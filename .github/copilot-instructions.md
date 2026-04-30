@@ -6,13 +6,19 @@ This repo is a personal collection of **GitHub Copilot CLI Skills** authored by 
 
 ## Layout
 
-Skills live under `ghcp/skills/<skill-name>/SKILL.md`. Current skills:
+Skills live under `ghcp/skills/<skill-name>/SKILL.md`. Custom agents live under `ghcp/agents/<agent-name>.agent.md` (single file, not a directory). Current contents:
+
+**Skills:**
 
 - `strict-code-review` — first-pass strict PR review (analysis-only).
 - `analyse-pr-feedback` — triage reviewer feedback into a decision table (analysis-only).
 - `rereview-pr` — focused follow-up review after a previous review cycle (analysis-only).
 
-When adding a new skill, create `ghcp/skills/<kebab-name>/SKILL.md` following the conventions below.
+**Agents:**
+
+- `andrej` — Karpathy-flavoured coding-discipline persona; behavioural rules to reduce common LLM coding mistakes.
+
+When adding a new skill, create `ghcp/skills/<kebab-name>/SKILL.md`. When adding a new agent, create `ghcp/agents/<kebab-name>.agent.md`.
 
 ## SKILL.md conventions
 
@@ -40,6 +46,14 @@ The body is a prompt addressed to the future Copilot session ("You are…"), not
 - Adapter sections for `Local branch` and `Pasted diff/feedback` so the skill works without network access.
 
 When extending an existing skill, keep the existing section ordering and severity/status vocabulary so the three skills stay consistent.
+
+## Agent file conventions
+
+Agent files (`ghcp/agents/<name>.agent.md`) are simpler than skills:
+
+- Single file, no enclosing per-agent directory.
+- Frontmatter contains only `description:` (a short line shown in the agent picker — not a router intent string).
+- Body is the agent's system prompt: persona, behavioural rules, operating mode. No mandatory sections.
 
 ## Authoring rules specific to this repo
 

@@ -2,7 +2,7 @@
 
 > A growing collection of AI tools, skills, and prompts I've built and want to share.
 
-This repo is where I park the AI-assistant tooling I find genuinely useful day to day — starting with a small set of opinionated **GitHub Copilot CLI skills** for pull request review, and expanding from there.
+This repo is where I park the AI-assistant tooling I find genuinely useful day to day — starting with a small set of opinionated **GitHub Copilot CLI skills** for pull request review, plus a couple of **custom agents** I reach for often. Expanding from there.
 
 If something in here saves you ten minutes, it's done its job. ✨
 
@@ -13,11 +13,13 @@ If something in here saves you ten minutes, it's done its job. ✨
 - [🤖 ai\_tools](#-ai_tools)
   - [📚 Table of contents](#-table-of-contents)
   - [🧰 What's inside today](#-whats-inside-today)
-  - [💡 What's a "skill"?](#-whats-a-skill)
+    - [Skills](#skills)
+    - [Custom agents](#custom-agents)
+  - [💡 Skills vs. agents](#-skills-vs-agents)
   - [📥 Install](#-install)
     - [Option 1: Symlink (recommended — you get updates with `git pull`)](#option-1-symlink-recommended--you-get-updates-with-git-pull)
     - [Option 2: Copy](#option-2-copy)
-    - [Option 3: Cherry-pick a single skill](#option-3-cherry-pick-a-single-skill)
+    - [Option 3: Cherry-pick a single skill or agent](#option-3-cherry-pick-a-single-skill-or-agent)
   - [▶️ Use the skills](#️-use-the-skills)
   - [🗂 Repository layout](#-repository-layout)
   - [🛠 Authoring conventions](#-authoring-conventions)
@@ -26,6 +28,8 @@ If something in here saves you ten minutes, it's done its job. ✨
 ---
 
 ## 🧰 What's inside today
+
+### Skills
 
 | Skill | What it does | When to invoke |
 |---|---|---|
@@ -37,19 +41,25 @@ All three are **provider-neutral** — they work with both **GitHub** and **Azur
 
 All three are **safe by design**: they only inspect and report. They will not edit files, commit, push, post comments, resolve threads, approve, reject, merge, or close the PR.
 
+### Custom agents
+
+| Agent | What it does | How to invoke |
+|---|---|---|
+| [`andrej`](./ghcp/agents/andrej.agent.md) | Karpathy-flavoured coding guidelines: think before coding, simplicity first, surface tradeoffs, no speculative abstractions. Useful as a delegate for any non-trivial code change where you want a more careful, less eager collaborator. | Ask Copilot to delegate to the `andrej` agent, or wire it into your own workflows. |
+
 ---
 
-## 💡 What's a "skill"?
+## 💡 Skills vs. agents
 
-A skill is a self-contained markdown prompt that the [GitHub Copilot CLI](https://docs.github.com/en/copilot/github-copilot-in-the-cli) loads on demand. When the user's intent matches a skill's `description`, the CLI activates it and follows the instructions in its `SKILL.md`.
+Both are markdown files the [GitHub Copilot CLI](https://docs.github.com/en/copilot/github-copilot-in-the-cli) loads on demand — they differ in *how* they're activated.
 
-In practice:
+**Skills** live at:
 
 ```
 ~/.copilot/skills/<skill-name>/SKILL.md
 ```
 
-Each `SKILL.md` is just a markdown file with a small YAML frontmatter block:
+The CLI auto-routes to a skill when the user's intent matches its `description`. Each `SKILL.md` is markdown with a small YAML frontmatter block:
 
 ```yaml
 ---
@@ -63,7 +73,25 @@ description: >-
 You are ...
 ```
 
-That's the entire contract. The body of the file is the prompt the model executes.
+**Custom agents** live at:
+
+```
+~/.copilot/agents/<agent-name>.agent.md
+```
+
+Agents are explicitly delegated to (via Copilot's `task` tool / sub-agent mechanism) rather than auto-routed. They define a persona or ruleset that runs in its own context window. Frontmatter is just a short `description`; the body is the agent's system prompt:
+
+```yaml
+---
+description: One-line description shown in the agent picker.
+---
+
+# My Agent
+
+Behavioural rules, persona, and operating instructions go here.
+```
+
+Rule of thumb: use a **skill** when the CLI should pick it up automatically from a user phrase, and an **agent** when you (or another agent) want to deliberately hand off a chunk of work to a specialist.
 
 ---
 
@@ -74,9 +102,16 @@ That's the entire contract. The body of the file is the prompt the model execute
 ```bash
 git clone https://github.com/ncksol/ai_tools.git ~/src/ai_tools
 
+# Skills
 mkdir -p ~/.copilot/skills
 for skill in ~/src/ai_tools/ghcp/skills/*/; do
   ln -sf "$skill" ~/.copilot/skills/"$(basename "$skill")"
+done
+
+# Agents
+mkdir -p ~/.copilot/agents
+for agent in ~/src/ai_tools/ghcp/agents/*.agent.md; do
+  ln -sf "$agent" ~/.copilot/agents/"$(basename "$agent")"
 done
 ```
 
@@ -85,17 +120,24 @@ done
 ```bash
 git clone https://github.com/ncksol/ai_tools.git
 cp -R ai_tools/ghcp/skills/* ~/.copilot/skills/
+cp    ai_tools/ghcp/agents/*.agent.md ~/.copilot/agents/
 ```
 
-### Option 3: Cherry-pick a single skill
+### Option 3: Cherry-pick a single skill or agent
 
 ```bash
+# A skill
 mkdir -p ~/.copilot/skills/strict-code-review
 curl -fsSL https://raw.githubusercontent.com/ncksol/ai_tools/main/ghcp/skills/strict-code-review/SKILL.md \
   -o ~/.copilot/skills/strict-code-review/SKILL.md
+
+# An agent
+mkdir -p ~/.copilot/agents
+curl -fsSL https://raw.githubusercontent.com/ncksol/ai_tools/main/ghcp/agents/andrej.agent.md \
+  -o ~/.copilot/agents/andrej.agent.md
 ```
 
-Restart your Copilot CLI session (or run `/skills` to confirm they show up) and you're done.
+Restart your Copilot CLI session and you're done.
 
 ---
 
@@ -126,16 +168,18 @@ ai_tools/
 ├── .github/
 │   └── copilot-instructions.md        ← guidance for Copilot working in this repo
 └── ghcp/                              ← GitHub Copilot CLI artefacts
-    └── skills/
-        ├── strict-code-review/
-        │   └── SKILL.md
-        ├── analyse-pr-feedback/
-        │   └── SKILL.md
-        └── rereview-pr/
-            └── SKILL.md
+    ├── skills/
+    │   ├── strict-code-review/
+    │   │   └── SKILL.md
+    │   ├── analyse-pr-feedback/
+    │   │   └── SKILL.md
+    │   └── rereview-pr/
+    │       └── SKILL.md
+    └── agents/
+        └── andrej.agent.md
 ```
 
-The top-level `ghcp/` namespace leaves room for other Copilot-CLI things later (e.g. `ghcp/agents/`, `ghcp/extensions/`), and for sibling namespaces for other tools — `claude/`, `cursor/`, `prompts/`, etc. — as the collection grows.
+The top-level `ghcp/` namespace leaves room for more Copilot-CLI things later (e.g. `ghcp/extensions/`), and for sibling namespaces for other tools — `claude/`, `cursor/`, `prompts/`, etc. — as the collection grows.
 
 ---
 
