@@ -46,6 +46,7 @@ All three are **safe by design**: they only inspect and report. They will not ed
 | Agent | What it does | How to invoke |
 |---|---|---|
 | [`andrej`](./ghcp/agents/andrej.agent.md) | Karpathy-flavoured coding guidelines: think before coding, simplicity first, surface tradeoffs, no speculative abstractions. Useful as a delegate for any non-trivial code change where you want a more careful, less eager collaborator. | Ask Copilot to delegate to the `andrej` agent, or wire it into your own workflows. |
+| [`azure-arch-diagram`](./ghcp/agents/azure-arch-diagram.agent.md) | Expert Azure architecture diagram creator. Produces **editable draw.io (`.drawio`) files** as raw mxGraph XML, following Microsoft Azure Architecture Centre style guidelines — official Azure2 icons, directional arrows, grouping containers, and a consistent colour palette. Ships ready-made templates for system, network, data-flow, context, and deployment diagrams. | Ask Copilot to delegate to the `azure-arch-diagram` agent, e.g. "draw an Azure architecture diagram for…". |
 
 ---
 
@@ -176,7 +177,8 @@ ai_tools/
     │   └── rereview-pr/
     │       └── SKILL.md
     └── agents/
-        └── andrej.agent.md
+        ├── andrej.agent.md
+        └── azure-arch-diagram.agent.md
 ```
 
 The top-level `ghcp/` namespace leaves room for more Copilot-CLI things later (e.g. `ghcp/extensions/`), and for sibling namespaces for other tools — `claude/`, `cursor/`, `prompts/`, etc. — as the collection grows.
