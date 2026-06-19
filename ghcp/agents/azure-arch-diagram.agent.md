@@ -1254,9 +1254,9 @@ Before delivering any diagram, verify:
 
 ### Layout
 - [ ] Tier-based placement: main pipeline in the middle band, control-plane/observability above, storage below (§1.11)
-- [ ] Main data-plane flow is left-to-right and visually dominant
+- [ ] Main data-plane flow is left-to-right and visually dominant (§1.11)
 - [ ] Spacing prevents label/icon collisions — labeled edges have ≥160px (horizontal) / ≥120px (vertical) between icon centers (§1.14)
-- [ ] ≥2 labeled containers for a multi-tier system; ≤6 services per container
+- [ ] ≥2 labeled containers for a multi-tier system; ≤6 services per container (§1.15)
 - [ ] Not overcrowded (max 15-20 resources per diagram)
 - [ ] Title present
 
