@@ -46,9 +46,10 @@ Follow these rules from the Microsoft Well-Architected Framework for every diagr
 ### 1.5 Layout
 - **Left-to-right flow** is preferred (users/internet on left, data stores on right)
 - Alternative: top-to-bottom for hierarchy/layered diagrams
-- Maintain consistent spacing: 100-150px between icons, 200px between groups
+- Baseline spacing: ≥60–80px clear gap between icons, ~200px between groups. **Labeled edges need extra clearance — see §1.14**
 - Icon size: **50x50px** for resources (standard), **40x40px** for smaller/secondary items
 - Keep diagrams under 15-20 resources for clarity — use layered diagrams for complex systems
+- For the full placement, flow-direction, spacing, and connection-budget rules, follow **§1.11–§1.15** below
 
 ### 1.6 Accuracy
 - Do NOT sacrifice accuracy for simplicity
@@ -73,6 +74,64 @@ Follow these rules from the Microsoft Well-Architected Framework for every diagr
   - **System/container diagram** → major components
   - **Component diagram** → specific technologies
   - **Deployment diagram** → infrastructure mapping
+
+### 1.11 Tier-Based Placement
+
+Place services by role into horizontal bands. The main flow is the backbone; everything else orbits it.
+
+- **Main data-plane pipeline** (entry actor → ingress → processing → primary data sinks) occupies the **middle horizontal band** and flows strictly **left→right**. Make it the visually dominant row.
+- **Control-plane, provisioning, and secrets** (Key Vault, provisioning/deployment services, Microsoft Entra ID when used for control) go **above** the pipeline; their edges drop **down** into it.
+- **Observability** (Azure Monitor, Log Analytics, Application Insights, Microsoft Sentinel, Microsoft Defender for Cloud) goes **above** the pipeline or in a dedicated container to the side; draw its edges **dashed**.
+- **Storage, batch analytics, and long-term data** (Data Lake, Synapse, Cosmos DB, Azure SQL, Blob) go **below** the pipeline; their edges come **up** into it.
+- **ML / inference / feedback loops** sit adjacent to analytics (typically **bottom-right**); make feedback edges visually distinct (e.g. curved routing).
+- **End-user dashboards and web UIs** go **far-left** if they trigger the flow, or **far-right** if they consume output — never in the middle row.
+- **On-premises** sits on the **left**, entering Azure through an explicit boundary node (ExpressRoute, VPN Gateway, or Private Link) before any edge crosses into an Azure container.
+
+### 1.12 Connection Flow Direction
+
+Arrow direction matters more than completeness. These two flows are drawn wrong by default — apply these rules.
+
+- **Telemetry flows from the emitter to the collection store — never the reverse.**
+  - Allowed: workload → Log Analytics or Application Insights; Application Insights → Log Analytics; workload → Azure Monitor (platform metrics, label e.g. "Publish metrics"); Log Analytics → Microsoft Sentinel / Defender for Cloud.
+  - **Do NOT draw Azure Monitor → Log Analytics** — Azure Monitor reads from Log Analytics, it does not push logs in.
+  - **Do NOT fan in** an edge from every service to Log Analytics (use hub-and-spoke — see §1.14).
+  - To show alerting, draw an edge **from Azure Monitor to an action target** (Logic Apps, Action Group, Webhook) labeled e.g. "Trigger alert" — not Log Analytics → Azure Monitor.
+- **Identity / OAuth: the user's first hop is the application entry point, not the identity provider.**
+  - Correct: `user → app ingress` (Front Door / Application Gateway / API Management / App Service / Container Apps), then `app ingress → Microsoft Entra ID` labeled "Authenticate user", "Validate token", or "Acquire token".
+  - `user → Microsoft Entra ID` as a first hop is **incorrect** for any web app, API, or enterprise workload.
+  - Exception: when identity itself is the diagram's subject (e.g. an Entra ID Conditional Access or B2C onboarding flow), `user → Entra ID` is correct.
+
+### 1.13 Anchors & Arrow Direction
+
+Align each edge's anchors with the flow so arrows leave and enter at the correct side. §3.3 shows edge syntax; add explicit exit/entry anchors:
+
+- Inputs enter a node from its **left** or **top**; outputs leave from its **right** or **bottom**.
+- Choose the `(source, target)` order and anchor fragments so the drawn arrow matches the intended direction:
+  - Left→right: `exitX=1;exitY=0.5;entryX=0;entryY=0.5;`
+  - Top→bottom: `exitX=0.5;exitY=1;entryX=0.5;entryY=0;`
+- Append these to the edge `style` (e.g. `...;exitX=1;exitY=0.5;entryX=0;entryY=0.5;`). Omitting anchors lets draw.io pick icon centers, which often routes arrows backwards through other icons.
+
+### 1.14 Connection Budget & Spacing
+
+Fewer, well-placed edges read better than an exhaustive web.
+
+**Connection budget:**
+- Draw only edges that represent **primary** data or control flow. Omit implicit relationships.
+- **Monitoring is hub-and-spoke:** connect the primary compute service to Azure Monitor, then a **single** Azure Monitor ↔ Log Analytics relationship. Do not connect every service to Log Analytics.
+- Show **one representative** Key Vault edge, not one from every consumer.
+- **Minimize cross-group edges.** Put tightly-coupled services in the same container. Prefer connecting services in **adjacent** containers; avoid edges that span the whole canvas — add an intermediate hop or move the services closer.
+
+**Spacing (50×50 icons):**
+- Keep a **clear gap of ≥60–80px** between any two icons.
+- When a **labeled** edge connects two icons, leave extra clearance so the mid-edge label doesn't collide: **≥160px center-to-center horizontally**, **≥120px center-to-center vertically**.
+- Give grouping containers **≥30px padding** around their child icons (children use parent-relative coordinates).
+- Keep **~200px** between separate groups.
+
+### 1.15 Labels, Grouping & Naming
+
+- **Connection labels are verb-first and short** (≤24 characters, 2–4 words): "Send telemetry", "Validate token", "Persist result". Avoid noun-only ("Telemetry") or generic ("Data", "Request") labels.
+- A multi-tier system needs **≥2 labeled containers**; a single-container diagram for a multi-service system is wrong. Keep **≤6 services per container**.
+- Use **official Microsoft product names only**. Never invent composite names like "Azure Workloads" or "Logic Apps Playbooks". Use **"Microsoft Entra ID"**, never "Azure Active Directory" or "AAD".
 
 ---
 
