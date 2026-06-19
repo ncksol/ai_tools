@@ -81,7 +81,7 @@ Place services by role into horizontal bands. The main flow is the backbone; eve
 
 - **Main data-plane pipeline** (entry actor → ingress → processing → primary data sinks) occupies the **middle horizontal band** and flows strictly **left→right**. Make it the visually dominant row.
 - **Control-plane, provisioning, and secrets** (Key Vault, provisioning/deployment services, Microsoft Entra ID when used for control) go **above** the pipeline; their edges drop **down** into it.
-- **Observability** (Azure Monitor, Log Analytics, Application Insights, Microsoft Sentinel, Microsoft Defender for Cloud) goes **above** the pipeline or in a dedicated container to the side; draw its edges **dashed**.
+- **Observability** (Azure Monitor, Log Analytics, Application Insights, Microsoft Sentinel, Microsoft Defender for Cloud) goes **above** the pipeline or in a dedicated container to the side; draw its edges **dashed in gray** (`#666666`, `dashed=1;dashPattern=8 8`) so they stay distinct from the blue dashed "async / events" style (see §2 Connection Colors).
 - **Storage, batch analytics, and long-term data** (Data Lake, Synapse, Cosmos DB, Azure SQL, Blob) go **below** the pipeline; their edges come **up** into it.
 - **ML / inference / feedback loops** sit adjacent to analytics (typically **bottom-right**); make feedback edges visually distinct (e.g. curved routing).
 - **End-user dashboards and web UIs** go **far-left** if they trigger the flow, or **far-right** if they consume output — never in the middle row.
@@ -117,7 +117,7 @@ Fewer, well-placed edges read better than an exhaustive web.
 
 **Connection budget:**
 - Draw only edges that represent **primary** data or control flow. Omit implicit relationships.
-- **Monitoring is hub-and-spoke:** connect the primary compute service to Azure Monitor, then a **single** Azure Monitor ↔ Log Analytics relationship. Do not connect every service to Log Analytics.
+- **Monitoring is hub-and-spoke:** make **Log Analytics** (or Application Insights) the telemetry hub — connect the primary compute service to it rather than wiring every service in. For alerting, draw **one** edge from Azure Monitor to an action target (Action Group / Logic Apps), per §1.12 — do not draw an Azure Monitor → Log Analytics edge.
 - Show **one representative** Key Vault edge, not one from every consumer.
 - **Minimize cross-group edges.** Put tightly-coupled services in the same container. Prefer connecting services in **adjacent** containers; avoid edges that span the whole canvas — add an intermediate hop or move the services closer.
 
@@ -237,7 +237,7 @@ aspect=fixed;html=1;align=center;image;fontSize=12;image=img/lib/azure2/compute/
 
 ```xml
 <mxCell id="conn1" value="HTTPS"
-        style="endArrow=classic;html=1;strokeColor=#0078D4;strokeWidth=2;fontSize=11;fontColor=#666666;"
+        style="endArrow=classic;html=1;strokeColor=#0078D4;strokeWidth=2;fontSize=11;fontColor=#666666;exitX=1;exitY=0.5;entryX=0;entryY=0.5;"
         edge="1" parent="1" source="vm1" target="sql1">
   <mxGeometry relative="1" as="geometry" />
 </mxCell>
@@ -250,6 +250,7 @@ aspect=fixed;html=1;align=center;image;fontSize=12;image=img/lib/azure2/compute/
 - `strokeColor` — line color
 - `strokeWidth` — line thickness
 - `dashed=1;dashPattern=8 8` — for dashed lines (async)
+- `exitX/exitY/entryX/entryY` — fixed anchor points (0–1 of the icon's width/height) so the arrow leaves the source's right/bottom and enters the target's left/top; align them with flow direction (see §1.13). Above, `exitX=1;…;entryX=0` draws a clean left→right arrow.
 
 Common arrow types:
 - `endArrow=classic` — filled triangle (default, use for most flows)
@@ -412,7 +413,7 @@ All icons follow the path pattern: `img/lib/azure2/{category}/{icon_name}.svg`
 
 | Resource Type | Icon Path | Common Aliases |
 |---|---|---|
-| Azure Active Directory | `identity/Azure_Active_Directory.svg` | Entra ID, AAD |
+| Microsoft Entra ID | `identity/Azure_Active_Directory.svg` | Entra ID |
 | Managed Identities | `identity/Managed_Identities.svg` | MI |
 | Users | `identity/Users.svg` | User, Client |
 | Groups | `identity/Groups.svg` | |
@@ -616,14 +617,15 @@ The most common diagram type. Shows major Azure components and their relationshi
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
 
+        <!-- app → SQL: explicit exit/entry anchors fix this edge left→right per §1.13 -->
         <mxCell id="c4" value="SQL"
-                style="endArrow=classic;html=1;strokeColor=#0078D4;strokeWidth=2;fontSize=11;fontColor=#666666;edgeStyle=orthogonalEdgeStyle;rounded=1;"
+                style="endArrow=classic;html=1;strokeColor=#0078D4;strokeWidth=2;fontSize=11;fontColor=#666666;edgeStyle=orthogonalEdgeStyle;rounded=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;"
                 edge="1" parent="rg1" source="app" target="sql">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
 
         <mxCell id="c5" value="NoSQL"
-                style="endArrow=classic;html=1;strokeColor=#0078D4;strokeWidth=2;fontSize=11;fontColor=#666666;edgeStyle=orthogonalEdgeStyle;rounded=1;"
+                style="endArrow=classic;html=1;strokeColor=#0078D4;strokeWidth=2;fontSize=11;fontColor=#666666;edgeStyle=orthogonalEdgeStyle;rounded=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;"
                 edge="1" parent="rg1" source="func" target="cosmos">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
