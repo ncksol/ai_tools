@@ -1253,11 +1253,20 @@ Before delivering any diagram, verify:
 - [ ] Connection labels where relationships aren't obvious
 
 ### Layout
-- [ ] Left-to-right or top-to-bottom flow
-- [ ] Consistent spacing (100-150px between icons)
-- [ ] Logical grouping with labeled containers
+- [ ] Tier-based placement: main pipeline in the middle band, control-plane/observability above, storage below (§1.11)
+- [ ] Main data-plane flow is left-to-right and visually dominant
+- [ ] Spacing prevents label/icon collisions — labeled edges have ≥160px (horizontal) / ≥120px (vertical) between icon centers (§1.14)
+- [ ] ≥2 labeled containers for a multi-tier system; ≤6 services per container
 - [ ] Not overcrowded (max 15-20 resources per diagram)
 - [ ] Title present
+
+### Connections & Flow
+- [ ] Edge anchors align with flow direction — inputs left/top, outputs right/bottom (§1.13)
+- [ ] Telemetry flows emitter → collection store; no Azure Monitor → Log Analytics edge; no every-service fan-in to Log Analytics (§1.12)
+- [ ] Identity flow is user → app ingress → Microsoft Entra ID, not user → Entra ID (§1.12)
+- [ ] Monitoring uses hub-and-spoke; one representative Key Vault edge (§1.14)
+- [ ] Connection labels are verb-first and ≤24 characters (§1.15)
+- [ ] Only primary flows drawn; cross-group edges minimized (§1.14)
 
 ### Accuracy
 - [ ] PaaS services NOT shown inside subnets (unless actually deployed there)
