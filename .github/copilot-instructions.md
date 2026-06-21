@@ -10,9 +10,15 @@ Skills live under `ghcp/skills/<skill-name>/SKILL.md`. Custom agents live under 
 
 **Skills:**
 
+PR-review skills (provider-neutral, inspection-only):
+
 - `strict-code-review` — first-pass strict PR review (analysis-only).
 - `analyse-pr-feedback` — triage reviewer feedback into a decision table (analysis-only).
 - `rereview-pr` — focused follow-up review after a previous review cycle (analysis-only).
+
+Research skills:
+
+- `storm-research` — Stanford STORM multi-perspective research (always grounded in real web sources; produces a chat briefing and, only when the user explicitly accepts, a self-contained HTML report).
 
 **Agents:**
 
@@ -34,19 +40,26 @@ description: >-
 ---
 ```
 
-The body is a prompt addressed to the future Copilot session ("You are…"), not human documentation. Match the structural patterns already established across the three skills:
+The body is a prompt addressed to the future Copilot session ("You are…"), not human documentation.
 
-- An explicit **Operating mode / Safety rules** section listing what the skill must NOT do (edit files, commit, push, post PR comments, approve/reject, vote, merge, close, resolve threads, use GitHub's native Copilot reviewer, run destructive commands).
-- A **Supported providers** section. All PR skills here are provider-neutral and must support both **GitHub** (`github.com/.../pull/<n>`) and **Azure DevOps** (`dev.azure.com/.../pullrequest/<id>` and `*.visualstudio.com/.../pullrequest/<id>`).
+**General conventions (every skill):**
+
+- An explicit **Operating mode** section stating the skill's safety boundaries — what it must and must not do. The exact boundaries depend on the skill: the PR-review skills are strictly inspection-only; `storm-research` reads from the web and writes a report file only when the user explicitly accepts. Spell out whichever rules apply.
+- A prescribed **Output format**, usually built around a markdown artifact (a decision/findings table for the review skills; a four-phase briefing for `storm-research`).
+- Forbid hallucination: do not invent line numbers, sources, quotes, or results; do not claim a command or search ran when it didn't; do not claim surrounding code was inspected when only the diff was read.
+
+**PR-review conventions (the `strict-code-review`, `analyse-pr-feedback`, `rereview-pr` family only):**
+
+- A **Supported providers** section. These skills are provider-neutral and must support both **GitHub** (`github.com/.../pull/<n>`) and **Azure DevOps** (`dev.azure.com/.../pullrequest/<id>` and `*.visualstudio.com/.../pullrequest/<id>`).
 - Separate **provider adapter** sections with the exact CLI commands to use:
   - GitHub: `gh pr view`, `gh pr diff`, `gh api repos/.../pulls/...`, and a GraphQL query for `reviewThreads` (REST does not reliably expose thread resolution state).
   - Azure DevOps: `az repos pr show`, `az repos pr work-item list`, `az repos pr policy list`, and `az devops invoke --area git --resource pullRequestThreads ... --api-version 7.1`.
 - A working-tree safety check: run `git status` first; if the tree is not clean, do **not** check out the PR — fall back to remote metadata + diff.
-- Shared **Severity** scale: `Critical | High | Medium | Low | Info` (use the same wording across skills).
-- A prescribed **Output format** with a markdown table as the primary artifact. End strict/re-review skills with the literal line `No code was changed.`
+- Shared **Severity** scale: `Critical | High | Medium | Low | Info` (use the same wording across the review skills).
 - Adapter sections for `Local branch` and `Pasted diff/feedback` so the skill works without network access.
+- End strict/re-review skills with the literal line `No code was changed.`
 
-When extending an existing skill, keep the existing section ordering and severity/status vocabulary so the three skills stay consistent.
+When extending an existing skill, keep that skill's established section ordering and vocabulary so the family stays consistent. Do **not** bolt PR-review machinery (provider adapters, PR safety rules) onto a non-PR skill such as `storm-research`.
 
 ## Agent file conventions
 
@@ -58,9 +71,9 @@ Agent files (`ghcp/agents/<name>.agent.md`) are simpler than skills:
 
 ## Authoring rules specific to this repo
 
-- Skills are **inspection and reporting only**. Never add a skill that edits, commits, pushes, or mutates a PR unless the user explicitly requests that.
-- Do **not** instruct the skill to invoke GitHub's native Copilot PR reviewer.
-- Do not invent line numbers, claim commands ran when they didn't, or claim surrounding code was inspected when only the diff was read — these prohibitions are repeated across skills and must be preserved.
+- The **PR-review skills** are inspection-and-reporting only: they must never edit, commit, push, or otherwise mutate a PR. Other skills may write output when the user explicitly asks for it — e.g. `storm-research` writes its HTML report only after the user accepts the offer. Do not add a skill that mutates a PR.
+- Do **not** instruct any skill to invoke GitHub's native Copilot PR reviewer.
+- Do not invent line numbers or sources, claim commands ran when they didn't, or claim surrounding code was inspected when only the diff was read — these prohibitions are repeated across skills and must be preserved.
 - Prefer `gh` CLI and `az` CLI commands over raw HTTP. When REST is insufficient (e.g., review thread resolution), use `gh api graphql` as shown in `rereview-pr/SKILL.md`.
 
 ## Working in this repo
