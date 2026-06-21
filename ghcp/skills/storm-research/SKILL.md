@@ -23,7 +23,9 @@ phases end to end, then offer a polished HTML report.
 
 - **Always grounded.** Use your `web_search` and `web_fetch` tools to find real, current sources. Every
   material factual claim must carry an inline citation (source title + URL). Never run this from memory
-  alone.
+  alone. If the web tools are unavailable or every search errors, **stop**: tell the user that grounded
+  STORM cannot run in this session and ask them to enable web access or paste sources. Do not fall back to
+  a memory-only briefing.
 - **Always run all four phases, in order, in one pass:** Multi-Perspective Scan → Contradiction Map →
   Synthesis Briefing → Peer Review. Do not stop after one phase and do not skip a phase.
 - **Research and report only.** Do not modify the user's repository or files, except writing the HTML
@@ -104,7 +106,8 @@ Grade your own briefing honestly:
 1. **Confidence scores** — rate each of the five key findings 1–10 for reliability and explain each score.
 2. **Weakest link** — which claim are you least confident in? What specific information would verify it?
 3. **Bias check** — which perspective may be overrepresented in the synthesis? Did one voice dominate?
-4. **Missing perspective** — is there a sixth angle that would change the conclusions?
+4. **Missing perspective** — is there a missing angle beyond the perspectives you used (a sixth lens, if
+   you used the default five) that would change the conclusions?
 5. **Overall grade** — what grade would a Stanford professor give this briefing, and what would they tell
    you to fix?
 
@@ -125,13 +128,29 @@ claims, and a consolidated **Sources** list at the end. Then offer the HTML repo
 
 ## Output — HTML report
 
-Only if the user accepts. Confirm the filename and location first; default to the current working
-directory as `storm-<topic-slug>-YYYY-MM-DD.html`. Write a **single self-contained `.html` file**: copy
-the template below verbatim and replace every `{{TOKEN}}` with the real content from the briefing you
-produced. Repeat the marked blocks (perspective cards, contradiction rows, findings, confidence rows,
-sources) as many times as needed. Do not alter the structure or CSS, do not add external assets (no
-external fonts, scripts, or stylesheets), and do not invent content the briefing does not contain. For the
-confidence badges, use class `b-bad` for scores 1–4, `b-warn` for 5–7, and `b-good` for 8–10.
+Only if the user accepts. **Filename:** confirm the filename and location first; default to the current
+working directory as `storm-<topic-slug>-YYYY-MM-DD.html`, where `<topic-slug>` is the topic lowercased
+with every run of non-alphanumeric characters replaced by a single hyphen, leading/trailing hyphens
+trimmed, and the result capped at ~60 characters — so it is always a valid Windows and POSIX filename.
+Before writing, check whether the target file already exists; if it does, ask the user whether to
+overwrite it or choose a new name rather than silently replacing it.
+
+Write a **single self-contained `.html` file**: copy the template below verbatim and replace every
+`{{TOKEN}}` with the real content from the briefing you produced. Repeat the marked blocks (perspective
+cards, contradiction rows, findings, confidence rows, sources) as many times as needed. Do not alter the
+structure or CSS, do not add external assets (no external fonts, scripts, or stylesheets), and do not
+invent content the briefing does not contain.
+
+**Substitution rules:**
+
+- **Confidence badges:** set each finding's `{{BADGE_CLASS}}` token from its score so the colour matches
+  the number — `b-bad` for 1–4, `b-warn` for 5–7, `b-good` for 8–10.
+- **Perspective count:** set `{{PERSPECTIVE_COUNT}}` to the number of perspectives you actually used; it
+  may not be five if the user overrode the lenses.
+- **Escaping:** every substituted value comes from research output, so escape it. In text, replace
+  `&`→`&amp;`, `<`→`&lt;`, `>`→`&gt;`; inside attribute values such as `href="{{URL}}"` also replace
+  `"`→`&quot;`. Allow only `http:`/`https:` source URLs — drop or plainly label (do not link) any other
+  scheme such as `javascript:`.
 
 ```html
 <!DOCTYPE html>
@@ -203,7 +222,7 @@ confidence badges, use class `b-bad` for scores 1–4, `b-warn` for 5–7, and `
 
   <section class="phase">
     <h2><span class="num">1</span>Multi-Perspective Scan</h2>
-    <p class="lead">Five expert lenses on the same topic.</p>
+    <p class="lead">{{PERSPECTIVE_COUNT}} expert lenses on the same topic.</p>
     <div class="cards">
       <!-- PERSPECTIVE_CARDS: repeat one .card per perspective -->
       <div class="card">
@@ -258,7 +277,7 @@ confidence badges, use class `b-bad` for scores 1–4, `b-warn` for 5–7, and `
       <thead><tr><th>Finding</th><th>Confidence</th><th>Why</th></tr></thead>
       <tbody>
         <!-- CONFIDENCE_ROWS: badge class b-bad (1-4), b-warn (5-7), b-good (8-10) -->
-        <tr><td>{{FINDING_SHORT}}</td><td><span class="badge b-good">{{SCORE}}</span></td><td>{{REASON}}</td></tr>
+        <tr><td>{{FINDING_SHORT}}</td><td><span class="badge {{BADGE_CLASS}}">{{SCORE}}</span></td><td>{{REASON}}</td></tr>
       </tbody>
     </table>
     <h3>Weakest link</h3>
