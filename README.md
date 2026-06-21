@@ -36,10 +36,13 @@ If something in here saves you ten minutes, it's done its job. ✨
 | [`strict-code-review`](./ghcp/skills/strict-code-review/SKILL.md) | First-pass strict senior-engineer PR review. Inspection only — no comments posted, no code changed. | "Review this PR: `<url>`" |
 | [`analyse-pr-feedback`](./ghcp/skills/analyse-pr-feedback/SKILL.md) | Triages reviewer comments into a decision table (agree / disagree / needs clarification) so you can reply intentionally. | "Analyse the feedback on `<url>`" |
 | [`rereview-pr`](./ghcp/skills/rereview-pr/SKILL.md) | Focused **second-pass** review: were the previous findings actually addressed? Is the engineer's pushback valid? | "Re-review `<url>`" |
+| [`storm-research`](./ghcp/skills/storm-research/SKILL.md) | Runs the Stanford **STORM** research method — five expert perspectives, a contradiction map, a synthesised briefing, and a self-critique — grounded in real web sources. Outputs a chat briefing plus an optional self-contained HTML report. | "Research `<topic>` deeply" / "STORM `<topic>`" |
 
-All three are **provider-neutral** — they work with both **GitHub** and **Azure DevOps** pull requests, and gracefully fall back to local branches or pasted diffs/feedback when remote access isn't available.
+The three PR-review skills (`strict-code-review`, `analyse-pr-feedback`, `rereview-pr`) are **provider-neutral** — they work with both **GitHub** and **Azure DevOps** pull requests, and gracefully fall back to local branches or pasted diffs/feedback when remote access isn't available.
 
-All three are **safe by design**: they only inspect and report. They will not edit files, commit, push, post comments, resolve threads, approve, reject, merge, or close the PR.
+Those three are **safe by design**: they only inspect and report. They will not edit files, commit, push, post comments, resolve threads, approve, reject, merge, or close the PR.
+
+[`storm-research`](./ghcp/skills/storm-research/SKILL.md) is a different kind of skill — grounded research, not code review. It reads from the web and writes to disk only when you explicitly accept its offer to save an HTML report.
 
 ### Custom agents
 
@@ -174,7 +177,9 @@ ai_tools/
     │   │   └── SKILL.md
     │   ├── analyse-pr-feedback/
     │   │   └── SKILL.md
-    │   └── rereview-pr/
+    │   ├── rereview-pr/
+    │   │   └── SKILL.md
+    │   └── storm-research/
     │       └── SKILL.md
     └── agents/
         ├── andrej.agent.md
