@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pr-review-graph.local/azure-access-fragment.schema.json",
+  "title": "Azure DevOps access fragment",
+  "type": "object",
+  "required": ["schemaVersion", "source", "capabilities"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "source": {
+      "type": "object",
+      "required": ["adapter", "credentialContext", "capturedAt"],
+      "properties": {
+        "adapter": { "type": "string", "minLength": 1 },
+        "credentialContext": { "type": "string", "minLength": 1 },
+        "capturedAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "capabilities": {
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "identity": { "$ref": "#/$defs/capability" },
+        "metadata": { "$ref": "#/$defs/capability" },
+        "snapshot": { "$ref": "#/$defs/capability" },
+        "workItems": { "$ref": "#/$defs/capability" },
+        "policies": { "$ref": "#/$defs/capability" },
+        "iterations": { "$ref": "#/$defs/capability" },
+        "changes": { "$ref": "#/$defs/capability" },
+        "existingThreads": { "$ref": "#/$defs/capability" },
+        "diff": { "$ref": "#/$defs/capability" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "capability": {
+      "type": "object",
+      "required": ["complete"],
+      "properties": {
+        "complete": { "type": "boolean" },
+        "data": {},
+        "failure": {
+          "type": "object",
+          "required": ["category", "message"],
+          "properties": {
+            "category": {
+              "enum": [
+                "tool-unavailable",
+                "unsupported",
+                "authentication",
+                "transient",
+                "malformed",
+                "incomplete"
+              ]
+            },
+            "message": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "complete": { "const": true } } },
+          "then": { "required": ["data"] }
+        },
+        {
+          "if": { "properties": { "complete": { "const": false } } },
+          "then": { "required": ["failure"] }
+        }
+      ],
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
