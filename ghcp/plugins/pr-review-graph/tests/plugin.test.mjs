@@ -507,16 +507,16 @@ test('discovery ingestion rejects literal controls and retains only redacted dia
 
 test('JWT redaction uses precise regex and does not overmatch', async () => {
   const { redactDiagnosticText } = await import('../skills/review-pull-request/scripts/process-discovery.mjs');
-  
+
   const validJwt = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U';
   const anotherValidJwt = 'eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlMTIzNDU2.aGFzQWZvdXJ0aFNlZ21lbnQ1NjU';
   const notAJwt = 'not.a.jwt.string';
   const falsePositiveJwt = 'some.thing.else';
-  
+
   const redacted = redactDiagnosticText(
     `Valid: ${validJwt} Another: ${anotherValidJwt} Not-JWT: ${notAJwt} False: ${falsePositiveJwt}`
   );
-  
+
   assert.doesNotMatch(redacted, new RegExp(validJwt));
   assert.doesNotMatch(redacted, new RegExp(anotherValidJwt));
   assert.match(redacted, /Valid: <redacted-jwt>/);
@@ -540,18 +540,18 @@ test('discovery ingestion cleans up diagnostic if result write fails', async () 
       'escaped\nstring'
     );
     await writeFile(rawFile, malformed, { mode: 0o600 });
-    
+
     await mkdir(resultDirectory, { recursive: true, mode: 0o700 });
     const resultPath = path.join(resultDirectory, 'prg-correctness-batch-001-attempt-1.json');
     await writeFile(resultPath, '{}', { mode: 0o600 });
-    
+
     const ingestPromise = ingestDiscoveryResponse(
       rawFile,
       resultDirectory,
       diagnosticsDirectory,
       { agent: 'prg-correctness', batch: 1, attempt: 1 }
     );
-    
+
     try {
       await ingestPromise;
       assert.fail('Expected EEXIST error');
@@ -711,6 +711,179 @@ test('discovery finalize CLI emits an authoritative empty array only for complet
     assert.equal(cli.status, 0, cli.stderr);
     assert.deepEqual(JSON.parse(await readFile(candidatesFile, 'utf8')), []);
     assert.equal(JSON.parse(await readFile(coverageFile, 'utf8')).status, 'complete');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery finalization fails closed when a routed agent has zero planned batches', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-zerobatch-'));
+  try {
+    const result = await finalizeDiscovery(
+      discoveryPlan('prg-correctness', 0),
+      path.join(directory, 'results')
+    );
+
+    assert.equal(result.coverage.status, 'failed');
+    assert.equal(result.coverage.scopes[0].status, 'failed');
+    assert.equal(result.coverage.scopes[0].expectedBatches, 0);
+    assert.ok(result.coverage.failures.some(failure => failure.reason === 'zero-expected-batches'));
+    assert.ok(result.coverage.planProblems.some(problem => problem.includes('zero expected batches')));
+    assert.equal(result.findings, null);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery finalization fails closed for a plan with no routed agents', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-noagents-'));
+  try {
+    const result = await finalizeDiscovery(
+      { schemaVersion: '1.0', agents: [] },
+      path.join(directory, 'results')
+    );
+
+    assert.equal(result.coverage.status, 'failed');
+    assert.deepEqual(result.coverage.scopes, []);
+    assert.ok(result.coverage.planProblems.some(problem => problem.includes('at least one routed agent')));
+    assert.equal(result.findings, null);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery finalization fails closed for a plan missing the agents array', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-malformed-'));
+  try {
+    const result = await finalizeDiscovery(
+      { schemaVersion: '1.0' },
+      path.join(directory, 'results')
+    );
+
+    assert.equal(result.coverage.status, 'failed');
+    assert.deepEqual(result.coverage.scopes, []);
+    assert.ok(result.coverage.planProblems.some(problem => problem.includes('agents array')));
+    assert.equal(result.findings, null);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery finalize CLI fails closed and removes stale candidates for a wrong/empty plan', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-cli-wrongplan-'));
+  try {
+    const planFile = path.join(directory, 'plan.json');
+    const resultDirectory = path.join(directory, 'results');
+    const candidatesFile = path.join(directory, 'candidates.json');
+    const coverageFile = path.join(directory, 'coverage.json');
+    await writeFile(planFile, JSON.stringify({ schemaVersion: '1.0', agents: [] }));
+    await writeFile(candidatesFile, '[]\n');
+
+    const cli = spawnSync(process.execPath, [
+      'skills/review-pull-request/scripts/process-discovery.mjs',
+      'finalize',
+      planFile,
+      resultDirectory,
+      candidatesFile,
+      coverageFile
+    ], { cwd: root, encoding: 'utf8' });
+
+    assert.equal(cli.status, 1, cli.stdout + cli.stderr);
+    await assert.rejects(access(candidatesFile), { code: 'ENOENT' });
+    const coverage = JSON.parse(await readFile(coverageFile, 'utf8'));
+    assert.equal(coverage.status, 'failed');
+    assert.ok(coverage.planProblems.some(problem => problem.includes('at least one routed agent')));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery finalize CLI fails closed on a binary-only plan with zero expected batches', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-cli-zerobatch-'));
+  try {
+    const planFile = path.join(directory, 'plan.json');
+    const resultDirectory = path.join(directory, 'results');
+    const candidatesFile = path.join(directory, 'candidates.json');
+    const coverageFile = path.join(directory, 'coverage.json');
+    await writeFile(planFile, JSON.stringify(discoveryPlan('prg-correctness', 0)));
+    await writeFile(candidatesFile, '[]\n');
+
+    const cli = spawnSync(process.execPath, [
+      'skills/review-pull-request/scripts/process-discovery.mjs',
+      'finalize',
+      planFile,
+      resultDirectory,
+      candidatesFile,
+      coverageFile
+    ], { cwd: root, encoding: 'utf8' });
+
+    assert.equal(cli.status, 1, cli.stdout + cli.stderr);
+    await assert.rejects(access(candidatesFile), { code: 'ENOENT' });
+    const coverage = JSON.parse(await readFile(coverageFile, 'utf8'));
+    assert.equal(coverage.status, 'failed');
+    assert.equal(coverage.scopes[0].status, 'failed');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery ingestion rejects a bare CLI batch or attempt flag instead of coercing it to 1', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-bareflag-'));
+  try {
+    const rawFile = path.join(directory, 'raw.txt');
+    const resultDirectory = path.join(directory, 'results');
+    const diagnosticsDirectory = path.join(directory, 'diagnostics');
+
+    await writeFile(rawFile, '[]', { mode: 0o600 });
+    await assert.rejects(
+      ingestDiscoveryResponse(rawFile, resultDirectory, diagnosticsDirectory, {
+        agent: 'prg-correctness', batch: true, attempt: 1
+      }),
+      /Batch must be a positive integer/
+    );
+
+    await writeFile(rawFile, '[]', { mode: 0o600 });
+    await assert.rejects(
+      ingestDiscoveryResponse(rawFile, resultDirectory, diagnosticsDirectory, {
+        agent: 'prg-correctness', batch: 1, attempt: undefined
+      }),
+      /Attempt must be 1 or 2/
+    );
+
+    await assert.rejects(
+      access(path.join(resultDirectory, discoveryResultFileName('prg-correctness', 1, 1))),
+      { code: 'ENOENT' }
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery ingest CLI rejects a trailing --batch flag with no value', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-cli-bareflag-'));
+  try {
+    const rawFile = path.join(directory, 'raw.txt');
+    const resultDirectory = path.join(directory, 'results');
+    const diagnosticsDirectory = path.join(directory, 'diagnostics');
+    await writeFile(rawFile, '[]', { mode: 0o600 });
+
+    const cli = spawnSync(process.execPath, [
+      'skills/review-pull-request/scripts/process-discovery.mjs',
+      'ingest',
+      rawFile,
+      resultDirectory,
+      diagnosticsDirectory,
+      '--agent', 'prg-correctness',
+      '--attempt', '1',
+      '--batch'
+    ], { cwd: root, encoding: 'utf8' });
+
+    assert.equal(cli.status, 1, cli.stdout + cli.stderr);
+    assert.match(cli.stderr, /Batch must be a positive integer/);
+    await assert.rejects(
+      access(path.join(resultDirectory, discoveryResultFileName('prg-correctness', 1, 1))),
+      { code: 'ENOENT' }
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
