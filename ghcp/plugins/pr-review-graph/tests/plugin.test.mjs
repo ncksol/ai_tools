@@ -13,6 +13,7 @@ import { fingerprintFindings } from '../skills/review-pull-request/scripts/finge
 import { applyDeduplication, prepareDeduplication } from '../skills/review-pull-request/scripts/deduplicate-findings.mjs';
 import { buildGitHubReview } from '../skills/review-pull-request/scripts/build-github-review.mjs';
 import { buildAzureThreads } from '../skills/review-pull-request/scripts/build-azure-threads.mjs';
+import { applyComments } from '../skills/review-pull-request/scripts/apply-comments.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -323,4 +324,65 @@ test('Azure CLI builder writes one payload per finding and an index', async () =
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+async function dedupedFindings() {
+  const packet = normalize(await fixture('github-raw.json'));
+  packet.existingThreads = [];
+  const fingerprinted = fingerprintFindings(packet, await fixture('findings.json'));
+  const prepared = prepareDeduplication(packet, fingerprinted);
+  return { packet, findings: applyDeduplication(prepared, []).findings };
+}
+
+test('comment join attaches editor text and makes the findings publishable', async () => {
+  const { packet, findings } = await dedupedFindings();
+  const editorOutput = {
+    comments: findings.map((finding, index) => ({
+      fingerprint: finding.fingerprint,
+      comment: `Edited comment ${index}`
+    }))
+  };
+
+  const final = applyComments({ findings }, editorOutput);
+
+  assert.equal(final.length, findings.length);
+  assert.equal(final[0].comment, 'Edited comment 0');
+  assert.equal(final[0].fingerprint, findings[0].fingerprint);
+  assert.equal(final[0].deduplication.verdict, 'distinct');
+  assert.equal(final[0].title, findings[0].title);
+
+  const payload = buildGitHubReview(packet, final);
+  const published = [payload.body, ...payload.comments.map(comment => comment.body)].join('\n');
+  assert.match(published, /Edited comment 0/);
+  assert.match(published, /Edited comment 1/);
+  assert.equal(payload.comments.length, 1);
+  assert.match(payload.comments[0].body, /<!-- pr-review-graph:[a-f0-9]{64} -->/);
+});
+
+test('comment join rejects a comment for an unknown finding', async () => {
+  const { findings } = await dedupedFindings();
+  const editorOutput = {
+    comments: [
+      ...findings.map(finding => ({ fingerprint: finding.fingerprint, comment: 'Edited comment' })),
+      { fingerprint: 'f'.repeat(64), comment: 'Invented finding' }
+    ]
+  };
+
+  assert.throws(() => applyComments({ findings }, editorOutput), /unknown findings/);
+});
+
+test('comment join rejects a finding left without usable comment text', async () => {
+  const { findings } = await dedupedFindings();
+  const withBlank = {
+    comments: findings.map((finding, index) => ({
+      fingerprint: finding.fingerprint,
+      comment: index === 0 ? '   ' : 'Edited comment'
+    }))
+  };
+  const withOmission = {
+    comments: findings.slice(1).map(finding => ({ fingerprint: finding.fingerprint, comment: 'Edited comment' }))
+  };
+
+  assert.throws(() => applyComments({ findings }, withBlank), /no usable comment/);
+  assert.throws(() => applyComments({ findings }, withOmission), /no usable comment/);
 });
