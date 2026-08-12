@@ -196,8 +196,26 @@ export async function ingestDiscoveryResponse(
   }
 }
 
+const SAFE_PROTOCOL_REASONS = Object.freeze({
+  complete_plus_second: 'complete-first-unexpected-retry',
+  missing_first: 'missing-first-attempt',
+  corrupt_envelope: 'corrupt-envelope',
+  exhausted_invalid: 'exhausted-invalid-attempts'
+});
+
+function safeProtocolReason(firstState, secondState) {
+  if (firstState === 'complete') return SAFE_PROTOCOL_REASONS.complete_plus_second;
+  if (firstState === 'missing') return SAFE_PROTOCOL_REASONS.missing_first;
+  if (firstState === 'corrupt' || secondState === 'corrupt') return SAFE_PROTOCOL_REASONS.corrupt_envelope;
+  return SAFE_PROTOCOL_REASONS.exhausted_invalid;
+}
+
 function validateAttemptEnvelope(value, expected) {
   const problems = [];
+  if (!expected.category || !Object.values(DISCOVERY_CATEGORIES).includes(expected.category)) {
+    problems.push(`expected.category is not a recognised discovery category`);
+    return problems;
+  }
   for (const field of ['agent', 'category', 'batch', 'attempt']) {
     if (value?.[field] !== expected[field]) {
       problems.push(`${field} does not match the expected attempt`);
@@ -302,6 +320,7 @@ export async function finalizeDiscovery(plan, resultDirectory) {
           agent: agentPlan.name,
           batch,
           recovered: false,
+          reason: safeProtocolReason(first.state, second.state),
           attempts: invalidAttempts,
           protocolStates: [first.state, second.state]
         });
