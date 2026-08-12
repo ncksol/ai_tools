@@ -2,11 +2,18 @@
 
 ## Repository purpose
 
-This repo is a personal collection of **GitHub Copilot CLI Skills** authored by the user. It contains no application code, no build, no tests, and no lint configuration. The deliverables are the `SKILL.md` files themselves — they are markdown prompts loaded by the Copilot CLI at runtime.
+This repo is a personal collection of **GitHub Copilot CLI artefacts** authored by the user: skills, custom agents, and plugins. The repository is itself a Copilot plugin marketplace named `ai-tools`.
+
+Most deliverables are markdown prompts loaded by the Copilot CLI at runtime — there is no application code, build, or lint configuration at the repository level. Individual plugins may vendor their own Node.js scripts and tests; those are the only things in the repo that are executed.
 
 ## Layout
 
-Skills live under `ghcp/skills/<skill-name>/SKILL.md`. Custom agents live under `ghcp/agents/<agent-name>.agent.md` (single file, not a directory). Current contents:
+- Skills: `ghcp/skills/<skill-name>/SKILL.md`
+- Custom agents: `ghcp/agents/<agent-name>.agent.md` (single file, not a directory)
+- Plugins: `ghcp/plugins/<plugin-name>/` (self-contained bundle)
+- Marketplace manifest: `.github/plugin/marketplace.json` (repository root, one file for all plugins)
+
+Current contents:
 
 **Skills:**
 
@@ -25,7 +32,31 @@ Research skills:
 - `andrej` — Karpathy-flavoured coding-discipline persona; behavioural rules to reduce common LLM coding mistakes.
 - `azure-arch-diagram` — expert Azure architecture diagram creator; emits editable draw.io (`.drawio`) mxGraph XML following Microsoft Azure Architecture Centre style (official Azure2 icons, directional arrows, grouping containers, consistent colour palette).
 
-When adding a new skill, create `ghcp/skills/<kebab-name>/SKILL.md`. When adding a new agent, create `ghcp/agents/<kebab-name>.agent.md`.
+**Plugins:**
+
+- `pr-review-graph` — bounded multi-agent review of an already-open GitHub or Azure DevOps PR: snapshot, specialist routing, verification, deduplication against existing comments, preview-then-publish. Bundles one skill (`review-pull-request`) and nine `prg-*` specialist agents.
+
+When adding a new skill, create `ghcp/skills/<kebab-name>/SKILL.md`. When adding a new agent, create `ghcp/agents/<kebab-name>.agent.md`. When adding a new plugin, see the plugin conventions below.
+
+## Plugin conventions
+
+Plugins are **vendored intact** under `ghcp/plugins/<plugin-name>/`. A plugin keeps its own `plugin.json`, `package.json`, tests, scripts, LICENSE and README. Treat a vendored plugin as a unit: when updating it from an upstream drop, replace the directory rather than hand-editing individual files, then re-apply the two repo-specific deltas below.
+
+- **One marketplace manifest, at the repository root.** `.github/plugin/marketplace.json` lists every plugin, each with a `source` path pointing at its directory (e.g. `"./ghcp/plugins/pr-review-graph"`). A plugin must **not** carry its own `marketplace.json`; delete it when vendoring. Copilot CLI only reads the manifest at the repository root.
+- **`version` must match** between a plugin's `plugin.json` and its entry in the root marketplace manifest.
+- **Skill and agent names inside a plugin stay namespaced to that plugin** (e.g. `prg-*` for `pr-review-graph`) so they don't collide with the loose skills in `ghcp/skills/` or agents in `ghcp/agents/`.
+- Do **not** duplicate a plugin's skills or agents into `ghcp/skills/` or `ghcp/agents/`. A plugin ships as one installable unit.
+- If a plugin has a validation script, it must check its entry in the root marketplace manifest, not a local one. See `ghcp/plugins/pr-review-graph/scripts/validate-plugin.mjs`.
+
+Install and validate a plugin with:
+
+```bash
+cd ghcp/plugins/<plugin-name>
+npm test
+npm run validate
+```
+
+Prefer `copilot plugin install <name>@ai-tools` over direct repo/URL/local-path installs; the CLI reports the latter as deprecated.
 
 ## SKILL.md conventions
 
@@ -78,5 +109,6 @@ Agent files (`ghcp/agents/<name>.agent.md`) are simpler than skills:
 
 ## Working in this repo
 
-- There is nothing to build, test, or lint. Validation = read the changed `SKILL.md` and confirm frontmatter parses and the prompt structure matches the conventions above.
+- Skills and agents have nothing to build, test, or lint. Validation = read the changed `SKILL.md` / `.agent.md` and confirm frontmatter parses and the structure matches the conventions above.
+- Plugins **do** have tests. After touching anything under `ghcp/plugins/<name>/` or the root `.github/plugin/marketplace.json`, run `npm test && npm run validate` from that plugin's directory.
 - Commits in this repo follow the user's global policy (no `Co-authored-by` trailers).

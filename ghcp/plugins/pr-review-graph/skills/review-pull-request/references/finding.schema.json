@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pr-review-graph.local/finding.schema.json",
+  "title": "PR Review Graph verified finding",
+  "type": "object",
+  "required": ["category", "severity", "confidence", "title", "problem", "trigger", "consequence", "evidence", "recommendation", "location", "verification"],
+  "properties": {
+    "category": {"enum": ["contract", "correctness", "tests", "security", "data-compatibility", "reliability"]},
+    "severity": {"enum": ["blocker", "high", "medium", "low"]},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "title": {"type": "string", "minLength": 5, "maxLength": 120},
+    "problem": {"type": "string", "minLength": 10},
+    "trigger": {"type": "string", "minLength": 5},
+    "consequence": {"type": "string", "minLength": 5},
+    "evidence": {"type": "string", "minLength": 10},
+    "recommendation": {"type": "string", "minLength": 5},
+    "comment": {"type": "string"},
+    "location": {
+      "anyOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["path", "line", "side"],
+          "properties": {
+            "path": {"type": "string", "minLength": 1},
+            "line": {"type": "integer", "minimum": 1},
+            "side": {"enum": ["RIGHT", "LEFT"]},
+            "startLine": {"type": "integer", "minimum": 1},
+            "changeTrackingId": {"type": "integer", "minimum": 1}
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "relatedLocations": {"type": "array", "items": {"type": "object"}},
+    "verification": {
+      "type": "object",
+      "required": ["verdict", "reason"],
+      "properties": {
+        "verdict": {"const": "verified"},
+        "reason": {"type": "string", "minLength": 5}
+      }
+    },
+    "deduplication": {
+      "type": "object",
+      "required": ["verdict", "batchesChecked", "existingThreadsChecked"],
+      "properties": {
+        "verdict": {"const": "distinct"},
+        "batchesChecked": {"type": "integer", "minimum": 0},
+        "existingThreadsChecked": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+  },
+  "additionalProperties": true
+}

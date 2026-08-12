@@ -1,0 +1,61 @@
+{
+  "provider": "github",
+  "repository": {
+    "nameWithOwner": "acme/widgets",
+    "url": "https://github.com/acme/widgets",
+    "defaultBranchRef": {"name": "main"}
+  },
+  "pullRequest": {
+    "id": "PR_kw_test",
+    "number": 42,
+    "title": "Allow lookup by request parameter",
+    "body": "Look up a user by numeric ID without changing authorization behaviour.",
+    "author": {"login": "developer"},
+    "url": "https://github.com/acme/widgets/pull/42",
+    "isDraft": false,
+    "baseRefName": "main",
+    "baseRefOid": "1111111111111111111111111111111111111111",
+    "headRefName": "lookup",
+    "headRefOid": "2222222222222222222222222222222222222222",
+    "statusCheckRollup": [],
+    "closingIssuesReferences": []
+  },
+  "diff": "diff --git a/src/user.js b/src/user.js\nindex 1111111..2222222 100644\n--- a/src/user.js\n+++ b/src/user.js\n@@ -10,3 +10,3 @@\n function findUser(req) {\n-  return db.query('SELECT * FROM users WHERE id = ?', [req.query.id]);\n+  return db.query(`SELECT * FROM users WHERE id = ${req.query.id}`);\n }\n",
+  "files": [
+    {
+      "filename": "src/user.js",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1,
+      "patch": "@@ -10,3 +10,3 @@\n function findUser(req) {\n-  return db.query('SELECT * FROM users WHERE id = ?', [req.query.id]);\n+  return db.query(`SELECT * FROM users WHERE id = ${req.query.id}`);\n }"
+    }
+  ],
+  "reviewComments": [
+    {
+      "id": 501,
+      "body": "The raw `id` is now inserted into the SQL text. A caller can inject additional SQL here; please keep this as a bound parameter.",
+      "path": "src/user.js",
+      "line": 11,
+      "user": {"login": "engineer-one"},
+      "html_url": "https://github.com/acme/widgets/pull/42#discussion_r501"
+    }
+  ],
+  "reviews": [
+    {
+      "id": 502,
+      "body": "The response mapping should also be checked for callers that expect missing users to return 404.",
+      "state": "CHANGES_REQUESTED",
+      "user": {"login": "engineer-two"},
+      "html_url": "https://github.com/acme/widgets/pull/42#pullrequestreview-502"
+    }
+  ],
+  "issueComments": [
+    {
+      "id": 503,
+      "body": "I reviewed the rollout notes and did not find any deployment concerns.",
+      "user": {"login": "release-bot"},
+      "html_url": "https://github.com/acme/widgets/pull/42#issuecomment-503"
+    }
+  ],
+  "checks": [{"name": "unit", "state": "SUCCESS", "bucket": "pass"}]
+}

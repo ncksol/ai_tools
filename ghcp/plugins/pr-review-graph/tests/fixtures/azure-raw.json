@@ -1,0 +1,31 @@
+{
+  "provider": "azure-devops",
+  "pullRequest": {
+    "pullRequestId": 77,
+    "title": "Require email address",
+    "description": "Add an email field while preserving rolling deployment compatibility.",
+    "createdBy": {"displayName": "Developer"},
+    "sourceRefName": "refs/heads/email-required",
+    "targetRefName": "refs/heads/main",
+    "lastMergeSourceCommit": {"commitId": "4444444444444444444444444444444444444444"},
+    "lastMergeTargetCommit": {"commitId": "3333333333333333333333333333333333333333"},
+    "repository": {
+      "id": "repo-guid",
+      "name": "widgets",
+      "webUrl": "https://dev.azure.com/acme/Platform/_git/widgets",
+      "defaultBranch": "refs/heads/main",
+      "project": {"id": "project-guid", "name": "Platform"}
+    }
+  },
+  "diff": "diff --git a/db/schema.sql b/db/schema.sql\nindex 3333333..4444444 100644\n--- a/db/schema.sql\n+++ b/db/schema.sql\n@@ -1,3 +1,4 @@\n CREATE TABLE users (\n-  id INT PRIMARY KEY\n+  id INT PRIMARY KEY,\n+  email TEXT NOT NULL\n );\n",
+  "changes": {
+    "count": 1,
+    "value": [
+      {"changeTrackingId": 9, "changeType": "edit", "item": {"path": "/db/schema.sql"}}
+    ]
+  },
+  "iterations": {"value": [{"id": 1}, {"id": 2}]},
+  "existingThreads": {"value": []},
+  "workItems": [{"id": 901, "title": "Preserve rolling deployment compatibility"}],
+  "policies": [{"id": 1, "status": "approved"}]
+}

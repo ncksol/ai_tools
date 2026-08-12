@@ -1,0 +1,20 @@
+{
+  "name": "pr-review-graph",
+  "description": "High-signal pull request reviews through a bounded multi-agent graph, with gh-cli and azure-devops-cli skill-backed providers.",
+  "version": "0.2.0",
+  "author": {
+    "name": "Nick"
+  },
+  "license": "MIT",
+  "keywords": [
+    "pull-request",
+    "code-review",
+    "github-cli",
+    "azure-devops",
+    "multi-agent",
+    "superpowers"
+  ],
+  "category": "development",
+  "agents": "agents/",
+  "skills": "skills/"
+}

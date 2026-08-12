@@ -2,7 +2,7 @@
 
 > A growing collection of AI tools, skills, and prompts I've built and want to share.
 
-This repo is where I park the AI-assistant tooling I find genuinely useful day to day — starting with a small set of opinionated **GitHub Copilot CLI skills** for pull request review, plus a couple of **custom agents** I reach for often. Expanding from there.
+This repo is where I park the AI-assistant tooling I find genuinely useful day to day — a set of opinionated **GitHub Copilot CLI skills** for pull request review, a couple of **custom agents** I reach for often, and now **plugins**, installable straight from this repo as a Copilot plugin marketplace. Expanding from there.
 
 If something in here saves you ten minutes, it's done its job. ✨
 
@@ -13,10 +13,12 @@ If something in here saves you ten minutes, it's done its job. ✨
 - [🤖 ai\_tools](#-ai_tools)
   - [📚 Table of contents](#-table-of-contents)
   - [🧰 What's inside today](#-whats-inside-today)
+    - [Plugins](#plugins)
     - [Skills](#skills)
     - [Custom agents](#custom-agents)
   - [💡 Skills vs. agents](#-skills-vs-agents)
   - [📥 Install](#-install)
+    - [Plugins (marketplace)](#plugins-marketplace)
     - [Option 1: Symlink (recommended — you get updates with `git pull`)](#option-1-symlink-recommended--you-get-updates-with-git-pull)
     - [Option 2: Copy](#option-2-copy)
     - [Option 3: Cherry-pick a single skill or agent](#option-3-cherry-pick-a-single-skill-or-agent)
@@ -28,6 +30,16 @@ If something in here saves you ten minutes, it's done its job. ✨
 ---
 
 ## 🧰 What's inside today
+
+### Plugins
+
+This repo is also a **Copilot CLI plugin marketplace** (`ai-tools`). Plugins are self-contained bundles of skills, agents and supporting scripts, installed as one unit.
+
+| Plugin | What it does | Install |
+|---|---|---|
+| [`pr-review-graph`](./ghcp/plugins/pr-review-graph/README.md) | Reviews an **already-open** PR through a bounded multi-agent graph: captures an immutable base/head snapshot, routes slices to nine focused read-only specialists, verifies every candidate finding against the snapshot, deduplicates against existing review comments, and previews author-facing comments. Publishes nothing without explicit confirmation. GitHub and Azure DevOps, via the `gh-cli` / `azure-devops-cli` skills. | `copilot plugin install pr-review-graph@ai-tools` |
+
+`pr-review-graph` overlaps in subject with the standalone review skills below but is a different tool: the skills are single-pass prompts you read the output of, the plugin is a verified multi-agent pipeline that can post comments back to the PR once you approve them.
 
 ### Skills
 
@@ -101,6 +113,25 @@ Rule of thumb: use a **skill** when the CLI should pick it up automatically from
 
 ## 📥 Install
 
+Plugins install through the Copilot CLI. Skills and agents are plain files you symlink or copy into `~/.copilot/`.
+
+### Plugins (marketplace)
+
+```bash
+copilot plugin marketplace add ncksol/ai_tools
+copilot plugin install pr-review-graph@ai-tools
+copilot plugin list
+```
+
+To iterate on a plugin locally, register your clone as the marketplace instead and reinstall after each edit — Copilot caches installed components:
+
+```bash
+copilot plugin marketplace add ~/src/ai_tools
+copilot plugin install pr-review-graph@ai-tools
+```
+
+Direct installs from a repo, URL or local path (`copilot plugin install ./ghcp/plugins/pr-review-graph`) still work, but the CLI marks them deprecated in favour of `plugin@marketplace`.
+
 ### Option 1: Symlink (recommended — you get updates with `git pull`)
 
 ```bash
@@ -170,7 +201,9 @@ Pasted diffs, local branch names, and Azure DevOps URLs all work too.
 ai_tools/
 ├── README.md                          ← you are here
 ├── .github/
-│   └── copilot-instructions.md        ← guidance for Copilot working in this repo
+│   ├── copilot-instructions.md        ← guidance for Copilot working in this repo
+│   └── plugin/
+│       └── marketplace.json           ← makes this repo the `ai-tools` plugin marketplace
 └── ghcp/                              ← GitHub Copilot CLI artefacts
     ├── skills/
     │   ├── strict-code-review/
@@ -181,12 +214,22 @@ ai_tools/
     │   │   └── SKILL.md
     │   └── storm-research/
     │       └── SKILL.md
-    └── agents/
-        ├── andrej.agent.md
-        └── azure-arch-diagram.agent.md
+    ├── agents/
+    │   ├── andrej.agent.md
+    │   └── azure-arch-diagram.agent.md
+    └── plugins/
+        └── pr-review-graph/           ← self-contained plugin (own manifest, tests, LICENSE)
+            ├── plugin.json
+            ├── package.json
+            ├── agents/                ← 9 × prg-*.agent.md specialists
+            ├── skills/
+            │   └── review-pull-request/
+            └── tests/
 ```
 
-The top-level `ghcp/` namespace leaves room for more Copilot-CLI things later (e.g. `ghcp/extensions/`), and for sibling namespaces for other tools — `claude/`, `cursor/`, `prompts/`, etc. — as the collection grows.
+The top-level `ghcp/` namespace leaves room for more Copilot-CLI things later, and for sibling namespaces for other tools — `claude/`, `cursor/`, `prompts/`, etc. — as the collection grows.
+
+Plugins are vendored **intact** under `ghcp/plugins/<name>/`: each keeps its own `plugin.json`, tests and LICENSE. The single marketplace manifest lives at the repository root and points at each plugin directory via its `source` field, so a plugin never carries its own `marketplace.json`.
 
 ---
 
