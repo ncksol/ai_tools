@@ -67,6 +67,7 @@ The default is preview-only. After inspecting the proposed comments, explicitly 
 1. Resolve the provider and capture an immutable base/head snapshot.
 2. Build a canonical review packet.
 3. Route relevant slices to focused specialist agents.
+   A routed batch that remains invalid after one retry fails the review before verification; partial coverage is never reported as a clean review.
 4. Verify every candidate against the PR snapshot.
 5. Compare verified findings with every existing inline comment, review body and PR conversation comment.
 6. Suppress confirmed duplicates and hold uncertain matches for human judgement.

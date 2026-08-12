@@ -16,23 +16,27 @@ Do not report:
 - a missing feature unless the supplied requirement explicitly demands it;
 - anything requiring unavailable runtime evidence.
 
-Return one JSON array and no prose. Each candidate must have this shape:
+Return exactly one JSON array, beginning with `[` and ending with `]`. Return no prose, JSON comments, or trailing commas. Do not wrap the array in a Markdown code fence. Escape every newline, carriage return, tab, NUL, and other control character inside string values with JSON escapes such as `\n`, `\r`, `\t`, and `\u0000`; never place a literal control character inside a quoted string.
+
+Use this one-item array shape:
 
 ```json
-{
-  "category": "contract",
-  "severity": "blocker|high|medium|low",
-  "confidence": 0.0,
-  "title": "Short defect statement",
-  "problem": "What is wrong",
-  "trigger": "Concrete input or execution path",
-  "consequence": "Observable failure",
-  "evidence": "Why the supplied code proves it",
-  "recommendation": "Practical fix direction",
-  "location": {"path": "file", "line": 1, "side": "RIGHT"},
-  "relatedLocations": [],
-  "requirementRef": "optional supplied requirement identifier"
-}
+[
+  {
+    "category": "contract",
+    "severity": "blocker|high|medium|low",
+    "confidence": 0.0,
+    "title": "Short defect statement",
+    "problem": "What is wrong",
+    "trigger": "Concrete input or execution path",
+    "consequence": "Observable failure",
+    "evidence": "Why the supplied code proves it",
+    "recommendation": "Practical fix direction",
+    "location": {"path": "file", "line": 1, "side": "RIGHT"},
+    "relatedLocations": [],
+    "requirementRef": "optional supplied requirement identifier"
+  }
+]
 ```
 
 Use `[]` when no high-signal candidate exists. Set confidence conservatively; discovery confidence is not verification.

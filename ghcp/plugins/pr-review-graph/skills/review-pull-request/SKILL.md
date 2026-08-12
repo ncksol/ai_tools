@@ -71,12 +71,33 @@ Give each discovery agent:
 
 When a patch is insufficient to resolve a caller, guard, type, or test, retrieve the smallest necessary file snapshot at the captured base or head SHA. Use `git show <SHA>:<PATH>` when the commit object is locally available; otherwise use the provider's read API described in its reference. Never substitute a working-tree file unless its commit exactly matches the captured SHA.
 
-Do not give discovery agents shell, editing, network, or publishing access. Dispatch independent discovery agents in parallel when supported. A discovery failure must not silently reduce coverage; retry once or mark the scope incomplete.
+Create `RESULTS_DIR`, `DIAGNOSTICS_DIR`, and a staging directory inside the mode-`0700` run directory. Every raw agent response staging file must be mode `0600`. Never print a raw response.
+
+Do not give discovery agents shell, editing, network, or publishing access. Dispatch independent discovery agents in parallel when supported.
+
+For each agent batch, write the exact response to a fresh mode-`0600` staging file and ingest attempt 1:
+
+```bash
+node <SKILL_DIR>/scripts/process-discovery.mjs ingest \
+  <RAW_RESPONSE_FILE> <RESULTS_DIR> <DIAGNOSTICS_DIR> \
+  --agent <PRG_AGENT> --batch <ONE_BASED_INDEX> --attempt 1
+```
+
+If ingestion exits non-zero, read only the safe attempt-result JSON. Retry that batch once, repeating the exact JSON-array contract and supplying only the failure kind and numeric location. Ingest the retry with `--attempt 2`. Do not include the raw response or diagnostic body in the retry prompt.
+
+After all routed batches settle, finalize them against the immutable plan:
+
+```bash
+node <SKILL_DIR>/scripts/process-discovery.mjs finalize \
+  <PLAN_JSON> <RESULTS_DIR> <CANDIDATES_JSON> <COVERAGE_JSON>
+```
+
+If finalization exits non-zero, stop before Phase 3. Lead with `REVIEW FAILED - DISCOVERY INCOMPLETE`, show each scope's completed and failed batch counts plus every redacted diagnostic path, and do not say `no findings`, `no publishable findings`, `clean`, or equivalent. Do not preview or publish a review. Remove unredacted staging files and provider data; retain only the redacted diagnostics and coverage report in the reported temporary directory.
 
 ## Phase 3: Verify and reduce
 
-1. Merge candidate arrays without rewriting them.
-2. Run `scripts/validate-findings.mjs`. Reject malformed candidates.
+1. Read candidates only from `CANDIDATES_JSON` written by successful discovery finalization.
+2. Run `scripts/validate-findings.mjs` as a defensive candidate check before verification.
 3. Send each valid candidate and its exact supporting context to `prg-verifier`.
 4. Require the verifier to reproduce a concrete failure path from the captured snapshot.
 5. Reject findings that depend on unstated assumptions, unchanged pre-existing behaviour, unavailable runtime evidence, or personal preference.
