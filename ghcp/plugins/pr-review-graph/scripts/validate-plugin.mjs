@@ -32,6 +32,14 @@ const agentDirectory = path.join(root, manifest.agents ?? 'agents');
 const agentFiles = (await readdir(agentDirectory)).filter(name => name.endsWith('.agent.md')).sort();
 if (agentFiles.length !== 9) errors.push(`expected 9 agents, found ${agentFiles.length}`);
 const agentNames = new Set();
+const discoveryAgentNames = new Set([
+  'prg-contract',
+  'prg-correctness',
+  'prg-tests',
+  'prg-security',
+  'prg-data-compatibility',
+  'prg-reliability'
+]);
 for (const file of agentFiles) {
   const text = await readFile(path.join(agentDirectory, file), 'utf8');
   const frontmatter = parseFrontmatter(text, `agents/${file}`);
@@ -40,6 +48,17 @@ for (const file of agentFiles) {
   agentNames.add(frontmatter.name);
   if (!frontmatter.description) errors.push(`agents/${file} needs a description`);
   if (frontmatter.tools !== '[]') errors.push(`agents/${file} must use tools: []`);
+  if (discoveryAgentNames.has(frontmatter.name)) {
+    if (!text.includes('Return exactly one JSON array')) {
+      errors.push(`agents/${file} must require exactly one JSON array`);
+    }
+    if (!text.includes('Do not wrap the array in a Markdown code fence')) {
+      errors.push(`agents/${file} must forbid Markdown code fences`);
+    }
+    if (!text.includes('\\u0000')) {
+      errors.push(`agents/${file} must require JSON-escaped control characters`);
+    }
+  }
 }
 
 const skillRoot = path.join(root, 'skills/review-pull-request');
@@ -72,6 +91,7 @@ for (const file of ['packet.schema.json', 'finding.schema.json', 'deduplication.
 const requiredScripts = [
   'normalize-context.mjs',
   'build-review-plan.mjs',
+  'process-discovery.mjs',
   'validate-findings.mjs',
   'fingerprint-findings.mjs',
   'deduplicate-findings.mjs',

@@ -775,6 +775,24 @@ test('validateAttemptEnvelope rejects an envelope when expected category is not 
 });
 
 
+test('discovery agents require escaped JSON arrays without fences', async () => {
+  const agents = [
+    'prg-contract',
+    'prg-correctness',
+    'prg-tests',
+    'prg-security',
+    'prg-data-compatibility',
+    'prg-reliability'
+  ];
+  for (const agent of agents) {
+    const text = await readFile(path.join(root, 'agents', `${agent}.agent.md`), 'utf8');
+    assert.match(text, /Return exactly one JSON array/);
+    assert.match(text, /Do not wrap the array in a Markdown code fence/);
+    assert.ok(text.includes('\\u0000'), `${agent} must require escaped control characters`);
+    assert.match(text, /```json\s*\[/);
+  }
+});
+
 const BASH4_ONLY = [
   { pattern: /\bmapfile\b/, name: 'mapfile (use a `while IFS= read -r` loop)' },
   { pattern: /\breadarray\b/, name: 'readarray (use a `while IFS= read -r` loop)' },

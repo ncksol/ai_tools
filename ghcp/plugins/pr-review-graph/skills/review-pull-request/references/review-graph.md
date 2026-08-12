@@ -33,7 +33,8 @@ Dispatch independent reviewers concurrently. Give each reviewer only relevant pa
 
 ## Bounded loops
 
-- Retry a discovery agent once only when it fails to return valid JSON.
+- Ingest every discovery response with `process-discovery.mjs`. Retry a batch once only when ingestion reports an invalid result. Never repair or silently drop malformed output.
+- After all routed batches settle, finalize discovery coverage against the immutable review plan. If any batch remains invalid, stop before verification.
 - Verify each candidate once. If the verifier requests dynamic evidence, suppress the finding unless the user authorizes the exact safe command and the result proves it.
 - If the head SHA changes, rebuild the packet and rerun only scopes intersecting changed files, but re-deduplicate the full finding set.
 - If a deduplication batch fails or omits a finding, retry once; then hold that finding for human judgement.
@@ -41,7 +42,11 @@ Dispatch independent reviewers concurrently. Give each reviewer only relevant pa
 
 ## Coverage result
 
-Classify each selected scope as `complete`, `incomplete`, or `failed`. A final review may proceed with incomplete scope only when the preview states the limitation. Never call it comprehensive.
+Classify each selected scope as `complete`, `incomplete`, or `failed`. A scope is complete only when every planned batch produced a valid candidate array, including batches recovered by their one retry.
+
+If any selected scope is incomplete or failed, the review status is failed and the graph stops before verification. Lead the report with `REVIEW FAILED - DISCOVERY INCOMPLETE`, show the scope matrix and redacted diagnostic paths, and do not describe the partial candidate set as clean.
+
+An empty candidate set is authoritative only when every selected scope is complete.
 
 ## Reduction order
 

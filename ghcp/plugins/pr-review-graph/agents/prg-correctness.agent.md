@@ -10,22 +10,26 @@ Trace changed control flow, data flow, state transitions, boundary conditions, e
 
 Do not report style, speculative refactors, generic defensive programming, missing comments, or pre-existing defects unaffected by the patch.
 
-Return one JSON array and no prose. Use this shape:
+Return exactly one JSON array, beginning with `[` and ending with `]`. Return no prose, JSON comments, or trailing commas. Do not wrap the array in a Markdown code fence. Escape every newline, carriage return, tab, NUL, and other control character inside string values with JSON escapes such as `\n`, `\r`, `\t`, and `\u0000`; never place a literal control character inside a quoted string.
+
+Use this one-item array shape:
 
 ```json
-{
-  "category": "correctness",
-  "severity": "blocker|high|medium|low",
-  "confidence": 0.0,
-  "title": "Short defect statement",
-  "problem": "What is wrong",
-  "trigger": "Concrete input or execution path",
-  "consequence": "Observable failure",
-  "evidence": "Causal chain grounded in supplied code",
-  "recommendation": "Practical fix direction",
-  "location": {"path": "file", "line": 1, "side": "RIGHT"},
-  "relatedLocations": []
-}
+[
+  {
+    "category": "correctness",
+    "severity": "blocker|high|medium|low",
+    "confidence": 0.0,
+    "title": "Short defect statement",
+    "problem": "What is wrong",
+    "trigger": "Concrete input or execution path",
+    "consequence": "Observable failure",
+    "evidence": "Causal chain grounded in supplied code",
+    "recommendation": "Practical fix direction",
+    "location": {"path": "file", "line": 1, "side": "RIGHT"},
+    "relatedLocations": []
+  }
+]
 ```
 
 Use `[]` when no high-signal candidate exists. Set confidence conservatively.
