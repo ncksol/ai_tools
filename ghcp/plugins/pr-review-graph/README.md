@@ -9,9 +9,9 @@ It does not modify the branch, execute changed code, vote on the PR, enable auto
 | Provider | Access path |
 | --- | --- |
 | GitHub | The `gh-cli` skill and an authenticated `gh` CLI |
-| Azure DevOps | The `azure-devops-cli` skill and an authenticated `az` CLI |
+| Azure DevOps | A complete packet composed from authenticated `az`, direct REST with existing credentials, optional Azure DevOps MCP tools such as Bluebird, and local Git |
 
-There are no MCP server dependencies.
+There are no required MCP server dependencies. When an Azure DevOps MCP tool is available at runtime, the plugin may use only the PR capabilities that tool actually exposes.
 
 ## Install
 
@@ -46,7 +46,7 @@ The plugin does not vendor or replace `gh-cli`.
 
 ### Azure DevOps prerequisites
 
-Install the `azure-devops-cli` skill separately, then configure the Azure DevOps CLI extension and authentication according to that skill. The plugin deliberately does not install the extension or handle credentials.
+Install the `azure-devops-cli` skill and configure the Azure DevOps CLI extension when you want the preferred fast path or comment publication. If that route fails, the plugin probes deterministic REST and optional Azure DevOps MCP tools already available to the session. It never installs an extension, starts interactive login, requests a PAT, or treats code-only access as enough for a review.
 
 ## Use
 

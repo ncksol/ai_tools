@@ -1,7 +1,7 @@
 {
   "name": "pr-review-graph",
-  "description": "High-signal pull request reviews through a bounded multi-agent graph, with gh-cli and azure-devops-cli skill-backed providers.",
-  "version": "0.2.4",
+  "description": "High-signal pull request reviews through a bounded multi-agent graph, with resilient GitHub and capability-composed Azure DevOps access.",
+  "version": "0.3.0",
   "author": {
     "name": "Nick"
   },
