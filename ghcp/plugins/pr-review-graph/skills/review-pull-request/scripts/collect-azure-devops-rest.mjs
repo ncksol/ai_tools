@@ -1,0 +1,371 @@
+#!/usr/bin/env node
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { isMain, writeJson } from './lib.mjs';
+import { validateAzureFragment } from './assemble-azure-context.mjs';
+
+const execFileAsync = promisify(execFile);
+export const AZURE_DEVOPS_RESOURCE = '499b84ac-1321-427f-aa17-267ca6975798';
+
+// ---------------------------------------------------------------------------
+// Private helpers
+// ---------------------------------------------------------------------------
+
+function accessError(category, message) {
+  const error = new Error(message);
+  error.category = category;
+  return error;
+}
+
+function complete(data) {
+  return { complete: true, data };
+}
+
+function incomplete(error) {
+  return {
+    complete: false,
+    failure: {
+      category: error.category ?? 'malformed',
+      message: error.message
+    }
+  };
+}
+
+async function capture(capabilities, name, operation) {
+  try {
+    capabilities[name] = complete(await operation());
+  } catch (error) {
+    capabilities[name] = incomplete(error);
+  }
+}
+
+function asValue(value) {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.value)) return value.value;
+  return [];
+}
+
+async function pagedPolicyEvaluations(root, artifactId, get) {
+  const all = [];
+  let skip = 0;
+  for (;;) {
+    const encodedArtifactId = encodeURIComponent(artifactId);
+    const url = `${root}/_apis/policy/evaluations?artifactId=${encodedArtifactId}&includeNotApplicable=true&api-version=7.1&%24top=100&%24skip=${skip}`;
+    const page = await get(url, 'policy evaluations');
+    const items = asValue(page);
+    all.push(...items);
+    if (items.length < 100) break;
+    skip += items.length;
+  }
+  return { value: all };
+}
+
+export async function pagedIterationChanges(pullRoot, iterationId, get) {
+  const allEntries = [];
+  let skip = 0;
+  let top = 2000;
+  let seenCursor = null;
+
+  for (;;) {
+    const url = `${pullRoot}/iterations/${iterationId}/changes?%24compareTo=0&%24top=${top}&%24skip=${skip}`;
+    const page = await get(url, `iteration ${iterationId} changes`);
+    allEntries.push(...(page.changeEntries ?? []));
+
+    const nextSkip = Number(page.nextSkip ?? 0);
+    const nextTop = Number(page.nextTop ?? 0);
+    if (nextSkip === 0 && nextTop === 0) {
+      return { changeEntries: allEntries, nextSkip: 0, nextTop: 0 };
+    }
+
+    const cursor = `${nextSkip}:${nextTop}`;
+    if (cursor === seenCursor) {
+      throw accessError('malformed', 'repeated Azure iteration-change cursor');
+    }
+    seenCursor = cursor;
+    skip = nextSkip;
+    top = nextTop;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Exported functions
+// ---------------------------------------------------------------------------
+
+export function parseAzurePullRequestUrl(value) {
+  const url = new URL(value);
+  let organization;
+  let segments = url.pathname.split('/').filter(Boolean);
+  if (url.hostname.toLowerCase() === 'dev.azure.com') {
+    organization = segments.shift();
+  } else if (url.hostname.toLowerCase().endsWith('.visualstudio.com')) {
+    organization = url.hostname.split('.')[0];
+  } else {
+    throw new Error('Azure DevOps PR URL must use dev.azure.com or visualstudio.com');
+  }
+  const gitIndex = segments.findIndex(segment => segment.toLowerCase() === '_git');
+  const pullIndex = segments.findIndex(segment => segment.toLowerCase() === 'pullrequest');
+  if (!organization || gitIndex < 1 || pullIndex !== gitIndex + 2 || !/^\d+$/.test(segments[pullIndex + 1] ?? '')) {
+    throw new Error('Azure DevOps PR URL must identify organization, project, repository, and pull request');
+  }
+  const project = decodeURIComponent(segments[gitIndex - 1]);
+  const repository = decodeURIComponent(segments[gitIndex + 1]);
+  const pullRequestId = Number(segments[pullIndex + 1]);
+  return {
+    organization,
+    organizationUrl: `https://${url.hostname.toLowerCase() === 'dev.azure.com' ? `dev.azure.com/${organization}` : `${organization}.visualstudio.com`}`,
+    project,
+    repository,
+    pullRequestId,
+    webUrl: value
+  };
+}
+
+export async function authorizationForMode(mode, {
+  env = process.env,
+  execFileImpl = execFileAsync
+} = {}) {
+  if (mode === 'anonymous') return null;
+  if (mode === 'pat') {
+    const token = env.AZURE_DEVOPS_EXT_PAT;
+    if (!token) throw accessError('tool-unavailable', 'AZURE_DEVOPS_EXT_PAT is not configured');
+    return `Basic ${Buffer.from(`:${token}`).toString('base64')}`;
+  }
+  if (mode === 'entra') {
+    let stdout;
+    try {
+      ({ stdout } = await execFileImpl('az', [
+        'account',
+        'get-access-token',
+        '--resource',
+        AZURE_DEVOPS_RESOURCE,
+        '--query',
+        'accessToken',
+        '--output',
+        'tsv'
+      ], { encoding: 'utf8', maxBuffer: 1024 * 1024 }));
+    } catch {
+      throw accessError('authentication', 'Azure CLI could not provide an Azure DevOps access token');
+    }
+    const token = stdout.trim();
+    if (!token) throw accessError('authentication', 'Azure CLI returned no Azure DevOps access token');
+    return ['Bearer', token].join(' ');
+  }
+  throw new Error(`Unsupported Azure REST credential mode: ${mode}`);
+}
+
+export async function requestJson(url, {
+  authorization,
+  operation,
+  fetchImpl = fetch,
+  sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
+}) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    let response;
+    try {
+      response = await fetchImpl(url, {
+        headers: {
+          accept: 'application/json',
+          ...(authorization ? { authorization } : {})
+        },
+        signal: AbortSignal.timeout(30_000)
+      });
+    } catch {
+      if (attempt === 2) throw accessError('transient', `${operation} timed out after 3 attempts`);
+      await sleep(2 ** attempt * 1000);
+      continue;
+    }
+    if (response.ok) return response.json();
+    if (response.status === 401 || response.status === 403) {
+      throw accessError('authentication', `HTTP ${response.status} from ${operation}`);
+    }
+    if (response.status === 429 || response.status >= 500) {
+      if (attempt === 2) throw accessError('transient', `HTTP ${response.status} from ${operation} after 3 attempts`);
+      const retryAfter = Number(response.headers.get('retry-after'));
+      await sleep(Number.isFinite(retryAfter) ? retryAfter * 1000 : 2 ** attempt * 1000);
+      continue;
+    }
+    throw accessError('malformed', `HTTP ${response.status} from ${operation}`);
+  }
+}
+
+export async function collectAzureDevOpsRest({
+  prUrl,
+  credentialContext,
+  authorization,
+  fetchImpl = fetch,
+  sleep
+}) {
+  const target = parseAzurePullRequestUrl(prUrl);
+  const source = {
+    adapter: 'azure-rest',
+    credentialContext,
+    capturedAt: new Date().toISOString()
+  };
+  const capabilities = {};
+  const get = (url, operation) => requestJson(url, { authorization, operation, fetchImpl, sleep });
+
+  let pr;
+  try {
+    pr = await get(
+      `${target.organizationUrl}/${encodeURIComponent(target.project)}/_apis/git/pullrequests/${target.pullRequestId}?api-version=7.1`,
+      'pull request'
+    );
+    pr.repository.webUrl ??= `${target.organizationUrl}/${encodeURIComponent(target.project)}/_git/${encodeURIComponent(pr.repository.name)}`;
+    pr._links ??= {};
+    pr._links.web ??= { href: prUrl };
+    capabilities.identity = complete({
+      pullRequestId: pr.pullRequestId,
+      url: prUrl,
+      repository: pr.repository
+    });
+    capabilities.metadata = complete({
+      title: pr.title ?? '',
+      description: pr.description ?? '',
+      createdBy: pr.createdBy ?? null,
+      status: pr.status ?? null,
+      isDraft: Boolean(pr.isDraft),
+      sourceRefName: pr.sourceRefName ?? '',
+      targetRefName: pr.targetRefName ?? '',
+      reviewers: pr.reviewers ?? []
+    });
+    capabilities.snapshot = complete({
+      lastMergeSourceCommit: pr.lastMergeSourceCommit,
+      lastMergeTargetCommit: pr.lastMergeTargetCommit
+    });
+  } catch (error) {
+    for (const name of ['identity', 'metadata', 'snapshot', 'workItems', 'policies', 'iterations', 'changes', 'existingThreads']) {
+      capabilities[name] = incomplete(error);
+    }
+    return validateAzureFragment({ schemaVersion: '1.0', source, capabilities });
+  }
+
+  const project = pr.repository.project;
+  const projectPath = encodeURIComponent(project.id ?? project.name);
+  const repositoryPath = encodeURIComponent(pr.repository.id ?? pr.repository.name);
+  const root = `${target.organizationUrl}/${projectPath}`;
+  const pullRoot = `${root}/_apis/git/repositories/${repositoryPath}/pullRequests/${pr.pullRequestId}`;
+
+  await capture(capabilities, 'workItems', async () => {
+    const refs = asValue(await get(`${pullRoot}/workitems?api-version=7.1`, 'linked work items'));
+    return Promise.all(refs.map(ref => get(
+      `${root}/_apis/wit/workitems/${encodeURIComponent(ref.id)}?%24expand=All&api-version=7.1`,
+      `work item ${ref.id}`
+    )));
+  });
+
+  await capture(capabilities, 'policies', async () => {
+    const artifactId = `vstfs:///CodeReview/CodeReviewId/${project.id}/${pr.pullRequestId}`;
+    return pagedPolicyEvaluations(root, artifactId, get);
+  });
+
+  let iterations;
+  await capture(capabilities, 'iterations', async () => {
+    iterations = await get(`${pullRoot}/iterations?api-version=7.1`, 'pull request iterations');
+    return iterations;
+  });
+
+  if (capabilities.iterations.complete) {
+    await capture(capabilities, 'changes', async () => {
+      const latest = Math.max(...asValue(iterations).map(iteration => Number(iteration.id)));
+      return pagedIterationChanges(pullRoot, latest, get);
+    });
+  } else {
+    capabilities.changes = incomplete(accessError('incomplete', 'Iteration changes require complete iteration metadata'));
+  }
+
+  await capture(capabilities, 'existingThreads', () =>
+    get(`${pullRoot}/threads?api-version=7.1`, 'pull request threads')
+  );
+
+  return validateAzureFragment({ schemaVersion: '1.0', source, capabilities });
+}
+
+export function failedAzureRestFragment(credentialContext, error) {
+  const failure = {
+    complete: false,
+    failure: {
+      category: error.category ?? 'authentication',
+      message: error.message
+    }
+  };
+  return validateAzureFragment({
+    schemaVersion: '1.0',
+    source: {
+      adapter: 'azure-rest',
+      credentialContext,
+      capturedAt: new Date().toISOString()
+    },
+    capabilities: Object.fromEntries(
+      ['identity', 'metadata', 'snapshot', 'workItems', 'policies', 'iterations', 'changes', 'existingThreads']
+        .map(name => [name, structuredClone(failure)])
+    )
+  });
+}
+
+// ---------------------------------------------------------------------------
+// CLI entry point
+// ---------------------------------------------------------------------------
+
+async function main() {
+  const [prUrl, mode, fragmentJson] = process.argv.slice(2);
+  if (!prUrl || !mode || !fragmentJson) {
+    process.stderr.write('Usage: collect-azure-devops-rest.mjs <PR_URL> <anonymous|pat|entra> <FRAGMENT_JSON>\n');
+    process.exitCode = 2;
+    return;
+  }
+
+  let parsedUrl;
+  try {
+    parsedUrl = parseAzurePullRequestUrl(prUrl);
+  } catch (error) {
+    process.stderr.write(`Invalid PR URL: ${error.message}\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  let authorization;
+  try {
+    authorization = await authorizationForMode(mode);
+  } catch (error) {
+    const fragment = failedAzureRestFragment(mode, error);
+    try {
+      await writeJson(fragmentJson, fragment);
+    } catch (writeError) {
+      process.stderr.write(`Failed to write fragment: ${writeError.message}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`Captured Azure REST attempt ${mode} at ${fragmentJson}`);
+    return;
+  }
+
+  let fragment;
+  try {
+    fragment = await collectAzureDevOpsRest({
+      prUrl,
+      credentialContext: mode,
+      authorization
+    });
+  } catch (error) {
+    process.stderr.write(`Collection failed: ${error.message}\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  try {
+    await writeJson(fragmentJson, fragment);
+  } catch (error) {
+    process.stderr.write(`Failed to write fragment: ${error.message}\n`);
+    process.exitCode = 1;
+    return;
+  }
+
+  console.log(`Captured Azure REST attempt ${mode} at ${fragmentJson}`);
+}
+
+if (isMain(import.meta.url)) {
+  main().catch(error => {
+    process.stderr.write(`${error.message}\n`);
+    process.exitCode = 1;
+  });
+}

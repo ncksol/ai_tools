@@ -186,6 +186,164 @@ test('empty-string head SHA is rejected — by fragment validation and by agreem
   );
 });
 
+import {
+  AZURE_DEVOPS_RESOURCE,
+  collectAzureDevOpsRest,
+  failedAzureRestFragment,
+  pagedIterationChanges,
+  requestJson
+} from '../skills/review-pull-request/scripts/collect-azure-devops-rest.mjs';
+
+function jsonResponse(value, status = 200, headers = {}) {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: { 'content-type': 'application/json', ...headers }
+  });
+}
+
+test('REST collection captures all provider capabilities and pages iteration changes', async () => {
+  const pr = structuredClone(raw.pullRequest);
+  const calls = [];
+  const fetchImpl = async url => {
+    const value = String(url);
+    calls.push(value);
+    if (value.includes('/_apis/git/pullrequests/77?')) return jsonResponse(pr);
+    if (value.includes('/workitems?')) return jsonResponse({ value: [{ id: '901' }] });
+    if (value.includes('/_apis/wit/workitems/901?')) return jsonResponse(raw.workItems[0]);
+    if (value.includes('/_apis/policy/evaluations?')) return jsonResponse({ value: raw.policies });
+    if (value.includes('/iterations?')) return jsonResponse(raw.iterations);
+    if (value.includes('/iterations/2/changes?') && value.includes('%24skip=0')) {
+      return jsonResponse({
+        changeEntries: [raw.changes.changeEntries[0]],
+        nextSkip: 1,
+        nextTop: 2000
+      });
+    }
+    if (value.includes('/iterations/2/changes?') && value.includes('%24skip=1')) {
+      return jsonResponse({ changeEntries: [], nextSkip: 0, nextTop: 0 });
+    }
+    if (value.includes('/threads?')) return jsonResponse(raw.existingThreads);
+    return jsonResponse({ message: `Unexpected URL ${value}` }, 404);
+  };
+
+  const fragment = await collectAzureDevOpsRest({
+    prUrl: 'https://dev.azure.com/acme/Platform/_git/widgets/pullrequest/77',
+    credentialContext: 'anonymous',
+    authorization: null,
+    fetchImpl,
+    sleep: async () => {}
+  });
+
+  for (const name of ['identity', 'metadata', 'snapshot', 'workItems', 'policies', 'iterations', 'changes', 'existingThreads']) {
+    assert.equal(fragment.capabilities[name].complete, true, name);
+  }
+  assert.equal(fragment.capabilities.metadata.data.description, raw.pullRequest.description);
+  assert.equal(fragment.capabilities.workItems.data[0].id, 901);
+  assert.equal(fragment.capabilities.changes.data.changeEntries.length, 1);
+  assert.equal(fragment.capabilities.changes.data.nextSkip, 0);
+  assert.equal(fragment.capabilities.changes.data.nextTop, 0);
+  assert.ok(calls.some(url => url.includes('%24skip=1')));
+  assert.equal(fragment.capabilities.diff, undefined);
+});
+
+assert.equal(AZURE_DEVOPS_RESOURCE, '499b84ac-1321-427f-aa17-267ca6975798');
+
+test('REST rejects a repeated iteration-change cursor instead of accepting a partial list', async () => {
+  let calls = 0;
+  await assert.rejects(
+    () => pagedIterationChanges(
+      'https://dev.azure.com/acme/project/_apis/git/repositories/repo/pullRequests/77',
+      2,
+      async () => {
+        calls += 1;
+        return {
+          changeEntries: [],
+          nextSkip: 100,
+          nextTop: 100
+        };
+      }
+    ),
+    /repeated Azure iteration-change cursor/
+  );
+  assert.equal(calls, 2);
+});
+
+test('REST keeps independent capabilities when linked work-item details are forbidden', async () => {
+  const fetchImpl = async url => {
+    const value = String(url);
+    if (value.includes('/_apis/git/pullrequests/77?')) return jsonResponse(structuredClone(raw.pullRequest));
+    if (value.includes('/workitems?')) return jsonResponse({ value: [{ id: '901' }] });
+    if (value.includes('/_apis/wit/workitems/901?')) return jsonResponse({ secret: 'must-not-appear' }, 403);
+    if (value.includes('/_apis/policy/evaluations?')) return jsonResponse({ value: [] });
+    if (value.includes('/iterations?')) return jsonResponse(raw.iterations);
+    if (value.includes('/iterations/2/changes?')) return jsonResponse({ changeEntries: [], nextSkip: 0, nextTop: 0 });
+    if (value.includes('/threads?')) return jsonResponse({ value: [] });
+    return jsonResponse({}, 404);
+  };
+
+  const fragment = await collectAzureDevOpsRest({
+    prUrl: 'https://dev.azure.com/acme/Platform/_git/widgets/pullrequest/77',
+    credentialContext: 'anonymous',
+    authorization: null,
+    fetchImpl,
+    sleep: async () => {}
+  });
+
+  assert.equal(fragment.capabilities.workItems.complete, false);
+  assert.equal(fragment.capabilities.workItems.failure.category, 'authentication');
+  assert.doesNotMatch(fragment.capabilities.workItems.failure.message, /must-not-appear/);
+  assert.equal(fragment.capabilities.existingThreads.complete, true);
+});
+
+test('REST retries transient responses without exposing response bodies', async () => {
+  let attempts = 0;
+  const fetchImpl = async () => {
+    attempts += 1;
+    if (attempts < 3) return jsonResponse({ secret: 'must-not-appear' }, 503);
+    return jsonResponse({ ok: true });
+  };
+  const value = await requestJson('https://example.invalid', {
+    authorization: ['Bearer', 'must-not-appear'].join(' '),
+    operation: 'test operation',
+    fetchImpl,
+    sleep: async () => {}
+  });
+  assert.deepEqual(value, { ok: true });
+  assert.equal(attempts, 3);
+});
+
+test('REST authentication failures are sanitized and not retried', async () => {
+  let attempts = 0;
+  await assert.rejects(
+    () => requestJson('https://example.invalid', {
+      authorization: 'Basic must-not-appear',
+      operation: 'pull request threads',
+      fetchImpl: async () => {
+        attempts += 1;
+        return jsonResponse({ token: 'must-not-appear' }, 401);
+      },
+      sleep: async () => {}
+    }),
+    error => {
+      assert.equal(error.category, 'authentication');
+      assert.equal(error.message, 'HTTP 401 from pull request threads');
+      assert.doesNotMatch(error.message, /must-not-appear/);
+      return true;
+    }
+  );
+  assert.equal(attempts, 1);
+});
+
+test('credential acquisition failure becomes a sanitized incomplete fragment', () => {
+  const error = Object.assign(new Error('AZURE_DEVOPS_EXT_PAT is not configured'), {
+    category: 'tool-unavailable'
+  });
+  const fragment = failedAzureRestFragment('pat', error);
+  assert.equal(fragment.capabilities.identity.complete, false);
+  assert.equal(fragment.capabilities.existingThreads.failure.category, 'tool-unavailable');
+  assert.equal(fragment.capabilities.existingThreads.failure.message, 'AZURE_DEVOPS_EXT_PAT is not configured');
+});
+
 test('failure CLI mode rejects an unknown capability name', () => {
   // Simulate what the failure CLI mode builds before calling validateAzureFragment.
   const badName = 'unknownCapability';
