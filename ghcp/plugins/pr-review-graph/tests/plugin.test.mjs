@@ -566,11 +566,13 @@ test('discovery ingestion cleans up diagnostic if result write fails', async () 
 });
 
 function discoveryPlan(agent, batchCount) {
+  const files = Array.from({ length: batchCount }, (_, index) => `file-${index + 1}.js`);
   return {
     schemaVersion: '1.0',
     agents: [{
       name: agent,
-      batches: Array.from({ length: batchCount }, (_, index) => [`file-${index + 1}.js`])
+      files,
+      batches: files.map(file => [file])
     }]
   };
 }
@@ -652,6 +654,77 @@ test('discovery finalization fails closed when one batch remains invalid', async
   }
 });
 
+test('discovery finalization rejects an empty file batch', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-empty-file-batch-'));
+  try {
+    await ingestText(directory, '[]', {
+      agent: 'prg-correctness', batch: 1, attempt: 1
+    });
+    const result = await finalizeDiscovery({
+      schemaVersion: '1.0',
+      agents: [{
+        name: 'prg-correctness',
+        files: [],
+        batches: [[]]
+      }]
+    }, path.join(directory, 'results'));
+
+    assert.equal(result.coverage.status, 'failed');
+    assert.equal(result.findings, null);
+    assert.ok(result.coverage.planProblems.some(problem => problem.includes('non-empty file paths')));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery finalization requires batches to exactly cover declared files once', async () => {
+  const invalidPlans = [
+    {
+      label: 'missing file',
+      files: ['a.js', 'b.js', 'c.js'],
+      batches: [['a.js']]
+    },
+    {
+      label: 'extra file',
+      files: ['a.js'],
+      batches: [['a.js', 'b.js']]
+    },
+    {
+      label: 'duplicate file',
+      files: ['a.js'],
+      batches: [['a.js'], ['a.js']]
+    }
+  ];
+
+  for (const invalidPlan of invalidPlans) {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-file-coverage-'));
+    try {
+      for (let batch = 1; batch <= invalidPlan.batches.length; batch += 1) {
+        await ingestText(directory, '[]', {
+          agent: 'prg-correctness', batch, attempt: 1
+        });
+      }
+      const result = await finalizeDiscovery({
+        schemaVersion: '1.0',
+        agents: [{
+          name: 'prg-correctness',
+          files: invalidPlan.files,
+          batches: invalidPlan.batches
+        }]
+      }, path.join(directory, 'results'));
+
+      assert.equal(result.coverage.status, 'failed', invalidPlan.label);
+      assert.equal(result.findings, null, invalidPlan.label);
+      assert.ok(
+        result.coverage.planProblems.some(problem => problem.includes('exactly once')),
+        invalidPlan.label
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+});
+
 test('discovery finalize CLI removes stale candidates on failed coverage', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-cli-'));
   try {
@@ -682,6 +755,49 @@ test('discovery finalize CLI removes stale candidates on failed coverage', async
     const coverage = JSON.parse(await readFile(coverageFile, 'utf8'));
     assert.equal(coverage.status, 'failed');
     assert.equal(coverage.scopes[0].status, 'failed');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery finalize CLI reports a corrupt complete envelope and removes stale candidates', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-corrupt-envelope-'));
+  try {
+    const planFile = path.join(directory, 'plan.json');
+    const resultDirectory = path.join(directory, 'results');
+    const candidatesFile = path.join(directory, 'candidates.json');
+    const coverageFile = path.join(directory, 'coverage.json');
+    await mkdir(resultDirectory);
+    await writeFile(planFile, JSON.stringify(discoveryPlan('prg-correctness', 1)));
+    await writeFile(path.join(
+      resultDirectory,
+      discoveryResultFileName('prg-correctness', 1, 1)
+    ), JSON.stringify({
+      schemaVersion: '1.0',
+      agent: 'prg-correctness',
+      category: 'correctness',
+      batch: 1,
+      attempt: 1,
+      status: 'complete',
+      findings: {}
+    }));
+    await writeFile(candidatesFile, '["stale"]\n');
+
+    const cli = spawnSync(process.execPath, [
+      'skills/review-pull-request/scripts/process-discovery.mjs',
+      'finalize',
+      planFile,
+      resultDirectory,
+      candidatesFile,
+      coverageFile
+    ], { cwd: root, encoding: 'utf8' });
+
+    assert.equal(cli.status, 1, cli.stdout + cli.stderr);
+    await assert.rejects(access(candidatesFile), { code: 'ENOENT' });
+    const coverage = JSON.parse(await readFile(coverageFile, 'utf8'));
+    assert.equal(coverage.status, 'failed');
+    assert.equal(coverage.scopes[0].status, 'failed');
+    assert.ok(coverage.failures.some(failure => failure.reason === 'corrupt-envelope'));
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

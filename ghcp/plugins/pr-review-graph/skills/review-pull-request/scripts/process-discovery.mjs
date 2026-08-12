@@ -235,9 +235,11 @@ function validateAttemptEnvelope(value, expected) {
   if (value?.status === 'complete') {
     const validation = validateFindings(value.findings, { mode: 'candidate' });
     problems.push(...validation.errors);
-    for (const [index, finding] of (value.findings ?? []).entries()) {
-      if (finding.category !== expected.category) {
-        problems.push(`finding[${index}].category must be ${expected.category}`);
+    if (Array.isArray(value.findings)) {
+      for (const [index, finding] of value.findings.entries()) {
+        if (finding.category !== expected.category) {
+          problems.push(`finding[${index}].category must be ${expected.category}`);
+        }
       }
     }
   }
@@ -275,6 +277,39 @@ async function listResultFiles(resultDirectory) {
   }
 }
 
+function validateAgentPlanCoverage(agentPlan) {
+  const problems = [];
+  const label = `Discovery plan entry for ${agentPlan.name}`;
+  if (agentPlan.batches.length === 0) return problems;
+
+  const files = agentPlan.files;
+  if (!Array.isArray(files) || !files.length || files.some(file => typeof file !== 'string' || !file.trim())) {
+    problems.push(`${label}.files must contain non-empty file paths`);
+  }
+
+  const batchedFiles = [];
+  for (const [index, batch] of agentPlan.batches.entries()) {
+    if (!Array.isArray(batch) || !batch.length || batch.some(file => typeof file !== 'string' || !file.trim())) {
+      problems.push(`${label}.batches[${index}] must contain non-empty file paths`);
+      continue;
+    }
+    batchedFiles.push(...batch);
+  }
+
+  if (Array.isArray(files) && files.length) {
+    const declaredFiles = new Set(files);
+    const coveredFiles = new Set(batchedFiles);
+    const exactlyCovered = declaredFiles.size === files.length
+      && coveredFiles.size === batchedFiles.length
+      && files.length === batchedFiles.length
+      && files.every(file => coveredFiles.has(file));
+    if (!exactlyCovered) {
+      problems.push(`${label}.batches must cover every declared file exactly once`);
+    }
+  }
+  return problems;
+}
+
 export async function finalizeDiscovery(plan, resultDirectory) {
   const scopes = [];
   const failures = [];
@@ -296,6 +331,11 @@ export async function finalizeDiscovery(plan, resultDirectory) {
     const category = DISCOVERY_CATEGORIES[agentPlan?.name];
     if (!category || !Array.isArray(agentPlan.batches)) {
       planProblems.push(`Invalid discovery plan entry for ${agentPlan?.name ?? '<unnamed>'}`);
+      continue;
+    }
+    const coverageProblems = validateAgentPlanCoverage(agentPlan);
+    if (coverageProblems.length) {
+      planProblems.push(...coverageProblems);
       continue;
     }
     let completedBatches = 0;
@@ -429,10 +469,10 @@ async function main() {
     if (!planFile || !resultDirectory || !candidatesFile || !coverageFile) {
       throw new Error('Usage: process-discovery.mjs finalize PLAN_JSON RESULTS_DIR CANDIDATES_JSON COVERAGE_JSON');
     }
-    const plan = JSON.parse(await readFile(path.resolve(planFile), 'utf8'));
     const candidates = path.resolve(candidatesFile);
-    const { coverage, findings } = await finalizeDiscovery(plan, path.resolve(resultDirectory));
     await rm(candidates, { force: true });
+    const plan = JSON.parse(await readFile(path.resolve(planFile), 'utf8'));
+    const { coverage, findings } = await finalizeDiscovery(plan, path.resolve(resultDirectory));
     await overwritePrivateJson(path.resolve(coverageFile), coverage);
     if (coverage.status === 'complete') {
       await overwritePrivateJson(candidates, findings);
