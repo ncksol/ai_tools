@@ -9,17 +9,29 @@ export function applyComments(deduplicated, editorOutput) {
 
   const usable = new Map();
   const unknown = [];
+  const seen = new Set();
+  const duplicates = [];
   for (const entry of entries) {
     const fingerprint = String(entry?.fingerprint ?? '');
     if (!known.has(fingerprint)) {
       unknown.push(fingerprint || '(missing fingerprint)');
       continue;
     }
+    if (seen.has(fingerprint)) {
+      if (!duplicates.includes(fingerprint)) {
+        duplicates.push(fingerprint);
+      }
+      continue;
+    }
+    seen.add(fingerprint);
     const comment = typeof entry?.comment === 'string' ? entry.comment.trim() : '';
     if (comment) usable.set(fingerprint, comment);
   }
   if (unknown.length) {
     throw new Error(`Editor returned comments for unknown findings: ${unknown.join(', ')}`);
+  }
+  if (duplicates.length) {
+    throw new Error(`Editor returned more than one comment for findings: ${duplicates.join(', ')}`);
   }
 
   const missing = findings

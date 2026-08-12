@@ -395,3 +395,15 @@ test('builders reject raw editor output instead of producing an empty review', a
   assert.throws(() => buildGitHubReview(packet, editorOutput), /apply-comments\.mjs/);
   assert.throws(() => buildAzureThreads(azurePacket, editorOutput), /apply-comments\.mjs/);
 });
+
+test('comment join rejects duplicate fingerprints in editor output', async () => {
+  const { findings } = await dedupedFindings();
+  const editorOutput = {
+    comments: [
+      ...findings.map((finding, index) => ({ fingerprint: finding.fingerprint, comment: `Edited comment ${index}` })),
+      { fingerprint: findings[0].fingerprint, comment: 'Duplicate for first finding' }
+    ]
+  };
+
+  assert.throws(() => applyComments({ findings }, editorOutput), /more than one comment/);
+});
