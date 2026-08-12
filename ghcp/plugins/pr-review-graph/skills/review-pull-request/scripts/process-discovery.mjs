@@ -35,7 +35,7 @@ export function redactDiagnosticText(value) {
     '<redacted-token>'
   );
   text = text.replace(
-    /[A-Za-z0-9_*.\-]+\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}(?=["\s,;}]|$)/g,
+    /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
     '<redacted-jwt>'
   );
   text = text.replace(
@@ -95,21 +95,26 @@ async function recordFailure(raw, resultDirectory, diagnosticsDirectory, metadat
     failureKind: kind,
     response: redactDiagnosticText(raw)
   });
-  const result = {
-    schemaVersion: '1.0',
-    ...metadata,
-    status: 'invalid',
-    failure: {
-      kind,
-      ...details,
-      diagnostic
-    }
-  };
-  await writePrivateJson(
-    path.join(resultDirectory, discoveryResultFileName(metadata.agent, metadata.batch, metadata.attempt)),
-    result
-  );
-  return result;
+  try {
+    const result = {
+      schemaVersion: '1.0',
+      ...metadata,
+      status: 'invalid',
+      failure: {
+        kind,
+        ...details,
+        diagnostic
+      }
+    };
+    await writePrivateJson(
+      path.join(resultDirectory, discoveryResultFileName(metadata.agent, metadata.batch, metadata.attempt)),
+      result
+    );
+    return result;
+  } catch (error) {
+    await rm(diagnostic, { force: true });
+    throw error;
+  }
 }
 
 export async function ingestDiscoveryResponse(

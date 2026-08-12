@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { access, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -467,14 +467,9 @@ test('discovery ingestion rejects literal controls and retains only redacted dia
     const resultDirectory = path.join(directory, 'results');
     const diagnosticsDirectory = path.join(directory, 'diagnostics');
     const githubToken = ['ghp', 'abcdefghijklmnopqrstuvwxyz1234567890ABCD'].join('_');
-    const jwt = [
-      '******',
-      'eyJzdWIiOiIxMjM0NTY3ODkwIn0',
-      'c2lnbmF0dXJlMTIzNDU2'
-    ].join('.');
     const candidate = discoveryCandidate('correctness', {
       evidence: 'first line\nsecond line',
-      recommendation: `Authorization: ******; token=${githubToken}; jwt=${jwt}`,
+      recommendation: `Authorization: bearer-secret; token=${githubToken}`,
       debug: {
         password: 'password-secret',
         private_key: '-----BEGIN PRIVATE KEY-----\nZmFrZQ==\n-----END PRIVATE KEY-----'
@@ -499,7 +494,7 @@ test('discovery ingestion rejects literal controls and retains only redacted dia
     const diagnostic = JSON.parse(diagnosticText);
     assert.equal(diagnostic.failureKind, 'invalid-json');
     assert.match(diagnosticText, /first line\\nsecond line/);
-    for (const secret of ['bearer-secret', githubToken, jwt, 'password-secret', 'ZmFrZQ==']) {
+    for (const secret of ['bearer-secret', githubToken, 'password-secret', 'ZmFrZQ==']) {
       assert.doesNotMatch(diagnostic.response, new RegExp(secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     }
     assert.match(diagnostic.response, /<redacted/);
@@ -508,6 +503,68 @@ test('discovery ingestion rejects literal controls and retains only redacted dia
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('JWT redaction uses precise regex and does not overmatch', async () => {
+  const { redactDiagnosticText } = await import('../skills/review-pull-request/scripts/process-discovery.mjs');
+  
+  const validJwt = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U';
+  const anotherValidJwt = 'eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlMTIzNDU2.aGFzQWZvdXJ0aFNlZ21lbnQ1NjU';
+  const notAJwt = 'not.a.jwt.string';
+  const falsePositiveJwt = 'some.thing.else';
+  
+  const redacted = redactDiagnosticText(
+    `Valid: ${validJwt} Another: ${anotherValidJwt} Not-JWT: ${notAJwt} False: ${falsePositiveJwt}`
+  );
+  
+  assert.doesNotMatch(redacted, new RegExp(validJwt));
+  assert.doesNotMatch(redacted, new RegExp(anotherValidJwt));
+  assert.match(redacted, /Valid: <redacted-jwt>/);
+  assert.match(redacted, /Another: <redacted-jwt>/);
+  assert.match(redacted, /Not-JWT: not\.a\.jwt\.string/);
+  assert.match(redacted, /False: some\.thing\.else/);
+});
+
+test('discovery ingestion cleans up diagnostic if result write fails', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-cleanup-'));
+  try {
+    const rawFile = path.join(directory, 'raw.txt');
+    const resultDirectory = path.join(directory, 'results');
+    const diagnosticsDirectory = path.join(directory, 'diagnostics');
+    const candidate = discoveryCandidate('correctness', {
+      evidence: 'escaped\\nstring',
+      recommendation: 'no secrets here'
+    });
+    const malformed = JSON.stringify([candidate]).replace(
+      'escaped\\nstring',
+      'escaped\nstring'
+    );
+    await writeFile(rawFile, malformed, { mode: 0o600 });
+    
+    await mkdir(resultDirectory, { recursive: true, mode: 0o700 });
+    const resultPath = path.join(resultDirectory, 'prg-correctness-batch-001-attempt-1.json');
+    await writeFile(resultPath, '{}', { mode: 0o600 });
+    
+    const ingestPromise = ingestDiscoveryResponse(
+      rawFile,
+      resultDirectory,
+      diagnosticsDirectory,
+      { agent: 'prg-correctness', batch: 1, attempt: 1 }
+    );
+    
+    try {
+      await ingestPromise;
+      assert.fail('Expected EEXIST error');
+    } catch (error) {
+      assert.equal(error.code, 'EEXIST');
+      const diagnosticPath = path.join(diagnosticsDirectory, 'prg-correctness-batch-001-attempt-1.failure.json');
+      await assert.rejects(access(diagnosticPath), { code: 'ENOENT' });
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+
 
 const BASH4_ONLY = [
   { pattern: /\bmapfile\b/, name: 'mapfile (use a `while IFS= read -r` loop)' },
