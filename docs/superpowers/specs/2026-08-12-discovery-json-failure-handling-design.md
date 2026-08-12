@@ -1,7 +1,7 @@
 # Discovery JSON failure handling
 
 - **Date:** 2026-08-12
-- **Status:** Proposed; awaiting user review
+- **Status:** Approved
 - **Target:** `ghcp/plugins/pr-review-graph/`
 - **Origin:** [Issue #5](https://github.com/ncksol/ai_tools/issues/5)
 
