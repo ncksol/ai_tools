@@ -123,10 +123,12 @@ They never contain event source lines, assistant content, tool arguments, or pay
 
 ## 7. Failure and retry protocol
 
-A transport failure consumes the current discovery attempt. Export a narrow `recordDiscoveryFailure`
-helper from `process-discovery.mjs` so the extractor can write the same invalid attempt and diagnostic
-envelopes as ingestion without duplicating their file protocol. Refactor the existing private failure writer
-to call that helper; `ingestDiscoveryResponse` and its strict parsing behavior remain unchanged.
+A transport failure consumes the current discovery attempt. Export
+`recordDiscoveryTransportFailure(resultDirectory, diagnosticsDirectory, options, kind, details)` from
+`process-discovery.mjs`. It reuses the module's metadata validation, exclusive private writes, filenames, and
+invalid attempt-result envelope. Its diagnostic envelope contains `failureKind` and a `transport` object
+instead of a response body. `ingestDiscoveryResponse` and its existing raw-response diagnostic path remain
+unchanged.
 
 The extractor uses only these fixed failure kinds:
 
@@ -140,8 +142,8 @@ The extractor uses only these fixed failure kinds:
 - `transport-non-terminal-payload`.
 
 Its diagnostic contains the failure kind plus safe line number, event index, event type, or count when
-applicable. The helper rejects unknown transport failure kinds and never accepts raw JSONL as diagnostic
-input.
+applicable. `recordDiscoveryTransportFailure` rejects unknown transport failure kinds, rejects detail keys
+outside that structural allowlist, and has no parameter through which raw JSONL can enter diagnostics.
 
 The existing state machine therefore continues to apply:
 
