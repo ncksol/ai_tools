@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 import path from 'node:path';
-import { authorComment, isChangedLine, isMain, parseFlags, readJson, severityRank, writeJson } from './lib.mjs';
+import { authorComment, isChangedLine, isMain, parseFlags, readJson, severityRank, unwrapFindings, writeJson } from './lib.mjs';
 
 export function buildGitHubReview(packet, value) {
   if (packet.provider !== 'github') throw new Error('Packet provider must be github');
-  const findings = unwrap(value).sort((a, b) => severityRank(a.severity) - severityRank(b.severity));
+  const findings = unwrapFindings(value).sort((a, b) => severityRank(a.severity) - severityRank(b.severity));
   const comments = [];
   const summary = [];
 
@@ -40,12 +40,6 @@ export function buildGitHubReview(packet, value) {
     body: bodyParts.join('\n'),
     comments
   };
-}
-
-function unwrap(value) {
-  if (Array.isArray(value)) return value;
-  if (Array.isArray(value?.findings)) return value.findings;
-  return [...(value?.inlineFindings ?? []), ...(value?.summaryFindings ?? [])];
 }
 
 function assertPublishable(finding) {

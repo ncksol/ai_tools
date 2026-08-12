@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import { authorComment, isChangedLine, isMain, normalizePath, parseFlags, readJson, severityRank, writeJson } from './lib.mjs';
+import { authorComment, isChangedLine, isMain, normalizePath, parseFlags, readJson, severityRank, unwrapFindings, writeJson } from './lib.mjs';
 
 export function buildAzureThreads(packet, value) {
   if (packet.provider !== 'azure-devops') throw new Error('Packet provider must be azure-devops');
-  const findings = unwrap(value).sort((a, b) => severityRank(a.severity) - severityRank(b.severity));
+  const findings = unwrapFindings(value).sort((a, b) => severityRank(a.severity) - severityRank(b.severity));
   const latestIteration = Number(packet.providerData?.latestIterationId ?? 0);
 
   return findings.map(finding => {
@@ -37,12 +37,6 @@ export function buildAzureThreads(packet, value) {
     }
     return { fingerprint: finding.fingerprint, inline: Boolean(payload.threadContext), payload };
   });
-}
-
-function unwrap(value) {
-  if (Array.isArray(value)) return value;
-  if (Array.isArray(value?.findings)) return value.findings;
-  return [...(value?.inlineFindings ?? []), ...(value?.summaryFindings ?? [])];
 }
 
 function assertPublishable(finding) {
