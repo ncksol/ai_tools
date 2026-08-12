@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -19,6 +19,9 @@ import {
   finalizeDiscovery,
   ingestDiscoveryResponse
 } from '../skills/review-pull-request/scripts/process-discovery.mjs';
+import {
+  extractAgentResponse
+} from '../skills/review-pull-request/scripts/extract-agent-response.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -42,6 +45,234 @@ function discoveryCandidate(category = 'correctness', overrides = {}) {
     ...overrides
   };
 }
+
+function agentEventStream(content, options = {}) {
+  const turnId = options.turnId ?? 'turn-final';
+  const events = [
+    ...(options.preceding ?? []),
+    {
+      type: 'assistant.turn_start',
+      data: { turnId, interactionId: `interaction-${turnId}` }
+    },
+    {
+      type: 'assistant.message',
+      data: { turnId, content, toolRequests: options.toolRequests ?? [] }
+    },
+    {
+      type: 'assistant.turn_end',
+      data: { turnId }
+    },
+    ...(options.following ?? []),
+    {
+      type: 'result',
+      exitCode: options.exitCode ?? 0
+    }
+  ];
+  return `${events.map(event => JSON.stringify(event)).join('\n')}\n`;
+}
+
+test('agent response transport preserves long array and object payloads exactly', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-agent-transport-'));
+  try {
+    const payloads = [
+      JSON.stringify([discoveryCandidate('correctness', {
+        title: 'x'.repeat(500),
+        evidence: 'first line\nsecond line\rthird line\twith a tab\0and a nul'
+      })]),
+      JSON.stringify({
+        comments: [{
+          fingerprint: 'a'.repeat(64),
+          comment: `line one\nline two ${'y'.repeat(500)}`
+        }]
+      })
+    ];
+
+    for (const [index, payload] of payloads.entries()) {
+      const eventsFile = path.join(directory, `events-${index}.jsonl`);
+      const responseFile = path.join(directory, `response-${index}.json`);
+      const statusFile = path.join(directory, `status-${index}.json`);
+      await writeFile(eventsFile, agentEventStream(payload), { mode: 0o600 });
+
+      const result = await extractAgentResponse(eventsFile, responseFile, statusFile);
+
+      assert.equal(result.status, 'complete');
+      assert.equal(await readFile(responseFile, 'utf8'), payload);
+      assert.equal((await stat(responseFile)).mode & 0o777, 0o600);
+      assert.deepEqual(JSON.parse(await readFile(statusFile, 'utf8')), {
+        schemaVersion: '1.0',
+        status: 'complete'
+      });
+      await assert.rejects(access(eventsFile), { code: 'ENOENT' });
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('agent response transport accepts structural tool events before the final payload', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-agent-tool-transport-'));
+  try {
+    const eventsFile = path.join(directory, 'events.jsonl');
+    const responseFile = path.join(directory, 'response.json');
+    const statusFile = path.join(directory, 'status.json');
+    const payload = JSON.stringify({ verdict: 'rejected', reason: 'No reachable failure path.' });
+    await writeFile(eventsFile, agentEventStream(payload, {
+      preceding: [
+        { type: 'assistant.turn_start', data: { turnId: 'turn-tool' } },
+        {
+          type: 'assistant.message',
+          data: {
+            turnId: 'turn-tool',
+            content: '',
+            toolRequests: [{ toolCallId: 'call-1', name: 'skill' }]
+          }
+        },
+        {
+          type: 'tool.execution_start',
+          data: { turnId: 'turn-tool', toolCallId: 'call-1', toolName: 'skill' }
+        },
+        {
+          type: 'tool.execution_complete',
+          data: { turnId: 'turn-tool', toolCallId: 'call-1', success: true }
+        },
+        { type: 'assistant.turn_end', data: { turnId: 'turn-tool' } }
+      ]
+    }), { mode: 0o600 });
+
+    const result = await extractAgentResponse(eventsFile, responseFile, statusFile);
+
+    assert.equal(result.status, 'complete');
+    assert.equal(await readFile(responseFile, 'utf8'), payload);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('agent response transport fails closed on ambiguous or rendered streams', async () => {
+  const preamble = [
+    { type: 'assistant.turn_start', data: { turnId: 'turn-preamble' } },
+    {
+      type: 'assistant.message',
+      data: {
+        turnId: 'turn-preamble',
+        content: 'Using strict-code-review to inspect this response.',
+        toolRequests: []
+      }
+    },
+    { type: 'assistant.turn_end', data: { turnId: 'turn-preamble' } }
+  ];
+  const finalTurn = [
+    { type: 'assistant.turn_start', data: { turnId: 'turn-final' } },
+    {
+      type: 'assistant.message',
+      data: { turnId: 'turn-final', content: '[]', toolRequests: [] }
+    },
+    { type: 'assistant.turn_end', data: { turnId: 'turn-final' } }
+  ];
+  const resultEvent = { type: 'result', exitCode: 0 };
+  const asJsonl = events => `${events.map(event => JSON.stringify(event)).join('\n')}\n`;
+  const cases = [
+    {
+      label: 'rendered text',
+      stream: 'Using strict-code-review to inspect this response.\n[]\n',
+      kind: 'transport-invalid-jsonl'
+    },
+    {
+      label: 'contentful preamble',
+      stream: asJsonl([...preamble, ...finalTurn, resultEvent]),
+      kind: 'transport-multiple-payloads'
+    },
+    {
+      label: 'failed result',
+      stream: agentEventStream('[]', { exitCode: 1 }),
+      kind: 'transport-unsuccessful-result'
+    },
+    {
+      label: 'missing result',
+      stream: asJsonl(finalTurn),
+      kind: 'transport-missing-result'
+    },
+    {
+      label: 'multiple results',
+      stream: asJsonl([...finalTurn, resultEvent, resultEvent]),
+      kind: 'transport-multiple-results'
+    },
+    {
+      label: 'missing payload',
+      stream: agentEventStream('', {
+        toolRequests: [{ toolCallId: 'call-1', name: 'skill' }]
+      }),
+      kind: 'transport-missing-payload'
+    },
+    {
+      label: 'content and tool request',
+      stream: agentEventStream('[]', {
+        toolRequests: [{ toolCallId: 'call-1', name: 'skill' }]
+      }),
+      kind: 'transport-invalid-event'
+    },
+    {
+      label: 'message outside a turn',
+      stream: asJsonl([
+        {
+          type: 'assistant.message',
+          data: { turnId: 'turn-missing', content: '[]', toolRequests: [] }
+        },
+        resultEvent
+      ]),
+      kind: 'transport-non-terminal-payload'
+    },
+    {
+      label: 'payload in a non-final turn',
+      stream: agentEventStream('[]', {
+        following: [
+          { type: 'assistant.turn_start', data: { turnId: 'turn-later' } },
+          {
+            type: 'assistant.message',
+            data: {
+              turnId: 'turn-later',
+              content: '',
+              toolRequests: [{ toolCallId: 'call-later', name: 'skill' }]
+            }
+          },
+          { type: 'assistant.turn_end', data: { turnId: 'turn-later' } }
+        ]
+      }),
+      kind: 'transport-non-terminal-payload'
+    },
+    {
+      label: 'malformed event object',
+      stream: asJsonl([{}, ...finalTurn, resultEvent]),
+      kind: 'transport-invalid-event'
+    }
+  ];
+
+  for (const [index, fixture] of cases.entries()) {
+    const directory = await mkdtemp(path.join(os.tmpdir(), `prg-agent-invalid-${index}-`));
+    try {
+      const eventsFile = path.join(directory, 'events.jsonl');
+      const responseFile = path.join(directory, 'response.json');
+      const statusFile = path.join(directory, 'status.json');
+      await writeFile(eventsFile, fixture.stream, { mode: 0o600 });
+
+      const result = await extractAgentResponse(eventsFile, responseFile, statusFile);
+
+      assert.equal(result.status, 'invalid', fixture.label);
+      assert.equal(result.failure.kind, fixture.kind, fixture.label);
+      await assert.rejects(access(responseFile), { code: 'ENOENT' });
+      await assert.rejects(access(eventsFile), { code: 'ENOENT' });
+      const persisted = await readFile(statusFile, 'utf8');
+      assert.deepEqual(JSON.parse(persisted), result);
+      assert.doesNotMatch(
+        persisted,
+        /Using strict-code-review|inspect this response|\[\]/,
+        fixture.label
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+});
 
 test('static plugin validation passes and declares no MCP integration', async () => {
   const manifest = JSON.parse(await readFile(path.join(root, 'plugin.json'), 'utf8'));
