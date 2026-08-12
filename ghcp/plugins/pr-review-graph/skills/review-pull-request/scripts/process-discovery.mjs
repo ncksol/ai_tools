@@ -59,9 +59,17 @@ export function redactDiagnosticText(value) {
 function normalizeMetadata(options) {
   const agent = String(options.agent ?? '');
   const category = DISCOVERY_CATEGORIES[agent];
+  if (!category) throw new Error(`Unsupported discovery agent: ${agent || '<empty>'}`);
+  // A bare CLI flag (`--batch` with no value) is parsed as the boolean `true`;
+  // Number(true) === 1, so reject non-string/non-number inputs before coercion.
+  if (!['string', 'number'].includes(typeof options.batch)) {
+    throw new Error('Batch must be a positive integer');
+  }
+  if (!['string', 'number'].includes(typeof options.attempt)) {
+    throw new Error('Attempt must be 1 or 2');
+  }
   const batch = Number(options.batch);
   const attempt = Number(options.attempt);
-  if (!category) throw new Error(`Unsupported discovery agent: ${agent || '<empty>'}`);
   if (!Number.isInteger(batch) || batch < 1) throw new Error('Batch must be a positive integer');
   if (![1, 2].includes(attempt)) throw new Error('Attempt must be 1 or 2');
   return { agent, category, batch, attempt };
@@ -272,11 +280,23 @@ export async function finalizeDiscovery(plan, resultDirectory) {
   const failures = [];
   const partialFindings = [];
   const expectedFiles = new Set();
+  const planProblems = [];
 
-  for (const agentPlan of plan.agents ?? []) {
-    const category = DISCOVERY_CATEGORIES[agentPlan.name];
+  // A missing or empty agents array is a malformed or wrong plan, not a
+  // vacuously-complete review: `[].every(...)` would otherwise report
+  // `complete` with zero coverage evidence.
+  const agentPlans = Array.isArray(plan?.agents) ? plan.agents : null;
+  if (!agentPlans) {
+    planProblems.push('Discovery plan must include an agents array');
+  } else if (agentPlans.length === 0) {
+    planProblems.push('Discovery plan must include at least one routed agent');
+  }
+
+  for (const agentPlan of agentPlans ?? []) {
+    const category = DISCOVERY_CATEGORIES[agentPlan?.name];
     if (!category || !Array.isArray(agentPlan.batches)) {
-      throw new Error(`Invalid discovery plan entry for ${agentPlan.name ?? '<unnamed>'}`);
+      planProblems.push(`Invalid discovery plan entry for ${agentPlan?.name ?? '<unnamed>'}`);
+      continue;
     }
     let completedBatches = 0;
     let recoveredBatches = 0;
@@ -328,11 +348,18 @@ export async function finalizeDiscovery(plan, resultDirectory) {
     }
 
     const expectedBatches = agentPlan.batches.length;
-    const status = completedBatches === expectedBatches
-      ? 'complete'
-      : completedBatches === 0
-        ? 'failed'
-        : 'incomplete';
+    // A routed agent with zero planned batches has no evidence it was ever
+    // reviewed; treat it as failed rather than vacuously complete.
+    if (expectedBatches === 0) {
+      failures.push({ agent: agentPlan.name, batch: null, recovered: false, reason: 'zero-expected-batches' });
+    }
+    const status = expectedBatches === 0
+      ? 'failed'
+      : completedBatches === expectedBatches
+        ? 'complete'
+        : completedBatches === 0
+          ? 'failed'
+          : 'incomplete';
     scopes.push({
       agent: agentPlan.name,
       status,
@@ -343,17 +370,26 @@ export async function finalizeDiscovery(plan, resultDirectory) {
     });
   }
 
+  const totalExpectedBatches = scopes.reduce((sum, scope) => sum + scope.expectedBatches, 0);
+  if (!planProblems.length && totalExpectedBatches === 0) {
+    planProblems.push('Discovery plan has zero expected batches');
+  }
+
   const actualFiles = await listResultFiles(resultDirectory);
   const protocolProblems = actualFiles
     .filter(file => !expectedFiles.has(file))
     .map(file => `Unexpected attempt result: ${file}`);
-  const complete = scopes.every(scope => scope.status === 'complete') && !protocolProblems.length;
+  const complete = !planProblems.length
+    && scopes.length > 0
+    && scopes.every(scope => scope.status === 'complete')
+    && !protocolProblems.length;
   const coverage = {
     schemaVersion: '1.0',
     status: complete ? 'complete' : 'failed',
     scopes,
     failures,
     protocolProblems,
+    ...(planProblems.length ? { planProblems } : {}),
     ...(complete
       ? { candidateCount: partialFindings.length }
       : { partialCandidateCount: partialFindings.length })

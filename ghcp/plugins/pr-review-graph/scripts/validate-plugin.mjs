@@ -77,6 +77,9 @@ if (skillText.split(/\r?\n/).length > 500) errors.push('SKILL.md exceeds 500 lin
 if (!skillText.includes('separately installed `gh-cli` skill')) errors.push('SKILL.md must require the gh-cli skill for GitHub');
 if (!skillText.includes('separately installed `azure-devops-cli` skill')) errors.push('SKILL.md must require the azure-devops-cli skill for Azure DevOps');
 if (!skillText.includes('`prg-deduplicator`')) errors.push('SKILL.md must include semantic existing-review deduplication');
+if (!skillText.includes('Never dispatch a discovery agent, or a batch, that is absent from `PLAN_JSON`')) {
+  errors.push('SKILL.md must forbid dispatching discovery agents absent from PLAN_JSON');
+}
 if (!githubProviderText.includes('First load and follow the separately installed `gh-cli` skill')) errors.push('GitHub provider must delegate to gh-cli');
 if (!azureProviderText.includes('Load and follow the separately installed `azure-devops-cli` skill')) errors.push('Azure DevOps provider must delegate to azure-devops-cli');
 

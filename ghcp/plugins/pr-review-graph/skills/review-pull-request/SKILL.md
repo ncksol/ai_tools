@@ -59,7 +59,9 @@ Run the deterministic risk router:
 node <SKILL_DIR>/scripts/build-review-plan.mjs <PACKET_JSON> <PLAN_JSON>
 ```
 
-Always include `prg-contract`, `prg-correctness`, and `prg-tests`. Add security, data-compatibility, and reliability reviewers only when the router selects them or repository context clearly requires them.
+Always include `prg-contract`, `prg-correctness`, and `prg-tests`. The router adds `prg-security`, `prg-data-compatibility`, or `prg-reliability` automatically when file patterns match.
+
+`PLAN_JSON` is the authoritative discovery coverage contract: `finalize` only recognizes results for the agents and batches it records, so anything dispatched outside it produces no coverage evidence. A context-required conditional reviewer that the router did not select may still be used, but only after it is added to `PLAN_JSON` — with its `name`, `reason`, `files`, and `batches` — before dispatch. Never dispatch a discovery agent, or a batch, that is absent from `PLAN_JSON`.
 
 Give each discovery agent:
 
