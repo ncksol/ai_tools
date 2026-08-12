@@ -75,6 +75,7 @@ const requiredScripts = [
   'validate-findings.mjs',
   'fingerprint-findings.mjs',
   'deduplicate-findings.mjs',
+  'apply-comments.mjs',
   'build-github-review.mjs',
   'build-azure-threads.mjs',
   'collect-github.sh',
