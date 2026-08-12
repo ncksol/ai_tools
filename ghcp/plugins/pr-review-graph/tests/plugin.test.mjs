@@ -99,6 +99,7 @@ test('agent response transport preserves long array and object payloads exactly'
       assert.equal(result.status, 'complete');
       assert.equal(await readFile(responseFile, 'utf8'), payload);
       assert.equal((await stat(responseFile)).mode & 0o777, 0o600);
+      assert.equal((await stat(statusFile)).mode & 0o777, 0o600);
       assert.deepEqual(JSON.parse(await readFile(statusFile, 'utf8')), {
         schemaVersion: '1.0',
         status: 'complete'
@@ -181,6 +182,24 @@ test('agent response transport fails closed on ambiguous or rendered streams', a
     {
       label: 'contentful preamble',
       stream: asJsonl([...preamble, ...finalTurn, resultEvent]),
+      kind: 'transport-multiple-payloads'
+    },
+    {
+      label: 'contentful preamble before object',
+      stream: asJsonl([
+        ...preamble,
+        { type: 'assistant.turn_start', data: { turnId: 'turn-object' } },
+        {
+          type: 'assistant.message',
+          data: {
+            turnId: 'turn-object',
+            content: '{"comments":[]}',
+            toolRequests: []
+          }
+        },
+        { type: 'assistant.turn_end', data: { turnId: 'turn-object' } },
+        resultEvent
+      ]),
       kind: 'transport-multiple-payloads'
     },
     {
@@ -275,11 +294,116 @@ test('agent response transport fails closed on ambiguous or rendered streams', a
   }
 });
 
+test('agent response transport CLI feeds array and object stage consumers', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-agent-transport-cli-'));
+  try {
+    const extractor = 'skills/review-pull-request/scripts/extract-agent-response.mjs';
+    async function extract(label, payload) {
+      const eventsFile = path.join(directory, `${label}.jsonl`);
+      const responseFile = path.join(directory, `${label}.response.json`);
+      const statusFile = path.join(directory, `${label}.status.json`);
+      await writeFile(eventsFile, agentEventStream(payload), { mode: 0o600 });
+      const cli = spawnSync(process.execPath, [
+        extractor,
+        eventsFile,
+        responseFile,
+        statusFile
+      ], { cwd: root, encoding: 'utf8' });
+      assert.equal(cli.status, 0, `${label}: ${cli.stdout}${cli.stderr}`);
+      assert.equal(JSON.parse(await readFile(statusFile, 'utf8')).status, 'complete');
+      await assert.rejects(access(eventsFile), { code: 'ENOENT' });
+      return responseFile;
+    }
+
+    const candidate = discoveryCandidate('correctness', {
+      evidence: `first line\nsecond line ${'x'.repeat(500)}`
+    });
+    const discoveryFile = await extract('discovery', JSON.stringify([candidate]));
+    const discovery = await ingestDiscoveryResponse(
+      discoveryFile,
+      path.join(directory, 'discovery-results'),
+      path.join(directory, 'discovery-diagnostics'),
+      { agent: 'prg-correctness', batch: 1, attempt: 1 }
+    );
+    assert.deepEqual(discovery.findings, [candidate]);
+
+    const verifierFile = await extract('verifier', JSON.stringify({
+      verdict: 'rejected',
+      confidence: 0.97,
+      reason: 'The supplied guard prevents the claimed trigger.',
+      finding: candidate
+    }));
+    const verifier = JSON.parse(await readFile(verifierFile, 'utf8'));
+    assert.equal(verifier.verdict, 'rejected');
+    assert.equal(typeof verifier.confidence, 'number');
+    assert.equal(typeof verifier.reason, 'string');
+    assert.deepEqual(verifier.finding, candidate);
+
+    const fingerprint = 'a'.repeat(64);
+    const fingerprinted = { ...candidate, fingerprint };
+    const prepared = {
+      schemaVersion: '1.0',
+      findings: [fingerprinted],
+      existingThreadCount: 1,
+      batches: [{
+        batchId: 'batch-001',
+        findingFingerprints: [fingerprint],
+        existingThreads: [{
+          id: '501',
+          body: 'An unrelated existing review comment.'
+        }]
+      }],
+      suppressed: []
+    };
+    const deduplicatorFile = await extract('deduplicator', JSON.stringify({
+      batchId: 'batch-001',
+      decisions: [{
+        fingerprint,
+        verdict: 'distinct',
+        matchedThreadIds: [],
+        reason: `No existing comment reports this failure. ${'y'.repeat(500)}`
+      }]
+    }));
+    const deduplicated = applyDeduplication(
+      prepared,
+      JSON.parse(await readFile(deduplicatorFile, 'utf8'))
+    );
+    assert.equal(deduplicated.findings.length, 1);
+
+    const editorFile = await extract('editor', JSON.stringify({
+      comments: [{
+        fingerprint,
+        comment: `This path still fails for the supplied trigger. ${'z'.repeat(500)}`
+      }]
+    }));
+    const edited = applyComments(
+      deduplicated,
+      JSON.parse(await readFile(editorFile, 'utf8'))
+    );
+    assert.equal(edited.length, 1);
+    assert.match(edited[0].comment, /supplied trigger/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('static plugin validation passes and declares no MCP integration', async () => {
   const manifest = JSON.parse(await readFile(path.join(root, 'plugin.json'), 'utf8'));
+  const marketplace = JSON.parse(await readFile(
+    path.resolve(root, '../../..', '.github/plugin/marketplace.json'),
+    'utf8'
+  ));
+  const validator = await readFile(path.join(root, 'scripts/validate-plugin.mjs'), 'utf8');
   assert.equal(manifest.name, 'pr-review-graph');
+  assert.equal(manifest.version, '0.2.6');
+  assert.equal(
+    marketplace.plugins.find(plugin => plugin.name === manifest.name)?.version,
+    manifest.version
+  );
   assert.equal(manifest.mcpServers, undefined);
   assert.equal(manifest.hooks, undefined);
+  assert.match(validator, /extract-agent-response\.mjs/);
+  assert.match(validator, /--output-format json --stream off --silent/);
 
   const result = spawnSync(process.execPath, ['scripts/validate-plugin.mjs'], { cwd: root, encoding: 'utf8' });
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
@@ -293,6 +417,32 @@ test('both provider adapters delegate CLI conventions to external skills', async
   assert.match(skill, /separately installed `azure-devops-cli` skill/);
   assert.match(github, /First load and follow the separately installed `gh-cli` skill/);
   assert.match(azure, /Load and follow the separately installed `azure-devops-cli` skill/);
+});
+
+test('machine-response transport is required for every tool-less agent stage', async () => {
+  const skill = await readFile(path.join(root, 'skills/review-pull-request/SKILL.md'), 'utf8');
+  const graph = await readFile(
+    path.join(root, 'skills/review-pull-request/references/review-graph.md'),
+    'utf8'
+  );
+  const superpowers = await readFile(
+    path.join(root, 'skills/review-pull-request/references/superpowers-compatibility.md'),
+    'utf8'
+  );
+
+  assert.match(skill, /--output-format json --stream off --silent/);
+  assert.match(skill, /extract-agent-response\.mjs/);
+  assert.match(skill, /rendered transcript[^.]*never ingestible/i);
+  assert.match(skill, /explicit raw final-response field/i);
+  for (const agent of ['prg-verifier', 'prg-deduplicator', 'prg-editor']) {
+    const dispatch = skill.indexOf(`\`${agent}\``);
+    assert.notEqual(dispatch, -1, agent);
+    assert.match(skill.slice(dispatch, dispatch + 1_800), /extract-agent-response\.mjs/, agent);
+  }
+  assert.match(graph, /verification transport failure[^.]*reject/i);
+  assert.match(graph, /deduplication transport failure[^.]*retry once[^.]*hold/i);
+  assert.match(graph, /editor transport failure[^.]*retry once[^.]*stop/i);
+  assert.match(superpowers, /skill narration[^.]*JSONL event/i);
 });
 
 test('GitHub raw data normalizes into an immutable canonical packet', async () => {
