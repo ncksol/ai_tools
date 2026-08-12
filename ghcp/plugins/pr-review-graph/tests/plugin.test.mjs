@@ -386,3 +386,12 @@ test('comment join rejects a finding left without usable comment text', async ()
   assert.throws(() => applyComments({ findings }, withBlank), /no usable comment/);
   assert.throws(() => applyComments({ findings }, withOmission), /no usable comment/);
 });
+
+test('builders reject raw editor output instead of producing an empty review', async () => {
+  const packet = normalize(await fixture('github-raw.json'));
+  const azurePacket = normalize(await fixture('azure-raw.json'));
+  const editorOutput = { comments: [{ fingerprint: 'a'.repeat(64), comment: 'Edited comment' }] };
+
+  assert.throws(() => buildGitHubReview(packet, editorOutput), /apply-comments\.mjs/);
+  assert.throws(() => buildAzureThreads(azurePacket, editorOutput), /apply-comments\.mjs/);
+});

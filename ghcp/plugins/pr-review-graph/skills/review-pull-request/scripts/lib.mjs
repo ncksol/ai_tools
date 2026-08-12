@@ -41,6 +41,12 @@ export function flattenPages(value) {
   return value;
 }
 
+export function unwrapFindings(value) {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.findings)) return value.findings;
+  throw new Error('Findings must be an array or an object with a findings array. Run apply-comments.mjs on the editor output first.');
+}
+
 export function asArray(value) {
   if (Array.isArray(value)) return value;
   if (Array.isArray(value?.value)) return value.value;
