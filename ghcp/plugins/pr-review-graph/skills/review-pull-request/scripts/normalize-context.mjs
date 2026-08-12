@@ -163,7 +163,7 @@ export function normalizeAzure(raw) {
   const project = repo.project ?? {};
   const parsedDiffs = parseUnifiedDiff(raw.diff);
   const parsedByPath = new Map(parsedDiffs.map(file => [normalizePath(file.path), file]));
-  const changes = asArray(raw.changes);
+  const changes = asArray(raw.changes?.changeEntries ?? raw.changes);
   const changeByPath = new Map();
   for (const change of changes) {
     const filePath = normalizePath(change.item?.path ?? change.path);
