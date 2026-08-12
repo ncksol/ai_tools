@@ -115,7 +115,14 @@ Send only verified, deduplicated findings to `prg-editor`. Require each final co
 4. the relevant evidence;
 5. a practical direction for fixing it, without prescribing an unnecessary implementation.
 
-Keep inline comments short enough to act on. Put cross-cutting findings in the review summary. Preserve the fingerprint marker produced by the payload builders.
+Keep inline comments short enough to act on. `prg-editor` returns one comment per finding, keyed by fingerprint, and decides nothing else. Join those comments onto the authoritative deduplicated findings:
+
+```bash
+node <SKILL_DIR>/scripts/apply-comments.mjs \
+  <DEDUPED_FINDINGS_JSON> <EDITOR_COMMENTS_JSON> <FINAL_FINDINGS_JSON>
+```
+
+The join fails if the editor invents a fingerprint or leaves a finding without comment text. Retry the editor rather than publishing unedited text. Placement between an inline comment and the review summary is decided by the payload builders, which also add the fingerprint marker.
 
 ## Phase 5: Preview and publish
 
