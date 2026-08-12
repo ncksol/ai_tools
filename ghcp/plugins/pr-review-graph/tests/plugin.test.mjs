@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -14,11 +14,32 @@ import { applyDeduplication, prepareDeduplication } from '../skills/review-pull-
 import { buildGitHubReview } from '../skills/review-pull-request/scripts/build-github-review.mjs';
 import { buildAzureThreads } from '../skills/review-pull-request/scripts/build-azure-threads.mjs';
 import { applyComments } from '../skills/review-pull-request/scripts/apply-comments.mjs';
+import {
+  discoveryResultFileName,
+  ingestDiscoveryResponse
+} from '../skills/review-pull-request/scripts/process-discovery.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 async function fixture(name) {
   return JSON.parse(await readFile(path.join(root, 'tests/fixtures', name), 'utf8'));
+}
+
+function discoveryCandidate(category = 'correctness', overrides = {}) {
+  return {
+    category,
+    severity: 'high',
+    confidence: 0.9,
+    title: 'Malformed output loses review coverage',
+    problem: 'the discovery response cannot be parsed as strict JSON',
+    trigger: 'a specialist emits a literal control character inside a string',
+    consequence: 'the batch is omitted from discovery coverage',
+    evidence: 'the strict parser rejects the response before candidate validation',
+    recommendation: 'serialize every string with JSON escapes',
+    location: null,
+    relatedLocations: [],
+    ...overrides
+  };
 }
 
 test('static plugin validation passes and declares no MCP integration', async () => {
@@ -406,6 +427,86 @@ test('comment join rejects duplicate fingerprints in editor output', async () =>
   };
 
   assert.throws(() => applyComments({ findings }, editorOutput), /more than one comment/);
+});
+
+test('discovery ingestion accepts escaped multiline and control characters', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-ingest-'));
+  try {
+    const rawFile = path.join(directory, 'raw.txt');
+    const resultDirectory = path.join(directory, 'results');
+    const diagnosticsDirectory = path.join(directory, 'diagnostics');
+    const evidence = 'first line\nsecond line\twith a tab\0and a nul';
+    await writeFile(rawFile, JSON.stringify([
+      discoveryCandidate('correctness', { evidence })
+    ]), { mode: 0o600 });
+
+    const result = await ingestDiscoveryResponse(
+      rawFile,
+      resultDirectory,
+      diagnosticsDirectory,
+      { agent: 'prg-correctness', batch: 1, attempt: 1 }
+    );
+
+    assert.equal(result.status, 'complete');
+    assert.equal(result.findings[0].evidence, evidence);
+    const persisted = await readFile(path.join(
+      resultDirectory,
+      discoveryResultFileName('prg-correctness', 1, 1)
+    ), 'utf8');
+    assert.match(persisted, /first line\\nsecond line\\twith a tab\\u0000and a nul/);
+    await assert.rejects(access(rawFile), { code: 'ENOENT' });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery ingestion rejects literal controls and retains only redacted diagnostics', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-invalid-'));
+  try {
+    const rawFile = path.join(directory, 'raw.txt');
+    const resultDirectory = path.join(directory, 'results');
+    const diagnosticsDirectory = path.join(directory, 'diagnostics');
+    const githubToken = ['ghp', 'abcdefghijklmnopqrstuvwxyz1234567890ABCD'].join('_');
+    const jwt = [
+      '******',
+      'eyJzdWIiOiIxMjM0NTY3ODkwIn0',
+      'c2lnbmF0dXJlMTIzNDU2'
+    ].join('.');
+    const candidate = discoveryCandidate('correctness', {
+      evidence: 'first line\nsecond line',
+      recommendation: `Authorization: ******; token=${githubToken}; jwt=${jwt}`,
+      debug: {
+        password: 'password-secret',
+        private_key: '-----BEGIN PRIVATE KEY-----\nZmFrZQ==\n-----END PRIVATE KEY-----'
+      }
+    });
+    const malformed = JSON.stringify([candidate]).replace(
+      'first line\\nsecond line',
+      'first line\nsecond line'
+    );
+    await writeFile(rawFile, malformed, { mode: 0o600 });
+
+    const result = await ingestDiscoveryResponse(
+      rawFile,
+      resultDirectory,
+      diagnosticsDirectory,
+      { agent: 'prg-correctness', batch: 1, attempt: 1 }
+    );
+
+    assert.equal(result.status, 'invalid');
+    assert.equal(result.failure.kind, 'invalid-json');
+    const diagnosticText = await readFile(result.failure.diagnostic, 'utf8');
+    const diagnostic = JSON.parse(diagnosticText);
+    assert.equal(diagnostic.failureKind, 'invalid-json');
+    assert.match(diagnosticText, /first line\\nsecond line/);
+    for (const secret of ['bearer-secret', githubToken, jwt, 'password-secret', 'ZmFrZQ==']) {
+      assert.doesNotMatch(diagnostic.response, new RegExp(secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+    assert.match(diagnostic.response, /<redacted/);
+    await assert.rejects(access(rawFile), { code: 'ENOENT' });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 const BASH4_ONLY = [
