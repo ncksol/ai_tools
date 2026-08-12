@@ -716,6 +716,63 @@ test('discovery finalize CLI emits an authoritative empty array only for complet
   }
 });
 
+test('discovery finalization classifies complete-first-plus-second as failed with explicit reason', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-reason-'));
+  try {
+    const candidate = discoveryCandidate();
+    await ingestText(directory, JSON.stringify([candidate]), {
+      agent: 'prg-correctness', batch: 1, attempt: 1
+    });
+    await ingestText(directory, JSON.stringify([candidate]), {
+      agent: 'prg-correctness', batch: 1, attempt: 2
+    });
+
+    const result = await finalizeDiscovery(
+      discoveryPlan('prg-correctness', 1),
+      path.join(directory, 'results')
+    );
+
+    assert.equal(result.coverage.status, 'failed');
+    assert.equal(result.coverage.scopes[0].status, 'failed');
+    assert.equal(result.coverage.failures[0].recovered, false);
+    assert.equal(result.coverage.failures[0].reason, 'complete-first-unexpected-retry');
+    assert.deepEqual(result.coverage.failures[0].attempts, []);
+    assert.equal(result.findings, null);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('validateAttemptEnvelope rejects an envelope when expected category is not a known discovery category', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-badcat-'));
+  try {
+    const candidate = discoveryCandidate('correctness');
+    await ingestText(directory, JSON.stringify([candidate]), {
+      agent: 'prg-correctness', batch: 1, attempt: 1
+    });
+
+    // Remove the category field from the stored result envelope so that
+    // value.category is undefined; validateAttemptEnvelope's field loop will
+    // flag it as corrupt (category does not match) before the findings check.
+    const resultFile = path.join(
+      directory, 'results',
+      discoveryResultFileName('prg-correctness', 1, 1)
+    );
+    const envelope = JSON.parse(await readFile(resultFile, 'utf8'));
+    delete envelope.category;
+    await writeFile(resultFile, JSON.stringify(envelope), { mode: 0o600 });
+
+    const result = await finalizeDiscovery(
+      discoveryPlan('prg-correctness', 1),
+      path.join(directory, 'results')
+    );
+    assert.equal(result.coverage.status, 'failed');
+    assert.equal(result.coverage.scopes[0].status, 'failed');
+    assert.equal(result.coverage.failures[0].reason, 'corrupt-envelope');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 
 const BASH4_ONLY = [
