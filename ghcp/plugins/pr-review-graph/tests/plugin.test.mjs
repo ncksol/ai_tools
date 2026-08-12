@@ -31,14 +31,20 @@ test('static plugin validation passes and declares no MCP integration', async ()
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 });
 
-test('both provider adapters delegate CLI conventions to external skills', async () => {
+test('provider adapters use skills without making one Azure access path mandatory', async () => {
   const skill = await readFile(path.join(root, 'skills/review-pull-request/SKILL.md'), 'utf8');
   const github = await readFile(path.join(root, 'skills/review-pull-request/references/github-gh-cli-provider.md'), 'utf8');
   const azure = await readFile(path.join(root, 'skills/review-pull-request/references/azure-devops-cli-provider.md'), 'utf8');
+
   assert.match(skill, /separately installed `gh-cli` skill/);
-  assert.match(skill, /separately installed `azure-devops-cli` skill/);
   assert.match(github, /First load and follow the separately installed `gh-cli` skill/);
-  assert.match(azure, /Load and follow the separately installed `azure-devops-cli` skill/);
+  assert.match(skill, /complete Azure DevOps read packet/);
+  assert.doesNotMatch(skill, /Do not substitute an Azure DevOps MCP server/);
+  assert.match(azure, /Bluebird/);
+  assert.match(azure, /env -u AZURE_DEVOPS_EXT_PAT/);
+  assert.match(azure, /collect-azure-devops-rest\.mjs/);
+  assert.match(azure, /assemble-azure-context\.mjs/);
+  assert.match(azure, /code-only access is insufficient/i);
 });
 
 test('GitHub raw data normalizes into an immutable canonical packet', async () => {

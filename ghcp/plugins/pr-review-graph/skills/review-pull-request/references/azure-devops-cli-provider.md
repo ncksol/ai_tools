@@ -1,50 +1,165 @@
-# Azure DevOps provider through `azure-devops-cli`
+# Azure DevOps provider: exhaust deterministic access routes
 
-Load and follow the separately installed `azure-devops-cli` skill before running Azure commands. Use its authentication and default-configuration conventions. Do not use an Azure DevOps MCP server, install extensions, or request a PAT.
+Load and follow the separately installed `azure-devops-cli` skill when available. Use its authentication and default-configuration conventions. Use only deterministic tools: never install extensions, run `az login`, request or mint a PAT, or change a stored default configuration.
 
-## Collection
+## 1. Safety and completeness
 
-Prefer `scripts/collect-azure-devops.sh`. Its core reads are:
+A single failed adapter is one result, not proof the PR is inaccessible. Try every available deterministic adapter — CLI, REST, optional MCP, and local Git — before concluding a capability is missing. Code-only access is insufficient, and metadata-only access is insufficient: the review requires a complete read packet covering all nine Azure DevOps capabilities before agent dispatch:
 
-```bash
-az repos pr show --id <PR_ID> --output json
-az repos pr work-item list --id <PR_ID> --output json
-az repos pr policy list --id <PR_ID> --output json
-```
+- `identity`
+- `metadata`
+- `snapshot`
+- `workItems`
+- `policies`
+- `iterations`
+- `changes`
+- `existingThreads`
+- `diff`
 
-Use the generic REST bridge for iterations, changes, and threads:
+Never persist raw provider responses, fragments, or packets inside the project tree; keep them in the `mktemp -d` work directory from Phase 1.
 
-```bash
-az devops invoke \
-  --area git \
-  --resource pullRequestIterations \
-  --route-parameters project=<PROJECT_ID> repositoryId=<REPOSITORY_ID> pullRequestId=<PR_ID> \
-  --api-version 7.1 \
-  --output json
-```
+## 2. CLI fast path
 
-```bash
-az devops invoke \
-  --area git \
-  --resource pullRequestIterationChanges \
-  --route-parameters project=<PROJECT_ID> repositoryId=<REPOSITORY_ID> pullRequestId=<PR_ID> iterationId=<ITERATION_ID> \
-  --query-parameters '$compareTo=0' '$top=2000' \
-  --api-version 7.1 \
-  --output json
-```
+Run the collector once with the current environment:
 
 ```bash
-az devops invoke \
-  --area git \
-  --resource pullRequestThreads \
-  --route-parameters project=<PROJECT_ID> repositoryId=<REPOSITORY_ID> pullRequestId=<PR_ID> \
-  --api-version 7.1 \
-  --output json
+bash <SKILL_DIR>/scripts/collect-azure-devops.sh <PR_ID> <PACKET_JSON>
 ```
 
-Pass every returned thread to deduplication, including active, fixed, closed, `wontFix`, `byDesign`, outdated, and general PR threads. Do not filter by author or status.
+Run it a second time only when `AZURE_DEVOPS_EXT_PAT` is present and the first command failed, with the injected PAT removed so the collector falls back to a stored `az login` context:
 
-Use the current local Git repository to produce the full unified diff between the captured target and source commit SHAs. Fetch missing commit objects without checkout; never execute changed code. Stop if the repository does not correspond to the PR or the commit objects cannot be obtained.
+```bash
+env -u AZURE_DEVOPS_EXT_PAT \
+  PRG_AZURE_CREDENTIAL_CONTEXT=stored-az-login \
+  bash <SKILL_DIR>/scripts/collect-azure-devops.sh <PR_ID> <PACKET_JSON>
+```
+
+Do not print either command's raw authentication error to the user or into any persisted file.
+
+After a failed CLI collector attempt, record a sanitized failure fragment before trying the next adapter:
+
+```bash
+node <SKILL_DIR>/scripts/assemble-azure-context.mjs failure \
+  azure-cli current-environment authentication \
+  "Azure CLI did not produce a complete PR packet" all \
+  <WORK_DIR>/cli-current-failure.json
+
+node <SKILL_DIR>/scripts/assemble-azure-context.mjs failure \
+  azure-cli stored-az-login authentication \
+  "Azure CLI stored login did not produce a complete PR packet" all \
+  <WORK_DIR>/cli-stored-failure.json
+```
+
+Use `tool-unavailable` instead of `authentication` when `az` or the Azure DevOps extension is absent.
+
+## 3. REST fragments
+
+Run each configured context independently:
+
+```bash
+node <SKILL_DIR>/scripts/collect-azure-devops-rest.mjs \
+  <PR_URL> anonymous <WORK_DIR>/rest-anonymous.json
+
+node <SKILL_DIR>/scripts/collect-azure-devops-rest.mjs \
+  <PR_URL> pat <WORK_DIR>/rest-pat.json
+
+node <SKILL_DIR>/scripts/collect-azure-devops-rest.mjs \
+  <PR_URL> entra <WORK_DIR>/rest-entra.json
+```
+
+Skip `pat` when `AZURE_DEVOPS_EXT_PAT` is absent. Skip `entra` when `az account get-access-token` is unavailable. Never prompt for credentials.
+
+## 4. Optional MCP fragments
+
+Inspect the available Azure DevOps tool descriptions before relying on any of them; optional MCP access is a runtime capability, not a plugin dependency. For Bluebird, call `bluebird-metadata` `connection_info` when the organization/project/repository scope is unknown, then call `bluebird-code_history` `pull_request` with the explicit organization, project, repository, PR ID, and the user's original question. Record only facts the tool actually returned.
+
+The current Bluebird PR operation can contribute identity and metadata; it does not prove exact base/target SHAs, complete threads, policies, iteration changes, or pagination. Do not mark a capability complete unless the tool contract and result together provide it. When an attempted MCP operation fails, use assembler `failure` mode with a sanitized message instead of silently omitting the attempt.
+
+Write the Bluebird fragment in this shape, replacing each runtime value only with a value returned by the tool or parsed from the supplied PR URL. This is a shape example illustrating the fabricated fixture used elsewhere in this repository, not hard-coded fallback data:
+
+```json
+{
+  "schemaVersion": "1.0",
+  "source": {
+    "adapter": "bluebird",
+    "credentialContext": "configured-mcp",
+    "capturedAt": "<RFC3339 capture time>"
+  },
+  "capabilities": {
+    "identity": {
+      "complete": true,
+      "data": {
+        "pullRequestId": 77,
+        "url": "https://dev.azure.com/fabrikam/Platform/_git/widgets/pullrequest/77",
+        "repository": {
+          "name": "widgets",
+          "webUrl": "https://dev.azure.com/fabrikam/Platform/_git/widgets",
+          "project": {
+            "name": "Platform"
+          }
+        }
+      }
+    },
+    "metadata": {
+      "complete": true,
+      "data": {
+        "title": "Require email address",
+        "description": "<exact full description returned by Bluebird>",
+        "createdBy": {
+          "displayName": "Developer"
+        },
+        "status": "active",
+        "isDraft": false,
+        "sourceRefName": "refs/heads/email-required",
+        "targetRefName": "refs/heads/main",
+        "reviewers": [
+          {
+            "displayName": "Reviewer",
+            "vote": 0
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+Omit `workItems` unless the tool returns every linked item's full fields, not just code references or IDs.
+
+## 5. Git diff fragment
+
+After authoritative snapshot SHAs and repository identity exist, reuse the existing collector's `ensure_commit` fetch behavior and:
+
+```bash
+git diff --find-renames --no-ext-diff --no-color --unified=80 "$target_sha...$source_sha" >"$diff_patch"
+```
+
+Fetch missing commit objects without checkout; never execute changed code. Stop if the local repository does not correspond to the PR or the commit objects cannot be obtained. Wrap the patch:
+
+```bash
+node <SKILL_DIR>/scripts/assemble-azure-context.mjs capability \
+  local-git configured-origin diff \
+  <WORK_DIR>/diff.patch <WORK_DIR>/git-diff.json
+```
+
+## 6. Assembly
+
+Pass every fragment that exists:
+
+```bash
+node <SKILL_DIR>/scripts/assemble-azure-context.mjs packet \
+  <PACKET_JSON> \
+  <WORK_DIR>/cli-current-failure.json \
+  <WORK_DIR>/cli-stored-failure.json \
+  <WORK_DIR>/rest-anonymous.json \
+  <WORK_DIR>/rest-pat.json \
+  <WORK_DIR>/rest-entra.json \
+  <WORK_DIR>/bluebird-identity.json \
+  <WORK_DIR>/bluebird-metadata.json \
+  <WORK_DIR>/git-diff.json
+```
+
+Include only files that exist. If assembly reports missing capabilities, show its sanitized attempt ledger and stop before agent dispatch. A complete `<PACKET_JSON>` with all nine capabilities is required; code-only access is insufficient even when the diff and changed files are complete.
 
 ## Line tracking
 
@@ -56,13 +171,13 @@ Preserve `changeTrackingId` from iteration changes. For an inline thread, includ
 
 Move findings without stable coordinates into a general PR thread.
 
-## Snapshot integrity
+## 7. Head recheck and publication
 
-Re-run `az repos pr show --id <PR_ID> --output json` immediately before publication and compare `lastMergeSourceCommit.commitId` with the packet head SHA. Refresh the review when they differ.
+Use `az repos pr show --id <PR_ID> --output json` for the head recheck when that credential context works, and compare `lastMergeSourceCommit.commitId` with the packet head SHA. When only REST access works, rerun `collect-azure-devops-rest.mjs` with the successful mode and read `capabilities.snapshot.data.lastMergeSourceCommit.commitId` from the new fragment. The current Bluebird PR operation cannot perform the recheck because it does not return the exact provider source SHA.
 
-## Publication
+Recheck immediately before preview and again after confirmation immediately before publication. Refresh the review when the SHAs differ.
 
-Generate payload files with `build-azure-threads.mjs`. Publish each approved file separately:
+Generate payload files with `build-azure-threads.mjs`. Publish each approved file separately, using `--in-file` for generated Markdown, when a CLI write context works:
 
 ```bash
 az devops invoke \
@@ -75,6 +190,6 @@ az devops invoke \
   --output json
 ```
 
-Always use `--in-file` for generated Markdown. If one thread creation fails, stop and report the successfully created thread IDs before previewing any retry.
+If one thread creation fails, stop and report the successfully created thread IDs before previewing any retry. When no credential context can write, do not block the analysis: preview the findings and state `publication unavailable`.
 
 Do not run `az repos pr set-vote`, update completion settings, abandon, reactivate, or modify the source branch.

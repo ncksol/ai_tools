@@ -59,13 +59,16 @@ if (!skillText.includes('separately installed `gh-cli` skill')) errors.push('SKI
 if (!skillText.includes('separately installed `azure-devops-cli` skill')) errors.push('SKILL.md must require the azure-devops-cli skill for Azure DevOps');
 if (!skillText.includes('`prg-deduplicator`')) errors.push('SKILL.md must include semantic existing-review deduplication');
 if (!githubProviderText.includes('First load and follow the separately installed `gh-cli` skill')) errors.push('GitHub provider must delegate to gh-cli');
-if (!azureProviderText.includes('Load and follow the separately installed `azure-devops-cli` skill')) errors.push('Azure DevOps provider must delegate to azure-devops-cli');
+if (!azureProviderText.includes('Bluebird')) errors.push('Azure DevOps provider must document Bluebird as an optional MCP adapter');
+if (!azureProviderText.includes('complete read packet')) errors.push('Azure DevOps provider must require a complete read packet');
+if (!azureProviderText.includes('collect-azure-devops-rest.mjs')) errors.push('Azure DevOps provider must document the REST collector');
+if (!azureProviderText.includes('assemble-azure-context.mjs')) errors.push('Azure DevOps provider must document the fragment assembler');
 
 for (const match of skillText.matchAll(/\]\((references\/[^)]+|scripts\/[^)]+)\)/g)) {
   await exists(path.join('skills/review-pull-request', match[1]), `SKILL.md reference ${match[1]}`);
 }
 
-for (const file of ['packet.schema.json', 'finding.schema.json', 'deduplication.schema.json']) {
+for (const file of ['packet.schema.json', 'finding.schema.json', 'deduplication.schema.json', 'azure-access-fragment.schema.json']) {
   await json(path.join('skills/review-pull-request/references', file));
 }
 
@@ -79,7 +82,9 @@ const requiredScripts = [
   'build-github-review.mjs',
   'build-azure-threads.mjs',
   'collect-github.sh',
-  'collect-azure-devops.sh'
+  'collect-azure-devops.sh',
+  'collect-azure-devops-rest.mjs',
+  'assemble-azure-context.mjs'
 ];
 for (const file of requiredScripts) await exists(path.join('skills/review-pull-request/scripts', file), `script ${file}`);
 
@@ -88,7 +93,7 @@ if (errors.length) {
   errors.forEach(error => console.error(`- ${error}`));
   process.exitCode = 1;
 } else {
-  console.log(`Plugin validation passed: ${agentFiles.length} agents, 1 skill, zero MCP and hook dependencies.`);
+  console.log(`Plugin validation passed: ${agentFiles.length} agents, 1 skill, zero required MCP and hook dependencies.`);
 }
 
 async function json(relativePath, base = root) {

@@ -23,7 +23,7 @@ Review the PR as a reporting workflow. Find concrete problems, verify them, and 
 - Read [review-graph.md](references/review-graph.md) before orchestrating agents.
 - Read [provider-contract.md](references/provider-contract.md) before collecting context.
 - For GitHub, first load and follow the separately installed `gh-cli` skill, then read [github-gh-cli-provider.md](references/github-gh-cli-provider.md). Do not substitute a GitHub MCP server.
-- For Azure DevOps, first load and follow the separately installed `azure-devops-cli` skill, then read [azure-devops-cli-provider.md](references/azure-devops-cli-provider.md). Do not substitute an Azure DevOps MCP server.
+- For Azure DevOps, load the separately installed `azure-devops-cli` skill when available, then read [azure-devops-cli-provider.md](references/azure-devops-cli-provider.md). Azure CLI failure or absence is not terminal while another deterministic adapter can contribute to a complete Azure DevOps read packet.
 - Read [author-comment-style.md](references/author-comment-style.md) before editing or publishing findings.
 - Read [superpowers-compatibility.md](references/superpowers-compatibility.md) only when Superpowers is installed or the user mentions it.
 - Use [packet.schema.json](references/packet.schema.json), [finding.schema.json](references/finding.schema.json), and [deduplication.schema.json](references/deduplication.schema.json) as the canonical data contracts.
@@ -32,12 +32,13 @@ Review the PR as a reporting workflow. Find concrete problems, verify them, and 
 
 1. Determine the provider from the URL, repository remote, or user statement.
 2. Resolve an unambiguous repository and PR identifier. Ask if a bare number could refer to multiple repositories.
-3. Confirm that required CLI authentication already works. Do not install tools or request a token.
-4. Capture the base SHA and head SHA before analysis.
-5. Create a temporary work directory outside the repository with `mktemp -d`. Do not persist review packets in the project tree.
-6. Collect metadata, changed files, unified diff, checks or policies, requirements, and existing review comments.
-7. Normalize the raw provider bundle with `scripts/normalize-context.mjs`.
-8. Inspect `limits.warnings` and `limits.truncatedFiles`. Do not claim a complete review when material context is missing.
+3. Create a temporary work directory outside the repository with `mktemp -d`. Do not persist review packets, fragments, provider responses, or access diagnostics in the project tree.
+4. For GitHub, confirm the required CLI authentication works and use the GitHub collector.
+5. For Azure DevOps, follow the provider reference's capability ledger. Try the complete CLI collector first, then probe every available deterministic adapter for missing capabilities. Optional MCP tools such as Bluebird may contribute only the facts their tool contracts expose.
+6. Capture provider-reported base and head SHAs before analysis.
+7. Require metadata, full description, linked work items, policies, iterations, iteration changes, all existing threads/comments, and changed-file content. Code-only or metadata-only access is incomplete.
+8. Normalize or assemble the provider bundle with the bundled scripts.
+9. Inspect `limits.warnings`, `limits.truncatedFiles`, and `providerData.access`. Do not dispatch discovery agents or claim a review when material context or a required Azure capability is missing.
 
 Prefer the bundled provider collection scripts when their prerequisites fit the environment:
 
@@ -49,7 +50,7 @@ bash <SKILL_DIR>/scripts/collect-github.sh <PR> <PACKET_JSON>
 bash <SKILL_DIR>/scripts/collect-azure-devops.sh <PR_ID> <PACKET_JSON>
 ```
 
-The collectors are deterministic helpers for commands described by `gh-cli` and `azure-devops-cli`; loading the matching provider skill remains mandatory. If the required provider skill is unavailable, stop with an actionable dependency message rather than improvising a replacement integration.
+For Azure DevOps, a failed collector command is one adapter result, not proof that the PR is inaccessible. Follow the fallback and fragment-composition sequence in the provider reference. The review may proceed only after `assemble-azure-context.mjs` produces a complete packet.
 
 ## Phase 2: Build the graph
 
@@ -128,7 +129,7 @@ The join fails if the editor invents a fingerprint or leaves a finding without c
 
 Before previewing:
 
-1. Fetch the provider's current head SHA.
+1. Fetch the provider's current head SHA. For Azure DevOps, use the provider reference's head recheck sequence.
 2. Compare it with `pullRequest.head.sha` in the packet.
 3. If it differs, stop and refresh the packet; do not reuse line positions.
 
@@ -161,7 +162,7 @@ node <SKILL_DIR>/scripts/build-azure-threads.mjs \
   <PACKET_JSON> <FINAL_FINDINGS_JSON> <THREAD_PAYLOAD_DIR>
 ```
 
-Publish the approved files with `az devops invoke --in-file` as described in the Azure provider reference.
+Recheck the head SHA again immediately after confirmation and immediately before publication, using the provider reference's recheck sequence. Publish the approved files with `az devops invoke --in-file` as described in the Azure provider reference. A complete read packet with no working write route still receives a preview marked `publication unavailable`; do not block the analysis on the absence of a write path.
 
 Do not publish an empty review unless the user requests a clean-review comment.
 
