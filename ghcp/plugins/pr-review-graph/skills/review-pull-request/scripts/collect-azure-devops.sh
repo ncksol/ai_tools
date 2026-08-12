@@ -107,9 +107,10 @@ ensure_commit "$source_sha" "$source_ref"
 git diff --find-renames --no-ext-diff --no-color --unified=80 "$target_sha...$source_sha" >"$work_dir/diff.patch"
 
 mkdir -p "$(dirname "$output_file")"
-node "$script_dir/normalize-context.mjs" \
-  --provider azure-devops \
-  --input-dir "$work_dir" \
-  --output "$output_file"
+node "$script_dir/assemble-azure-context.mjs" directory \
+  "$work_dir" \
+  azure-cli \
+  "${PRG_AZURE_CREDENTIAL_CONTEXT:-current-environment}" \
+  "$output_file"
 
 echo "Captured Azure DevOps PR $repository_name!$pr_id at $output_file"
