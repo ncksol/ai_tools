@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pr-review-graph.local/deduplication.schema.json",
+  "title": "PR Review Graph deduplication batch result",
+  "type": "object",
+  "required": ["batchId", "decisions"],
+  "properties": {
+    "batchId": {"type": "string", "pattern": "^batch-[0-9]{3}$"},
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["fingerprint", "verdict", "matchedThreadIds", "reason"],
+        "properties": {
+          "fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "verdict": {"enum": ["duplicate", "distinct", "uncertain"]},
+          "matchedThreadIds": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+          "reason": {"type": "string", "minLength": 5}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

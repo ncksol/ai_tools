@@ -1,0 +1,30 @@
+[
+  {
+    "category": "security",
+    "severity": "high",
+    "confidence": 0.94,
+    "title": "Request parameter is interpolated into SQL",
+    "problem": "the changed query interpolates attacker-controlled input directly into SQL",
+    "trigger": "a caller supplies SQL syntax in the id query parameter",
+    "consequence": "the caller can alter the database query and access or modify unintended data",
+    "evidence": "the new line inserts req.query.id into a template literal passed directly to db.query",
+    "recommendation": "keep the parameterized query and validate that the identifier is numeric",
+    "location": {"path": "src/user.js", "line": 11, "side": "RIGHT"},
+    "relatedLocations": [],
+    "verification": {"verdict": "verified", "reason": "The supplied value reaches the SQL parser without parameter binding."}
+  },
+  {
+    "category": "contract",
+    "severity": "medium",
+    "confidence": 0.88,
+    "title": "Lookup accepts non-numeric identifiers",
+    "problem": "the changed path no longer enforces the numeric identifier contract",
+    "trigger": "the request contains a non-numeric id",
+    "consequence": "the endpoint sends an invalid lookup to the database",
+    "evidence": "the PR requirement says numeric ID while the changed line passes the raw query value",
+    "recommendation": "validate and reject non-numeric identifiers before constructing the query",
+    "location": {"path": "src/user.js", "line": 999, "side": "RIGHT"},
+    "relatedLocations": [],
+    "verification": {"verdict": "verified", "reason": "The explicit numeric-ID requirement is not enforced by the changed path."}
+  }
+]

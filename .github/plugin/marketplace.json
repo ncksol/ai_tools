@@ -1,0 +1,30 @@
+{
+  "name": "ai-tools",
+  "owner": {
+    "name": "Nick Sologoub"
+  },
+  "metadata": {
+    "description": "AI assistant tooling: GitHub Copilot CLI plugins, skills, and agents.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "pr-review-graph",
+      "description": "High-signal pull request reviews through a bounded multi-agent graph, with gh-cli and azure-devops-cli skill-backed providers.",
+      "version": "0.2.0",
+      "source": "./ghcp/plugins/pr-review-graph",
+      "author": {
+        "name": "Nick Sologoub"
+      },
+      "license": "MIT",
+      "category": "development",
+      "keywords": [
+        "pull-request",
+        "code-review",
+        "github-cli",
+        "azure-devops",
+        "multi-agent"
+      ]
+    }
+  ]
+}

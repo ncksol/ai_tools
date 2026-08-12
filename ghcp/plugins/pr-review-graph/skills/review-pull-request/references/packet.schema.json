@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pr-review-graph.local/packet.schema.json",
+  "title": "PR Review Graph packet",
+  "type": "object",
+  "required": ["schemaVersion", "provider", "repository", "pullRequest", "files", "existingThreads", "checks", "requirements", "limits", "collectedAt"],
+  "properties": {
+    "schemaVersion": {"const": "1.0"},
+    "provider": {"enum": ["github", "azure-devops"]},
+    "repository": {
+      "type": "object",
+      "required": ["id", "name", "url"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "name": {"type": "string", "minLength": 1},
+        "url": {"type": "string", "minLength": 1},
+        "owner": {"type": ["string", "null"]},
+        "project": {"type": ["string", "null"]},
+        "defaultBranch": {"type": ["string", "null"]}
+      },
+      "additionalProperties": true
+    },
+    "pullRequest": {
+      "type": "object",
+      "required": ["id", "number", "url", "title", "description", "base", "head"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "number": {"type": "integer", "minimum": 1},
+        "url": {"type": "string", "minLength": 1},
+        "title": {"type": "string"},
+        "description": {"type": "string"},
+        "author": {"type": ["string", "null"]},
+        "draft": {"type": "boolean"},
+        "base": {"$ref": "#/$defs/ref"},
+        "head": {"$ref": "#/$defs/ref"}
+      },
+      "additionalProperties": true
+    },
+    "files": {"type": "array", "items": {"$ref": "#/$defs/file"}},
+    "existingThreads": {"type": "array", "items": {"type": "object"}},
+    "checks": {"type": "array", "items": {"type": "object"}},
+    "requirements": {"type": "array", "items": {"type": "object"}},
+    "limits": {
+      "type": "object",
+      "required": ["warnings", "truncatedFiles"],
+      "properties": {
+        "warnings": {"type": "array", "items": {"type": "string"}},
+        "truncatedFiles": {"type": "array", "items": {"type": "object"}}
+      }
+    },
+    "collectedAt": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "ref": {
+      "type": "object",
+      "required": ["ref", "sha"],
+      "properties": {"ref": {"type": "string"}, "sha": {"type": "string", "minLength": 7}}
+    },
+    "file": {
+      "type": "object",
+      "required": ["path", "status", "patch", "isBinary"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "previousPath": {"type": ["string", "null"]},
+        "status": {"type": "string"},
+        "additions": {"type": ["integer", "null"]},
+        "deletions": {"type": ["integer", "null"]},
+        "patch": {"type": ["string", "null"]},
+        "isBinary": {"type": "boolean"},
+        "changeTrackingId": {"type": ["integer", "null"]}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
