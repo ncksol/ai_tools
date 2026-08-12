@@ -16,6 +16,7 @@ import { buildAzureThreads } from '../skills/review-pull-request/scripts/build-a
 import { applyComments } from '../skills/review-pull-request/scripts/apply-comments.mjs';
 import {
   discoveryResultFileName,
+  finalizeDiscovery,
   ingestDiscoveryResponse
 } from '../skills/review-pull-request/scripts/process-discovery.mjs';
 
@@ -559,6 +560,157 @@ test('discovery ingestion cleans up diagnostic if result write fails', async () 
       const diagnosticPath = path.join(diagnosticsDirectory, 'prg-correctness-batch-001-attempt-1.failure.json');
       await assert.rejects(access(diagnosticPath), { code: 'ENOENT' });
     }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+function discoveryPlan(agent, batchCount) {
+  return {
+    schemaVersion: '1.0',
+    agents: [{
+      name: agent,
+      batches: Array.from({ length: batchCount }, (_, index) => [`file-${index + 1}.js`])
+    }]
+  };
+}
+
+async function ingestText(directory, text, metadata) {
+  const rawFile = path.join(
+    directory,
+    `${metadata.agent}-${metadata.batch}-${metadata.attempt}.raw`
+  );
+  await writeFile(rawFile, text, { mode: 0o600 });
+  return ingestDiscoveryResponse(
+    rawFile,
+    path.join(directory, 'results'),
+    path.join(directory, 'diagnostics'),
+    metadata
+  );
+}
+
+test('discovery finalization treats a valid retry as complete coverage', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-retry-'));
+  try {
+    const candidate = discoveryCandidate();
+    const malformed = JSON.stringify([{
+      ...candidate,
+      evidence: 'first line\nsecond line'
+    }]).replace('first line\\nsecond line', 'first line\nsecond line');
+    await ingestText(directory, malformed, {
+      agent: 'prg-correctness', batch: 1, attempt: 1
+    });
+    await ingestText(directory, JSON.stringify([candidate]), {
+      agent: 'prg-correctness', batch: 1, attempt: 2
+    });
+
+    const result = await finalizeDiscovery(
+      discoveryPlan('prg-correctness', 1),
+      path.join(directory, 'results')
+    );
+
+    assert.equal(result.coverage.status, 'complete');
+    assert.deepEqual(result.coverage.scopes[0], {
+      agent: 'prg-correctness',
+      status: 'complete',
+      expectedBatches: 1,
+      completedBatches: 1,
+      recoveredBatches: 1,
+      failedBatches: 0
+    });
+    assert.equal(result.findings.length, 1);
+    assert.equal(result.coverage.failures[0].attempts[0].attempt, 1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery finalization fails closed when one batch remains invalid', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-partial-'));
+  try {
+    await ingestText(directory, '[]', {
+      agent: 'prg-correctness', batch: 1, attempt: 1
+    });
+    for (const attempt of [1, 2]) {
+      await ingestText(directory, '[{"evidence":"literal\nnewline"}]', {
+        agent: 'prg-correctness', batch: 2, attempt
+      });
+    }
+
+    const result = await finalizeDiscovery(
+      discoveryPlan('prg-correctness', 2),
+      path.join(directory, 'results')
+    );
+
+    assert.equal(result.coverage.status, 'failed');
+    assert.equal(result.coverage.scopes[0].status, 'incomplete');
+    assert.equal(result.coverage.scopes[0].completedBatches, 1);
+    assert.equal(result.coverage.scopes[0].failedBatches, 1);
+    assert.equal(result.findings, null);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery finalize CLI removes stale candidates on failed coverage', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-cli-'));
+  try {
+    const planFile = path.join(directory, 'plan.json');
+    const resultDirectory = path.join(directory, 'results');
+    const candidatesFile = path.join(directory, 'candidates.json');
+    const coverageFile = path.join(directory, 'coverage.json');
+    await writeFile(planFile, JSON.stringify(discoveryPlan('prg-correctness', 1)));
+    await writeFile(candidatesFile, '[]\n');
+    await ingestText(directory, '[{"evidence":"literal\nnewline"}]', {
+      agent: 'prg-correctness', batch: 1, attempt: 1
+    });
+    await ingestText(directory, '[{"evidence":"literal\nnewline"}]', {
+      agent: 'prg-correctness', batch: 1, attempt: 2
+    });
+
+    const cli = spawnSync(process.execPath, [
+      'skills/review-pull-request/scripts/process-discovery.mjs',
+      'finalize',
+      planFile,
+      resultDirectory,
+      candidatesFile,
+      coverageFile
+    ], { cwd: root, encoding: 'utf8' });
+
+    assert.equal(cli.status, 1, cli.stderr);
+    await assert.rejects(access(candidatesFile), { code: 'ENOENT' });
+    const coverage = JSON.parse(await readFile(coverageFile, 'utf8'));
+    assert.equal(coverage.status, 'failed');
+    assert.equal(coverage.scopes[0].status, 'failed');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery finalize CLI emits an authoritative empty array only for complete coverage', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-empty-'));
+  try {
+    const planFile = path.join(directory, 'plan.json');
+    const resultDirectory = path.join(directory, 'results');
+    const candidatesFile = path.join(directory, 'candidates.json');
+    const coverageFile = path.join(directory, 'coverage.json');
+    await writeFile(planFile, JSON.stringify(discoveryPlan('prg-correctness', 1)));
+    await ingestText(directory, '[]', {
+      agent: 'prg-correctness', batch: 1, attempt: 1
+    });
+
+    const cli = spawnSync(process.execPath, [
+      'skills/review-pull-request/scripts/process-discovery.mjs',
+      'finalize',
+      planFile,
+      resultDirectory,
+      candidatesFile,
+      coverageFile
+    ], { cwd: root, encoding: 'utf8' });
+
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.deepEqual(JSON.parse(await readFile(candidatesFile, 'utf8')), []);
+    assert.equal(JSON.parse(await readFile(coverageFile, 'utf8')).status, 'complete');
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

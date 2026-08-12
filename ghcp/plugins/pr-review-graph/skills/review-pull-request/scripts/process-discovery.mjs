@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { isMain, parseFlags } from './lib.mjs';
@@ -196,19 +196,197 @@ export async function ingestDiscoveryResponse(
   }
 }
 
+function validateAttemptEnvelope(value, expected) {
+  const problems = [];
+  for (const field of ['agent', 'category', 'batch', 'attempt']) {
+    if (value?.[field] !== expected[field]) {
+      problems.push(`${field} does not match the expected attempt`);
+    }
+  }
+  if (!['complete', 'invalid'].includes(value?.status)) {
+    problems.push('status must be complete or invalid');
+  }
+  if (value?.status === 'complete') {
+    const validation = validateFindings(value.findings, { mode: 'candidate' });
+    problems.push(...validation.errors);
+    for (const [index, finding] of (value.findings ?? []).entries()) {
+      if (finding.category !== expected.category) {
+        problems.push(`finding[${index}].category must be ${expected.category}`);
+      }
+    }
+  }
+  if (value?.status === 'invalid') {
+    if (typeof value.failure?.kind !== 'string') problems.push('invalid result needs failure.kind');
+    if (typeof value.failure?.diagnostic !== 'string') problems.push('invalid result needs failure.diagnostic');
+  }
+  return problems;
+}
+
+async function readAttempt(resultDirectory, expected) {
+  const file = path.join(
+    resultDirectory,
+    discoveryResultFileName(expected.agent, expected.batch, expected.attempt)
+  );
+  let value;
+  try {
+    value = JSON.parse(await readFile(file, 'utf8'));
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { state: 'missing', file };
+    return { state: 'corrupt', file };
+  }
+  const problems = validateAttemptEnvelope(value, expected);
+  return problems.length
+    ? { state: 'corrupt', file, problems }
+    : { state: value.status, file, value };
+}
+
+async function listResultFiles(resultDirectory) {
+  try {
+    return (await readdir(resultDirectory)).filter(file => file.endsWith('.json'));
+  } catch (error) {
+    if (error?.code === 'ENOENT') return [];
+    throw error;
+  }
+}
+
+export async function finalizeDiscovery(plan, resultDirectory) {
+  const scopes = [];
+  const failures = [];
+  const partialFindings = [];
+  const expectedFiles = new Set();
+
+  for (const agentPlan of plan.agents ?? []) {
+    const category = DISCOVERY_CATEGORIES[agentPlan.name];
+    if (!category || !Array.isArray(agentPlan.batches)) {
+      throw new Error(`Invalid discovery plan entry for ${agentPlan.name ?? '<unnamed>'}`);
+    }
+    let completedBatches = 0;
+    let recoveredBatches = 0;
+    let failedBatches = 0;
+
+    for (let index = 0; index < agentPlan.batches.length; index += 1) {
+      const batch = index + 1;
+      for (const attempt of [1, 2]) {
+        expectedFiles.add(discoveryResultFileName(agentPlan.name, batch, attempt));
+      }
+      const expected = { agent: agentPlan.name, category, batch };
+      const first = await readAttempt(resultDirectory, { ...expected, attempt: 1 });
+      const second = await readAttempt(resultDirectory, { ...expected, attempt: 2 });
+      const secondExists = second.state !== 'missing';
+      let terminal = null;
+
+      if (first.state === 'complete' && !secondExists) {
+        terminal = first.value;
+      } else if (first.state === 'invalid' && second.state === 'complete') {
+        terminal = second.value;
+        recoveredBatches += 1;
+      }
+
+      const invalidAttempts = [first, second]
+        .filter(item => item.state === 'invalid')
+        .map(item => ({
+          attempt: item.value.attempt,
+          kind: item.value.failure.kind,
+          diagnostic: item.value.failure.diagnostic
+        }));
+
+      if (terminal) {
+        completedBatches += 1;
+        partialFindings.push(...terminal.findings);
+        if (invalidAttempts.length) {
+          failures.push({ agent: agentPlan.name, batch, recovered: true, attempts: invalidAttempts });
+        }
+      } else {
+        failedBatches += 1;
+        failures.push({
+          agent: agentPlan.name,
+          batch,
+          recovered: false,
+          attempts: invalidAttempts,
+          protocolStates: [first.state, second.state]
+        });
+      }
+    }
+
+    const expectedBatches = agentPlan.batches.length;
+    const status = completedBatches === expectedBatches
+      ? 'complete'
+      : completedBatches === 0
+        ? 'failed'
+        : 'incomplete';
+    scopes.push({
+      agent: agentPlan.name,
+      status,
+      expectedBatches,
+      completedBatches,
+      recoveredBatches,
+      failedBatches
+    });
+  }
+
+  const actualFiles = await listResultFiles(resultDirectory);
+  const protocolProblems = actualFiles
+    .filter(file => !expectedFiles.has(file))
+    .map(file => `Unexpected attempt result: ${file}`);
+  const complete = scopes.every(scope => scope.status === 'complete') && !protocolProblems.length;
+  const coverage = {
+    schemaVersion: '1.0',
+    status: complete ? 'complete' : 'failed',
+    scopes,
+    failures,
+    protocolProblems,
+    ...(complete
+      ? { candidateCount: partialFindings.length }
+      : { partialCandidateCount: partialFindings.length })
+  };
+  return { coverage, findings: complete ? partialFindings : null };
+}
+
+async function overwritePrivateJson(file, value) {
+  await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+  await rm(file, { force: true });
+  await writeFile(file, `${JSON.stringify(value, null, 2)}\n`, {
+    encoding: 'utf8',
+    flag: 'wx',
+    mode: 0o600
+  });
+}
+
 async function main() {
   const flags = parseFlags(process.argv.slice(2));
-  const [mode, rawFile, resultDirectory, diagnosticsDirectory] = flags._;
-  if (mode !== 'ingest' || !rawFile || !resultDirectory || !diagnosticsDirectory) {
-    throw new Error('Usage: process-discovery.mjs ingest RAW_RESPONSE_FILE RESULTS_DIR DIAGNOSTICS_DIR --agent NAME --batch N --attempt 1|2');
+  const [mode, ...args] = flags._;
+  if (mode === 'ingest') {
+    const [rawFile, resultDirectory, diagnosticsDirectory] = args;
+    if (!rawFile || !resultDirectory || !diagnosticsDirectory) {
+      throw new Error('Usage: process-discovery.mjs ingest RAW_RESPONSE_FILE RESULTS_DIR DIAGNOSTICS_DIR --agent NAME --batch N --attempt 1|2');
+    }
+    const result = await ingestDiscoveryResponse(
+      path.resolve(rawFile),
+      path.resolve(resultDirectory),
+      path.resolve(diagnosticsDirectory),
+      { agent: flags.agent, batch: flags.batch, attempt: flags.attempt }
+    );
+    if (result.status !== 'complete') process.exitCode = 1;
+    return;
   }
-  const result = await ingestDiscoveryResponse(
-    path.resolve(rawFile),
-    path.resolve(resultDirectory),
-    path.resolve(diagnosticsDirectory),
-    { agent: flags.agent, batch: flags.batch, attempt: flags.attempt }
-  );
-  if (result.status !== 'complete') process.exitCode = 1;
+  if (mode === 'finalize') {
+    const [planFile, resultDirectory, candidatesFile, coverageFile] = args;
+    if (!planFile || !resultDirectory || !candidatesFile || !coverageFile) {
+      throw new Error('Usage: process-discovery.mjs finalize PLAN_JSON RESULTS_DIR CANDIDATES_JSON COVERAGE_JSON');
+    }
+    const plan = JSON.parse(await readFile(path.resolve(planFile), 'utf8'));
+    const candidates = path.resolve(candidatesFile);
+    const { coverage, findings } = await finalizeDiscovery(plan, path.resolve(resultDirectory));
+    await rm(candidates, { force: true });
+    await overwritePrivateJson(path.resolve(coverageFile), coverage);
+    if (coverage.status === 'complete') {
+      await overwritePrivateJson(candidates, findings);
+    } else {
+      process.exitCode = 1;
+    }
+    return;
+  }
+  throw new Error('First argument must be ingest or finalize');
 }
 
 if (isMain(import.meta.url)) {
