@@ -2,7 +2,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { isMain, writeJson } from './lib.mjs';
-import { validateAzureFragment } from './assemble-azure-context.mjs';
+import { downgradeMalformedCapabilities, validateAzureFragment } from './assemble-azure-context.mjs';
 
 const execFileAsync = promisify(execFile);
 export const AZURE_DEVOPS_RESOURCE = '499b84ac-1321-427f-aa17-267ca6975798';
@@ -45,9 +45,10 @@ function asValue(value) {
   return [];
 }
 
-async function pagedPolicyEvaluations(root, artifactId, get) {
+export async function pagedPolicyEvaluations(root, artifactId, get) {
   const all = [];
   let skip = 0;
+  let seenPage = null;
   for (;;) {
     const encodedArtifactId = encodeURIComponent(artifactId);
     const url = `${root}/_apis/policy/evaluations?artifactId=${encodedArtifactId}&includeNotApplicable=true&api-version=7.1&%24top=100&%24skip=${skip}`;
@@ -55,6 +56,11 @@ async function pagedPolicyEvaluations(root, artifactId, get) {
     const items = asValue(page);
     all.push(...items);
     if (items.length < 100) break;
+    const signature = JSON.stringify(items);
+    if (signature === seenPage) {
+      throw accessError('malformed', 'repeated Azure policy evaluation page');
+    }
+    seenPage = signature;
     skip += items.length;
   }
   return { value: all };
@@ -153,6 +159,19 @@ export async function authorizationForMode(mode, {
   throw new Error(`Unsupported Azure REST credential mode: ${mode}`);
 }
 
+function backoffMilliseconds(attempt) {
+  return 2 ** attempt * 1000;
+}
+
+// Retry-After counts only when the server actually sent a usable delay.
+function retryAfterMilliseconds(response) {
+  const header = response.headers.get('retry-after');
+  if (header === null) return null;
+  const seconds = Number(header);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  return seconds * 1000;
+}
+
 export async function requestJson(url, {
   authorization,
   operation,
@@ -170,8 +189,8 @@ export async function requestJson(url, {
         signal: AbortSignal.timeout(30_000)
       });
     } catch {
-      if (attempt === 2) throw accessError('transient', `${operation} timed out after 3 attempts`);
-      await sleep(2 ** attempt * 1000);
+      if (attempt === 2) throw accessError('transient', `${operation} failed after 3 attempts (network, TLS, or timeout error)`);
+      await sleep(backoffMilliseconds(attempt));
       continue;
     }
     if (response.ok) return response.json();
@@ -180,8 +199,7 @@ export async function requestJson(url, {
     }
     if (response.status === 429 || response.status >= 500) {
       if (attempt === 2) throw accessError('transient', `HTTP ${response.status} from ${operation} after 3 attempts`);
-      const retryAfter = Number(response.headers.get('retry-after'));
-      await sleep(Number.isFinite(retryAfter) ? retryAfter * 1000 : 2 ** attempt * 1000);
+      await sleep(retryAfterMilliseconds(response) ?? backoffMilliseconds(attempt));
       continue;
     }
     throw accessError('malformed', `HTTP ${response.status} from ${operation}`);
@@ -277,7 +295,11 @@ export async function collectAzureDevOpsRest({
     get(`${pullRoot}/threads?api-version=7.1`, 'pull request threads')
   );
 
-  return validateAzureFragment({ schemaVersion: '1.0', source, capabilities });
+  return validateAzureFragment({
+    schemaVersion: '1.0',
+    source,
+    capabilities: downgradeMalformedCapabilities(capabilities)
+  });
 }
 
 export function failedAzureRestFragment(credentialContext, error) {

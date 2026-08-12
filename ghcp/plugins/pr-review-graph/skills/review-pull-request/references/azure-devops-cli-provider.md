@@ -75,7 +75,7 @@ Inspect the available Azure DevOps tool descriptions before relying on any of th
 
 The current Bluebird PR operation can contribute identity and metadata; it does not prove exact base/target SHAs, complete threads, policies, iteration changes, or pagination. Do not mark a capability complete unless the tool contract and result together provide it. When an attempted MCP operation fails, use assembler `failure` mode with a sanitized message instead of silently omitting the attempt.
 
-Write the Bluebird fragment in this shape, replacing each runtime value only with a value returned by the tool or parsed from the supplied PR URL. This is a shape example illustrating the fabricated fixture used elsewhere in this repository, not hard-coded fallback data:
+Write one Bluebird fragment, `<WORK_DIR>/bluebird.json`, holding every capability the tool actually satisfied. Replace each runtime value only with a value returned by the tool or parsed from the supplied PR URL. This is a shape example illustrating the fabricated fixture used elsewhere in this repository, not hard-coded fallback data:
 
 ```json
 {
@@ -154,12 +154,11 @@ node <SKILL_DIR>/scripts/assemble-azure-context.mjs packet \
   <WORK_DIR>/rest-anonymous.json \
   <WORK_DIR>/rest-pat.json \
   <WORK_DIR>/rest-entra.json \
-  <WORK_DIR>/bluebird-identity.json \
-  <WORK_DIR>/bluebird-metadata.json \
+  <WORK_DIR>/bluebird.json \
   <WORK_DIR>/git-diff.json
 ```
 
-Include only files that exist. If assembly reports missing capabilities, show its sanitized attempt ledger and stop before agent dispatch. A complete `<PACKET_JSON>` with all nine capabilities is required; code-only access is insufficient even when the diff and changed files are complete.
+Include only files that exist. For a capability more than one fragment completed, the assembler prefers `azure-cli` and `azure-rest` over hand-transcribed MCP or manual fragments regardless of capture order, and every candidate stays in the attempt ledger. If assembly reports missing capabilities, show its sanitized attempt ledger and stop before agent dispatch. A complete `<PACKET_JSON>` with all nine capabilities is required; code-only access is insufficient even when the diff and changed files are complete.
 
 ## Line tracking
 

@@ -186,11 +186,98 @@ test('empty-string head SHA is rejected — by fragment validation and by agreem
   );
 });
 
+test('identity fragments with disjoint id and name keys describe the same PR', () => {
+  const pr = raw.pullRequest;
+  const input = structuredClone(fragments());
+  // Bluebird transcribes display names only.
+  input[0].capabilities.identity = complete({
+    pullRequestId: pr.pullRequestId,
+    url: `${pr.repository.webUrl}/pullrequest/${pr.pullRequestId}`,
+    repository: {
+      name: pr.repository.name,
+      webUrl: pr.repository.webUrl,
+      project: { name: pr.repository.project.name }
+    }
+  });
+  // REST returns GUIDs only.
+  input[1].capabilities.identity = complete({
+    pullRequestId: pr.pullRequestId,
+    url: `${pr.repository.webUrl}/pullrequest/${pr.pullRequestId}`,
+    repository: {
+      id: pr.repository.id,
+      webUrl: pr.repository.webUrl,
+      project: { id: pr.repository.project.id }
+    }
+  });
+
+  const packet = assembleAzureFragments(input);
+  assert.equal(packet.pullRequest.number, 77);
+
+  // A key both candidates carry must still agree.
+  const conflicting = structuredClone(input);
+  conflicting.push({
+    schemaVersion: '1.0',
+    source: source('other-adapter'),
+    capabilities: {
+      identity: complete({
+        pullRequestId: pr.pullRequestId,
+        url: `${pr.repository.webUrl}/pullrequest/${pr.pullRequestId}`,
+        repository: { id: 'different-repo-guid', project: { id: pr.repository.project.id } }
+      })
+    }
+  });
+  assert.throws(() => assembleAzureFragments(conflicting), /Conflicting Azure PR identity/);
+});
+
+test('authoritative adapters outrank a later hand-transcribed fragment per capability', () => {
+  const pr = raw.pullRequest;
+  const input = structuredClone(fragments());
+  const rest = input.find(fragment => fragment.source.adapter === 'azure-rest');
+  const bluebird = input.find(fragment => fragment.source.adapter === 'bluebird');
+
+  rest.capabilities.identity = complete({
+    pullRequestId: pr.pullRequestId,
+    url: `${pr.repository.webUrl}/pullrequest/${pr.pullRequestId}`,
+    repository: pr.repository
+  });
+  rest.capabilities.metadata = complete({
+    title: pr.title,
+    description: pr.description,
+    createdBy: pr.createdBy,
+    status: 'active',
+    isDraft: false,
+    sourceRefName: pr.sourceRefName,
+    targetRefName: pr.targetRefName,
+    reviewers: []
+  });
+  rest.capabilities.workItems = { complete: false, failure: { category: 'authentication', message: 'HTTP 403 from work item 901' } };
+
+  // The MCP fragment is captured later but is hand transcribed.
+  bluebird.source.capturedAt = '2026-08-12T13:00:00.000Z';
+  bluebird.capabilities.metadata.data.description = 'truncated transcription';
+  bluebird.capabilities.workItems = complete(raw.workItems);
+
+  const packet = assembleAzureFragments(input);
+  const capabilities = packet.providerData.access.capabilities;
+  assert.equal(capabilities.identity.adapter, 'azure-rest');
+  assert.equal(capabilities.metadata.adapter, 'azure-rest');
+  assert.equal(packet.pullRequest.description, pr.description);
+  // Bluebird still fills a capability no authoritative adapter completed.
+  assert.equal(capabilities.workItems.adapter, 'bluebird');
+  assert.ok(packet.providerData.access.attempts.some(
+    attempt => attempt.capability === 'metadata' && attempt.source.adapter === 'bluebird'
+  ));
+  assert.ok(packet.providerData.access.attempts.some(
+    attempt => attempt.capability === 'workItems' && attempt.source.adapter === 'azure-rest' && !attempt.complete
+  ));
+});
+
 import {
   AZURE_DEVOPS_RESOURCE,
   collectAzureDevOpsRest,
   failedAzureRestFragment,
   pagedIterationChanges,
+  pagedPolicyEvaluations,
   requestJson
 } from '../skills/review-pull-request/scripts/collect-azure-devops-rest.mjs';
 
@@ -297,6 +384,7 @@ test('REST keeps independent capabilities when linked work-item details are forb
 
 test('REST retries transient responses without exposing response bodies', async () => {
   let attempts = 0;
+  const delays = [];
   const fetchImpl = async () => {
     attempts += 1;
     if (attempts < 3) return jsonResponse({ secret: 'must-not-appear' }, 503);
@@ -306,10 +394,101 @@ test('REST retries transient responses without exposing response bodies', async 
     authorization: ['Bearer', 'must-not-appear'].join(' '),
     operation: 'test operation',
     fetchImpl,
-    sleep: async () => {}
+    sleep: async milliseconds => { delays.push(milliseconds); }
   });
   assert.deepEqual(value, { ok: true });
   assert.equal(attempts, 3);
+  // No Retry-After header means exponential backoff, never a zero-length sleep.
+  assert.deepEqual(delays, [1000, 2000]);
+});
+
+test('REST uses Retry-After only when it is present, finite, and positive', async () => {
+  async function delaysFor(headers) {
+    let attempts = 0;
+    const delays = [];
+    await requestJson('https://example.invalid', {
+      operation: 'test operation',
+      fetchImpl: async () => {
+        attempts += 1;
+        if (attempts < 3) return jsonResponse({}, 429, headers);
+        return jsonResponse({ ok: true });
+      },
+      sleep: async milliseconds => { delays.push(milliseconds); }
+    });
+    return delays;
+  }
+
+  assert.deepEqual(await delaysFor({ 'retry-after': '3' }), [3000, 3000]);
+  assert.deepEqual(await delaysFor({ 'retry-after': '0' }), [1000, 2000]);
+  assert.deepEqual(await delaysFor({ 'retry-after': 'later' }), [1000, 2000]);
+});
+
+test('REST reports exhausted network failures without claiming they were timeouts', async () => {
+  const delays = [];
+  await assert.rejects(
+    () => requestJson('https://example.invalid', {
+      operation: 'pull request',
+      fetchImpl: async () => { throw new Error('getaddrinfo ENOTFOUND must-not-appear'); },
+      sleep: async milliseconds => { delays.push(milliseconds); }
+    }),
+    error => {
+      assert.equal(error.category, 'transient');
+      assert.doesNotMatch(error.message, /^pull request timed out/);
+      assert.match(error.message, /pull request failed after 3 attempts/);
+      assert.doesNotMatch(error.message, /must-not-appear/);
+      return true;
+    }
+  );
+  assert.deepEqual(delays, [1000, 2000]);
+});
+
+test('REST rejects a repeated policy-evaluation page instead of looping forever', async () => {
+  let calls = 0;
+  const page = { value: Array.from({ length: 100 }, (unused, index) => ({ evaluationId: `e${index}` })) };
+  await assert.rejects(
+    () => pagedPolicyEvaluations(
+      'https://dev.azure.com/acme/project',
+      'vstfs:///CodeReview/CodeReviewId/project-guid/77',
+      async () => {
+        calls += 1;
+        return structuredClone(page);
+      }
+    ),
+    /repeated Azure policy evaluation page/
+  );
+  assert.equal(calls, 2);
+});
+
+test('one malformed REST capability is downgraded without discarding the others', async () => {
+  const pr = structuredClone(raw.pullRequest);
+  pr.lastMergeSourceCommit = { commitId: '' };
+  const fetchImpl = async url => {
+    const value = String(url);
+    if (value.includes('/_apis/git/pullrequests/77?')) return jsonResponse(pr);
+    if (value.includes('/workitems?')) return jsonResponse({ value: [{ id: '901' }] });
+    if (value.includes('/_apis/wit/workitems/901?')) return jsonResponse(raw.workItems[0]);
+    if (value.includes('/_apis/policy/evaluations?')) return jsonResponse({ value: raw.policies });
+    if (value.includes('/iterations?')) return jsonResponse(raw.iterations);
+    if (value.includes('/iterations/2/changes?')) return jsonResponse({ changeEntries: [], nextSkip: 0, nextTop: 0 });
+    if (value.includes('/threads?')) return jsonResponse(raw.existingThreads);
+    return jsonResponse({}, 404);
+  };
+
+  const fragment = await collectAzureDevOpsRest({
+    prUrl: 'https://dev.azure.com/acme/Platform/_git/widgets/pullrequest/77',
+    credentialContext: 'anonymous',
+    authorization: null,
+    fetchImpl,
+    sleep: async () => {}
+  });
+
+  assert.equal(fragment.capabilities.snapshot.complete, false);
+  assert.equal(fragment.capabilities.snapshot.failure.category, 'malformed');
+  assert.match(fragment.capabilities.snapshot.failure.message, /lastMergeSourceCommit/);
+  assert.doesNotMatch(fragment.capabilities.snapshot.failure.message, /[\r\n]/);
+  for (const name of ['identity', 'metadata', 'workItems', 'policies', 'iterations', 'changes', 'existingThreads']) {
+    assert.equal(fragment.capabilities[name].complete, true, name);
+  }
 });
 
 test('REST authentication failures are sanitized and not retried', async () => {

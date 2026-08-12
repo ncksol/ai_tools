@@ -60,6 +60,7 @@ if (!skillText.includes('separately installed `azure-devops-cli` skill')) errors
 if (!skillText.includes('`prg-deduplicator`')) errors.push('SKILL.md must include semantic existing-review deduplication');
 if (!githubProviderText.includes('First load and follow the separately installed `gh-cli` skill')) errors.push('GitHub provider must delegate to gh-cli');
 if (!azureProviderText.includes('Bluebird')) errors.push('Azure DevOps provider must document Bluebird as an optional MCP adapter');
+if (!azureProviderText.includes('<WORK_DIR>/bluebird.json')) errors.push('Azure DevOps provider must name one Bluebird fragment file consistently');
 if (!azureProviderText.includes('complete read packet')) errors.push('Azure DevOps provider must require a complete read packet');
 if (!azureProviderText.includes('collect-azure-devops-rest.mjs')) errors.push('Azure DevOps provider must document the REST collector');
 if (!azureProviderText.includes('assemble-azure-context.mjs')) errors.push('Azure DevOps provider must document the fragment assembler');

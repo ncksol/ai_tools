@@ -84,39 +84,67 @@ function assertCapabilityData(name, data) {
 }
 
 function assertImmutableAgreement(fragments) {
-  let prId = null;
-  let repoId = null;
-  let projectId = null;
-  let headSha = null;
-  let baseSha = null;
+  const seen = new Map();
+
+  // An absent key is no evidence: adapters legitimately carry GUIDs only or
+  // display names only. Compare id-to-id and name-to-name, never across keys.
+  const agree = (key, value, message) => {
+    const text = String(value ?? '').trim();
+    if (!text) return;
+    const previous = seen.get(key);
+    if (previous === undefined) seen.set(key, text);
+    else if (previous !== text) throw new Error(message);
+  };
 
   for (const fragment of fragments) {
     const id = fragment.capabilities?.identity;
     if (id?.complete) {
-      const pid = String(id.data.pullRequestId);
-      if (prId === null) prId = pid;
-      else if (prId !== pid) throw new Error('Conflicting Azure PR identity');
       const repo = id.data.repository ?? {};
-      const rid = String(repo.id ?? repo.name ?? '');
-      if (repoId === null) repoId = rid;
-      else if (repoId !== rid) throw new Error('Conflicting Azure PR identity');
       const project = repo.project ?? {};
-      const pgid = String(project.id ?? project.name ?? '');
-      if (projectId === null) projectId = pgid;
-      else if (projectId !== pgid) throw new Error('Conflicting Azure PR identity');
+      agree('pullRequestId', id.data.pullRequestId, 'Conflicting Azure PR identity');
+      agree('repository.id', repo.id, 'Conflicting Azure PR identity');
+      agree('repository.name', repo.name, 'Conflicting Azure PR identity');
+      agree('project.id', project.id, 'Conflicting Azure PR identity');
+      agree('project.name', project.name, 'Conflicting Azure PR identity');
     }
     const snap = fragment.capabilities?.snapshot;
     if (snap?.complete) {
-      const head = String(snap.data.lastMergeSourceCommit?.commitId ?? '');
-      if (!head.trim()) throw new Error('Conflicting Azure head SHA');
-      if (headSha === null) headSha = head;
-      else if (headSha !== head) throw new Error('Conflicting Azure head SHA');
-      const base = String(snap.data.lastMergeTargetCommit?.commitId ?? '');
-      if (!base.trim()) throw new Error('Conflicting Azure base SHA');
-      if (baseSha === null) baseSha = base;
-      else if (baseSha !== base) throw new Error('Conflicting Azure base SHA');
+      const head = String(snap.data.lastMergeSourceCommit?.commitId ?? '').trim();
+      if (!head) throw new Error('Conflicting Azure head SHA');
+      agree('head', head, 'Conflicting Azure head SHA');
+      const base = String(snap.data.lastMergeTargetCommit?.commitId ?? '').trim();
+      if (!base) throw new Error('Conflicting Azure base SHA');
+      agree('base', base, 'Conflicting Azure base SHA');
     }
   }
+}
+
+function assertCapabilityShape(name, capability) {
+  if (!REQUIRED_AZURE_CAPABILITIES.includes(name)) throw new Error(`Unknown Azure capability: ${name}`);
+  if (typeof capability?.complete !== 'boolean') throw new Error(`Azure capability ${name} needs complete=true|false`);
+  if (capability.complete) {
+    if (!Object.hasOwn(capability, 'data')) throw new Error(`Complete Azure capability ${name} needs data`);
+    assertCapabilityData(name, capability.data);
+  }
+  if (!capability.complete && !capability.failure?.category) throw new Error(`Incomplete Azure capability ${name} needs a failure`);
+}
+
+// Malformed data in one capability must not discard the valid evidence an
+// adapter collected for the others.
+export function downgradeMalformedCapabilities(capabilities) {
+  const result = {};
+  for (const [name, capability] of Object.entries(capabilities)) {
+    try {
+      assertCapabilityShape(name, capability);
+      result[name] = capability;
+    } catch (error) {
+      result[name] = {
+        complete: false,
+        failure: { category: 'malformed', message: error.message.replace(/[\r\n]/g, ' ') }
+      };
+    }
+  }
+  return result;
 }
 
 export function validateAzureFragment(fragment) {
@@ -126,17 +154,16 @@ export function validateAzureFragment(fragment) {
   }
   const names = Object.keys(fragment.capabilities ?? {});
   if (!names.length) throw new Error('Azure access fragment must declare at least one capability');
-  for (const name of names) {
-    if (!REQUIRED_AZURE_CAPABILITIES.includes(name)) throw new Error(`Unknown Azure capability: ${name}`);
-    const capability = fragment.capabilities[name];
-    if (typeof capability?.complete !== 'boolean') throw new Error(`Azure capability ${name} needs complete=true|false`);
-    if (capability.complete) {
-      if (!Object.hasOwn(capability, 'data')) throw new Error(`Complete Azure capability ${name} needs data`);
-      assertCapabilityData(name, capability.data);
-    }
-    if (!capability.complete && !capability.failure?.category) throw new Error(`Incomplete Azure capability ${name} needs a failure`);
-  }
+  for (const name of names) assertCapabilityShape(name, fragment.capabilities[name]);
   return fragment;
+}
+
+// Directly queried provider APIs outrank hand-transcribed MCP or manual
+// fragments for the same capability; capturedAt breaks ties within a rank.
+const AUTHORITATIVE_ADAPTERS = Object.freeze(['azure-cli', 'azure-rest']);
+
+function adapterAuthority(source) {
+  return AUTHORITATIVE_ADAPTERS.includes(source.adapter) ? 1 : 0;
 }
 
 export function assembleAzureFragments(inputFragments) {
@@ -154,7 +181,9 @@ export function assembleAzureFragments(inputFragments) {
       if (capability.complete) candidates.push({ capability, source: fragment.source });
     }
     if (candidates.length) {
-      candidates.sort((left, right) => left.source.capturedAt.localeCompare(right.source.capturedAt));
+      candidates.sort((left, right) =>
+        adapterAuthority(left.source) - adapterAuthority(right.source) ||
+        left.source.capturedAt.localeCompare(right.source.capturedAt));
       selected[name] = candidates.at(-1);
     }
   }

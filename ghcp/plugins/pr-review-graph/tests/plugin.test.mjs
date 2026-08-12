@@ -41,6 +41,8 @@ test('provider adapters use skills without making one Azure access path mandator
   assert.match(skill, /complete Azure DevOps read packet/);
   assert.doesNotMatch(skill, /Do not substitute an Azure DevOps MCP server/);
   assert.match(azure, /Bluebird/);
+  assert.match(azure, /bluebird\.json/);
+  assert.doesNotMatch(azure, /bluebird-(identity|metadata)\.json/);
   assert.match(azure, /env -u AZURE_DEVOPS_EXT_PAT/);
   assert.match(azure, /collect-azure-devops-rest\.mjs/);
   assert.match(azure, /assemble-azure-context\.mjs/);
