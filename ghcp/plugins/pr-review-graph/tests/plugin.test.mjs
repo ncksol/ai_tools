@@ -445,3 +445,13 @@ test('shell scripts avoid Bash 4 constructs so they run on the stock macOS Bash 
 
   assert.deepEqual(offences, [], `macOS ships Bash 3.2, and SKILL.md invokes these scripts as plain \`bash\`, so Bash 4 syntax makes them fail at runtime:\n${offences.join('\n')}`);
 });
+
+test('a truncated Azure change list is reported as a packet warning', async () => {
+  const raw = await fixture('azure-raw.json');
+  const untruncated = normalize(raw);
+  assert.equal(untruncated.limits.warnings.some(warning => /change list is truncated/.test(warning)), false);
+
+  const truncated = normalize({ ...raw, changes: { ...raw.changes, nextSkip: 2000, nextTop: 2000 } });
+  assert.equal(truncated.limits.warnings.some(warning => /change list is truncated/.test(warning)), true);
+  assert.equal(truncated.files.length, untruncated.files.length);
+});

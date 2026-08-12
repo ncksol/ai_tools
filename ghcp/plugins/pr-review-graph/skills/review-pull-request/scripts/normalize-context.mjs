@@ -223,6 +223,9 @@ export function normalizeAzure(raw) {
     : [];
 
   if (!String(raw.diff ?? '').trim()) warnings.push('Unified diff is unavailable');
+  if (Number(raw.changes?.nextSkip ?? 0) > 0 || Number(raw.changes?.nextTop ?? 0) > 0) {
+    warnings.push('Azure change list is truncated; some files have no change tracking data');
+  }
 
   return {
     schemaVersion: '1.0',
