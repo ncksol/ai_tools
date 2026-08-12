@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -406,4 +406,42 @@ test('comment join rejects duplicate fingerprints in editor output', async () =>
   };
 
   assert.throws(() => applyComments({ findings }, editorOutput), /more than one comment/);
+});
+
+const BASH4_ONLY = [
+  { pattern: /\bmapfile\b/, name: 'mapfile (use a `while IFS= read -r` loop)' },
+  { pattern: /\breadarray\b/, name: 'readarray (use a `while IFS= read -r` loop)' },
+  { pattern: /\$\{[A-Za-z_][A-Za-z0-9_]*,/, name: 'lowercase expansion ${var,} or ${var,,} (use tr)' },
+  { pattern: /\$\{[A-Za-z_][A-Za-z0-9_]*\^/, name: 'uppercase expansion ${var^} or ${var^^} (use tr)' },
+  { pattern: /\b(declare|local|typeset)\s+-[A-Za-z]*A/, name: 'associative array declaration' }
+];
+
+async function shellScripts(directory) {
+  const found = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (entry.name === 'node_modules' || entry.name === '.git') continue;
+    const full = path.join(directory, entry.name);
+    if (entry.isDirectory()) found.push(...(await shellScripts(full)));
+    else if (entry.name.endsWith('.sh')) found.push(full);
+  }
+  return found;
+}
+
+test('shell scripts avoid Bash 4 constructs so they run on the stock macOS Bash 3.2', async () => {
+  const scripts = await shellScripts(root);
+  assert.ok(scripts.length >= 2, `expected to find the collector scripts, found ${scripts.length}`);
+
+  const offences = [];
+  for (const file of scripts) {
+    const lines = (await readFile(file, 'utf8')).split(/\r?\n/);
+    lines.forEach((line, index) => {
+      for (const { pattern, name } of BASH4_ONLY) {
+        if (pattern.test(line)) {
+          offences.push(`${path.relative(root, file)}:${index + 1} uses ${name}`);
+        }
+      }
+    });
+  }
+
+  assert.deepEqual(offences, [], `macOS ships Bash 3.2, and SKILL.md invokes these scripts as plain \`bash\`, so Bash 4 syntax makes them fail at runtime:\n${offences.join('\n')}`);
 });

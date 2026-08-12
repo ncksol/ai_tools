@@ -25,7 +25,10 @@ az repos pr policy list --id "$pr_id" --output json >"$work_dir/policies.json"
 node -e 'const fs=require("fs"); const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(JSON.stringify(p.repository ?? {}))' \
   "$work_dir/pull-request.json" >"$work_dir/repository.json"
 
-mapfile -t pr_values < <(node -e '
+pr_values=()
+while IFS= read -r line; do
+  pr_values+=("$line")
+done < <(node -e '
   const fs=require("fs");
   const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
   const r=p.repository ?? {}, project=r.project ?? {}, url=r.webUrl ?? p.url ?? "";
@@ -80,7 +83,9 @@ az devops invoke \
 
 origin_url="$(git remote get-url origin)"
 origin_name="$(basename "${origin_url%.git}")"
-[[ "${origin_name,,}" == "${repository_name,,}" ]] || {
+origin_lower="$(printf '%s' "$origin_name" | tr '[:upper:]' '[:lower:]')"
+repository_lower="$(printf '%s' "$repository_name" | tr '[:upper:]' '[:lower:]')"
+[[ "$origin_lower" == "$repository_lower" ]] || {
   echo "Current Git repository '$origin_name' does not match Azure repository '$repository_name'" >&2
   exit 1
 }
