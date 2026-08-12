@@ -17,7 +17,8 @@ import { applyComments } from '../skills/review-pull-request/scripts/apply-comme
 import {
   discoveryResultFileName,
   finalizeDiscovery,
-  ingestDiscoveryResponse
+  ingestDiscoveryResponse,
+  recordDiscoveryTransportFailure
 } from '../skills/review-pull-request/scripts/process-discovery.mjs';
 import {
   extractAgentResponse
@@ -855,6 +856,192 @@ test('discovery finalization treats a valid retry as complete coverage', async (
     assert.equal(result.coverage.failures[0].attempts[0].attempt, 1);
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery transport failure can recover on the one allowed retry', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-transport-retry-'));
+  try {
+    const eventsFile = path.join(directory, 'events.jsonl');
+    const responseFile = path.join(directory, 'response.json');
+    const statusFile = path.join(directory, 'transport-status.json');
+    const resultDirectory = path.join(directory, 'results');
+    const diagnosticsDirectory = path.join(directory, 'diagnostics');
+    await writeFile(eventsFile, agentEventStream('[]', {
+      preceding: [
+        { type: 'assistant.turn_start', data: { turnId: 'turn-preamble' } },
+        {
+          type: 'assistant.message',
+          data: {
+            turnId: 'turn-preamble',
+            content: 'Using strict-code-review to inspect this response.',
+            toolRequests: []
+          }
+        },
+        { type: 'assistant.turn_end', data: { turnId: 'turn-preamble' } }
+      ]
+    }), { mode: 0o600 });
+    const transport = await extractAgentResponse(eventsFile, responseFile, statusFile);
+    assert.equal(transport.status, 'invalid');
+
+    const first = await recordDiscoveryTransportFailure(
+      statusFile,
+      resultDirectory,
+      diagnosticsDirectory,
+      { agent: 'prg-correctness', batch: 1, attempt: 1 }
+    );
+    const candidate = discoveryCandidate();
+    await ingestText(directory, JSON.stringify([candidate]), {
+      agent: 'prg-correctness', batch: 1, attempt: 2
+    });
+    const result = await finalizeDiscovery(
+      discoveryPlan('prg-correctness', 1),
+      resultDirectory
+    );
+
+    assert.equal(first.status, 'invalid');
+    assert.equal(first.failure.kind, 'transport-multiple-payloads');
+    assert.equal(result.coverage.status, 'complete');
+    assert.equal(result.coverage.scopes[0].recoveredBatches, 1);
+    assert.deepEqual(result.findings, [candidate]);
+    const diagnostic = JSON.parse(await readFile(first.failure.diagnostic, 'utf8'));
+    assert.equal(diagnostic.failureKind, 'transport-multiple-payloads');
+    assert.deepEqual(diagnostic.transport, { count: 2 });
+    assert.equal(diagnostic.response, undefined);
+    assert.doesNotMatch(JSON.stringify(diagnostic), /Using strict-code-review|\[\]/);
+    await assert.rejects(access(statusFile), { code: 'ENOENT' });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery transport failure CLI records a structural invalid attempt', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-transport-cli-'));
+  try {
+    const statusFile = path.join(directory, 'transport-status.json');
+    const resultDirectory = path.join(directory, 'results');
+    const diagnosticsDirectory = path.join(directory, 'diagnostics');
+    await writeFile(statusFile, JSON.stringify({
+      schemaVersion: '1.0',
+      status: 'invalid',
+      failure: {
+        kind: 'transport-invalid-jsonl',
+        line: 1
+      }
+    }), { mode: 0o600 });
+
+    const cli = spawnSync(process.execPath, [
+      'skills/review-pull-request/scripts/process-discovery.mjs',
+      'transport-failure',
+      statusFile,
+      resultDirectory,
+      diagnosticsDirectory,
+      '--agent', 'prg-correctness',
+      '--batch', '1',
+      '--attempt', '1'
+    ], { cwd: root, encoding: 'utf8' });
+
+    assert.equal(cli.status, 1, cli.stdout + cli.stderr);
+    const result = JSON.parse(await readFile(path.join(
+      resultDirectory,
+      discoveryResultFileName('prg-correctness', 1, 1)
+    ), 'utf8'));
+    assert.equal(result.status, 'invalid');
+    assert.equal(result.failure.kind, 'transport-invalid-jsonl');
+    const diagnostic = JSON.parse(await readFile(result.failure.diagnostic, 'utf8'));
+    assert.deepEqual(diagnostic.transport, { line: 1 });
+    assert.equal(diagnostic.response, undefined);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery transport failures remain terminal after two attempts', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-transport-terminal-'));
+  try {
+    const resultDirectory = path.join(directory, 'results');
+    const diagnosticsDirectory = path.join(directory, 'diagnostics');
+    for (const attempt of [1, 2]) {
+      const statusFile = path.join(directory, `transport-${attempt}.json`);
+      await writeFile(statusFile, JSON.stringify({
+        schemaVersion: '1.0',
+        status: 'invalid',
+        failure: { kind: 'transport-missing-payload' }
+      }), { mode: 0o600 });
+      await recordDiscoveryTransportFailure(
+        statusFile,
+        resultDirectory,
+        diagnosticsDirectory,
+        { agent: 'prg-correctness', batch: 1, attempt }
+      );
+    }
+
+    const result = await finalizeDiscovery(
+      discoveryPlan('prg-correctness', 1),
+      resultDirectory
+    );
+
+    assert.equal(result.coverage.status, 'failed');
+    assert.equal(result.coverage.scopes[0].status, 'failed');
+    assert.equal(result.coverage.failures[0].attempts.length, 2);
+    assert.equal(result.findings, null);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery transport failure rejects unsafe or malformed status', async () => {
+  const invalidStatuses = [
+    '{',
+    JSON.stringify({
+      schemaVersion: '1.0',
+      status: 'invalid',
+      failure: { kind: 'transport-unknown' }
+    }),
+    JSON.stringify({
+      schemaVersion: '1.0',
+      status: 'invalid',
+      failure: {
+        kind: 'transport-invalid-event',
+        eventType: 'authorization: bearer-secret'
+      }
+    }),
+    JSON.stringify({
+      schemaVersion: '1.0',
+      status: 'invalid',
+      failure: {
+        kind: 'transport-invalid-jsonl',
+        payload: 'Using strict-code-review...'
+      }
+    })
+  ];
+
+  for (const [index, value] of invalidStatuses.entries()) {
+    const directory = await mkdtemp(path.join(os.tmpdir(), `prg-transport-status-${index}-`));
+    try {
+      const statusFile = path.join(directory, 'transport-status.json');
+      const resultDirectory = path.join(directory, 'results');
+      await writeFile(statusFile, value, { mode: 0o600 });
+
+      await assert.rejects(
+        recordDiscoveryTransportFailure(
+          statusFile,
+          resultDirectory,
+          path.join(directory, 'diagnostics'),
+          { agent: 'prg-correctness', batch: 1, attempt: 1 }
+        ),
+        /Transport status|transport failure/i
+      );
+      await assert.rejects(
+        access(path.join(resultDirectory, discoveryResultFileName(
+          'prg-correctness', 1, 1
+        ))),
+        { code: 'ENOENT' }
+      );
+      await assert.rejects(access(statusFile), { code: 'ENOENT' });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   }
 });
 
