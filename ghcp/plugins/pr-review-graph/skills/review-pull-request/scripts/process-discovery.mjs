@@ -2,6 +2,7 @@
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { TRANSPORT_FAILURE_KINDS } from './extract-agent-response.mjs';
 import { isMain, parseFlags } from './lib.mjs';
 import { validateFindings } from './validate-findings.mjs';
 
@@ -15,6 +16,14 @@ export const DISCOVERY_CATEGORIES = Object.freeze({
 });
 
 const SECRET_NAME = '(?:authorization|token|access[_-]?token|api[_-]?key|client[_-]?secret|password|passwd|cookie|set-cookie|private[_-]?key)';
+const TRANSPORT_FAILURE_KIND_SET = new Set(TRANSPORT_FAILURE_KINDS);
+const TRANSPORT_DETAIL_KEYS = new Set(['line', 'eventIndex', 'eventType', 'count']);
+const SAFE_TRANSPORT_EVENT_TYPES = new Set([
+  'assistant.turn_start',
+  'assistant.message',
+  'assistant.turn_end',
+  'result'
+]);
 
 export function discoveryResultFileName(agent, batch, attempt) {
   return `${agent}-batch-${String(batch).padStart(3, '0')}-attempt-${attempt}.json`;
@@ -122,6 +131,87 @@ async function recordFailure(raw, resultDirectory, diagnosticsDirectory, metadat
   } catch (error) {
     await rm(diagnostic, { force: true });
     throw error;
+  }
+}
+
+function validateTransportStatus(value) {
+  if (value?.schemaVersion !== '1.0' || value?.status !== 'invalid') {
+    throw new Error('Transport status must be a version 1.0 invalid result');
+  }
+  const kind = value.failure?.kind;
+  if (!TRANSPORT_FAILURE_KIND_SET.has(kind)) {
+    throw new Error('Unsupported transport failure kind');
+  }
+  const entries = Object.entries(value.failure ?? {}).filter(([key]) => key !== 'kind');
+  if (entries.some(([key]) => !TRANSPORT_DETAIL_KEYS.has(key))) {
+    throw new Error('Transport failure contains unsupported detail keys');
+  }
+  const details = Object.fromEntries(entries);
+  for (const key of ['eventIndex', 'count']) {
+    if (key in details && (!Number.isInteger(details[key]) || details[key] < 0)) {
+      throw new Error(`Transport failure ${key} must be a non-negative integer`);
+    }
+  }
+  if ('line' in details && (!Number.isInteger(details.line) || details.line < 1)) {
+    throw new Error('Transport failure line must be a positive integer');
+  }
+  if ('eventType' in details && !SAFE_TRANSPORT_EVENT_TYPES.has(details.eventType)) {
+    throw new Error('Transport failure eventType is not structural');
+  }
+  return { kind, details };
+}
+
+export async function recordDiscoveryTransportFailure(
+  statusFile,
+  resultDirectory,
+  diagnosticsDirectory,
+  options
+) {
+  try {
+    const metadata = normalizeMetadata(options);
+    let status;
+    try {
+      status = JSON.parse(await readFile(statusFile, 'utf8'));
+    } catch {
+      throw new Error('Transport status must be valid JSON');
+    }
+    const { kind, details } = validateTransportStatus(status);
+    const diagnostic = path.join(
+      diagnosticsDirectory,
+      diagnosticFileName(metadata.agent, metadata.batch, metadata.attempt)
+    );
+    await writePrivateJson(diagnostic, {
+      schemaVersion: '1.0',
+      ...metadata,
+      failureKind: kind,
+      transport: details
+    });
+    try {
+      const result = {
+        schemaVersion: '1.0',
+        ...metadata,
+        status: 'invalid',
+        failure: {
+          kind,
+          ...details,
+          diagnostic
+        }
+      };
+      await writePrivateJson(
+        path.join(resultDirectory, discoveryResultFileName(
+          metadata.agent,
+          metadata.batch,
+          metadata.attempt
+        )),
+        result
+      );
+      return result;
+    } catch (error) {
+      await rm(diagnostic, { force: true });
+      throw error;
+    }
+  } finally {
+    await rm(statusFile, { force: true });
   }
 }
 
@@ -464,6 +554,20 @@ async function main() {
     if (result.status !== 'complete') process.exitCode = 1;
     return;
   }
+  if (mode === 'transport-failure') {
+    const [statusFile, resultDirectory, diagnosticsDirectory] = args;
+    if (!statusFile || !resultDirectory || !diagnosticsDirectory) {
+      throw new Error('Usage: process-discovery.mjs transport-failure TRANSPORT_STATUS_JSON RESULTS_DIR DIAGNOSTICS_DIR --agent NAME --batch N --attempt 1|2');
+    }
+    await recordDiscoveryTransportFailure(
+      path.resolve(statusFile),
+      path.resolve(resultDirectory),
+      path.resolve(diagnosticsDirectory),
+      { agent: flags.agent, batch: flags.batch, attempt: flags.attempt }
+    );
+    process.exitCode = 1;
+    return;
+  }
   if (mode === 'finalize') {
     const [planFile, resultDirectory, candidatesFile, coverageFile] = args;
     if (!planFile || !resultDirectory || !candidatesFile || !coverageFile) {
@@ -481,7 +585,7 @@ async function main() {
     }
     return;
   }
-  throw new Error('First argument must be ingest or finalize');
+  throw new Error('First argument must be ingest, transport-failure, or finalize');
 }
 
 if (isMain(import.meta.url)) {

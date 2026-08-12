@@ -7,6 +7,7 @@
 | Resolve | PR reference | Provider and unambiguous PR identity | None |
 | Snapshot | Provider identity | Canonical packet with base/head SHAs | None |
 | Route | Canonical packet | Reviewer plan and packet slices | None |
+| Transport | Tool-less agent JSONL or explicit raw final-response field | Exact machine payload or structural failure status | None |
 | Discover | Reviewer slices | Candidate findings | None |
 | Verify | Candidates and evidence | Verified or rejected findings | None |
 | Fingerprint | Verified findings | Internally deduplicated set | None |
@@ -31,13 +32,16 @@ Conditionally dispatch:
 
 Dispatch independent reviewers concurrently. Give each reviewer only relevant patches and necessary context. Preserve the packet's provider line coordinates.
 
+Every discovery, verifier, deduplicator, and editor subprocess uses Copilot JSONL output and `extract-agent-response.mjs`; rendered transcript text is never a machine response. Native dispatch may bypass extraction only for an explicit raw final-response field that is structurally separate from progress, tool, skill, reasoning, summary, and transcript data.
+
 ## Bounded loops
 
 - Ingest every discovery response with `process-discovery.mjs`. Retry a batch once only when ingestion reports an invalid result. Never repair or silently drop malformed output.
 - After all routed batches settle, finalize discovery coverage against the immutable review plan. If any batch remains invalid, stop before verification.
-- Verify each candidate once. If the verifier requests dynamic evidence, suppress the finding unless the user authorizes the exact safe command and the result proves it.
+- A verification transport failure rejects that candidate without retry; malformed transport can never create a verified finding. Otherwise verify each candidate once. If the verifier requests dynamic evidence, suppress the finding unless the user authorizes the exact safe command and the result proves it.
 - If the head SHA changes, rebuild the packet and rerun only scopes intersecting changed files, but re-deduplicate the full finding set.
-- If a deduplication batch fails or omits a finding, retry once; then hold that finding for human judgement.
+- For a deduplication transport failure, retry once; if the retry fails, hold every affected finding for human judgement. The same hold applies when a valid batch omits a finding.
+- For an editor transport failure, retry once; if the retry fails, stop before payload construction.
 - Retry remote publication only after showing which writes succeeded and obtaining confirmation for the remainder.
 
 ## Coverage result

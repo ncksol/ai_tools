@@ -80,6 +80,18 @@ if (!skillText.includes('`prg-deduplicator`')) errors.push('SKILL.md must includ
 if (!skillText.includes('Never dispatch a discovery agent, or a batch, that is absent from `PLAN_JSON`')) {
   errors.push('SKILL.md must forbid dispatching discovery agents absent from PLAN_JSON');
 }
+if (!skillText.includes('--output-format json --stream off --silent')) {
+  errors.push('SKILL.md must require JSONL agent transport');
+}
+if (!skillText.includes('extract-agent-response.mjs')) {
+  errors.push('SKILL.md must extract raw agent responses');
+}
+for (const name of ['prg-verifier', 'prg-deduplicator', 'prg-editor']) {
+  const dispatch = skillText.indexOf(`\`${name}\``);
+  if (dispatch < 0 || !skillText.slice(dispatch, dispatch + 1_800).includes('extract-agent-response.mjs')) {
+    errors.push(`SKILL.md must route ${name} through machine-response transport`);
+  }
+}
 if (!githubProviderText.includes('First load and follow the separately installed `gh-cli` skill')) errors.push('GitHub provider must delegate to gh-cli');
 if (!azureProviderText.includes('Load and follow the separately installed `azure-devops-cli` skill')) errors.push('Azure DevOps provider must delegate to azure-devops-cli');
 
@@ -94,6 +106,7 @@ for (const file of ['packet.schema.json', 'finding.schema.json', 'deduplication.
 const requiredScripts = [
   'normalize-context.mjs',
   'build-review-plan.mjs',
+  'extract-agent-response.mjs',
   'process-discovery.mjs',
   'validate-findings.mjs',
   'fingerprint-findings.mjs',
