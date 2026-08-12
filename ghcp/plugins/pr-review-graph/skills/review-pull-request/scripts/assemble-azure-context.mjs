@@ -108,9 +108,11 @@ function assertImmutableAgreement(fragments) {
     const snap = fragment.capabilities?.snapshot;
     if (snap?.complete) {
       const head = String(snap.data.lastMergeSourceCommit?.commitId ?? '');
+      if (!head.trim()) throw new Error('Conflicting Azure head SHA');
       if (headSha === null) headSha = head;
       else if (headSha !== head) throw new Error('Conflicting Azure head SHA');
       const base = String(snap.data.lastMergeTargetCommit?.commitId ?? '');
+      if (!base.trim()) throw new Error('Conflicting Azure base SHA');
       if (baseSha === null) baseSha = base;
       else if (baseSha !== base) throw new Error('Conflicting Azure base SHA');
     }
@@ -293,6 +295,7 @@ async function main() {
       source: { adapter, credentialContext, capturedAt: new Date().toISOString() },
       capabilities
     };
+    validateAzureFragment(fragment);
     await writeJson(path.resolve(fragmentJson), fragment);
     console.log(`fragment: ${fragmentJson} (source: ${adapter}/${credentialContext}, failure: ${names.join(', ')})`);
     return;
