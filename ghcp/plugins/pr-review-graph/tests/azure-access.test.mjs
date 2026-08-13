@@ -884,6 +884,54 @@ test('dev.azure.com and visualstudio.com URL forms for the same org are treated 
   assert.doesNotThrow(() => assembleAzureFragments(input));
 });
 
+test('mixed-case dev.azure.com org slugs are treated as equivalent', () => {
+  const pr = raw.pullRequest;
+  const input = structuredClone(fragments());
+  // First fragment uses the mixed-case slug "Acme".
+  input[0].capabilities.identity = complete({
+    pullRequestId: pr.pullRequestId,
+    url: 'https://dev.azure.com/Acme/Platform/_git/widgets/pullrequest/77',
+    repository: pr.repository
+  });
+  // Second identity fragment (pushed below) uses lowercase "acme".
+  input.push({
+    schemaVersion: '1.0',
+    source: source('second-adapter'),
+    capabilities: {
+      identity: complete({
+        pullRequestId: pr.pullRequestId,
+        url: 'https://dev.azure.com/acme/Platform/_git/widgets/pullrequest/77',
+        repository: pr.repository
+      })
+    }
+  });
+  assert.doesNotThrow(() => assembleAzureFragments(input));
+});
+
+test('mixed-case visualstudio.com and dev.azure.com slugs are treated as equivalent', () => {
+  const pr = raw.pullRequest;
+  const input = structuredClone(fragments());
+  // First fragment uses the uppercase legacy form "ACME.visualstudio.com".
+  input[0].capabilities.identity = complete({
+    pullRequestId: pr.pullRequestId,
+    url: 'https://ACME.visualstudio.com/Platform/_git/widgets/pullrequest/77',
+    repository: pr.repository
+  });
+  // Second identity fragment uses dev.azure.com/acme — lowercase.
+  input.push({
+    schemaVersion: '1.0',
+    source: source('second-adapter'),
+    capabilities: {
+      identity: complete({
+        pullRequestId: pr.pullRequestId,
+        url: 'https://dev.azure.com/acme/Platform/_git/widgets/pullrequest/77',
+        repository: pr.repository
+      })
+    }
+  });
+  assert.doesNotThrow(() => assembleAzureFragments(input));
+});
+
 test('CLI-sourced policies carry exhausted evidence because az has no partial-list mode', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'prg-azure-raw-'));
   try {
