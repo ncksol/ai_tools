@@ -134,13 +134,16 @@ After authoritative snapshot SHAs and repository identity exist, reuse the exist
 git diff --find-renames --no-ext-diff --no-color --unified=80 "$target_sha...$source_sha" >"$diff_patch"
 ```
 
-Fetch missing commit objects without checkout; never execute changed code. Stop if the local repository does not correspond to the PR or the commit objects cannot be obtained. Wrap the patch:
+Fetch missing commit objects without checkout; never execute changed code. Stop if the local repository does not correspond to the PR or the commit objects cannot be obtained. The diff fragment must prove which repository and exact commits it was generated from: write the repository object already recorded in the identity fragment to `<WORK_DIR>/repository.json`, then wrap the patch together with the exact SHAs used above:
 
 ```bash
 node <SKILL_DIR>/scripts/assemble-azure-context.mjs capability \
   local-git configured-origin diff \
+  <WORK_DIR>/repository.json "$target_sha" "$source_sha" \
   <WORK_DIR>/diff.patch <WORK_DIR>/git-diff.json
 ```
+
+The assembler rejects this fragment before normalization if its repository, base SHA, or head SHA disagree with any other fragment's declared identity or snapshot.
 
 ## 6. Assembly
 

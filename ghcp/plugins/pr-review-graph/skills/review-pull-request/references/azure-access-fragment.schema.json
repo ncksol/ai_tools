@@ -28,7 +28,7 @@
         "iterations": { "$ref": "#/$defs/capability" },
         "changes": { "$ref": "#/$defs/capability" },
         "existingThreads": { "$ref": "#/$defs/capability" },
-        "diff": { "$ref": "#/$defs/capability" }
+        "diff": { "$ref": "#/$defs/diffCapability" }
       },
       "additionalProperties": false
     }
@@ -70,6 +70,28 @@
         }
       ],
       "additionalProperties": false
+    },
+    "diffCapability": {
+      "allOf": [
+        { "$ref": "#/$defs/capability" },
+        {
+          "if": { "properties": { "complete": { "const": true } } },
+          "then": {
+            "properties": {
+              "data": {
+                "type": "object",
+                "required": ["repository", "baseSha", "headSha", "patch"],
+                "properties": {
+                  "repository": { "type": "object" },
+                  "baseSha": { "type": "string", "minLength": 1 },
+                  "headSha": { "type": "string", "minLength": 1 },
+                  "patch": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      ]
     }
   },
   "additionalProperties": false
