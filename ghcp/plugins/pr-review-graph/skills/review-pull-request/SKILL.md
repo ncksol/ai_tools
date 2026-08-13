@@ -28,6 +28,27 @@ Review the PR as a reporting workflow. Find concrete problems, verify them, and 
 - Read [superpowers-compatibility.md](references/superpowers-compatibility.md) only when Superpowers is installed or the user mentions it.
 - Use [packet.schema.json](references/packet.schema.json), [finding.schema.json](references/finding.schema.json), and [deduplication.schema.json](references/deduplication.schema.json) as the canonical data contracts.
 
+## Machine-response transport
+
+Every tool-less PRG agent returns a machine response. Never stage terminal display text as that response. A rendered transcript is never ingestible because it can contain wrapped assistant text, progress UI, reasoning, tool events, skill events, or generic task summaries.
+
+For subprocess dispatch, use JSONL and extract the one terminal assistant payload:
+
+```bash
+umask 077
+copilot --agent pr-review-graph:<PRG_AGENT> \
+  --output-format json --stream off --silent \
+  -p "<AGENT_PROMPT>" > <EVENTS_JSONL>
+node <SKILL_DIR>/scripts/extract-agent-response.mjs \
+  <EVENTS_JSONL> <RAW_RESPONSE_FILE> <TRANSPORT_STATUS_JSON>
+```
+
+The extractor writes `assistant.message.data.content` unchanged. It does not parse JSON, trim whitespace, strip prose or fences, or repair malformed output. Read only `TRANSPORT_STATUS_JSON` when extraction fails; it contains structural metadata and never response text. Empty assistant messages are structural frames regardless of tool requests; they remain subject to matching turn boundaries and are never payload candidates.
+
+Native Task or subsession dispatch may bypass JSONL extraction only when its API exposes an explicit raw final-response field that is structurally separate from transcript, progress, tool, skill, reasoning, and summary fields. Stage that field unchanged. If the API exposes only rendered or concatenated text, record a transport failure instead.
+
+Use a fresh mode-`0600` capture, response, and status path for every invocation. Remove each status after acting on it. The extractor removes the event capture, and the stage consumer removes the raw response.
+
 ## Phase 1: Resolve and snapshot
 
 1. Determine the provider from the URL, repository remote, or user statement.
@@ -60,7 +81,9 @@ Run the deterministic risk router:
 node <SKILL_DIR>/scripts/build-review-plan.mjs <PACKET_JSON> <PLAN_JSON>
 ```
 
-Always include `prg-contract`, `prg-correctness`, and `prg-tests`. Add security, data-compatibility, and reliability reviewers only when the router selects them or repository context clearly requires them.
+Always include `prg-contract`, `prg-correctness`, and `prg-tests`. The router adds `prg-security`, `prg-data-compatibility`, or `prg-reliability` automatically when file patterns match.
+
+`PLAN_JSON` is the authoritative discovery coverage contract: `finalize` only recognizes results for the agents and batches it records, so anything dispatched outside it produces no coverage evidence. A context-required conditional reviewer that the router did not select may still be used, but only after it is added to `PLAN_JSON` — with its `name`, `reason`, `files`, and `batches` — before dispatch. Never dispatch a discovery agent, or a batch, that is absent from `PLAN_JSON`.
 
 Give each discovery agent:
 
@@ -72,35 +95,65 @@ Give each discovery agent:
 
 When a patch is insufficient to resolve a caller, guard, type, or test, retrieve the smallest necessary file snapshot at the captured base or head SHA. Use `git show <SHA>:<PATH>` when the commit object is locally available; otherwise use the provider's read API described in its reference. Never substitute a working-tree file unless its commit exactly matches the captured SHA.
 
-Do not give discovery agents shell, editing, network, or publishing access. Dispatch independent discovery agents in parallel when supported. A discovery failure must not silently reduce coverage; retry once or mark the scope incomplete.
+Create `RESULTS_DIR`, `DIAGNOSTICS_DIR`, and a staging directory inside the mode-`0700` run directory. Every event capture, transport status, and raw agent response staging file must be mode `0600`. Never print a raw response.
+
+Do not give discovery agents shell, editing, network, or publishing access. Dispatch independent discovery agents in parallel when supported.
+
+For each agent batch, apply the machine-response transport above. On extraction success, ingest attempt 1:
+
+```bash
+node <SKILL_DIR>/scripts/process-discovery.mjs ingest \
+  <RAW_RESPONSE_FILE> <RESULTS_DIR> <DIAGNOSTICS_DIR> \
+  --agent <PRG_AGENT> --batch <ONE_BASED_INDEX> --attempt 1
+```
+
+On extraction failure, record the current attempt without staging the JSONL:
+
+```bash
+node <SKILL_DIR>/scripts/process-discovery.mjs transport-failure \
+  <TRANSPORT_STATUS_JSON> <RESULTS_DIR> <DIAGNOSTICS_DIR> \
+  --agent <PRG_AGENT> --batch <ONE_BASED_INDEX> --attempt 1
+```
+
+If extraction or ingestion exits non-zero, read only the safe attempt-result JSON. Retry that batch once, repeating the exact JSON-array contract and supplying only the failure kind and numeric location. Extract the retry through `extract-agent-response.mjs`, then either ingest it or record its transport failure with `--attempt 2`. Do not include the raw response, JSONL capture, or diagnostic body in the retry prompt.
+
+After all routed batches settle, finalize them against the immutable plan:
+
+```bash
+node <SKILL_DIR>/scripts/process-discovery.mjs finalize \
+  <PLAN_JSON> <RESULTS_DIR> <CANDIDATES_JSON> <COVERAGE_JSON>
+```
+
+If finalization exits non-zero, stop before Phase 3. Lead with `REVIEW FAILED - DISCOVERY INCOMPLETE`, show each scope's completed and failed batch counts plus every redacted diagnostic path, and do not say `no findings`, `no publishable findings`, `clean`, or equivalent. Do not preview or publish a review. Remove unredacted staging files and provider data; retain only the redacted diagnostics and coverage report in the reported temporary directory.
 
 ## Phase 3: Verify and reduce
 
-1. Merge candidate arrays without rewriting them.
-2. Run `scripts/validate-findings.mjs`. Reject malformed candidates.
+1. Read candidates only from `CANDIDATES_JSON` written by successful discovery finalization.
+2. Run `scripts/validate-findings.mjs` as a defensive candidate check before verification.
 3. Send each valid candidate and its exact supporting context to `prg-verifier`.
-4. Require the verifier to reproduce a concrete failure path from the captured snapshot.
-5. Reject findings that depend on unstated assumptions, unchanged pre-existing behaviour, unavailable runtime evidence, or personal preference.
-6. Require at least `0.80` confidence for correctness, contract, tests, data compatibility, and reliability findings.
-7. Require at least `0.85` confidence for security findings.
-8. Run `scripts/fingerprint-findings.mjs` on verified findings to collapse findings from this review and exact marker matches.
-9. Prepare comparison batches containing every existing provider comment:
+4. Extract every `prg-verifier` response through `extract-agent-response.mjs` before strict object parsing. A transport failure, malformed object, or invalid verifier contract rejects that candidate without retry; it can never produce a verified finding.
+5. Require the verifier to reproduce a concrete failure path from the captured snapshot.
+6. Reject findings that depend on unstated assumptions, unchanged pre-existing behaviour, unavailable runtime evidence, or personal preference.
+7. Require at least `0.80` confidence for correctness, contract, tests, data compatibility, and reliability findings.
+8. Require at least `0.85` confidence for security findings.
+9. Run `scripts/fingerprint-findings.mjs` on verified findings to collapse findings from this review and exact marker matches.
+10. Prepare comparison batches containing every existing provider comment:
 
 ```bash
 node <SKILL_DIR>/scripts/deduplicate-findings.mjs prepare \
   <PACKET_JSON> <FINGERPRINTED_JSON> <DEDUPE_CHECKS_JSON>
 ```
 
-10. For each batch in `DEDUPE_CHECKS_JSON`, send all remaining findings and that batch's comments to `prg-deduplicator`. Check every batch; do not shortlist by path or line because an earlier reviewer may have reported the issue in a summary or another location.
-11. Merge the agent results into one decisions array and apply them:
+11. For each batch in `DEDUPE_CHECKS_JSON`, send all remaining findings and that batch's comments to `prg-deduplicator`. Extract every `prg-deduplicator` response through `extract-agent-response.mjs`. A transport failure is a failed batch: retry it once, then leave its decisions missing so affected findings are held. Check every batch; do not shortlist by path or line because an earlier reviewer may have reported the issue in a summary or another location.
+12. Merge the agent results into one decisions array and apply them:
 
 ```bash
 node <SKILL_DIR>/scripts/deduplicate-findings.mjs apply \
   <DEDUPE_CHECKS_JSON> <DEDUPE_DECISIONS_JSON> <DEDUPED_FINDINGS_JSON>
 ```
 
-12. Publish only `findings` from `DEDUPED_FINDINGS_JSON`. Never publish entries in `suppressed` or `held` automatically. A missing batch result is incomplete deduplication and must be held, not assumed distinct.
-13. Cap the publishable set at 20 findings. Prefer higher severity and confidence; mention omitted verified findings in the preview.
+13. Publish only `findings` from `DEDUPED_FINDINGS_JSON`. Never publish entries in `suppressed` or `held` automatically. A missing batch result is incomplete deduplication and must be held, not assumed distinct.
+14. Cap the publishable set at 20 findings. Prefer higher severity and confidence; mention omitted verified findings in the preview.
 
 Classify the same underlying defect as a duplicate even when another reviewer used different wording, assigned different severity, commented on a nearby line, or proposed another fix. Do not treat two genuinely different failure mechanisms as duplicates merely because they affect the same line.
 
@@ -118,12 +171,14 @@ Send only verified, deduplicated findings to `prg-editor`. Require each final co
 
 Keep inline comments short enough to act on. `prg-editor` returns one comment per finding, keyed by fingerprint, and decides nothing else. Join those comments onto the authoritative deduplicated findings:
 
+Extract every `prg-editor` response through `extract-agent-response.mjs`. A transport failure is invalid editor output: retry once, then stop before payload construction if no valid complete editor object is available.
+
 ```bash
 node <SKILL_DIR>/scripts/apply-comments.mjs \
   <DEDUPED_FINDINGS_JSON> <EDITOR_COMMENTS_JSON> <FINAL_FINDINGS_JSON>
 ```
 
-The join fails if the editor invents a fingerprint or leaves a finding without comment text. Retry the editor rather than publishing unedited text. Placement between an inline comment and the review summary is decided by the payload builders, which also add the fingerprint marker.
+The join fails if the editor invents a fingerprint or leaves a finding without comment text. Use the same single editor retry for either transport or join failure; if it was already used, stop rather than publishing unedited text. Placement between an inline comment and the review summary is decided by the payload builders, which also add the fingerprint marker.
 
 ## Phase 5: Preview and publish
 

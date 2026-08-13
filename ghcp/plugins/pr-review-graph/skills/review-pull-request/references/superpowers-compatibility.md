@@ -18,5 +18,6 @@ Treat Superpowers as an optional neighbouring workflow, not a dependency.
 - Accept a Superpowers plan or requirements document as optional requirement context when the user supplies it.
 - Keep PR Review Graph preview and publication confirmation independent from any earlier Superpowers approval or implementation checkpoint.
 - Do not implement fixes, start TDD, create a worktree, or finish the branch.
+- Skill narration is a separate JSONL event from an agent's raw final response. Never stage rendered Superpowers announcements, skill output, or transcript text as a PRG machine response.
 
 When the same snapshot already received a Superpowers implementation review, use that output as context if supplied, but independently verify every provider comment and suppress duplicate feedback.

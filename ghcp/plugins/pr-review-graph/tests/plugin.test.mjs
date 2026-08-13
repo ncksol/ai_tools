@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -14,6 +14,15 @@ import { applyDeduplication, prepareDeduplication } from '../skills/review-pull-
 import { buildGitHubReview } from '../skills/review-pull-request/scripts/build-github-review.mjs';
 import { buildAzureThreads } from '../skills/review-pull-request/scripts/build-azure-threads.mjs';
 import { applyComments } from '../skills/review-pull-request/scripts/apply-comments.mjs';
+import {
+  discoveryResultFileName,
+  finalizeDiscovery,
+  ingestDiscoveryResponse,
+  recordDiscoveryTransportFailure
+} from '../skills/review-pull-request/scripts/process-discovery.mjs';
+import {
+  extractAgentResponse
+} from '../skills/review-pull-request/scripts/extract-agent-response.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -21,11 +30,504 @@ async function fixture(name) {
   return JSON.parse(await readFile(path.join(root, 'tests/fixtures', name), 'utf8'));
 }
 
+function discoveryCandidate(category = 'correctness', overrides = {}) {
+  return {
+    category,
+    severity: 'high',
+    confidence: 0.9,
+    title: 'Malformed output loses review coverage',
+    problem: 'the discovery response cannot be parsed as strict JSON',
+    trigger: 'a specialist emits a literal control character inside a string',
+    consequence: 'the batch is omitted from discovery coverage',
+    evidence: 'the strict parser rejects the response before candidate validation',
+    recommendation: 'serialize every string with JSON escapes',
+    location: null,
+    relatedLocations: [],
+    ...overrides
+  };
+}
+
+function agentEventStream(content, options = {}) {
+  const turnId = options.turnId ?? 'turn-final';
+  const events = [
+    ...(options.preceding ?? []),
+    {
+      type: 'assistant.turn_start',
+      data: { turnId, interactionId: `interaction-${turnId}` }
+    },
+    ...(options.beforePayload ?? []),
+    {
+      type: 'assistant.message',
+      data: { turnId, content, toolRequests: options.toolRequests ?? [] }
+    },
+    {
+      type: 'assistant.turn_end',
+      data: { turnId }
+    },
+    ...(options.following ?? []),
+    {
+      type: 'result',
+      exitCode: options.exitCode ?? 0
+    }
+  ];
+  return `${events.map(event => JSON.stringify(event)).join('\n')}\n`;
+}
+
+test('agent response transport preserves long array and object payloads exactly', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-agent-transport-'));
+  try {
+    const payloads = [
+      JSON.stringify([discoveryCandidate('correctness', {
+        title: 'x'.repeat(500),
+        evidence: 'first line\nsecond line\rthird line\twith a tab\0and a nul'
+      })]),
+      JSON.stringify({
+        comments: [{
+          fingerprint: 'a'.repeat(64),
+          comment: `line one\nline two ${'y'.repeat(500)}`
+        }]
+      })
+    ];
+
+    for (const [index, payload] of payloads.entries()) {
+      const eventsFile = path.join(directory, `events-${index}.jsonl`);
+      const responseFile = path.join(directory, `response-${index}.json`);
+      const statusFile = path.join(directory, `status-${index}.json`);
+      await writeFile(eventsFile, agentEventStream(payload), { mode: 0o600 });
+
+      const result = await extractAgentResponse(eventsFile, responseFile, statusFile);
+
+      assert.equal(result.status, 'complete');
+      assert.equal(await readFile(responseFile, 'utf8'), payload);
+      assert.equal((await stat(responseFile)).mode & 0o777, 0o600);
+      assert.equal((await stat(statusFile)).mode & 0o777, 0o600);
+      assert.deepEqual(JSON.parse(await readFile(statusFile, 'utf8')), {
+        schemaVersion: '1.0',
+        status: 'complete'
+      });
+      await assert.rejects(access(eventsFile), { code: 'ENOENT' });
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('agent response transport accepts structural tool events before the final payload', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-agent-tool-transport-'));
+  try {
+    const eventsFile = path.join(directory, 'events.jsonl');
+    const responseFile = path.join(directory, 'response.json');
+    const statusFile = path.join(directory, 'status.json');
+    const payload = JSON.stringify({ verdict: 'rejected', reason: 'No reachable failure path.' });
+    await writeFile(eventsFile, agentEventStream(payload, {
+      preceding: [
+        { type: 'assistant.turn_start', data: { turnId: 'turn-tool' } },
+        {
+          type: 'assistant.message',
+          data: {
+            turnId: 'turn-tool',
+            content: '',
+            toolRequests: [{ toolCallId: 'call-1', name: 'skill' }]
+          }
+        },
+        {
+          type: 'tool.execution_start',
+          data: { turnId: 'turn-tool', toolCallId: 'call-1', toolName: 'skill' }
+        },
+        {
+          type: 'tool.execution_complete',
+          data: { turnId: 'turn-tool', toolCallId: 'call-1', success: true }
+        },
+        { type: 'assistant.turn_end', data: { turnId: 'turn-tool' } }
+      ]
+    }), { mode: 0o600 });
+
+    const result = await extractAgentResponse(eventsFile, responseFile, statusFile);
+
+    assert.equal(result.status, 'complete');
+    assert.equal(await readFile(responseFile, 'utf8'), payload);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('agent response transport ignores an empty tool-free reasoning frame', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-agent-empty-frame-'));
+  try {
+    const eventsFile = path.join(directory, 'events.jsonl');
+    const responseFile = path.join(directory, 'response.json');
+    const statusFile = path.join(directory, 'status.json');
+    await writeFile(eventsFile, agentEventStream('[]', {
+      beforePayload: [{
+        type: 'assistant.message',
+        data: {
+          turnId: 'turn-final',
+          content: '',
+          toolRequests: [],
+          encryptedContent: 'synthetic-encrypted-frame',
+          reasoningOpaque: 'synthetic-reasoning-frame'
+        }
+      }]
+    }), { mode: 0o600 });
+
+    const result = await extractAgentResponse(eventsFile, responseFile, statusFile);
+
+    assert.equal(result.status, 'complete');
+    assert.equal(await readFile(responseFile, 'utf8'), '[]');
+    assert.deepEqual(JSON.parse(await readFile(statusFile, 'utf8')), {
+      schemaVersion: '1.0',
+      status: 'complete'
+    });
+    await assert.rejects(access(eventsFile), { code: 'ENOENT' });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('captured reliability stream shape extracts and ingests the final candidate array', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-agent-reliability-shape-'));
+  try {
+    const eventsFile = path.join(directory, 'events.jsonl');
+    const responseFile = path.join(directory, 'response.json');
+    const statusFile = path.join(directory, 'status.json');
+    const candidate = discoveryCandidate('reliability', {
+      title: 'Terminal payload survives empty reasoning frames',
+      problem: 'valid final discovery output is discarded before strict ingestion',
+      trigger: 'a long Copilot turn emits empty tool-free reasoning frames',
+      consequence: 'the planned reliability batch is recorded as failed',
+      evidence: 'the terminal assistant payload remains a strict candidate array',
+      recommendation: 'exclude empty assistant frames from payload candidacy'
+    });
+    const payload = JSON.stringify([candidate]);
+    const reasoningFrames = Array.from({ length: 7 }, (_, index) => ({
+      type: 'assistant.message',
+      data: {
+        turnId: 'turn-final',
+        content: '',
+        toolRequests: [],
+        encryptedContent: `synthetic-encrypted-${index + 1}`,
+        reasoningOpaque: `synthetic-reasoning-${index + 1}`
+      }
+    }));
+    await writeFile(eventsFile, agentEventStream(payload, {
+      preceding: [
+        { type: 'assistant.turn_start', data: { turnId: 'turn-tool' } },
+        {
+          type: 'assistant.message',
+          data: {
+            turnId: 'turn-tool',
+            content: '',
+            toolRequests: [{ toolCallId: 'call-1', name: 'skill' }]
+          }
+        },
+        {
+          type: 'tool.execution_start',
+          data: { turnId: 'turn-tool', toolCallId: 'call-1', toolName: 'skill' }
+        },
+        {
+          type: 'tool.execution_complete',
+          data: { turnId: 'turn-tool', toolCallId: 'call-1', success: true }
+        },
+        { type: 'assistant.turn_end', data: { turnId: 'turn-tool' } }
+      ],
+      beforePayload: reasoningFrames
+    }), { mode: 0o600 });
+
+    const transport = await extractAgentResponse(eventsFile, responseFile, statusFile);
+    assert.equal(transport.status, 'complete');
+    assert.equal(await readFile(responseFile, 'utf8'), payload);
+
+    const ingestion = await ingestDiscoveryResponse(
+      responseFile,
+      path.join(directory, 'results'),
+      path.join(directory, 'diagnostics'),
+      { agent: 'prg-reliability', batch: 1, attempt: 1 }
+    );
+    assert.equal(ingestion.status, 'complete');
+    assert.deepEqual(ingestion.findings, [candidate]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('agent response transport fails closed on ambiguous or rendered streams', async () => {
+  const preamble = [
+    { type: 'assistant.turn_start', data: { turnId: 'turn-preamble' } },
+    {
+      type: 'assistant.message',
+      data: {
+        turnId: 'turn-preamble',
+        content: 'Using strict-code-review to inspect this response.',
+        toolRequests: []
+      }
+    },
+    { type: 'assistant.turn_end', data: { turnId: 'turn-preamble' } }
+  ];
+  const finalTurn = [
+    { type: 'assistant.turn_start', data: { turnId: 'turn-final' } },
+    {
+      type: 'assistant.message',
+      data: { turnId: 'turn-final', content: '[]', toolRequests: [] }
+    },
+    { type: 'assistant.turn_end', data: { turnId: 'turn-final' } }
+  ];
+  const resultEvent = { type: 'result', exitCode: 0 };
+  const asJsonl = events => `${events.map(event => JSON.stringify(event)).join('\n')}\n`;
+  const cases = [
+    {
+      label: 'rendered text',
+      stream: 'Using strict-code-review to inspect this response.\n[]\n',
+      kind: 'transport-invalid-jsonl'
+    },
+    {
+      label: 'contentful preamble',
+      stream: asJsonl([...preamble, ...finalTurn, resultEvent]),
+      kind: 'transport-multiple-payloads'
+    },
+    {
+      label: 'contentful preamble before object',
+      stream: asJsonl([
+        ...preamble,
+        { type: 'assistant.turn_start', data: { turnId: 'turn-object' } },
+        {
+          type: 'assistant.message',
+          data: {
+            turnId: 'turn-object',
+            content: '{"comments":[]}',
+            toolRequests: []
+          }
+        },
+        { type: 'assistant.turn_end', data: { turnId: 'turn-object' } },
+        resultEvent
+      ]),
+      kind: 'transport-multiple-payloads'
+    },
+    {
+      label: 'failed result',
+      stream: agentEventStream('[]', { exitCode: 1 }),
+      kind: 'transport-unsuccessful-result'
+    },
+    {
+      label: 'missing result',
+      stream: asJsonl(finalTurn),
+      kind: 'transport-missing-result'
+    },
+    {
+      label: 'multiple results',
+      stream: asJsonl([...finalTurn, resultEvent, resultEvent]),
+      kind: 'transport-multiple-results'
+    },
+    {
+      label: 'missing payload',
+      stream: agentEventStream('', {
+        toolRequests: [{ toolCallId: 'call-1', name: 'skill' }]
+      }),
+      kind: 'transport-missing-payload'
+    },
+    {
+      // Characterization: a valid completed turn whose only assistant
+      // message is empty and tool-free has no payload candidate at all.
+      // The corrected extractor already returns transport-missing-payload
+      // for this shape; this fixture pins that behavior rather than
+      // driving a new implementation change.
+      label: 'sole assistant message is an empty tool-free frame',
+      stream: agentEventStream(''),
+      kind: 'transport-missing-payload'
+    },
+    {
+      label: 'content and tool request',
+      stream: agentEventStream('[]', {
+        toolRequests: [{ toolCallId: 'call-1', name: 'skill' }]
+      }),
+      kind: 'transport-invalid-event'
+    },
+    {
+      label: 'message outside a turn',
+      stream: asJsonl([
+        {
+          type: 'assistant.message',
+          data: { turnId: 'turn-missing', content: '[]', toolRequests: [] }
+        },
+        resultEvent
+      ]),
+      kind: 'transport-non-terminal-payload'
+    },
+    {
+      label: 'payload in a non-final turn',
+      stream: agentEventStream('[]', {
+        following: [
+          { type: 'assistant.turn_start', data: { turnId: 'turn-later' } },
+          {
+            type: 'assistant.message',
+            data: {
+              turnId: 'turn-later',
+              content: '',
+              toolRequests: [{ toolCallId: 'call-later', name: 'skill' }]
+            }
+          },
+          { type: 'assistant.turn_end', data: { turnId: 'turn-later' } }
+        ]
+      }),
+      kind: 'transport-non-terminal-payload'
+    },
+    {
+      label: 'malformed event object',
+      stream: asJsonl([{}, ...finalTurn, resultEvent]),
+      kind: 'transport-invalid-event'
+    },
+    {
+      label: 'empty tool-free message outside a turn',
+      stream: asJsonl([{
+        type: 'assistant.message',
+        data: {
+          turnId: 'turn-orphan',
+          content: '',
+          toolRequests: [],
+          encryptedContent: 'synthetic-encrypted-frame',
+          reasoningOpaque: 'synthetic-reasoning-frame'
+        }
+      }, ...finalTurn, resultEvent]),
+      kind: 'transport-non-terminal-payload'
+    }
+  ];
+
+  for (const [index, fixture] of cases.entries()) {
+    const directory = await mkdtemp(path.join(os.tmpdir(), `prg-agent-invalid-${index}-`));
+    try {
+      const eventsFile = path.join(directory, 'events.jsonl');
+      const responseFile = path.join(directory, 'response.json');
+      const statusFile = path.join(directory, 'status.json');
+      await writeFile(eventsFile, fixture.stream, { mode: 0o600 });
+
+      const result = await extractAgentResponse(eventsFile, responseFile, statusFile);
+
+      assert.equal(result.status, 'invalid', fixture.label);
+      assert.equal(result.failure.kind, fixture.kind, fixture.label);
+      await assert.rejects(access(responseFile), { code: 'ENOENT' });
+      await assert.rejects(access(eventsFile), { code: 'ENOENT' });
+      const persisted = await readFile(statusFile, 'utf8');
+      assert.deepEqual(JSON.parse(persisted), result);
+      assert.doesNotMatch(
+        persisted,
+        /Using strict-code-review|inspect this response|\[\]/,
+        fixture.label
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+});
+
+test('agent response transport CLI feeds array and object stage consumers', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-agent-transport-cli-'));
+  try {
+    const extractor = 'skills/review-pull-request/scripts/extract-agent-response.mjs';
+    async function extract(label, payload) {
+      const eventsFile = path.join(directory, `${label}.jsonl`);
+      const responseFile = path.join(directory, `${label}.response.json`);
+      const statusFile = path.join(directory, `${label}.status.json`);
+      await writeFile(eventsFile, agentEventStream(payload), { mode: 0o600 });
+      const cli = spawnSync(process.execPath, [
+        extractor,
+        eventsFile,
+        responseFile,
+        statusFile
+      ], { cwd: root, encoding: 'utf8' });
+      assert.equal(cli.status, 0, `${label}: ${cli.stdout}${cli.stderr}`);
+      assert.equal(JSON.parse(await readFile(statusFile, 'utf8')).status, 'complete');
+      await assert.rejects(access(eventsFile), { code: 'ENOENT' });
+      return responseFile;
+    }
+
+    const candidate = discoveryCandidate('correctness', {
+      evidence: `first line\nsecond line ${'x'.repeat(500)}`
+    });
+    const discoveryFile = await extract('discovery', JSON.stringify([candidate]));
+    const discovery = await ingestDiscoveryResponse(
+      discoveryFile,
+      path.join(directory, 'discovery-results'),
+      path.join(directory, 'discovery-diagnostics'),
+      { agent: 'prg-correctness', batch: 1, attempt: 1 }
+    );
+    assert.deepEqual(discovery.findings, [candidate]);
+
+    const verifierFile = await extract('verifier', JSON.stringify({
+      verdict: 'rejected',
+      confidence: 0.97,
+      reason: 'The supplied guard prevents the claimed trigger.',
+      finding: candidate
+    }));
+    const verifier = JSON.parse(await readFile(verifierFile, 'utf8'));
+    assert.equal(verifier.verdict, 'rejected');
+    assert.equal(typeof verifier.confidence, 'number');
+    assert.equal(typeof verifier.reason, 'string');
+    assert.deepEqual(verifier.finding, candidate);
+
+    const fingerprint = 'a'.repeat(64);
+    const fingerprinted = { ...candidate, fingerprint };
+    const prepared = {
+      schemaVersion: '1.0',
+      findings: [fingerprinted],
+      existingThreadCount: 1,
+      batches: [{
+        batchId: 'batch-001',
+        findingFingerprints: [fingerprint],
+        existingThreads: [{
+          id: '501',
+          body: 'An unrelated existing review comment.'
+        }]
+      }],
+      suppressed: []
+    };
+    const deduplicatorFile = await extract('deduplicator', JSON.stringify({
+      batchId: 'batch-001',
+      decisions: [{
+        fingerprint,
+        verdict: 'distinct',
+        matchedThreadIds: [],
+        reason: `No existing comment reports this failure. ${'y'.repeat(500)}`
+      }]
+    }));
+    const deduplicated = applyDeduplication(
+      prepared,
+      JSON.parse(await readFile(deduplicatorFile, 'utf8'))
+    );
+    assert.equal(deduplicated.findings.length, 1);
+
+    const editorFile = await extract('editor', JSON.stringify({
+      comments: [{
+        fingerprint,
+        comment: `This path still fails for the supplied trigger. ${'z'.repeat(500)}`
+      }]
+    }));
+    const edited = applyComments(
+      deduplicated,
+      JSON.parse(await readFile(editorFile, 'utf8'))
+    );
+    assert.equal(edited.length, 1);
+    assert.match(edited[0].comment, /supplied trigger/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('static plugin validation passes and declares no MCP integration', async () => {
   const manifest = JSON.parse(await readFile(path.join(root, 'plugin.json'), 'utf8'));
+  const marketplace = JSON.parse(await readFile(
+    path.resolve(root, '../../..', '.github/plugin/marketplace.json'),
+    'utf8'
+  ));
+  const validator = await readFile(path.join(root, 'scripts/validate-plugin.mjs'), 'utf8');
   assert.equal(manifest.name, 'pr-review-graph');
+  assert.equal(manifest.version, '0.3.0');
+  assert.equal(
+    marketplace.plugins.find(plugin => plugin.name === manifest.name)?.version,
+    manifest.version
+  );
   assert.equal(manifest.mcpServers, undefined);
   assert.equal(manifest.hooks, undefined);
+  assert.match(validator, /extract-agent-response\.mjs/);
+  assert.match(validator, /--output-format json --stream off --silent/);
 
   const result = spawnSync(process.execPath, ['scripts/validate-plugin.mjs'], { cwd: root, encoding: 'utf8' });
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
@@ -47,6 +549,102 @@ test('provider adapters use skills without making one Azure access path mandator
   assert.match(azure, /collect-azure-devops-rest\.mjs/);
   assert.match(azure, /assemble-azure-context\.mjs/);
   assert.match(azure, /code-only access is insufficient/i);
+});
+
+test('machine-response transport is required for every tool-less agent stage', async () => {
+  const skill = await readFile(path.join(root, 'skills/review-pull-request/SKILL.md'), 'utf8');
+  const graph = await readFile(
+    path.join(root, 'skills/review-pull-request/references/review-graph.md'),
+    'utf8'
+  );
+  const superpowers = await readFile(
+    path.join(root, 'skills/review-pull-request/references/superpowers-compatibility.md'),
+    'utf8'
+  );
+  const readme = await readFile(path.join(root, 'README.md'), 'utf8');
+
+  assert.match(skill, /--output-format json --stream off --silent/);
+  assert.match(skill, /extract-agent-response\.mjs/);
+  assert.match(skill, /rendered transcript[^.]*never ingestible/i);
+  assert.match(skill, /explicit raw final-response field/i);
+  for (const agent of ['prg-verifier', 'prg-deduplicator', 'prg-editor']) {
+    const dispatch = skill.indexOf(`\`${agent}\``);
+    assert.notEqual(dispatch, -1, agent);
+    assert.match(skill.slice(dispatch, dispatch + 1_800), /extract-agent-response\.mjs/, agent);
+  }
+  assert.match(graph, /verification transport failure[^.]*reject/i);
+  assert.match(graph, /deduplication transport failure[^.]*retry once[^.]*hold/i);
+  assert.match(graph, /editor transport failure[^.]*retry once[^.]*stop/i);
+  assert.match(superpowers, /skill narration[^.]*JSONL event/i);
+  assert.match(skill, /empty assistant messages[^.]*structural frames[^.]*regardless of tool requests/i);
+  assert.match(graph, /empty assistant messages[^.]*structural frames[^.]*regardless of tool requests/i);
+  assert.match(readme, /empty assistant messages[^.]*structural frames[^.]*regardless of tool requests/i);
+  assert.match(readme, /## Opt-in transport smoke/);
+  assert.match(readme, /EXPECTED_BASE/);
+  assert.match(readme, /pr-review-graph:prg-reliability/);
+  assert.match(readme, /normalize-context\.mjs/);
+
+  // Current-repo binding: REPO must be asserted against this checkout, not
+  // an arbitrary value.
+  assert.match(readme, /git remote get-url origin/);
+  assert.match(readme, /gh repo view --json nameWithOwner/);
+  assert.match(readme, /\[ "\$REPO" = "\$origin_repo" \]/);
+  assert.match(readme, /\[ "\$REPO" = "\$gh_repo" \]/);
+
+  // Pull-ref fetch to FETCH_HEAD so fork PRs and missing objects work,
+  // before the cat-file checks, with no persistent custom ref.
+  const fetchIndex = readme.indexOf('git fetch --no-tags --quiet origin "refs/pull/${PR}/head"');
+  const catFileIndex = readme.indexOf('git cat-file -e "${EXPECTED_BASE}^{commit}"');
+  assert.notEqual(fetchIndex, -1);
+  assert.notEqual(catFileIndex, -1);
+  assert.ok(fetchIndex < catFileIndex, 'PR-head fetch must precede the cat-file checks');
+  assert.match(readme, /FETCH_HEAD/);
+  assert.match(readme, /no persistent ref/);
+
+  // Full lowercase 40-hex SHA format required for both identities.
+  assert.match(readme, /\^\[0-9a-f\]\{40\}\$/);
+  assert.match(readme, /EXPECTED_BASE.*=~ \^\[0-9a-f\]\{40\}\$/);
+  assert.match(readme, /EXPECTED_HEAD.*=~ \^\[0-9a-f\]\{40\}\$/);
+
+  // Executable jq -e checks binding the remote, packet, and plan identity —
+  // not prose-only verification — plus exactly one prg-reliability plan
+  // entry containing the selected batch.
+  assert.match(readme, /jq -e --arg b "\$EXPECTED_BASE" --arg h "\$EXPECTED_HEAD" \\\n\s*'\.baseRefOid == \$b and \.headRefOid == \$h' "\$scratch\/pull-request\.json"/);
+  assert.match(readme, /'\.pullRequest\.base\.sha == \$b and \.pullRequest\.head\.sha == \$h'/);
+  assert.match(readme, /'\.snapshot\.baseSha == \$b and \.snapshot\.headSha == \$h'/);
+  assert.match(readme, /select\(\.name == "prg-reliability"\)\] as \$reliability\s*\n\s*\| \(\$reliability \| length\) == 1/);
+  assert.match(readme, /'\.baseRefOid == \$b and \.headRefOid == \$h' "\$scratch\/final-shas\.json"/);
+
+  // Structural diagnostics: the safe count object must print before its gate.
+  const structuralPrintIndex = readme.indexOf('jq . "$scratch/structural.json"');
+  const structuralGateIndex = readme.indexOf("jq -e '.opaqueEmptyNoToolFrames >= 1");
+  assert.notEqual(structuralPrintIndex, -1);
+  assert.notEqual(structuralGateIndex, -1);
+  assert.ok(structuralPrintIndex < structuralGateIndex, 'structural counts must print before the topology gate');
+
+  // Safe extractor/ingestion failure handling: only the fixed status/kind
+  // from the private JSON, never payload/candidate content, then exit
+  // non-zero.
+  assert.match(readme, /extract_exit=\$\?/);
+  assert.match(readme, /ingest_exit=\$\?/);
+  assert.match(readme, /if \[ "\$extract_exit" -ne 0 \]; then\s*\n\s*jq -r '\.failure\.kind' "\$scratch\/transport-status\.json"\s*\n\s*exit 1/);
+  assert.match(readme, /if \[ "\$ingest_exit" -ne 0 \]; then\s*\n\s*jq -r '\.failure\.kind' "\$result_file"\s*\n\s*exit 1/);
+  assert.match(readme, /Never print payload, candidate, or packet content/);
+
+  // Immutable-PRG-agent / SHA-guarded markers, and the single non-interactive
+  // shell + SKILL.md Phase 2 cross-reference.
+  assert.match(readme, /SHA-guarded/i);
+  assert.match(readme, /one non-interactive shell/);
+  assert.match(readme, /Phase 2: Build the graph\]\(skills\/review-pull-request\/SKILL\.md#phase-2-build-the-graph\)/);
+  assert.match(readme, /no added capabilities/);
+
+  // The superseded short synthetic skill-only smoke must be fully gone.
+  assert.doesNotMatch(readme, /--available-tools=skill --allow-tool=skill/);
+  assert.doesNotMatch(readme, /emptyNoToolFrames\b/);
+  assert.doesNotMatch(readme, /toolBearingEmptyFrames\b/);
+  assert.doesNotMatch(readme, /nonEmptyPayloads\b/);
+  assert.doesNotMatch(readme, /return exactly \[\]/i);
+  assert.doesNotMatch(readme, /\(\.findings \| length\) == 0/);
 });
 
 test('GitHub raw data normalizes into an immutable canonical packet', async () => {
@@ -414,6 +1012,844 @@ test('comment join rejects duplicate fingerprints in editor output', async () =>
   };
 
   assert.throws(() => applyComments({ findings }, editorOutput), /more than one comment/);
+});
+
+test('discovery ingestion accepts escaped multiline and control characters', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-ingest-'));
+  try {
+    const rawFile = path.join(directory, 'raw.txt');
+    const resultDirectory = path.join(directory, 'results');
+    const diagnosticsDirectory = path.join(directory, 'diagnostics');
+    const evidence = 'first line\nsecond line\twith a tab\0and a nul';
+    await writeFile(rawFile, JSON.stringify([
+      discoveryCandidate('correctness', { evidence })
+    ]), { mode: 0o600 });
+
+    const result = await ingestDiscoveryResponse(
+      rawFile,
+      resultDirectory,
+      diagnosticsDirectory,
+      { agent: 'prg-correctness', batch: 1, attempt: 1 }
+    );
+
+    assert.equal(result.status, 'complete');
+    assert.equal(result.findings[0].evidence, evidence);
+    const persisted = await readFile(path.join(
+      resultDirectory,
+      discoveryResultFileName('prg-correctness', 1, 1)
+    ), 'utf8');
+    assert.match(persisted, /first line\\nsecond line\\twith a tab\\u0000and a nul/);
+    await assert.rejects(access(rawFile), { code: 'ENOENT' });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery ingestion rejects literal controls and retains only redacted diagnostics', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-invalid-'));
+  try {
+    const rawFile = path.join(directory, 'raw.txt');
+    const resultDirectory = path.join(directory, 'results');
+    const diagnosticsDirectory = path.join(directory, 'diagnostics');
+    const githubToken = ['ghp', 'abcdefghijklmnopqrstuvwxyz1234567890ABCD'].join('_');
+    const candidate = discoveryCandidate('correctness', {
+      evidence: 'first line\nsecond line',
+      recommendation: `Authorization: bearer-secret; token=${githubToken}`,
+      debug: {
+        password: 'password-secret',
+        private_key: '-----BEGIN PRIVATE KEY-----\nZmFrZQ==\n-----END PRIVATE KEY-----'
+      }
+    });
+    const malformed = JSON.stringify([candidate]).replace(
+      'first line\\nsecond line',
+      'first line\nsecond line'
+    );
+    await writeFile(rawFile, malformed, { mode: 0o600 });
+
+    const result = await ingestDiscoveryResponse(
+      rawFile,
+      resultDirectory,
+      diagnosticsDirectory,
+      { agent: 'prg-correctness', batch: 1, attempt: 1 }
+    );
+
+    assert.equal(result.status, 'invalid');
+    assert.equal(result.failure.kind, 'invalid-json');
+    const diagnosticText = await readFile(result.failure.diagnostic, 'utf8');
+    const diagnostic = JSON.parse(diagnosticText);
+    assert.equal(diagnostic.failureKind, 'invalid-json');
+    assert.match(diagnosticText, /first line\\nsecond line/);
+    for (const secret of ['bearer-secret', githubToken, 'password-secret', 'ZmFrZQ==']) {
+      assert.doesNotMatch(diagnostic.response, new RegExp(secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+    assert.match(diagnostic.response, /<redacted/);
+    await assert.rejects(access(rawFile), { code: 'ENOENT' });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('JWT redaction uses precise regex and does not overmatch', async () => {
+  const { redactDiagnosticText } = await import('../skills/review-pull-request/scripts/process-discovery.mjs');
+
+  const validJwt = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U';
+  const anotherValidJwt = 'eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlMTIzNDU2.aGFzQWZvdXJ0aFNlZ21lbnQ1NjU';
+  const notAJwt = 'not.a.jwt.string';
+  const falsePositiveJwt = 'some.thing.else';
+
+  const redacted = redactDiagnosticText(
+    `Valid: ${validJwt} Another: ${anotherValidJwt} Not-JWT: ${notAJwt} False: ${falsePositiveJwt}`
+  );
+
+  assert.doesNotMatch(redacted, new RegExp(validJwt));
+  assert.doesNotMatch(redacted, new RegExp(anotherValidJwt));
+  assert.match(redacted, /Valid: <redacted-jwt>/);
+  assert.match(redacted, /Another: <redacted-jwt>/);
+  assert.match(redacted, /Not-JWT: not\.a\.jwt\.string/);
+  assert.match(redacted, /False: some\.thing\.else/);
+});
+
+test('discovery ingestion cleans up diagnostic if result write fails', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-cleanup-'));
+  try {
+    const rawFile = path.join(directory, 'raw.txt');
+    const resultDirectory = path.join(directory, 'results');
+    const diagnosticsDirectory = path.join(directory, 'diagnostics');
+    const candidate = discoveryCandidate('correctness', {
+      evidence: 'escaped\\nstring',
+      recommendation: 'no secrets here'
+    });
+    const malformed = JSON.stringify([candidate]).replace(
+      'escaped\\nstring',
+      'escaped\nstring'
+    );
+    await writeFile(rawFile, malformed, { mode: 0o600 });
+
+    await mkdir(resultDirectory, { recursive: true, mode: 0o700 });
+    const resultPath = path.join(resultDirectory, 'prg-correctness-batch-001-attempt-1.json');
+    await writeFile(resultPath, '{}', { mode: 0o600 });
+
+    const ingestPromise = ingestDiscoveryResponse(
+      rawFile,
+      resultDirectory,
+      diagnosticsDirectory,
+      { agent: 'prg-correctness', batch: 1, attempt: 1 }
+    );
+
+    try {
+      await ingestPromise;
+      assert.fail('Expected EEXIST error');
+    } catch (error) {
+      assert.equal(error.code, 'EEXIST');
+      const diagnosticPath = path.join(diagnosticsDirectory, 'prg-correctness-batch-001-attempt-1.failure.json');
+      await assert.rejects(access(diagnosticPath), { code: 'ENOENT' });
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+function discoveryPlan(agent, batchCount) {
+  const files = Array.from({ length: batchCount }, (_, index) => `file-${index + 1}.js`);
+  return {
+    schemaVersion: '1.0',
+    agents: [{
+      name: agent,
+      files,
+      batches: files.map(file => [file])
+    }]
+  };
+}
+
+async function ingestText(directory, text, metadata) {
+  const rawFile = path.join(
+    directory,
+    `${metadata.agent}-${metadata.batch}-${metadata.attempt}.raw`
+  );
+  await writeFile(rawFile, text, { mode: 0o600 });
+  return ingestDiscoveryResponse(
+    rawFile,
+    path.join(directory, 'results'),
+    path.join(directory, 'diagnostics'),
+    metadata
+  );
+}
+
+test('discovery finalization treats a valid retry as complete coverage', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-retry-'));
+  try {
+    const candidate = discoveryCandidate();
+    const malformed = JSON.stringify([{
+      ...candidate,
+      evidence: 'first line\nsecond line'
+    }]).replace('first line\\nsecond line', 'first line\nsecond line');
+    await ingestText(directory, malformed, {
+      agent: 'prg-correctness', batch: 1, attempt: 1
+    });
+    await ingestText(directory, JSON.stringify([candidate]), {
+      agent: 'prg-correctness', batch: 1, attempt: 2
+    });
+
+    const result = await finalizeDiscovery(
+      discoveryPlan('prg-correctness', 1),
+      path.join(directory, 'results')
+    );
+
+    assert.equal(result.coverage.status, 'complete');
+    assert.deepEqual(result.coverage.scopes[0], {
+      agent: 'prg-correctness',
+      status: 'complete',
+      expectedBatches: 1,
+      completedBatches: 1,
+      recoveredBatches: 1,
+      failedBatches: 0
+    });
+    assert.equal(result.findings.length, 1);
+    assert.equal(result.coverage.failures[0].attempts[0].attempt, 1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery transport failure can recover on the one allowed retry', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-transport-retry-'));
+  try {
+    const eventsFile = path.join(directory, 'events.jsonl');
+    const responseFile = path.join(directory, 'response.json');
+    const statusFile = path.join(directory, 'transport-status.json');
+    const resultDirectory = path.join(directory, 'results');
+    const diagnosticsDirectory = path.join(directory, 'diagnostics');
+    await writeFile(eventsFile, agentEventStream('[]', {
+      preceding: [
+        { type: 'assistant.turn_start', data: { turnId: 'turn-preamble' } },
+        {
+          type: 'assistant.message',
+          data: {
+            turnId: 'turn-preamble',
+            content: 'Using strict-code-review to inspect this response.',
+            toolRequests: []
+          }
+        },
+        { type: 'assistant.turn_end', data: { turnId: 'turn-preamble' } }
+      ]
+    }), { mode: 0o600 });
+    const transport = await extractAgentResponse(eventsFile, responseFile, statusFile);
+    assert.equal(transport.status, 'invalid');
+
+    const first = await recordDiscoveryTransportFailure(
+      statusFile,
+      resultDirectory,
+      diagnosticsDirectory,
+      { agent: 'prg-correctness', batch: 1, attempt: 1 }
+    );
+    const candidate = discoveryCandidate();
+    await ingestText(directory, JSON.stringify([candidate]), {
+      agent: 'prg-correctness', batch: 1, attempt: 2
+    });
+    const result = await finalizeDiscovery(
+      discoveryPlan('prg-correctness', 1),
+      resultDirectory
+    );
+
+    assert.equal(first.status, 'invalid');
+    assert.equal(first.failure.kind, 'transport-multiple-payloads');
+    assert.equal(result.coverage.status, 'complete');
+    assert.equal(result.coverage.scopes[0].recoveredBatches, 1);
+    assert.deepEqual(result.findings, [candidate]);
+    const diagnostic = JSON.parse(await readFile(first.failure.diagnostic, 'utf8'));
+    assert.equal(diagnostic.failureKind, 'transport-multiple-payloads');
+    assert.deepEqual(diagnostic.transport, { count: 2 });
+    assert.equal(diagnostic.response, undefined);
+    assert.doesNotMatch(JSON.stringify(diagnostic), /Using strict-code-review|\[\]/);
+    await assert.rejects(access(statusFile), { code: 'ENOENT' });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery transport failure CLI records a structural invalid attempt', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-transport-cli-'));
+  try {
+    const statusFile = path.join(directory, 'transport-status.json');
+    const resultDirectory = path.join(directory, 'results');
+    const diagnosticsDirectory = path.join(directory, 'diagnostics');
+    await writeFile(statusFile, JSON.stringify({
+      schemaVersion: '1.0',
+      status: 'invalid',
+      failure: {
+        kind: 'transport-invalid-jsonl',
+        line: 1
+      }
+    }), { mode: 0o600 });
+
+    const cli = spawnSync(process.execPath, [
+      'skills/review-pull-request/scripts/process-discovery.mjs',
+      'transport-failure',
+      statusFile,
+      resultDirectory,
+      diagnosticsDirectory,
+      '--agent', 'prg-correctness',
+      '--batch', '1',
+      '--attempt', '1'
+    ], { cwd: root, encoding: 'utf8' });
+
+    assert.equal(cli.status, 1, cli.stdout + cli.stderr);
+    const result = JSON.parse(await readFile(path.join(
+      resultDirectory,
+      discoveryResultFileName('prg-correctness', 1, 1)
+    ), 'utf8'));
+    assert.equal(result.status, 'invalid');
+    assert.equal(result.failure.kind, 'transport-invalid-jsonl');
+    const diagnostic = JSON.parse(await readFile(result.failure.diagnostic, 'utf8'));
+    assert.deepEqual(diagnostic.transport, { line: 1 });
+    assert.equal(diagnostic.response, undefined);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery transport failures remain terminal after two attempts', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-transport-terminal-'));
+  try {
+    const resultDirectory = path.join(directory, 'results');
+    const diagnosticsDirectory = path.join(directory, 'diagnostics');
+    for (const attempt of [1, 2]) {
+      const statusFile = path.join(directory, `transport-${attempt}.json`);
+      await writeFile(statusFile, JSON.stringify({
+        schemaVersion: '1.0',
+        status: 'invalid',
+        failure: { kind: 'transport-missing-payload' }
+      }), { mode: 0o600 });
+      await recordDiscoveryTransportFailure(
+        statusFile,
+        resultDirectory,
+        diagnosticsDirectory,
+        { agent: 'prg-correctness', batch: 1, attempt }
+      );
+    }
+
+    const result = await finalizeDiscovery(
+      discoveryPlan('prg-correctness', 1),
+      resultDirectory
+    );
+
+    assert.equal(result.coverage.status, 'failed');
+    assert.equal(result.coverage.scopes[0].status, 'failed');
+    assert.equal(result.coverage.failures[0].attempts.length, 2);
+    assert.equal(result.findings, null);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery transport failure rejects unsafe or malformed status', async () => {
+  const invalidStatuses = [
+    '{',
+    JSON.stringify({
+      schemaVersion: '1.0',
+      status: 'invalid',
+      failure: { kind: 'transport-unknown' }
+    }),
+    JSON.stringify({
+      schemaVersion: '1.0',
+      status: 'invalid',
+      failure: {
+        kind: 'transport-invalid-event',
+        eventType: 'authorization: bearer-secret'
+      }
+    }),
+    JSON.stringify({
+      schemaVersion: '1.0',
+      status: 'invalid',
+      failure: {
+        kind: 'transport-invalid-jsonl',
+        payload: 'Using strict-code-review...'
+      }
+    })
+  ];
+
+  for (const [index, value] of invalidStatuses.entries()) {
+    const directory = await mkdtemp(path.join(os.tmpdir(), `prg-transport-status-${index}-`));
+    try {
+      const statusFile = path.join(directory, 'transport-status.json');
+      const resultDirectory = path.join(directory, 'results');
+      await writeFile(statusFile, value, { mode: 0o600 });
+
+      await assert.rejects(
+        recordDiscoveryTransportFailure(
+          statusFile,
+          resultDirectory,
+          path.join(directory, 'diagnostics'),
+          { agent: 'prg-correctness', batch: 1, attempt: 1 }
+        ),
+        /Transport status|transport failure/i
+      );
+      await assert.rejects(
+        access(path.join(resultDirectory, discoveryResultFileName(
+          'prg-correctness', 1, 1
+        ))),
+        { code: 'ENOENT' }
+      );
+      await assert.rejects(access(statusFile), { code: 'ENOENT' });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+});
+
+test('discovery finalization fails closed when one batch remains invalid', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-partial-'));
+  try {
+    await ingestText(directory, '[]', {
+      agent: 'prg-correctness', batch: 1, attempt: 1
+    });
+    for (const attempt of [1, 2]) {
+      await ingestText(directory, '[{"evidence":"literal\nnewline"}]', {
+        agent: 'prg-correctness', batch: 2, attempt
+      });
+    }
+
+    const result = await finalizeDiscovery(
+      discoveryPlan('prg-correctness', 2),
+      path.join(directory, 'results')
+    );
+
+    assert.equal(result.coverage.status, 'failed');
+    assert.equal(result.coverage.scopes[0].status, 'incomplete');
+    assert.equal(result.coverage.scopes[0].completedBatches, 1);
+    assert.equal(result.coverage.scopes[0].failedBatches, 1);
+    assert.equal(result.findings, null);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery finalization rejects an empty file batch', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-empty-file-batch-'));
+  try {
+    await ingestText(directory, '[]', {
+      agent: 'prg-correctness', batch: 1, attempt: 1
+    });
+    const result = await finalizeDiscovery({
+      schemaVersion: '1.0',
+      agents: [{
+        name: 'prg-correctness',
+        files: [],
+        batches: [[]]
+      }]
+    }, path.join(directory, 'results'));
+
+    assert.equal(result.coverage.status, 'failed');
+    assert.equal(result.findings, null);
+    assert.ok(result.coverage.planProblems.some(problem => problem.includes('non-empty file paths')));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery finalization requires batches to exactly cover declared files once', async () => {
+  const invalidPlans = [
+    {
+      label: 'missing file',
+      files: ['a.js', 'b.js', 'c.js'],
+      batches: [['a.js']]
+    },
+    {
+      label: 'extra file',
+      files: ['a.js'],
+      batches: [['a.js', 'b.js']]
+    },
+    {
+      label: 'duplicate file',
+      files: ['a.js'],
+      batches: [['a.js'], ['a.js']]
+    }
+  ];
+
+  for (const invalidPlan of invalidPlans) {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-file-coverage-'));
+    try {
+      for (let batch = 1; batch <= invalidPlan.batches.length; batch += 1) {
+        await ingestText(directory, '[]', {
+          agent: 'prg-correctness', batch, attempt: 1
+        });
+      }
+      const result = await finalizeDiscovery({
+        schemaVersion: '1.0',
+        agents: [{
+          name: 'prg-correctness',
+          files: invalidPlan.files,
+          batches: invalidPlan.batches
+        }]
+      }, path.join(directory, 'results'));
+
+      assert.equal(result.coverage.status, 'failed', invalidPlan.label);
+      assert.equal(result.findings, null, invalidPlan.label);
+      assert.ok(
+        result.coverage.planProblems.some(problem => problem.includes('exactly once')),
+        invalidPlan.label
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+});
+
+test('discovery finalize CLI removes stale candidates on failed coverage', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-cli-'));
+  try {
+    const planFile = path.join(directory, 'plan.json');
+    const resultDirectory = path.join(directory, 'results');
+    const candidatesFile = path.join(directory, 'candidates.json');
+    const coverageFile = path.join(directory, 'coverage.json');
+    await writeFile(planFile, JSON.stringify(discoveryPlan('prg-correctness', 1)));
+    await writeFile(candidatesFile, '[]\n');
+    await ingestText(directory, '[{"evidence":"literal\nnewline"}]', {
+      agent: 'prg-correctness', batch: 1, attempt: 1
+    });
+    await ingestText(directory, '[{"evidence":"literal\nnewline"}]', {
+      agent: 'prg-correctness', batch: 1, attempt: 2
+    });
+
+    const cli = spawnSync(process.execPath, [
+      'skills/review-pull-request/scripts/process-discovery.mjs',
+      'finalize',
+      planFile,
+      resultDirectory,
+      candidatesFile,
+      coverageFile
+    ], { cwd: root, encoding: 'utf8' });
+
+    assert.equal(cli.status, 1, cli.stderr);
+    await assert.rejects(access(candidatesFile), { code: 'ENOENT' });
+    const coverage = JSON.parse(await readFile(coverageFile, 'utf8'));
+    assert.equal(coverage.status, 'failed');
+    assert.equal(coverage.scopes[0].status, 'failed');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery finalize CLI reports a corrupt complete envelope and removes stale candidates', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-corrupt-envelope-'));
+  try {
+    const planFile = path.join(directory, 'plan.json');
+    const resultDirectory = path.join(directory, 'results');
+    const candidatesFile = path.join(directory, 'candidates.json');
+    const coverageFile = path.join(directory, 'coverage.json');
+    await mkdir(resultDirectory);
+    await writeFile(planFile, JSON.stringify(discoveryPlan('prg-correctness', 1)));
+    await writeFile(path.join(
+      resultDirectory,
+      discoveryResultFileName('prg-correctness', 1, 1)
+    ), JSON.stringify({
+      schemaVersion: '1.0',
+      agent: 'prg-correctness',
+      category: 'correctness',
+      batch: 1,
+      attempt: 1,
+      status: 'complete',
+      findings: {}
+    }));
+    await writeFile(candidatesFile, '["stale"]\n');
+
+    const cli = spawnSync(process.execPath, [
+      'skills/review-pull-request/scripts/process-discovery.mjs',
+      'finalize',
+      planFile,
+      resultDirectory,
+      candidatesFile,
+      coverageFile
+    ], { cwd: root, encoding: 'utf8' });
+
+    assert.equal(cli.status, 1, cli.stdout + cli.stderr);
+    await assert.rejects(access(candidatesFile), { code: 'ENOENT' });
+    const coverage = JSON.parse(await readFile(coverageFile, 'utf8'));
+    assert.equal(coverage.status, 'failed');
+    assert.equal(coverage.scopes[0].status, 'failed');
+    assert.ok(coverage.failures.some(failure => failure.reason === 'corrupt-envelope'));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery finalize CLI emits an authoritative empty array only for complete coverage', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-empty-'));
+  try {
+    const planFile = path.join(directory, 'plan.json');
+    const resultDirectory = path.join(directory, 'results');
+    const candidatesFile = path.join(directory, 'candidates.json');
+    const coverageFile = path.join(directory, 'coverage.json');
+    await writeFile(planFile, JSON.stringify(discoveryPlan('prg-correctness', 1)));
+    await ingestText(directory, '[]', {
+      agent: 'prg-correctness', batch: 1, attempt: 1
+    });
+
+    const cli = spawnSync(process.execPath, [
+      'skills/review-pull-request/scripts/process-discovery.mjs',
+      'finalize',
+      planFile,
+      resultDirectory,
+      candidatesFile,
+      coverageFile
+    ], { cwd: root, encoding: 'utf8' });
+
+    assert.equal(cli.status, 0, cli.stderr);
+    assert.deepEqual(JSON.parse(await readFile(candidatesFile, 'utf8')), []);
+    assert.equal(JSON.parse(await readFile(coverageFile, 'utf8')).status, 'complete');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery finalization fails closed when a routed agent has zero planned batches', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-zerobatch-'));
+  try {
+    const result = await finalizeDiscovery(
+      discoveryPlan('prg-correctness', 0),
+      path.join(directory, 'results')
+    );
+
+    assert.equal(result.coverage.status, 'failed');
+    assert.equal(result.coverage.scopes[0].status, 'failed');
+    assert.equal(result.coverage.scopes[0].expectedBatches, 0);
+    assert.ok(result.coverage.failures.some(failure => failure.reason === 'zero-expected-batches'));
+    assert.ok(result.coverage.planProblems.some(problem => problem.includes('zero expected batches')));
+    assert.equal(result.findings, null);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery finalization fails closed for a plan with no routed agents', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-noagents-'));
+  try {
+    const result = await finalizeDiscovery(
+      { schemaVersion: '1.0', agents: [] },
+      path.join(directory, 'results')
+    );
+
+    assert.equal(result.coverage.status, 'failed');
+    assert.deepEqual(result.coverage.scopes, []);
+    assert.ok(result.coverage.planProblems.some(problem => problem.includes('at least one routed agent')));
+    assert.equal(result.findings, null);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery finalization fails closed for a plan missing the agents array', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-malformed-'));
+  try {
+    const result = await finalizeDiscovery(
+      { schemaVersion: '1.0' },
+      path.join(directory, 'results')
+    );
+
+    assert.equal(result.coverage.status, 'failed');
+    assert.deepEqual(result.coverage.scopes, []);
+    assert.ok(result.coverage.planProblems.some(problem => problem.includes('agents array')));
+    assert.equal(result.findings, null);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery finalize CLI fails closed and removes stale candidates for a wrong/empty plan', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-cli-wrongplan-'));
+  try {
+    const planFile = path.join(directory, 'plan.json');
+    const resultDirectory = path.join(directory, 'results');
+    const candidatesFile = path.join(directory, 'candidates.json');
+    const coverageFile = path.join(directory, 'coverage.json');
+    await writeFile(planFile, JSON.stringify({ schemaVersion: '1.0', agents: [] }));
+    await writeFile(candidatesFile, '[]\n');
+
+    const cli = spawnSync(process.execPath, [
+      'skills/review-pull-request/scripts/process-discovery.mjs',
+      'finalize',
+      planFile,
+      resultDirectory,
+      candidatesFile,
+      coverageFile
+    ], { cwd: root, encoding: 'utf8' });
+
+    assert.equal(cli.status, 1, cli.stdout + cli.stderr);
+    await assert.rejects(access(candidatesFile), { code: 'ENOENT' });
+    const coverage = JSON.parse(await readFile(coverageFile, 'utf8'));
+    assert.equal(coverage.status, 'failed');
+    assert.ok(coverage.planProblems.some(problem => problem.includes('at least one routed agent')));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery finalize CLI fails closed on a binary-only plan with zero expected batches', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-cli-zerobatch-'));
+  try {
+    const planFile = path.join(directory, 'plan.json');
+    const resultDirectory = path.join(directory, 'results');
+    const candidatesFile = path.join(directory, 'candidates.json');
+    const coverageFile = path.join(directory, 'coverage.json');
+    await writeFile(planFile, JSON.stringify(discoveryPlan('prg-correctness', 0)));
+    await writeFile(candidatesFile, '[]\n');
+
+    const cli = spawnSync(process.execPath, [
+      'skills/review-pull-request/scripts/process-discovery.mjs',
+      'finalize',
+      planFile,
+      resultDirectory,
+      candidatesFile,
+      coverageFile
+    ], { cwd: root, encoding: 'utf8' });
+
+    assert.equal(cli.status, 1, cli.stdout + cli.stderr);
+    await assert.rejects(access(candidatesFile), { code: 'ENOENT' });
+    const coverage = JSON.parse(await readFile(coverageFile, 'utf8'));
+    assert.equal(coverage.status, 'failed');
+    assert.equal(coverage.scopes[0].status, 'failed');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery ingestion rejects a bare CLI batch or attempt flag instead of coercing it to 1', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-bareflag-'));
+  try {
+    const rawFile = path.join(directory, 'raw.txt');
+    const resultDirectory = path.join(directory, 'results');
+    const diagnosticsDirectory = path.join(directory, 'diagnostics');
+
+    await writeFile(rawFile, '[]', { mode: 0o600 });
+    await assert.rejects(
+      ingestDiscoveryResponse(rawFile, resultDirectory, diagnosticsDirectory, {
+        agent: 'prg-correctness', batch: true, attempt: 1
+      }),
+      /Batch must be a positive integer/
+    );
+
+    await writeFile(rawFile, '[]', { mode: 0o600 });
+    await assert.rejects(
+      ingestDiscoveryResponse(rawFile, resultDirectory, diagnosticsDirectory, {
+        agent: 'prg-correctness', batch: 1, attempt: undefined
+      }),
+      /Attempt must be 1 or 2/
+    );
+
+    await assert.rejects(
+      access(path.join(resultDirectory, discoveryResultFileName('prg-correctness', 1, 1))),
+      { code: 'ENOENT' }
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery ingest CLI rejects a trailing --batch flag with no value', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-cli-bareflag-'));
+  try {
+    const rawFile = path.join(directory, 'raw.txt');
+    const resultDirectory = path.join(directory, 'results');
+    const diagnosticsDirectory = path.join(directory, 'diagnostics');
+    await writeFile(rawFile, '[]', { mode: 0o600 });
+
+    const cli = spawnSync(process.execPath, [
+      'skills/review-pull-request/scripts/process-discovery.mjs',
+      'ingest',
+      rawFile,
+      resultDirectory,
+      diagnosticsDirectory,
+      '--agent', 'prg-correctness',
+      '--attempt', '1',
+      '--batch'
+    ], { cwd: root, encoding: 'utf8' });
+
+    assert.equal(cli.status, 1, cli.stdout + cli.stderr);
+    assert.match(cli.stderr, /Batch must be a positive integer/);
+    await assert.rejects(
+      access(path.join(resultDirectory, discoveryResultFileName('prg-correctness', 1, 1))),
+      { code: 'ENOENT' }
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery finalization classifies complete-first-plus-second as failed with explicit reason', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-reason-'));
+  try {
+    const candidate = discoveryCandidate();
+    await ingestText(directory, JSON.stringify([candidate]), {
+      agent: 'prg-correctness', batch: 1, attempt: 1
+    });
+    await ingestText(directory, JSON.stringify([candidate]), {
+      agent: 'prg-correctness', batch: 1, attempt: 2
+    });
+
+    const result = await finalizeDiscovery(
+      discoveryPlan('prg-correctness', 1),
+      path.join(directory, 'results')
+    );
+
+    assert.equal(result.coverage.status, 'failed');
+    assert.equal(result.coverage.scopes[0].status, 'failed');
+    assert.equal(result.coverage.failures[0].recovered, false);
+    assert.equal(result.coverage.failures[0].reason, 'complete-first-unexpected-retry');
+    assert.deepEqual(result.coverage.failures[0].attempts, []);
+    assert.equal(result.findings, null);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('validateAttemptEnvelope rejects an envelope when expected category is not a known discovery category', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-badcat-'));
+  try {
+    const candidate = discoveryCandidate('correctness');
+    await ingestText(directory, JSON.stringify([candidate]), {
+      agent: 'prg-correctness', batch: 1, attempt: 1
+    });
+
+    // Remove the category field from the stored result envelope so that
+    // value.category is undefined; validateAttemptEnvelope's field loop will
+    // flag it as corrupt (category does not match) before the findings check.
+    const resultFile = path.join(
+      directory, 'results',
+      discoveryResultFileName('prg-correctness', 1, 1)
+    );
+    const envelope = JSON.parse(await readFile(resultFile, 'utf8'));
+    delete envelope.category;
+    await writeFile(resultFile, JSON.stringify(envelope), { mode: 0o600 });
+
+    const result = await finalizeDiscovery(
+      discoveryPlan('prg-correctness', 1),
+      path.join(directory, 'results')
+    );
+    assert.equal(result.coverage.status, 'failed');
+    assert.equal(result.coverage.scopes[0].status, 'failed');
+    assert.equal(result.coverage.failures[0].reason, 'corrupt-envelope');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+
+test('discovery agents require escaped JSON arrays without fences', async () => {
+  const agents = [
+    'prg-contract',
+    'prg-correctness',
+    'prg-tests',
+    'prg-security',
+    'prg-data-compatibility',
+    'prg-reliability'
+  ];
+  for (const agent of agents) {
+    const text = await readFile(path.join(root, 'agents', `${agent}.agent.md`), 'utf8');
+    assert.match(text, /Return exactly one JSON array/);
+    assert.match(text, /Do not wrap the array in a Markdown code fence/);
+    assert.ok(text.includes('\\u0000'), `${agent} must require escaped control characters`);
+    assert.match(text, /```json\s*\[/);
+  }
 });
 
 const BASH4_ONLY = [

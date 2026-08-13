@@ -32,6 +32,14 @@ const agentDirectory = path.join(root, manifest.agents ?? 'agents');
 const agentFiles = (await readdir(agentDirectory)).filter(name => name.endsWith('.agent.md')).sort();
 if (agentFiles.length !== 9) errors.push(`expected 9 agents, found ${agentFiles.length}`);
 const agentNames = new Set();
+const discoveryAgentNames = new Set([
+  'prg-contract',
+  'prg-correctness',
+  'prg-tests',
+  'prg-security',
+  'prg-data-compatibility',
+  'prg-reliability'
+]);
 for (const file of agentFiles) {
   const text = await readFile(path.join(agentDirectory, file), 'utf8');
   const frontmatter = parseFrontmatter(text, `agents/${file}`);
@@ -40,6 +48,17 @@ for (const file of agentFiles) {
   agentNames.add(frontmatter.name);
   if (!frontmatter.description) errors.push(`agents/${file} needs a description`);
   if (frontmatter.tools !== '[]') errors.push(`agents/${file} must use tools: []`);
+  if (discoveryAgentNames.has(frontmatter.name)) {
+    if (!text.includes('Return exactly one JSON array')) {
+      errors.push(`agents/${file} must require exactly one JSON array`);
+    }
+    if (!text.includes('Do not wrap the array in a Markdown code fence')) {
+      errors.push(`agents/${file} must forbid Markdown code fences`);
+    }
+    if (!text.includes('\\u0000')) {
+      errors.push(`agents/${file} must require JSON-escaped control characters`);
+    }
+  }
 }
 
 const skillRoot = path.join(root, 'skills/review-pull-request');
@@ -58,6 +77,24 @@ if (skillText.split(/\r?\n/).length > 500) errors.push('SKILL.md exceeds 500 lin
 if (!skillText.includes('separately installed `gh-cli` skill')) errors.push('SKILL.md must require the gh-cli skill for GitHub');
 if (!skillText.includes('separately installed `azure-devops-cli` skill')) errors.push('SKILL.md must require the azure-devops-cli skill for Azure DevOps');
 if (!skillText.includes('`prg-deduplicator`')) errors.push('SKILL.md must include semantic existing-review deduplication');
+if (!skillText.includes('Never dispatch a discovery agent, or a batch, that is absent from `PLAN_JSON`')) {
+  errors.push('SKILL.md must forbid dispatching discovery agents absent from PLAN_JSON');
+}
+if (!skillText.includes('--output-format json --stream off --silent')) {
+  errors.push('SKILL.md must require JSONL agent transport');
+}
+if (!skillText.includes('extract-agent-response.mjs')) {
+  errors.push('SKILL.md must extract raw agent responses');
+}
+if (!/empty assistant messages[^.]*structural frames[^.]*regardless of tool requests/i.test(skillText)) {
+  errors.push('SKILL.md must classify empty assistant messages as structural frames');
+}
+for (const name of ['prg-verifier', 'prg-deduplicator', 'prg-editor']) {
+  const dispatch = skillText.indexOf(`\`${name}\``);
+  if (dispatch < 0 || !skillText.slice(dispatch, dispatch + 1_800).includes('extract-agent-response.mjs')) {
+    errors.push(`SKILL.md must route ${name} through machine-response transport`);
+  }
+}
 if (!githubProviderText.includes('First load and follow the separately installed `gh-cli` skill')) errors.push('GitHub provider must delegate to gh-cli');
 if (!azureProviderText.includes('Bluebird')) errors.push('Azure DevOps provider must document Bluebird as an optional MCP adapter');
 if (!azureProviderText.includes('<WORK_DIR>/bluebird.json')) errors.push('Azure DevOps provider must name one Bluebird fragment file consistently');
@@ -76,6 +113,8 @@ for (const file of ['packet.schema.json', 'finding.schema.json', 'deduplication.
 const requiredScripts = [
   'normalize-context.mjs',
   'build-review-plan.mjs',
+  'extract-agent-response.mjs',
+  'process-discovery.mjs',
   'validate-findings.mjs',
   'fingerprint-findings.mjs',
   'deduplicate-findings.mjs',
