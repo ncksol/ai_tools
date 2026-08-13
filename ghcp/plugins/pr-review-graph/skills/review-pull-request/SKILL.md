@@ -68,10 +68,10 @@ bash <SKILL_DIR>/scripts/collect-github.sh <PR> <PACKET_JSON>
 ```
 
 ```bash
-bash <SKILL_DIR>/scripts/collect-azure-devops.sh <PR_ID> <PACKET_JSON>
+bash <SKILL_DIR>/scripts/collect-azure-devops.sh <PR_ID> <PACKET_JSON> <WORK_DIR>/cli-current.json
 ```
 
-For Azure DevOps, a failed collector command is one adapter result, not proof that the PR is inaccessible. Follow the fallback and fragment-composition sequence in the provider reference. The review may proceed only after `assemble-azure-context.mjs` produces a complete packet.
+For Azure DevOps, a failed collector command is one adapter result, not proof that the PR is inaccessible. The collector always writes its fragment, preserving the capabilities it did collect, and writes `<PACKET_JSON>` only when all nine are complete. Follow the fallback and fragment-composition sequence in the provider reference. The review may proceed only after `assemble-azure-context.mjs` produces a complete packet.
 
 ## Phase 2: Build the graph
 

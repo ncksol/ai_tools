@@ -28,7 +28,8 @@ default budgets three `az` calls, three `az devops invoke` calls, and one `git f
 ```bash
 node <SKILL_DIR>/scripts/run-with-deadline.mjs \
   --deadline-ms "${PRG_AZURE_CLI_DEADLINE_MS:-120000}" \
-  -- bash <SKILL_DIR>/scripts/collect-azure-devops.sh <PR_ID> <PACKET_JSON>
+  -- bash <SKILL_DIR>/scripts/collect-azure-devops.sh \
+  <PR_ID> <PACKET_JSON> <WORK_DIR>/cli-current.json
 cli_current_status=$?
 ```
 
@@ -39,44 +40,59 @@ env -u AZURE_DEVOPS_EXT_PAT \
   PRG_AZURE_CREDENTIAL_CONTEXT=stored-az-login \
   node <SKILL_DIR>/scripts/run-with-deadline.mjs \
   --deadline-ms "${PRG_AZURE_CLI_DEADLINE_MS:-120000}" \
-  -- bash <SKILL_DIR>/scripts/collect-azure-devops.sh <PR_ID> <PACKET_JSON>
+  -- bash <SKILL_DIR>/scripts/collect-azure-devops.sh \
+  <PR_ID> <PACKET_JSON> <WORK_DIR>/cli-stored.json
 cli_stored_status=$?
 ```
 
-Do not print either command's raw authentication error to the user or into any persisted file.
+When it reaches normal completion, the collector writes the fragment named by its third
+argument whether the result is complete or partial. Omit that argument only if you accept
+the default path `<dirname PACKET_JSON>/azure-cli-<credential-context>.fragment.json`,
+which the collector prints on stdout. A complete provider packet is written only when all
+nine capabilities are complete; an incomplete attempt writes the sanitized assembly-failure
+artifact at `<PACKET_JSON>`.
 
-After a failed CLI collector attempt, record a sanitized failure fragment before trying the
-next adapter. Exit code `124` from `run-with-deadline.mjs` means the deadline was exceeded
-and the whole process tree (the shell, `az`, and `git`) was terminated — record that as
-`transient`, distinct from an authentication or tool-availability failure:
+| Exit status | Meaning |
+| --- | --- |
+| `0` | Every capability complete; fragment and packet written |
+| `1` | Fragment written; at least one capability incomplete; `<PACKET_JSON>` is a failure artifact |
+| `2` | Usage error or hard prerequisite failure; no fragment is guaranteed |
+| `124` | Deadline exceeded; the process tree was terminated; a fragment may not exist |
+
+Pass every fragment the collector wrote to assembler `packet` mode. Do not write a separate
+blanket `failure ... all` fragment for a CLI attempt that produced one: the collector already
+records each capability it collected and marks only the failed operations incomplete.
+
+| Category | Meaning |
+| --- | --- |
+| `tool-unavailable` | `az` or the Azure DevOps extension is absent |
+| `authentication` | The operation failed with an authorization signal |
+| `command-failed` | The operation exited non-zero for another reason |
+| `dependency-unavailable` | A prerequisite capability or field was not collected |
+| `repository-mismatch` | The local Git origin is not the Azure repository for this PR |
+| `malformed` | The response is missing, unreadable, or fails shape validation |
+
+Use assembler `failure` mode only when the expected fragment file does not exist. Record
+deadline exit `124` as `transient`; use `tool-unavailable` when the collector could not be
+invoked:
 
 ```bash
-if [ "$cli_current_status" -eq 124 ]; then
-  node <SKILL_DIR>/scripts/assemble-azure-context.mjs failure \
-    azure-cli current-environment transient \
-    "Azure CLI collector timed out after ${PRG_AZURE_CLI_DEADLINE_MS:-120000}ms" all \
-    <WORK_DIR>/cli-current-failure.json
-elif [ "$cli_current_status" -ne 0 ]; then
-  node <SKILL_DIR>/scripts/assemble-azure-context.mjs failure \
-    azure-cli current-environment authentication \
-    "Azure CLI did not produce a complete PR packet" all \
-    <WORK_DIR>/cli-current-failure.json
-fi
-
-if [ "$cli_stored_status" -eq 124 ]; then
-  node <SKILL_DIR>/scripts/assemble-azure-context.mjs failure \
-    azure-cli stored-az-login transient \
-    "Azure CLI stored login collector timed out after ${PRG_AZURE_CLI_DEADLINE_MS:-120000}ms" all \
-    <WORK_DIR>/cli-stored-failure.json
-elif [ "$cli_stored_status" -ne 0 ]; then
-  node <SKILL_DIR>/scripts/assemble-azure-context.mjs failure \
-    azure-cli stored-az-login authentication \
-    "Azure CLI stored login did not produce a complete PR packet" all \
-    <WORK_DIR>/cli-stored-failure.json
+if [ ! -f <WORK_DIR>/cli-current.json ]; then
+  if [ "$cli_current_status" -eq 124 ]; then
+    node <SKILL_DIR>/scripts/assemble-azure-context.mjs failure \
+      azure-cli current-environment transient \
+      "Azure CLI collector timed out after ${PRG_AZURE_CLI_DEADLINE_MS:-120000}ms" all \
+      <WORK_DIR>/cli-current-failure.json
+  else
+    node <SKILL_DIR>/scripts/assemble-azure-context.mjs failure \
+      azure-cli current-environment tool-unavailable \
+      "Azure CLI could not produce a capability fragment" all \
+      <WORK_DIR>/cli-current-failure.json
+  fi
 fi
 ```
 
-Use `tool-unavailable` instead of `authentication` when `az` or the Azure DevOps extension is absent.
+Do not print either command's raw authentication error to the user or into any persisted file. The collector keeps captured stderr inside its own temporary directory and deletes it on exit.
 
 ## 3. REST fragments
 
@@ -154,7 +170,7 @@ Omit `workItems` unless the tool returns every linked item's full fields, not ju
 
 ## 5. Git diff fragment
 
-After authoritative snapshot SHAs and repository identity exist, reuse the existing collector's `ensure_commit` fetch behavior and:
+After authoritative snapshot SHAs and repository identity exist, reuse the collector's `collect_diff` fetch behavior and:
 
 ```bash
 git diff --find-renames --no-ext-diff --no-color --unified=80 "$target_sha...$source_sha" >"$diff_patch"
@@ -178,8 +194,8 @@ Pass every fragment that exists:
 ```bash
 node <SKILL_DIR>/scripts/assemble-azure-context.mjs packet \
   <PACKET_JSON> \
-  <WORK_DIR>/cli-current-failure.json \
-  <WORK_DIR>/cli-stored-failure.json \
+  <WORK_DIR>/cli-current.json \
+  <WORK_DIR>/cli-stored.json \
   <WORK_DIR>/rest-anonymous.json \
   <WORK_DIR>/rest-pat.json \
   <WORK_DIR>/rest-entra.json \
@@ -187,7 +203,9 @@ node <SKILL_DIR>/scripts/assemble-azure-context.mjs packet \
   <WORK_DIR>/git-diff.json
 ```
 
-Include only files that exist. For a capability more than one fragment completed, the assembler prefers `azure-cli` and `azure-rest` over hand-transcribed MCP or manual fragments regardless of capture order, and every candidate stays in the attempt ledger. A malformed capability in one fragment — for example a broken `bluebird.json` — is downgraded to an incomplete/malformed entry in that ledger rather than aborting assembly of the other fragments; a fragment too broken to sanitize at all (missing `schemaVersion` or every capability) is dropped and listed in `providerData.access.rejectedFragments`. If the `packet` command exits non-zero, `<PACKET_JSON>` itself now holds a sanitized `assembled: false` failure artifact — `missingCapabilities`, `selectedCapabilities` (sources for capabilities that did complete), the full `attempts` ledger, and `rejectedFragments` — so read that file rather than relying on the printed message alone before stopping. A complete `<PACKET_JSON>` with all nine capabilities is required; code-only access is insufficient even when the diff and changed files are complete.
+A partially successful CLI fragment is a contributor like any other: the capabilities it completed are selected normally, and the other adapters need only cover the capabilities it marked incomplete.
+
+Include only files that exist. For a capability more than one fragment completed, the assembler prefers `azure-cli` and `azure-rest` over hand-transcribed MCP or manual fragments regardless of capture order, and every candidate stays in the attempt ledger. A malformed capability in one fragment — for example a broken `bluebird.json` — is downgraded to an incomplete/malformed entry in that ledger rather than aborting assembly of the other fragments; a fragment too broken to sanitize at all (missing `schemaVersion` or every capability) is dropped and listed in `providerData.access.rejectedFragments`. If the `packet` command exits non-zero, `<PACKET_JSON>` itself holds a sanitized `assembled: false` failure artifact — `missingCapabilities`, `selectedCapabilities` (sources for capabilities that did complete), the full `attempts` ledger, and `rejectedFragments` — so read that file rather than relying on the printed message alone before stopping. A complete provider packet with all nine capabilities is required; code-only access is insufficient even when the diff and changed files are complete.
 
 ## Line tracking
 
