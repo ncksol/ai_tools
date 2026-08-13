@@ -235,3 +235,47 @@ test('wrong argument counts are rejected without a fragment', async () => {
     await rm(context.base, { recursive: true, force: true });
   }
 });
+
+test('a partial CLI fragment composes with another adapter into a complete packet', async () => {
+  const context = await scenario();
+  try {
+    const packetJson = path.join(context.base, 'out/packet.json');
+    const fragmentJson = path.join(context.base, 'out/cli-current.json');
+    const partial = run(context, ['77', packetJson, fragmentJson], {
+      PRG_STUB_FAIL_OP: 'threads',
+      PRG_STUB_FAIL_STDERR: 'TF400813: user is not authorized'
+    });
+    assert.equal(partial.status, 1);
+
+    const threadsJson = path.join(context.base, 'out/rest-threads-data.json');
+    const restFragment = path.join(context.base, 'out/rest-threads.json');
+    await writeFile(threadsJson, JSON.stringify(raw.existingThreads));
+    const capability = spawnSync(
+      process.execPath,
+      [
+        path.join(root, 'skills/review-pull-request/scripts/assemble-azure-context.mjs'),
+        'capability', 'azure-rest', 'anonymous', 'existingThreads', threadsJson, restFragment
+      ],
+      { encoding: 'utf8' }
+    );
+    assert.equal(capability.status, 0, capability.stderr);
+
+    const assembled = spawnSync(
+      process.execPath,
+      [
+        path.join(root, 'skills/review-pull-request/scripts/assemble-azure-context.mjs'),
+        'packet', packetJson, fragmentJson, restFragment
+      ],
+      { encoding: 'utf8' }
+    );
+
+    assert.equal(assembled.status, 0, assembled.stderr);
+    const packet = JSON.parse(await readFile(packetJson, 'utf8'));
+    const sources = packet.providerData.access.capabilities;
+    assert.equal(sources.identity.adapter, 'azure-cli');
+    assert.equal(sources.changes.adapter, 'azure-cli');
+    assert.equal(sources.existingThreads.adapter, 'azure-rest');
+  } finally {
+    await rm(context.base, { recursive: true, force: true });
+  }
+});
