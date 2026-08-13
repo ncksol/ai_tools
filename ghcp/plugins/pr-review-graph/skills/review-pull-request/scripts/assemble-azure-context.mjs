@@ -166,8 +166,36 @@ function adapterAuthority(source) {
   return AUTHORITATIVE_ADAPTERS.includes(source.adapter) ? 1 : 0;
 }
 
+// A hand-transcribed optional fragment (e.g. Bluebird) can carry one broken
+// capability without the whole fragment being unusable. Downgrade malformed
+// capabilities the same way collectAzureDevOpsRest already self-sanitizes,
+// then only reject the fragment outright if its envelope itself is broken
+// (bad schemaVersion, missing source fields, or no capabilities at all) —
+// never let one bad fragment abort assembly of other complete sources.
+function sanitizeAzureFragment(fragment, rejectedFragments) {
+  const capabilities = fragment?.capabilities;
+  const safeCapabilities = capabilities && typeof capabilities === 'object' && !Array.isArray(capabilities)
+    ? capabilities
+    : {};
+  try {
+    return validateAzureFragment({
+      ...fragment,
+      capabilities: downgradeMalformedCapabilities(safeCapabilities)
+    });
+  } catch (error) {
+    rejectedFragments.push({
+      source: fragment?.source ?? null,
+      failure: { category: 'malformed', message: error.message.replace(/[\r\n]/g, ' ') }
+    });
+    return null;
+  }
+}
+
 export function assembleAzureFragments(inputFragments) {
-  const fragments = inputFragments.map(validateAzureFragment);
+  const rejectedFragments = [];
+  const fragments = inputFragments
+    .map(fragment => sanitizeAzureFragment(fragment, rejectedFragments))
+    .filter(fragment => fragment !== null);
   assertImmutableAgreement(fragments);
   const selected = {};
   const attempts = [];
@@ -229,7 +257,8 @@ export function assembleAzureFragments(inputFragments) {
     capabilities: Object.fromEntries(
       Object.entries(selected).map(([name, value]) => [name, value.source])
     ),
-    attempts
+    attempts,
+    ...(rejectedFragments.length ? { rejectedFragments } : {})
   };
   return packet;
 }

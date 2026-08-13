@@ -272,6 +272,49 @@ test('authoritative adapters outrank a later hand-transcribed fragment per capab
   ));
 });
 
+test('a malformed capability in one fragment is downgraded without discarding its complete siblings', () => {
+  const input = fragments();
+  const bluebird = input.find(fragment => fragment.source.adapter === 'bluebird');
+  const rest = input.find(fragment => fragment.source.adapter === 'azure-rest');
+  // A backup identity source keeps the packet completable even though
+  // Bluebird's own identity capability is broken (missing pullRequestId) —
+  // this reproduces the reported bug: previously the eager validate-all-first
+  // pass would throw for the *whole* assembly here, discarding REST's and
+  // local Git's already-complete capabilities along with it.
+  rest.capabilities.identity = complete(structuredClone(bluebird.capabilities.identity.data));
+  delete bluebird.capabilities.identity.data.pullRequestId;
+
+  const packet = assembleAzureFragments(input);
+  assert.equal(packet.pullRequest.number, 77);
+  const capabilities = packet.providerData.access.capabilities;
+  assert.equal(capabilities.identity.adapter, 'azure-rest');
+  // Bluebird's still-valid metadata capability survives the downgrade of its
+  // sibling identity capability in the same fragment.
+  assert.equal(capabilities.metadata.adapter, 'bluebird');
+  const identityAttempt = packet.providerData.access.attempts.find(
+    attempt => attempt.capability === 'identity' && attempt.source.adapter === 'bluebird'
+  );
+  assert.equal(identityAttempt.complete, false);
+  assert.equal(identityAttempt.failure.category, 'malformed');
+  assert.match(identityAttempt.failure.message, /pullRequestId/);
+});
+
+test('a structurally broken fragment is dropped, not fatal, and is visible in diagnostics', () => {
+  const input = fragments();
+  input.push({ source: { adapter: 'broken-adapter', credentialContext: 'configured', capturedAt } });
+  input.push({ schemaVersion: '2.0', source: source('other-broken'), capabilities: { identity: complete({}) } });
+
+  const packet = assembleAzureFragments(input);
+  assert.equal(packet.pullRequest.number, 77);
+  const rejected = packet.providerData.access.rejectedFragments;
+  assert.equal(rejected.length, 2);
+  assert.deepEqual(rejected.map(entry => entry.source?.adapter).sort(), ['broken-adapter', 'other-broken']);
+  for (const entry of rejected) {
+    assert.equal(entry.failure.category, 'malformed');
+    assert.ok(entry.failure.message.length > 0);
+  }
+});
+
 import {
   AZURE_DEVOPS_RESOURCE,
   collectAzureDevOpsRest,
