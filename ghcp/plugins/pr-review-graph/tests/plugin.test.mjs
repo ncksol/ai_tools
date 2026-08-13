@@ -325,6 +325,16 @@ test('agent response transport fails closed on ambiguous or rendered streams', a
       kind: 'transport-missing-payload'
     },
     {
+      // Characterization: a valid completed turn whose only assistant
+      // message is empty and tool-free has no payload candidate at all.
+      // The corrected extractor already returns transport-missing-payload
+      // for this shape; this fixture pins that behavior rather than
+      // driving a new implementation change.
+      label: 'sole assistant message is an empty tool-free frame',
+      stream: agentEventStream(''),
+      kind: 'transport-missing-payload'
+    },
+    {
       label: 'content and tool request',
       stream: agentEventStream('[]', {
         toolRequests: [{ toolCallId: 'call-1', name: 'skill' }]
@@ -565,7 +575,68 @@ test('machine-response transport is required for every tool-less agent stage', a
   assert.match(readme, /EXPECTED_BASE/);
   assert.match(readme, /pr-review-graph:prg-reliability/);
   assert.match(readme, /normalize-context\.mjs/);
+
+  // Current-repo binding: REPO must be asserted against this checkout, not
+  // an arbitrary value.
+  assert.match(readme, /git remote get-url origin/);
+  assert.match(readme, /gh repo view --json nameWithOwner/);
+  assert.match(readme, /\[ "\$REPO" = "\$origin_repo" \]/);
+  assert.match(readme, /\[ "\$REPO" = "\$gh_repo" \]/);
+
+  // Pull-ref fetch to FETCH_HEAD so fork PRs and missing objects work,
+  // before the cat-file checks, with no persistent custom ref.
+  const fetchIndex = readme.indexOf('git fetch --no-tags --quiet origin "refs/pull/${PR}/head"');
+  const catFileIndex = readme.indexOf('git cat-file -e "${EXPECTED_BASE}^{commit}"');
+  assert.notEqual(fetchIndex, -1);
+  assert.notEqual(catFileIndex, -1);
+  assert.ok(fetchIndex < catFileIndex, 'PR-head fetch must precede the cat-file checks');
+  assert.match(readme, /FETCH_HEAD/);
+  assert.match(readme, /no persistent ref/);
+
+  // Full lowercase 40-hex SHA format required for both identities.
+  assert.match(readme, /\^\[0-9a-f\]\{40\}\$/);
+  assert.match(readme, /EXPECTED_BASE.*=~ \^\[0-9a-f\]\{40\}\$/);
+  assert.match(readme, /EXPECTED_HEAD.*=~ \^\[0-9a-f\]\{40\}\$/);
+
+  // Executable jq -e checks binding the remote, packet, and plan identity —
+  // not prose-only verification — plus exactly one prg-reliability plan
+  // entry containing the selected batch.
+  assert.match(readme, /jq -e --arg b "\$EXPECTED_BASE" --arg h "\$EXPECTED_HEAD" \\\n\s*'\.baseRefOid == \$b and \.headRefOid == \$h' "\$scratch\/pull-request\.json"/);
+  assert.match(readme, /'\.pullRequest\.base\.sha == \$b and \.pullRequest\.head\.sha == \$h'/);
+  assert.match(readme, /'\.snapshot\.baseSha == \$b and \.snapshot\.headSha == \$h'/);
+  assert.match(readme, /select\(\.name == "prg-reliability"\)\] as \$reliability\s*\n\s*\| \(\$reliability \| length\) == 1/);
+  assert.match(readme, /'\.baseRefOid == \$b and \.headRefOid == \$h' "\$scratch\/final-shas\.json"/);
+
+  // Structural diagnostics: the safe count object must print before its gate.
+  const structuralPrintIndex = readme.indexOf('jq . "$scratch/structural.json"');
+  const structuralGateIndex = readme.indexOf("jq -e '.opaqueEmptyNoToolFrames >= 1");
+  assert.notEqual(structuralPrintIndex, -1);
+  assert.notEqual(structuralGateIndex, -1);
+  assert.ok(structuralPrintIndex < structuralGateIndex, 'structural counts must print before the topology gate');
+
+  // Safe extractor/ingestion failure handling: only the fixed status/kind
+  // from the private JSON, never payload/candidate content, then exit
+  // non-zero.
+  assert.match(readme, /extract_exit=\$\?/);
+  assert.match(readme, /ingest_exit=\$\?/);
+  assert.match(readme, /if \[ "\$extract_exit" -ne 0 \]; then\s*\n\s*jq -r '\.failure\.kind' "\$scratch\/transport-status\.json"\s*\n\s*exit 1/);
+  assert.match(readme, /if \[ "\$ingest_exit" -ne 0 \]; then\s*\n\s*jq -r '\.failure\.kind' "\$result_file"\s*\n\s*exit 1/);
+  assert.match(readme, /Never print payload, candidate, or packet content/);
+
+  // Immutable-PRG-agent / SHA-guarded markers, and the single non-interactive
+  // shell + SKILL.md Phase 2 cross-reference.
+  assert.match(readme, /SHA-guarded/i);
+  assert.match(readme, /one non-interactive shell/);
+  assert.match(readme, /Phase 2: Build the graph\]\(skills\/review-pull-request\/SKILL\.md#phase-2-build-the-graph\)/);
+  assert.match(readme, /no added capabilities/);
+
+  // The superseded short synthetic skill-only smoke must be fully gone.
   assert.doesNotMatch(readme, /--available-tools=skill --allow-tool=skill/);
+  assert.doesNotMatch(readme, /emptyNoToolFrames\b/);
+  assert.doesNotMatch(readme, /toolBearingEmptyFrames\b/);
+  assert.doesNotMatch(readme, /nonEmptyPayloads\b/);
+  assert.doesNotMatch(readme, /return exactly \[\]/i);
+  assert.doesNotMatch(readme, /\(\.findings \| length\) == 0/);
 });
 
 test('GitHub raw data normalizes into an immutable canonical packet', async () => {

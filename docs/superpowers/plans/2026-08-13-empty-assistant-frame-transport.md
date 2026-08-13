@@ -309,7 +309,10 @@ assert.equal(manifest.version, '0.2.7');
 ```
 
 In `machine-response transport is required for every tool-less agent stage`,
-read the README and assert the runtime and smoke contracts:
+read the README and assert the runtime, current-repo binding, SHA-format,
+executable-check, structural-diagnostic-ordering, and safe-failure-handling
+contracts of the SHA-pinned immutable PRG reliability-batch procedure (not the
+retired short synthetic skill-only smoke):
 
 ```js
 const readme = await readFile(path.join(root, 'README.md'), 'utf8');
@@ -317,8 +320,40 @@ assert.match(skill, /empty assistant messages[^.]*structural frames[^.]*regardle
 assert.match(graph, /empty assistant messages[^.]*structural frames[^.]*regardless of tool requests/i);
 assert.match(readme, /empty assistant messages[^.]*structural frames[^.]*regardless of tool requests/i);
 assert.match(readme, /## Opt-in transport smoke/);
-assert.match(readme, /--available-tools=skill --allow-tool=skill/);
-assert.match(readme, /emptyNoToolFrames/);
+assert.match(readme, /pr-review-graph:prg-reliability/);
+assert.match(readme, /normalize-context\.mjs/);
+
+// Current-repo binding.
+assert.match(readme, /git remote get-url origin/);
+assert.match(readme, /gh repo view --json nameWithOwner/);
+
+// Pull-ref fetch to FETCH_HEAD before the cat-file checks, no persistent ref.
+const fetchIndex = readme.indexOf('refs/pull/${PR}/head');
+const catFileIndex = readme.indexOf('git cat-file -e "${EXPECTED_BASE}^{commit}"');
+assert.ok(fetchIndex > -1 && catFileIndex > -1 && fetchIndex < catFileIndex);
+assert.match(readme, /FETCH_HEAD/);
+
+// Full lowercase 40-hex SHA format, required before use.
+assert.match(readme, /\^\[0-9a-f\]\{40\}\$/);
+
+// Executable jq -e identity checks, not prose-only verification.
+assert.match(readme, /jq -e --arg b "\$EXPECTED_BASE" --arg h "\$EXPECTED_HEAD"/);
+assert.match(readme, /\$reliability \| length\) == 1/);
+
+// Structural diagnostics print before their gate.
+const printIndex = readme.indexOf('jq . "$scratch/structural.json"');
+const gateIndex = readme.indexOf("jq -e '.opaqueEmptyNoToolFrames >= 1");
+assert.ok(printIndex > -1 && gateIndex > -1 && printIndex < gateIndex);
+
+// Safe extractor/ingestion failure handling.
+assert.match(readme, /extract_exit=\$\?/);
+assert.match(readme, /ingest_exit=\$\?/);
+
+// The retired short synthetic skill-only smoke must be gone.
+assert.doesNotMatch(readme, /--available-tools=skill --allow-tool=skill/);
+assert.doesNotMatch(readme, /emptyNoToolFrames\b/);
+assert.doesNotMatch(readme, /return exactly \[\]/i);
+assert.doesNotMatch(readme, /\(\.findings \| length\) == 0/);
 ```
 
 Run:
@@ -331,7 +366,8 @@ node --test \
 ```
 
 Expected: failures for version `0.2.6`, missing empty-frame clauses, and the
-missing opt-in smoke section.
+retired short synthetic skill-only smoke markers still present instead of the
+SHA-pinned immutable PRG reliability-batch procedure.
 
 - [ ] **Step 2: Correct the runtime transport instructions**
 
@@ -382,86 +418,51 @@ rg -n "empty.*only.*tool|Permit an empty message only|empty message only when" \
 
 Expected: no matches.
 
-- [ ] **Step 4: Add the opt-in real Copilot CLI smoke procedure**
+- [ ] **Step 4: Replace the smoke procedure with a SHA-pinned immutable PRG reliability-batch probe**
 
-Add this section under README `## Development`, after the standard test
-commands:
+Replace the short synthetic skill-only smoke under README `## Opt-in transport
+smoke` (which invoked a generic Copilot turn constrained to `--available-tools=skill
+--allow-tool=skill` and asserted an exact `[]` reply with zero findings) with
+the numbered procedure validated against the real
+`pr-review-graph:prg-reliability` agent on immutable PR #4 batches:
 
-````markdown
-## Opt-in transport smoke
+- bind exact identity before any model invocation — full lowercase 40-hex
+  `EXPECTED_BASE`/`EXPECTED_HEAD`, `REPO` cross-checked against
+  `git remote get-url origin` and `gh repo view` for this checkout, and a
+  read-only fetch of `refs/pull/${PR}/head` into `FETCH_HEAD` (no persistent
+  ref) before the `git cat-file` checks so fork PRs and locally missing
+  objects still resolve;
+- assert, with executable `jq -e` (not prose), that the initial remote
+  base/head SHAs, the normalized packet, and the routed plan all carry the
+  identical base/head SHAs, and that exactly one `prg-reliability` plan entry
+  contains the selected batch;
+- invoke the local, tool-less `pr-review-graph:prg-reliability` agent
+  (`tools: []`, no added capabilities) with a SHA-pinned immutable batch
+  prompt built only from that plan entry — not a generic skill-invocation
+  turn;
+- structurally require at least one opaque empty/no-tool assistant frame
+  before exactly one non-empty, tool-free terminal payload, printing the safe
+  structural count object before gating on it, and record without gating on
+  any tool-bearing frame count;
+- run the extractor and strict ingestion wrapped so a failure prints only the
+  fixed structural failure kind/status from their own private status/result
+  JSON and then exits non-zero, never printing payload, candidate, or packet
+  content;
+- strictly ingest whatever valid reliability candidate array the agent
+  returns — do not require a specific finding count, only that the array
+  satisfies the existing strict finding contract;
+- recheck the remote base/head SHAs exactly before reporting success; and
+- remove the entire mode-`0700` scratch directory through the `EXIT` trap
+  (`${TMPDIR:-/tmp}` outside the repository/worktree, `umask 077`, mode-`0600`
+  sensitive files).
 
-This manual smoke invokes Copilot and is intentionally excluded from `npm test`.
-It allows only the `skill` tool, retains all output in a private temporary
-directory, reports structural counts only, and removes the directory on exit.
-
-```bash
-set -euo pipefail
-umask 077
-tmp="$(mktemp -d "${TMPDIR:-/tmp}/prg-transport-smoke.XXXXXX")"
-trap 'rm -rf "$tmp"' EXIT
-events="$tmp/events.jsonl"
-response="$tmp/response.json"
-status="$tmp/status.json"
-results="$tmp/results"
-diagnostics="$tmp/diagnostics"
-
-copilot --output-format json --stream off --silent \
-  --available-tools=skill --allow-tool=skill --effort high \
-  -p 'Invoke the gh-cli skill. Do not call another tool. After reading the skill, return exactly [] with no prose.' \
-  > "$events"
-
-jq -e -s '
-  {
-    assistantMessages: ([.[] | select(.type == "assistant.message")] | length),
-    emptyNoToolFrames: ([
-      .[]
-      | select(
-          .type == "assistant.message"
-          and .data.content == ""
-          and (.data.toolRequests | length) == 0
-        )
-    ] | length),
-    toolBearingEmptyFrames: ([
-      .[]
-      | select(
-          .type == "assistant.message"
-          and .data.content == ""
-          and (.data.toolRequests | length) > 0
-        )
-    ] | length),
-    nonEmptyPayloads: ([
-      .[]
-      | select(
-          .type == "assistant.message"
-          and (.data.content | length) > 0
-          and (.data.toolRequests | length) == 0
-        )
-    ] | length)
-  }
-  | select(
-      .emptyNoToolFrames > 0
-      and .toolBearingEmptyFrames > 0
-      and .nonEmptyPayloads == 1
-    )
-' "$events"
-
-node skills/review-pull-request/scripts/extract-agent-response.mjs \
-  "$events" "$response" "$status"
-mkdir -m 700 "$results" "$diagnostics"
-node skills/review-pull-request/scripts/process-discovery.mjs ingest \
-  "$response" "$results" "$diagnostics" \
-  --agent prg-reliability --batch 1 --attempt 1
-jq -e '
-  .status == "complete"
-  and .category == "reliability"
-  and (.findings | length) == 0
-' "$results/prg-reliability-batch-001-attempt-1.json" >/dev/null
-printf '%s\n' 'Opt-in transport smoke passed'
-```
-
-Run it only from `ghcp/plugins/pr-review-graph`. Do not redirect, copy, or
-retain the event or response files outside the private temporary directory.
-````
+See `ghcp/plugins/pr-review-graph/README.md` `## Opt-in transport smoke` for
+the exact, currently shipped command blocks; keep this plan's description in
+sync with that file rather than duplicating its full text here. Run every
+numbered README block in one non-interactive shell so `set -euo pipefail`,
+the exported variables, and the `EXIT` trap share state across blocks. Step 6
+(prompt construction) must mirror `SKILL.md`'s Phase 2 dispatch contract to
+reduce drift between the opt-in probe and real dispatch.
 
 - [ ] **Step 5: Enforce the contract in plugin validation**
 
@@ -529,14 +530,20 @@ git commit -m "docs(pr-review-graph): release empty frame transport fix"
 
 - [ ] **Step 1: Run the opt-in real CLI structural smoke**
 
-From `ghcp/plugins/pr-review-graph`, execute the complete command block under
-README `## Opt-in transport smoke` without altering its trap or redirecting
-its files.
+From `ghcp/plugins/pr-review-graph`, execute every numbered command block
+under README `## Opt-in transport smoke`, in order, in one non-interactive
+shell so `set -euo pipefail`, the exported variables, and the `EXIT` trap
+share state, without altering the trap or redirecting its files.
 
-Expected: `jq` emits one structural count object with
-`emptyNoToolFrames > 0`, `toolBearingEmptyFrames > 0`, and
-`nonEmptyPayloads == 1`, followed by `Opt-in transport smoke passed`. The trap
-removes the temporary JSONL, response, status, result, and diagnostic files.
+Expected: the identity checks (SHA format, `REPO` binding, initial remote
+SHA match, packet/plan SHA match, single `prg-reliability` plan entry) all
+pass; `jq` prints the safe structural count object — with
+`opaqueEmptyNoToolFrames >= 1` and `nonEmptyToolFreePayloads == 1` — before
+its gate; extraction and strict ingestion each report a `complete` status;
+the final remote SHA recheck matches; and the run ends with
+`Opt-in transport smoke passed`. The trap removes the scratch directory and
+every JSONL, response, prompt, packet, plan, status, result, and diagnostic
+file it contains.
 
 - [ ] **Step 2: Run the full plugin test and validation commands**
 

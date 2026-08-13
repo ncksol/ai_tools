@@ -162,6 +162,17 @@ inside the test's private temporary directory. Extraction must preserve the
 candidate array exactly, and `ingestDiscoveryResponse` must accept it under the
 existing strict finding contract.
 
+### Empty-only-turn characterization
+
+Construct a valid, successfully completed stream whose only
+`assistant.message` is empty and tool-free — no other assistant message
+precedes or follows it in the turn. Extraction must fail with
+`transport-missing-payload`, write no response file, and remove the event
+capture. Because the corrected extractor already treats a lone empty frame as
+containing no payload candidate, this fixture is added as a characterization
+of existing behavior rather than a regression that requires an implementation
+change; it is not expected to be RED before the fix.
+
 ### Existing safety coverage
 
 The suite must continue covering contentful preambles, multiple payloads,
@@ -172,20 +183,47 @@ rejection, deduplication retry/hold, and editor retry/stop behavior.
 
 ## Opt-in Copilot CLI Verification
 
-Document a manual reproduction that:
+Document a manual, numbered reproduction — validated against the real
+`pr-review-graph:prg-reliability` agent on immutable PR #4 batches — that:
 
-1. creates a private temporary directory with `umask 077`;
-2. invokes a long, tool-using Copilot CLI turn with JSONL output;
-3. checks only structural event fields to confirm at least one empty,
-   tool-free assistant frame and one later non-empty payload;
-4. runs the extractor and strict discovery ingestion;
-5. reports only statuses and counts; and
-6. removes the entire temporary directory through an exit trap.
+1. creates a private, mode-`0700` scratch directory outside the repository
+   with `umask 077`, mode-`0600` sensitive files, and an `EXIT` trap;
+2. binds exact identity before any model invocation: full lowercase 40-hex
+   `EXPECTED_BASE`/`EXPECTED_HEAD`, `REPO` cross-checked against
+   `git remote get-url origin` and `gh repo view` for this checkout, and a
+   read-only fetch of `refs/pull/${PR}/head` into `FETCH_HEAD` (no persistent
+   ref) so fork PRs and locally missing objects still resolve before the
+   `git cat-file` checks;
+3. fetches read-only provider data and asserts, with executable `jq -e`, that
+   the initial remote base/head SHAs match exactly — not a prose-only
+   verification;
+4. builds the packet and review plan from the exact commit diff, and asserts
+   with executable `jq -e` that the packet and plan carry the identical
+   base/head SHAs and that exactly one `prg-reliability` plan entry contains
+   the selected batch;
+5. invokes the local, tool-less `pr-review-graph:prg-reliability` agent
+   (`tools: []`, no added capabilities) with a SHA-pinned immutable batch
+   prompt built only from that plan entry;
+6. structurally requires at least one opaque empty/no-tool assistant frame
+   before exactly one non-empty, tool-free terminal payload — printing the
+   safe structural count object before gating on it — and records, without
+   gating on, any tool-bearing frame count;
+7. runs the extractor and strict discovery ingestion, wrapping both so a
+   failure prints only the fixed structural failure kind/status from their
+   own private status/result JSON and then exits non-zero, never printing
+   payload, candidate, or packet content;
+8. strictly ingests whatever valid reliability candidate array the agent
+   returns — it does not require a specific finding count, only that the
+   array satisfies the existing strict finding contract;
+9. rechecks the remote base/head SHAs exactly before reporting success; and
+10. removes the entire scratch directory through the exit trap.
 
-The procedure must never print, copy, commit, or retain the JSONL or raw
-response. It is intentionally excluded from `npm test` because model behavior,
-installed skills, authentication, and network availability are not
-deterministic test dependencies.
+The procedure must never print, copy, commit, or retain the JSONL, raw
+response, prompt, packet, result, or diagnostic content outside the scratch
+directory, and it must never write to the PR or execute code from the PR. It
+is intentionally excluded from `npm test` because model behavior, installed
+skills, authentication, and network availability are not deterministic test
+dependencies.
 
 ## Documentation and Release
 
@@ -209,10 +247,17 @@ convention.
 2. The captured-structure reliability fixture extracts and passes strict
    discovery ingestion.
 3. Empty frames remain subject to existing turn-boundary checks.
-4. Every existing fail-closed transport and downstream-stage test remains
+4. A stream whose only assistant message is an empty, tool-free frame extracts
+   as `transport-missing-payload`, writes no response, and cleans the event
+   capture (characterization, since the corrected extractor already passes
+   it).
+5. Every existing fail-closed transport and downstream-stage test remains
    passing.
-5. The opt-in real CLI reproduction succeeds without retaining raw output.
-6. `npm test --silent` and `npm run validate --silent` pass from
+6. The opt-in real CLI reproduction — a SHA-pinned immutable PR batch against
+   the local, tool-less `prg-reliability` agent — succeeds without retaining
+   raw output, and its README procedure binds exact SHA and current-repository
+   identity with executable `jq -e` checks rather than prose.
+7. `npm test --silent` and `npm run validate --silent` pass from
    `ghcp/plugins/pr-review-graph`.
-7. Contradicted documentation is corrected and plugin versions are
+8. Contradicted documentation is corrected and plugin versions are
    synchronized at `0.2.7`.
