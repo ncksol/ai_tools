@@ -326,6 +326,121 @@ test('a structurally broken fragment is dropped, not fatal, and is visible in di
   }
 });
 
+test('capturedAt must be a string containing a valid ISO date-time', () => {
+  const base = {
+    schemaVersion: '1.0',
+    source: { adapter: 'test', credentialContext: 'ctx' },
+    capabilities: { identity: complete({ pullRequestId: 1, url: 'https://example.com', repository: { id: 'r', project: { id: 'p' } } }) }
+  };
+
+  // Number is not a string — passes emptiness check but fails type check.
+  assert.throws(
+    () => validateAzureFragment({ ...base, source: { ...base.source, capturedAt: 42 } }),
+    /valid ISO date-time string/
+  );
+
+  // Empty string is caught by the existing required-field loop.
+  assert.throws(
+    () => validateAzureFragment({ ...base, source: { ...base.source, capturedAt: '' } }),
+    /capturedAt is required/
+  );
+
+  // Non-date string passes the emptiness check but fails Date.parse.
+  assert.throws(
+    () => validateAzureFragment({ ...base, source: { ...base.source, capturedAt: 'not-a-date' } }),
+    /valid ISO date-time string/
+  );
+
+  // Valid ISO instant passes.
+  assert.doesNotThrow(
+    () => validateAzureFragment({ ...base, source: { ...base.source, capturedAt: '2026-08-12T12:00:00.000Z' } })
+  );
+});
+
+test('a fragment with a numeric capturedAt is rejected as malformed without aborting assembly', () => {
+  const input = fragments();
+  // Add an extra fragment that is otherwise valid but has a non-string capturedAt.
+  input.push({
+    schemaVersion: '1.0',
+    source: { adapter: 'clock-broken', credentialContext: 'ctx', capturedAt: 99999 },
+    capabilities: {
+      identity: complete({
+        pullRequestId: raw.pullRequest.pullRequestId,
+        url: `${raw.pullRequest.repository.webUrl}/pullrequest/${raw.pullRequest.pullRequestId}`,
+        repository: raw.pullRequest.repository
+      })
+    }
+  });
+
+  const packet = assembleAzureFragments(input);
+  assert.equal(packet.pullRequest.number, 77);
+  const rejected = packet.providerData.access.rejectedFragments;
+  assert.ok(rejected.some(entry => entry.source?.adapter === 'clock-broken'), 'bad-timestamp fragment must appear in rejectedFragments');
+  const entry = rejected.find(e => e.source?.adapter === 'clock-broken');
+  assert.equal(entry.failure.category, 'malformed');
+  assert.match(entry.failure.message, /valid ISO date-time string/);
+});
+
+test('equal-authority tie-break uses capturedAt lexicographic order without crashing', () => {
+  const pr = raw.pullRequest;
+  const earlier = '2026-08-12T11:00:00.000Z';
+  const later   = '2026-08-12T13:00:00.000Z';
+
+  // Two azure-rest fragments: both authoritative, same capability, different capturedAt.
+  const fragmentA = {
+    schemaVersion: '1.0',
+    source: { adapter: 'azure-rest', credentialContext: 'ctx-a', capturedAt: earlier },
+    capabilities: {
+      identity: complete({
+        pullRequestId: pr.pullRequestId,
+        url: `${pr.repository.webUrl}/pullrequest/${pr.pullRequestId}`,
+        repository: pr.repository
+      }),
+      metadata: complete({
+        title: pr.title,
+        description: 'from A',
+        createdBy: pr.createdBy,
+        status: 'active',
+        isDraft: false,
+        sourceRefName: pr.sourceRefName,
+        targetRefName: pr.targetRefName,
+        reviewers: []
+      }),
+      snapshot: complete({
+        lastMergeSourceCommit: pr.lastMergeSourceCommit,
+        lastMergeTargetCommit: pr.lastMergeTargetCommit
+      }),
+      workItems: complete(raw.workItems),
+      policies: complete({ value: raw.policies, exhausted: true }),
+      iterations: complete(raw.iterations),
+      changes: complete(raw.changes),
+      existingThreads: complete(raw.existingThreads)
+    }
+  };
+  const fragmentB = {
+    schemaVersion: '1.0',
+    source: { adapter: 'azure-rest', credentialContext: 'ctx-b', capturedAt: later },
+    capabilities: {
+      metadata: complete({
+        title: pr.title,
+        description: 'from B',
+        createdBy: pr.createdBy,
+        status: 'active',
+        isDraft: false,
+        sourceRefName: pr.sourceRefName,
+        targetRefName: pr.targetRefName,
+        reviewers: []
+      })
+    }
+  };
+  const diffFrag = fragments().find(f => f.source.adapter === 'local-git');
+
+  const packet = assembleAzureFragments([fragmentA, fragmentB, diffFrag]);
+  // The later capturedAt wins for metadata — 'from B' was captured more recently.
+  assert.equal(packet.pullRequest.description, 'from B');
+  assert.equal(packet.providerData.access.capabilities.metadata.credentialContext, 'ctx-b');
+});
+
 test('a diff fragment must declare repository, baseSha, headSha, and patch, not a bare string', () => {
   const input = fragments();
   const diffFragment = input.find(fragment => fragment.source.adapter === 'local-git');

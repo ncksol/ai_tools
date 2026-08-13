@@ -186,6 +186,10 @@ export function validateAzureFragment(fragment) {
   for (const key of ['adapter', 'credentialContext', 'capturedAt']) {
     if (!String(fragment.source?.[key] ?? '').trim()) throw new Error(`Azure access fragment source.${key} is required`);
   }
+  const capturedAt = fragment.source?.capturedAt;
+  if (typeof capturedAt !== 'string' || isNaN(Date.parse(capturedAt))) {
+    throw new Error('Azure access fragment source.capturedAt must be a valid ISO date-time string');
+  }
   const names = Object.keys(fragment.capabilities ?? {});
   if (!names.length) throw new Error('Azure access fragment must declare at least one capability');
   for (const name of names) assertCapabilityShape(name, fragment.capabilities[name]);
