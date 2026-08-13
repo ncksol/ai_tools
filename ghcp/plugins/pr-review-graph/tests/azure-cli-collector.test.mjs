@@ -135,7 +135,10 @@ test('a late thread failure preserves every capability collected before it', asy
     assert.equal(fragment.capabilities.existingThreads.failure.category, 'authentication');
     assert.doesNotMatch(fragment.capabilities.existingThreads.failure.message, /TF400813|not authorized/);
     assert.doesNotMatch(result.stdout + result.stderr, /TF400813|not authorized/);
-    await assert.rejects(readFile(packetJson, 'utf8'));
+    const failure = JSON.parse(await readFile(packetJson, 'utf8'));
+    assert.equal(failure.assembled, false);
+    assert.ok(failure.missingCapabilities.includes('existingThreads'));
+    assert.equal(JSON.stringify(failure).includes('"data"'), false);
   } finally {
     await rm(context.base, { recursive: true, force: true });
   }
