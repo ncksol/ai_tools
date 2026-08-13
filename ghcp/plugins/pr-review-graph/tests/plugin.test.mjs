@@ -509,7 +509,7 @@ test('static plugin validation passes and declares no MCP integration', async ()
   ));
   const validator = await readFile(path.join(root, 'scripts/validate-plugin.mjs'), 'utf8');
   assert.equal(manifest.name, 'pr-review-graph');
-  assert.equal(manifest.version, '0.2.6');
+  assert.equal(manifest.version, '0.2.7');
   assert.equal(
     marketplace.plugins.find(plugin => plugin.name === manifest.name)?.version,
     manifest.version
@@ -543,6 +543,7 @@ test('machine-response transport is required for every tool-less agent stage', a
     path.join(root, 'skills/review-pull-request/references/superpowers-compatibility.md'),
     'utf8'
   );
+  const readme = await readFile(path.join(root, 'README.md'), 'utf8');
 
   assert.match(skill, /--output-format json --stream off --silent/);
   assert.match(skill, /extract-agent-response\.mjs/);
@@ -557,6 +558,12 @@ test('machine-response transport is required for every tool-less agent stage', a
   assert.match(graph, /deduplication transport failure[^.]*retry once[^.]*hold/i);
   assert.match(graph, /editor transport failure[^.]*retry once[^.]*stop/i);
   assert.match(superpowers, /skill narration[^.]*JSONL event/i);
+  assert.match(skill, /empty assistant messages[^.]*structural frames[^.]*regardless of tool requests/i);
+  assert.match(graph, /empty assistant messages[^.]*structural frames[^.]*regardless of tool requests/i);
+  assert.match(readme, /empty assistant messages[^.]*structural frames[^.]*regardless of tool requests/i);
+  assert.match(readme, /## Opt-in transport smoke/);
+  assert.match(readme, /--available-tools=skill --allow-tool=skill/);
+  assert.match(readme, /emptyNoToolFrames/);
 });
 
 test('GitHub raw data normalizes into an immutable canonical packet', async () => {

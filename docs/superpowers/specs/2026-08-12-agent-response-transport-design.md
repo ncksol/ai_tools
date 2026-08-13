@@ -85,8 +85,7 @@ one successful terminal `result` event. Assistant turns are defined by matching 
 Tool, skill, MCP, reasoning, usage, and other non-assistant events are ignored by event type. They are never
 removed from assistant text because assistant text is never searched or rewritten.
 
-An empty `assistant.message` is ignorable only when it carries one or more tool requests. A response payload
-is a non-empty, tool-free string in `assistant.message.data.content`. The stream is valid only when:
+An empty `assistant.message` is an ignorable structural frame regardless of whether it carries tool requests. It remains subject to the same matching turn boundaries as every assistant message. A response payload is a non-empty, tool-free string in `assistant.message.data.content`. The stream is valid only when:
 
 - exactly one response payload exists;
 - its message belongs to the final completed assistant turn;

@@ -149,7 +149,7 @@ async function writeStatus(file, status) {
 }
 ```
 
-Parse CRLF-safe JSONL without trimming content. Empty physical lines may be skipped; whitespace-only lines must fail. Validate every event as an object with a string `type`. Track `assistant.turn_start`, `assistant.message`, and `assistant.turn_end` by `data.turnId`. Permit an empty message only when `data.toolRequests` is a non-empty array. Require exactly one non-empty message with an empty `toolRequests` array, require it to be in the last completed turn, and require exactly one final `result` with `exitCode === 0`.
+Parse CRLF-safe JSONL without trimming content. Empty physical lines may be skipped; whitespace-only lines must fail. Validate every event as an object with a string `type`. Track `assistant.turn_start`, `assistant.message`, and `assistant.turn_end` by `data.turnId`. Treat an empty message as a structural frame regardless of tool-request presence, while still requiring it to belong to one matching assistant turn. Require exactly one non-empty message with an empty `toolRequests` array, require it to be in the last completed turn, and require exactly one final `result` with `exitCode === 0`.
 
 Return only fixed failures:
 

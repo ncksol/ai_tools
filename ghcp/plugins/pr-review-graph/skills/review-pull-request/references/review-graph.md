@@ -32,7 +32,7 @@ Conditionally dispatch:
 
 Dispatch independent reviewers concurrently. Give each reviewer only relevant patches and necessary context. Preserve the packet's provider line coordinates.
 
-Every discovery, verifier, deduplicator, and editor subprocess uses Copilot JSONL output and `extract-agent-response.mjs`; rendered transcript text is never a machine response. Native dispatch may bypass extraction only for an explicit raw final-response field that is structurally separate from progress, tool, skill, reasoning, summary, and transcript data.
+Every discovery, verifier, deduplicator, and editor subprocess uses Copilot JSONL output and `extract-agent-response.mjs`; rendered transcript text is never a machine response. Native dispatch may bypass extraction only for an explicit raw final-response field that is structurally separate from progress, tool, skill, reasoning, summary, and transcript data. Empty assistant messages are structural frames regardless of tool requests and remain subject to assistant-turn validation.
 
 ## Bounded loops
 
