@@ -902,3 +902,59 @@ test('CLI-sourced policies carry exhausted evidence because az has no partial-li
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('REST marks workItems incomplete when linked-items list response is not a value array', async () => {
+  const fetchImpl = async url => {
+    const value = String(url);
+    if (value.includes('/_apis/git/pullrequests/77?')) return jsonResponse(structuredClone(raw.pullRequest));
+    if (value.includes('/workitems?')) return jsonResponse({ unexpected: true });
+    if (value.includes('/_apis/policy/evaluations?')) return jsonResponse({ value: [] });
+    if (value.includes('/iterations?')) return jsonResponse(raw.iterations);
+    if (value.includes('/iterations/2/changes?')) return jsonResponse({ changeEntries: [], nextSkip: 0, nextTop: 0 });
+    if (value.includes('/threads?')) return jsonResponse({ value: [] });
+    return jsonResponse({}, 404);
+  };
+
+  const fragment = await collectAzureDevOpsRest({
+    prUrl: 'https://dev.azure.com/acme/Platform/_git/widgets/pullrequest/77',
+    credentialContext: 'anonymous',
+    authorization: null,
+    fetchImpl,
+    sleep: async () => {}
+  });
+
+  assert.equal(fragment.capabilities.workItems.complete, false);
+  assert.equal(fragment.capabilities.workItems.failure.category, 'malformed');
+  assert.match(fragment.capabilities.workItems.failure.message, /linked work items/);
+  for (const name of ['identity', 'metadata', 'snapshot', 'policies', 'iterations', 'changes', 'existingThreads']) {
+    assert.equal(fragment.capabilities[name].complete, true, name);
+  }
+});
+
+test('REST marks policies incomplete when a policy-evaluations page is not a value array', async () => {
+  const fetchImpl = async url => {
+    const value = String(url);
+    if (value.includes('/_apis/git/pullrequests/77?')) return jsonResponse(structuredClone(raw.pullRequest));
+    if (value.includes('/workitems?')) return jsonResponse({ value: [] });
+    if (value.includes('/_apis/policy/evaluations?')) return jsonResponse({ unexpected: true });
+    if (value.includes('/iterations?')) return jsonResponse(raw.iterations);
+    if (value.includes('/iterations/2/changes?')) return jsonResponse({ changeEntries: [], nextSkip: 0, nextTop: 0 });
+    if (value.includes('/threads?')) return jsonResponse({ value: [] });
+    return jsonResponse({}, 404);
+  };
+
+  const fragment = await collectAzureDevOpsRest({
+    prUrl: 'https://dev.azure.com/acme/Platform/_git/widgets/pullrequest/77',
+    credentialContext: 'anonymous',
+    authorization: null,
+    fetchImpl,
+    sleep: async () => {}
+  });
+
+  assert.equal(fragment.capabilities.policies.complete, false);
+  assert.equal(fragment.capabilities.policies.failure.category, 'malformed');
+  assert.match(fragment.capabilities.policies.failure.message, /policy evaluations page/);
+  for (const name of ['identity', 'metadata', 'snapshot', 'workItems', 'iterations', 'changes', 'existingThreads']) {
+    assert.equal(fragment.capabilities[name].complete, true, name);
+  }
+});

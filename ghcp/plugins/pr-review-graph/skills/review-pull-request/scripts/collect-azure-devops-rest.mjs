@@ -39,10 +39,10 @@ async function capture(capabilities, name, operation) {
   }
 }
 
-function asValue(value) {
+function requireValueArray(value, context) {
   if (Array.isArray(value)) return value;
   if (Array.isArray(value?.value)) return value.value;
-  return [];
+  throw accessError('malformed', `unexpected ${context} response shape`);
 }
 
 export async function pagedPolicyEvaluations(root, artifactId, get) {
@@ -53,7 +53,7 @@ export async function pagedPolicyEvaluations(root, artifactId, get) {
     const encodedArtifactId = encodeURIComponent(artifactId);
     const url = `${root}/_apis/policy/evaluations?artifactId=${encodedArtifactId}&includeNotApplicable=true&api-version=7.1&%24top=100&%24skip=${skip}`;
     const page = await get(url, 'policy evaluations');
-    const items = asValue(page);
+    const items = requireValueArray(page, 'policy evaluations page');
     all.push(...items);
     if (items.length < 100) break;
     const signature = JSON.stringify(items);
@@ -264,7 +264,7 @@ export async function collectAzureDevOpsRest({
   const pullRoot = `${root}/_apis/git/repositories/${repositoryPath}/pullRequests/${pr.pullRequestId}`;
 
   await capture(capabilities, 'workItems', async () => {
-    const refs = asValue(await get(`${pullRoot}/workitems?api-version=7.1`, 'linked work items'));
+    const refs = requireValueArray(await get(`${pullRoot}/workitems?api-version=7.1`, 'linked work items'), 'linked work items');
     return Promise.all(refs.map(ref => get(
       `${root}/_apis/wit/workitems/${encodeURIComponent(ref.id)}?%24expand=All&api-version=7.1`,
       `work item ${ref.id}`
@@ -284,7 +284,7 @@ export async function collectAzureDevOpsRest({
 
   if (capabilities.iterations.complete) {
     await capture(capabilities, 'changes', async () => {
-      const latest = Math.max(...asValue(iterations).map(iteration => Number(iteration.id)));
+      const latest = Math.max(...requireValueArray(iterations, 'iteration list').map(iteration => Number(iteration.id)));
       return pagedIterationChanges(pullRoot, latest, get);
     });
   } else {
