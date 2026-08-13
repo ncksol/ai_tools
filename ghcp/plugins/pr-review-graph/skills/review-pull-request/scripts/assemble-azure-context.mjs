@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { access, readFile } from 'node:fs/promises';
+import { access, mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { asArray, isMain, readJson, writeJson } from './lib.mjs';
 import { loadRawDirectory, normalize, organizationFromUrl } from './normalize-context.mjs';
@@ -501,12 +501,41 @@ async function main() {
   const [mode, ...args] = process.argv.slice(2);
 
   if (mode === 'directory') {
-    const [rawDir, adapter, credentialContext, packetJson] = args;
+    const [rawDir, adapter, credentialContext, packetJson, fragmentJson] = args;
     if (!rawDir || !adapter || !credentialContext || !packetJson) {
-      throw new Error('Usage: assemble-azure-context.mjs directory <RAW_DIR> <ADAPTER> <CREDENTIAL_CONTEXT> <PACKET_JSON>');
+      throw new Error('Usage: assemble-azure-context.mjs directory <RAW_DIR> <ADAPTER> <CREDENTIAL_CONTEXT> <PACKET_JSON> [<FRAGMENT_JSON>]');
     }
-    const fragment = await fragmentFromRawDirectory(path.resolve(rawDir), { adapter, credentialContext });
-    await assembleAndWrite([fragment], path.resolve(packetJson));
+    if (!fragmentJson) {
+      const fragment = await fragmentFromRawDirectory(path.resolve(rawDir), { adapter, credentialContext });
+      await assembleAndWrite([fragment], path.resolve(packetJson));
+      console.log(`packet: ${packetJson} (source: ${adapter}/${credentialContext})`);
+      return;
+    }
+
+    const fragment = await fragmentFromPartialRawDirectory(path.resolve(rawDir), { adapter, credentialContext });
+    try {
+      await mkdir(path.dirname(path.resolve(fragmentJson)), { recursive: true });
+      await writeJson(path.resolve(fragmentJson), fragment);
+    } catch (error) {
+      throw Object.assign(
+        new Error(`Could not write the Azure access fragment: ${error.code ?? error.message}`),
+        { exitCode: 2 }
+      );
+    }
+    console.log(`fragment: ${fragmentJson} (source: ${adapter}/${credentialContext})`);
+
+    const incomplete = REQUIRED_AZURE_CAPABILITIES.filter(name => !fragment.capabilities[name].complete);
+    for (const name of incomplete) {
+      console.error(`incomplete: ${name} (${fragment.capabilities[name].failure.category})`);
+    }
+
+    await mkdir(path.dirname(path.resolve(packetJson)), { recursive: true });
+    try {
+      await assembleAndWrite([fragment], path.resolve(packetJson));
+    } catch (error) {
+      if (error.attempts) error.exitCode = 1;
+      throw error;
+    }
     console.log(`packet: ${packetJson} (source: ${adapter}/${credentialContext})`);
     return;
   }
@@ -588,6 +617,6 @@ async function main() {
 if (isMain(import.meta.url)) {
   main().catch(error => {
     console.error(error.message);
-    process.exitCode = 1;
+    process.exitCode = error.exitCode ?? 1;
   });
 }

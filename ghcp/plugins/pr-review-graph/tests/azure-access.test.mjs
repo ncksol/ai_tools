@@ -1477,3 +1477,68 @@ test('a still-paginated change response fails only the changes capability', asyn
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+const assembler = path.join(root, 'skills/review-pull-request/scripts/assemble-azure-context.mjs');
+
+test('directory mode writes a fragment and failure artifact when a capability is missing', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'prg-azure-dirmode-'));
+  try {
+    await writeFile(path.join(dir, 'pull-request.json'), JSON.stringify(raw.pullRequest));
+    await writeFile(path.join(dir, 'work-items.json'), JSON.stringify(raw.workItems));
+    await writeFile(path.join(dir, 'policies.json'), JSON.stringify(raw.policies));
+    await writeFile(
+      path.join(dir, 'existingThreads.failure'),
+      'authentication\naz devops invoke pullRequestThreads failed with exit status 1\n'
+    );
+
+    const packetJson = path.join(dir, 'out', 'packet.json');
+    const fragmentJson = path.join(dir, 'out', 'fragment.json');
+    const result = spawnSync(
+      process.execPath,
+      [assembler, 'directory', dir, 'azure-cli', 'current-environment', packetJson, fragmentJson],
+      { encoding: 'utf8' }
+    );
+
+    assert.equal(result.status, 1);
+    const fragment = JSON.parse(await readFile(fragmentJson, 'utf8'));
+    assert.equal(fragment.capabilities.identity.complete, true);
+    assert.equal(fragment.capabilities.existingThreads.complete, false);
+    assert.match(result.stdout, /fragment:/);
+    assert.match(result.stderr, /existingThreads \(authentication\)/);
+    const failure = JSON.parse(await readFile(packetJson, 'utf8'));
+    assert.equal(failure.assembled, false);
+    assert.ok(failure.missingCapabilities.includes('existingThreads'));
+    assert.equal(JSON.stringify(failure).includes('"data"'), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('directory mode writes both the fragment and the packet when every capability is complete', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'prg-azure-dirmode-'));
+  try {
+    await writeFile(path.join(dir, 'pull-request.json'), JSON.stringify(raw.pullRequest));
+    await writeFile(path.join(dir, 'work-items.json'), JSON.stringify(raw.workItems));
+    await writeFile(path.join(dir, 'policies.json'), JSON.stringify(raw.policies));
+    await writeFile(path.join(dir, 'iterations.json'), JSON.stringify(raw.iterations));
+    await writeFile(path.join(dir, 'changes.json'), JSON.stringify(raw.changes));
+    await writeFile(path.join(dir, 'threads.json'), JSON.stringify(raw.existingThreads));
+    await writeFile(path.join(dir, 'diff.patch'), raw.diff);
+
+    const packetJson = path.join(dir, 'out', 'packet.json');
+    const fragmentJson = path.join(dir, 'out', 'fragment.json');
+    const result = spawnSync(
+      process.execPath,
+      [assembler, 'directory', dir, 'azure-cli', 'current-environment', packetJson, fragmentJson],
+      { encoding: 'utf8' }
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    const packet = JSON.parse(await readFile(packetJson, 'utf8'));
+    assert.equal(packet.providerData.access.capabilities.identity.adapter, 'azure-cli');
+    const fragment = JSON.parse(await readFile(fragmentJson, 'utf8'));
+    assert.equal(Object.keys(fragment.capabilities).length, REQUIRED_AZURE_CAPABILITIES.length);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
