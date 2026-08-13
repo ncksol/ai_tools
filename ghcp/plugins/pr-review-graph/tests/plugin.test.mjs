@@ -548,7 +548,10 @@ test('provider adapters use skills without making one Azure access path mandator
   assert.match(azure, /env -u AZURE_DEVOPS_EXT_PAT/);
   assert.match(azure, /collect-azure-devops-rest\.mjs/);
   assert.match(azure, /assemble-azure-context\.mjs/);
+  assert.match(azure, /run-with-deadline\.mjs/);
   assert.match(azure, /code-only access is insufficient/i);
+  assert.match(skill, /run-with-deadline\.mjs/, 'SKILL.md must invoke the Azure CLI collector through run-with-deadline.mjs');
+  assert.doesNotMatch(skill, /^\s*bash\s+<SKILL_DIR>\/scripts\/collect-azure-devops\.sh/m, 'SKILL.md must not invoke collect-azure-devops.sh directly');
 });
 
 test('machine-response transport is required for every tool-less agent stage', async () => {

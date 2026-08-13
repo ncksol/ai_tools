@@ -102,6 +102,12 @@ if (!azureProviderText.includes('complete read packet')) errors.push('Azure DevO
 if (!azureProviderText.includes('collect-azure-devops-rest.mjs')) errors.push('Azure DevOps provider must document the REST collector');
 if (!azureProviderText.includes('assemble-azure-context.mjs')) errors.push('Azure DevOps provider must document the fragment assembler');
 if (!azureProviderText.includes('run-with-deadline.mjs')) errors.push('Azure DevOps provider must document the deadline wrapper for the CLI-first attempt');
+if (/^\s*bash\s+<SKILL_DIR>\/scripts\/collect-azure-devops\.sh/m.test(skillText)) {
+  errors.push('SKILL.md must not invoke collect-azure-devops.sh directly; wrap with run-with-deadline.mjs');
+}
+if (!skillText.includes('run-with-deadline.mjs')) {
+  errors.push('SKILL.md must invoke the Azure CLI collector through run-with-deadline.mjs');
+}
 
 for (const match of skillText.matchAll(/\]\((references\/[^)]+|scripts\/[^)]+)\)/g)) {
   await exists(path.join('skills/review-pull-request', match[1]), `SKILL.md reference ${match[1]}`);
