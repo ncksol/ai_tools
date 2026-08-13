@@ -562,6 +562,97 @@ test('REST rejects a multi-step iteration-change cursor cycle (A→B→A)', asyn
   assert.equal(calls, 3);
 });
 
+test('REST rejects an iteration-change page with no changeEntries field', async () => {
+  await assert.rejects(
+    () => pagedIterationChanges(
+      'https://dev.azure.com/acme/project/_apis/git/repositories/repo/pullRequests/77',
+      2,
+      async () => ({ nextSkip: 0, nextTop: 0 })
+    ),
+    /changes page missing changeEntries array/
+  );
+});
+
+test('REST rejects an iteration-change page where changeEntries is not an array', async () => {
+  await assert.rejects(
+    () => pagedIterationChanges(
+      'https://dev.azure.com/acme/project/_apis/git/repositories/repo/pullRequests/77',
+      2,
+      async () => ({ changeEntries: null, nextSkip: 0, nextTop: 0 })
+    ),
+    /changes page missing changeEntries array/
+  );
+});
+
+test('REST rejects an iteration-change page with null pagination fields', async () => {
+  await assert.rejects(
+    () => pagedIterationChanges(
+      'https://dev.azure.com/acme/project/_apis/git/repositories/repo/pullRequests/77',
+      2,
+      async () => ({ changeEntries: [], nextSkip: null, nextTop: null })
+    ),
+    /changes page has invalid pagination fields/
+  );
+});
+
+test('REST rejects an iteration-change page with string pagination fields', async () => {
+  await assert.rejects(
+    () => pagedIterationChanges(
+      'https://dev.azure.com/acme/project/_apis/git/repositories/repo/pullRequests/77',
+      2,
+      async () => ({ changeEntries: [], nextSkip: '100', nextTop: '2000' })
+    ),
+    /changes page has invalid pagination fields/
+  );
+});
+
+test('REST rejects an iteration-change page with a negative pagination field', async () => {
+  await assert.rejects(
+    () => pagedIterationChanges(
+      'https://dev.azure.com/acme/project/_apis/git/repositories/repo/pullRequests/77',
+      2,
+      async () => ({ changeEntries: [], nextSkip: -1, nextTop: 2000 })
+    ),
+    /changes page has invalid pagination fields/
+  );
+});
+
+test('REST accepts a valid empty first iteration-change page and returns zero entries', async () => {
+  const result = await pagedIterationChanges(
+    'https://dev.azure.com/acme/project/_apis/git/repositories/repo/pullRequests/77',
+    2,
+    async () => ({ changeEntries: [], nextSkip: 0, nextTop: 0 })
+  );
+  assert.deepEqual(result, { changeEntries: [], nextSkip: 0, nextTop: 0 });
+});
+
+test('REST keeps sibling capabilities complete when iteration-change page is malformed', async () => {
+  const fetchImpl = async url => {
+    const value = String(url);
+    if (value.includes('/_apis/git/pullrequests/77?')) return jsonResponse(structuredClone(raw.pullRequest));
+    if (value.includes('/workitems?')) return jsonResponse({ value: [] });
+    if (value.includes('/_apis/policy/evaluations?')) return jsonResponse({ value: [] });
+    if (value.includes('/iterations?')) return jsonResponse(raw.iterations);
+    if (value.includes('/iterations/2/changes?')) return jsonResponse({ nextSkip: 0, nextTop: 0 }); // missing changeEntries
+    if (value.includes('/threads?')) return jsonResponse({ value: [] });
+    return jsonResponse({}, 404);
+  };
+
+  const fragment = await collectAzureDevOpsRest({
+    prUrl: 'https://dev.azure.com/acme/Platform/_git/widgets/pullrequest/77',
+    credentialContext: 'anonymous',
+    authorization: null,
+    fetchImpl,
+    sleep: async () => {}
+  });
+
+  assert.equal(fragment.capabilities.changes.complete, false);
+  assert.equal(fragment.capabilities.changes.failure.category, 'malformed');
+  for (const name of ['identity', 'metadata', 'snapshot', 'workItems', 'policies', 'iterations', 'existingThreads']) {
+    assert.equal(fragment.capabilities[name].complete, true, `sibling capability ${name} must remain complete`);
+  }
+});
+
 test('REST rejects a multi-step policy-evaluation page cycle (A→B→A)', async () => {
   // Two distinct 100-item pages alternate; the old single-value guard misses the revisit.
   const pageA = Array.from({ length: 100 }, (_, i) => ({ evaluationId: `a${i}` }));

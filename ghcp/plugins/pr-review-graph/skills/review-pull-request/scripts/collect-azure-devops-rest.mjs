@@ -75,10 +75,19 @@ export async function pagedIterationChanges(pullRoot, iterationId, get) {
   for (;;) {
     const url = `${pullRoot}/iterations/${iterationId}/changes?%24compareTo=0&%24top=${top}&%24skip=${skip}`;
     const page = await get(url, `iteration ${iterationId} changes`);
-    allEntries.push(...(page.changeEntries ?? []));
+    if (!Array.isArray(page?.changeEntries)) {
+      throw accessError('malformed', `iteration ${iterationId} changes page missing changeEntries array`);
+    }
+    allEntries.push(...page.changeEntries);
 
-    const nextSkip = Number(page.nextSkip ?? 0);
-    const nextTop = Number(page.nextTop ?? 0);
+    if (
+      !Number.isInteger(page.nextSkip) || page.nextSkip < 0 ||
+      !Number.isInteger(page.nextTop)  || page.nextTop  < 0
+    ) {
+      throw accessError('malformed', `iteration ${iterationId} changes page has invalid pagination fields`);
+    }
+    const nextSkip = page.nextSkip;
+    const nextTop = page.nextTop;
     if (nextSkip === 0 && nextTop === 0) {
       return { changeEntries: allEntries, nextSkip: 0, nextTop: 0 };
     }
