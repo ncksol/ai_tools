@@ -284,6 +284,11 @@ export function assembleAzureFragments(inputFragments) {
       `Incomplete Azure DevOps context: ${missing.join(', ')}\n${blockers.join('\n')}`
     );
     error.attempts = attempts;
+    error.missingCapabilities = missing;
+    error.rejectedFragments = rejectedFragments;
+    error.selectedCapabilities = Object.fromEntries(
+      Object.entries(selected).map(([name, value]) => [name, value.source])
+    );
     throw error;
   }
 
@@ -366,6 +371,37 @@ function complete(data) {
   return { complete: true, data };
 }
 
+function buildFailureArtifact(error) {
+  return {
+    provider: 'azure-devops',
+    assembled: false,
+    message: error.message,
+    missingCapabilities: error.missingCapabilities ?? [],
+    selectedCapabilities: error.selectedCapabilities ?? {},
+    attempts: error.attempts ?? [],
+    rejectedFragments: error.rejectedFragments ?? []
+  };
+}
+
+// Both `directory` and `packet` CLI modes assemble fragments and write PACKET_JSON. When
+// assembly fails on missing capabilities, write the same sanitized ledger the caller would
+// have seen on `providerData.access` to that same path instead of leaving only a printed
+// message, so the operator (or a re-read of PACKET_JSON) can see the full attempt/rejection
+// ledger before stopping.
+async function assembleAndWrite(inputFragments, packetJsonPath) {
+  let packet;
+  try {
+    packet = assembleAzureFragments(inputFragments);
+  } catch (error) {
+    if (!error.attempts) throw error;
+    await writeJson(packetJsonPath, buildFailureArtifact(error));
+    error.message += `\nfailure artifact: ${packetJsonPath}`;
+    throw error;
+  }
+  await writeJson(packetJsonPath, packet);
+  return packet;
+}
+
 async function main() {
   const [mode, ...args] = process.argv.slice(2);
 
@@ -375,8 +411,7 @@ async function main() {
       throw new Error('Usage: assemble-azure-context.mjs directory <RAW_DIR> <ADAPTER> <CREDENTIAL_CONTEXT> <PACKET_JSON>');
     }
     const fragment = await fragmentFromRawDirectory(path.resolve(rawDir), { adapter, credentialContext });
-    const packet = assembleAzureFragments([fragment]);
-    await writeJson(path.resolve(packetJson), packet);
+    await assembleAndWrite([fragment], path.resolve(packetJson));
     console.log(`packet: ${packetJson} (source: ${adapter}/${credentialContext})`);
     return;
   }
@@ -446,8 +481,7 @@ async function main() {
       throw new Error('Usage: assemble-azure-context.mjs packet <PACKET_JSON> <FRAGMENT_JSON>...');
     }
     const fragments = await Promise.all(fragmentPaths.map(p => readJson(path.resolve(p))));
-    const packet = assembleAzureFragments(fragments);
-    await writeJson(path.resolve(packetJson), packet);
+    await assembleAndWrite(fragments, path.resolve(packetJson));
     const sources = fragments.map(f => `${f.source.adapter}/${f.source.credentialContext}`).join(', ');
     console.log(`packet: ${packetJson} (sources: ${sources})`);
     return;

@@ -1252,3 +1252,85 @@ test('REST marks policies incomplete when a policy-evaluations page is not a val
     assert.equal(fragment.capabilities[name].complete, true, name);
   }
 });
+
+test('a missing-capability assembly failure exposes selected capabilities alongside missing ones', () => {
+  const partial = fragments().filter(fragment => fragment.source.adapter !== 'azure-rest');
+  assert.throws(() => assembleAzureFragments(partial), error => {
+    assert.deepEqual(
+      error.missingCapabilities,
+      ['changes', 'existingThreads', 'iterations', 'policies', 'snapshot', 'workItems']
+    );
+    assert.deepEqual(Object.keys(error.selectedCapabilities).sort(), ['diff', 'identity', 'metadata']);
+    assert.equal(error.selectedCapabilities.identity.adapter, 'bluebird');
+    assert.equal(error.selectedCapabilities.metadata.adapter, 'bluebird');
+    assert.equal(error.selectedCapabilities.diff.adapter, 'local-git');
+    assert.ok(Array.isArray(error.attempts) && error.attempts.length > 0);
+    assert.deepEqual(error.rejectedFragments, []);
+    return true;
+  });
+});
+
+test('rejected fragments surface on a failed assembly, not only on a successful one', () => {
+  const partial = fragments().filter(fragment => fragment.source.adapter !== 'azure-rest');
+  partial.push({ source: { adapter: 'broken-adapter', credentialContext: 'configured', capturedAt } });
+  assert.throws(() => assembleAzureFragments(partial), error => {
+    assert.equal(error.rejectedFragments.length, 1);
+    assert.equal(error.rejectedFragments[0].source.adapter, 'broken-adapter');
+    assert.equal(error.rejectedFragments[0].failure.category, 'malformed');
+    assert.ok(error.rejectedFragments[0].failure.message.length > 0);
+    return true;
+  });
+});
+
+test('a failed-assembly error never carries raw capability data or credential material', () => {
+  const partial = fragments().filter(fragment => fragment.source.adapter !== 'azure-rest');
+  assert.throws(() => assembleAzureFragments(partial), error => {
+    for (const capabilitySource of Object.values(error.selectedCapabilities)) {
+      assert.deepEqual(Object.keys(capabilitySource).sort(), ['adapter', 'capturedAt', 'credentialContext']);
+    }
+    for (const attempt of error.attempts) {
+      assert.deepEqual(Object.keys(attempt).sort(), ['capability', 'complete', 'failure', 'source']);
+      assert.deepEqual(Object.keys(attempt.source).sort(), ['adapter', 'capturedAt', 'credentialContext']);
+    }
+    return true;
+  });
+});
+
+test('packet CLI mode writes a sanitized assembled:false failure artifact when capabilities are missing', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'prg-azure-packet-fail-'));
+  try {
+    const partial = fragments().filter(fragment => fragment.source.adapter !== 'azure-rest');
+    const fragmentPaths = await Promise.all(partial.map(async (fragment, index) => {
+      const file = path.join(dir, `fragment-${index}.json`);
+      await writeFile(file, JSON.stringify(fragment));
+      return file;
+    }));
+    const packetJson = path.join(dir, 'packet.json');
+
+    const result = spawnSync(process.execPath, [
+      path.join(root, 'skills/review-pull-request/scripts/assemble-azure-context.mjs'),
+      'packet',
+      packetJson,
+      ...fragmentPaths
+    ], { encoding: 'utf8' });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Incomplete Azure DevOps context/);
+    assert.match(result.stderr, /failure artifact: /);
+    assert.match(result.stderr, new RegExp(path.basename(packetJson)));
+
+    const artifact = JSON.parse(await readFile(packetJson, 'utf8'));
+    assert.equal(artifact.provider, 'azure-devops');
+    assert.equal(artifact.assembled, false);
+    assert.deepEqual(
+      artifact.missingCapabilities,
+      ['changes', 'existingThreads', 'iterations', 'policies', 'snapshot', 'workItems']
+    );
+    assert.ok(Array.isArray(artifact.attempts) && artifact.attempts.length > 0);
+    assert.deepEqual(Object.keys(artifact.selectedCapabilities).sort(), ['diff', 'identity', 'metadata']);
+    assert.deepEqual(artifact.rejectedFragments, []);
+    assert.equal(JSON.stringify(artifact).includes('"data"'), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
