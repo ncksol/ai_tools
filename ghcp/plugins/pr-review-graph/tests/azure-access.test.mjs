@@ -771,3 +771,52 @@ test('Azure CLI collector routes its complete raw directory through the access a
   assert.match(collector, /PRG_AZURE_CREDENTIAL_CONTEXT:-current-environment/);
   assert.doesNotMatch(collector, /normalize-context\.mjs" \\\n\s+--provider azure-devops/);
 });
+
+test('identity fragments from the same organization pass the agreement check', () => {
+  const pr = raw.pullRequest;
+  const input = structuredClone(fragments());
+  const second = {
+    schemaVersion: '1.0',
+    source: source('second-adapter'),
+    capabilities: {
+      identity: complete({
+        pullRequestId: pr.pullRequestId,
+        url: `${pr.repository.webUrl}/pullrequest/${pr.pullRequestId}`,
+        repository: pr.repository
+      })
+    }
+  };
+  input.push(second);
+  // Both identity fragments resolve to the same org — no conflict.
+  assert.doesNotThrow(() => assembleAzureFragments(input));
+});
+
+test('identity fragments from different organizations fail closed', () => {
+  const pr = raw.pullRequest;
+  const input = structuredClone(fragments());
+  input.push({
+    schemaVersion: '1.0',
+    source: source('cross-org-adapter'),
+    capabilities: {
+      identity: complete({
+        pullRequestId: pr.pullRequestId,
+        url: 'https://dev.azure.com/contoso/Platform/_git/widgets/pullrequest/77',
+        repository: { ...pr.repository, webUrl: 'https://dev.azure.com/contoso/Platform/_git/widgets' }
+      })
+    }
+  });
+  assert.throws(() => assembleAzureFragments(input), /Conflicting Azure organization/);
+});
+
+test('dev.azure.com and visualstudio.com URL forms for the same org are treated as equivalent', () => {
+  const pr = raw.pullRequest;
+  const input = structuredClone(fragments());
+  // Replace the identity URL in the first fragment with the legacy visualstudio.com form.
+  input[0].capabilities.identity = complete({
+    pullRequestId: pr.pullRequestId,
+    url: 'https://acme.visualstudio.com/Platform/_git/widgets/pullrequest/77',
+    repository: pr.repository
+  });
+  // The second identity (from the fixture) uses dev.azure.com/acme — same org slug.
+  assert.doesNotThrow(() => assembleAzureFragments(input));
+});

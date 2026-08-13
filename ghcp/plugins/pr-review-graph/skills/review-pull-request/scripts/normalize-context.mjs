@@ -298,7 +298,7 @@ function githubRepoUrl(value) {
   return match?.[1] ?? '';
 }
 
-function organizationFromUrl(value) {
+export function organizationFromUrl(value) {
   const text = String(value ?? '');
   const modern = text.match(/dev\.azure\.com\/([^/]+)/i);
   if (modern) return modern[1];

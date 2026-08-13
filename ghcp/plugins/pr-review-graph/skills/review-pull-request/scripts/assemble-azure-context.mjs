@@ -2,7 +2,7 @@
 import { access, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isMain, readJson, writeJson } from './lib.mjs';
-import { loadRawDirectory, normalize } from './normalize-context.mjs';
+import { loadRawDirectory, normalize, organizationFromUrl } from './normalize-context.mjs';
 
 export const REQUIRED_AZURE_CAPABILITIES = Object.freeze([
   'identity',
@@ -118,6 +118,7 @@ function assertImmutableAgreement(fragments) {
       agree('repository.name', repo.name, 'Conflicting Azure PR identity');
       agree('project.id', project.id, 'Conflicting Azure PR identity');
       agree('project.name', project.name, 'Conflicting Azure PR identity');
+      agree('organization', organizationFromUrl(id.data.url), 'Conflicting Azure organization');
     }
     const snap = fragment.capabilities?.snapshot;
     if (snap?.complete) {
