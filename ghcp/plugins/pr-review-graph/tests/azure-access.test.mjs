@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
   assembleAzureFragments,
   downgradeMalformedCapabilities,
+  fragmentFromPartialRawDirectory,
   fragmentFromRawDirectory,
   REQUIRED_AZURE_CAPABILITIES,
   validateAzureFragment
@@ -1336,6 +1337,36 @@ test('packet CLI mode writes a sanitized assembled:false failure artifact when c
   }
 });
 
+test('a partial raw directory keeps collected capabilities and marks the rest incomplete', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'prg-azure-partial-'));
+  try {
+    await writeFile(path.join(dir, 'pull-request.json'), JSON.stringify(raw.pullRequest));
+    await writeFile(path.join(dir, 'work-items.json'), JSON.stringify(raw.workItems));
+    await writeFile(path.join(dir, 'policies.json'), JSON.stringify(raw.policies));
+    await writeFile(
+      path.join(dir, 'existingThreads.failure'),
+      'authentication\naz devops invoke pullRequestThreads failed with exit status 1\n'
+    );
+
+    const fragment = await fragmentFromPartialRawDirectory(dir, {
+      adapter: 'azure-cli',
+      credentialContext: 'current-environment'
+    });
+
+    validateAzureFragment(fragment);
+    for (const name of ['identity', 'metadata', 'snapshot', 'workItems', 'policies']) {
+      assert.equal(fragment.capabilities[name].complete, true, name);
+    }
+    assert.equal(fragment.capabilities.existingThreads.complete, false);
+    assert.equal(fragment.capabilities.existingThreads.failure.category, 'authentication');
+    assert.equal(fragment.capabilities.iterations.complete, false);
+    assert.equal(fragment.capabilities.iterations.failure.category, 'malformed');
+    assert.match(fragment.capabilities.iterations.failure.message, /iterations\.json/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('authorizationForMode(entra) reports a sanitized transient timeout instead of hanging', async () => {
   const hangingExecFileImpl = () => new Promise(() => {
     // Never resolves — simulates a stalled `az account get-access-token`. If
@@ -1377,4 +1408,72 @@ test('authorizationForMode(entra) uses a sane default deadline when unset', asyn
     execFileImpl: fastExecFileImpl
   });
   assert.equal(authorization, 'Bearer token-value');
+});
+
+test('an uncollected list capability is never reported as a valid empty result', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'prg-azure-partial-'));
+  try {
+    await writeFile(path.join(dir, 'pull-request.json'), JSON.stringify(raw.pullRequest));
+
+    const fragment = await fragmentFromPartialRawDirectory(dir, {
+      adapter: 'azure-cli',
+      credentialContext: 'current-environment'
+    });
+
+    assert.equal(fragment.capabilities.workItems.complete, false);
+    assert.equal(fragment.capabilities.policies.complete, false);
+    assert.equal(fragment.capabilities.existingThreads.complete, false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('an unreadable raw response fails only its own capability', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'prg-azure-partial-'));
+  try {
+    await writeFile(path.join(dir, 'pull-request.json'), JSON.stringify(raw.pullRequest));
+    await writeFile(path.join(dir, 'work-items.json'), '{ this is not json');
+    await writeFile(path.join(dir, 'policies.json'), JSON.stringify(raw.policies));
+
+    const fragment = await fragmentFromPartialRawDirectory(dir, {
+      adapter: 'azure-cli',
+      credentialContext: 'current-environment'
+    });
+
+    assert.equal(fragment.capabilities.workItems.complete, false);
+    assert.equal(fragment.capabilities.workItems.failure.category, 'malformed');
+    assert.equal(fragment.capabilities.policies.complete, true);
+    assert.equal(fragment.capabilities.identity.complete, true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a still-paginated change response fails only the changes capability', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'prg-azure-partial-'));
+  try {
+    await writeFile(path.join(dir, 'pull-request.json'), JSON.stringify(raw.pullRequest));
+    await writeFile(path.join(dir, 'work-items.json'), JSON.stringify(raw.workItems));
+    await writeFile(path.join(dir, 'policies.json'), JSON.stringify(raw.policies));
+    await writeFile(path.join(dir, 'iterations.json'), JSON.stringify(raw.iterations));
+    await writeFile(path.join(dir, 'threads.json'), JSON.stringify(raw.existingThreads));
+    await writeFile(path.join(dir, 'diff.patch'), raw.diff);
+    await writeFile(
+      path.join(dir, 'changes.json'),
+      JSON.stringify({ ...raw.changes, nextSkip: 2000, nextTop: 2000 })
+    );
+
+    const fragment = await fragmentFromPartialRawDirectory(dir, {
+      adapter: 'azure-cli',
+      credentialContext: 'current-environment'
+    });
+
+    assert.equal(fragment.capabilities.changes.complete, false);
+    assert.equal(fragment.capabilities.changes.failure.category, 'malformed');
+    for (const name of ['identity', 'metadata', 'snapshot', 'workItems', 'policies', 'iterations', 'existingThreads', 'diff']) {
+      assert.equal(fragment.capabilities[name].complete, true, name);
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

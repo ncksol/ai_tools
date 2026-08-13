@@ -26,6 +26,32 @@ const RAW_FILES = Object.freeze([
   'diff.patch'
 ]);
 
+const CAPABILITY_SOURCES = Object.freeze({
+  identity: ['pull-request.json'],
+  metadata: ['pull-request.json'],
+  snapshot: ['pull-request.json'],
+  workItems: ['work-items.json'],
+  policies: ['policies.json'],
+  iterations: ['iterations.json'],
+  changes: ['changes.json'],
+  existingThreads: ['threads.json'],
+  diff: ['pull-request.json', 'diff.patch']
+});
+
+const RAW_FILE_KEYS = Object.freeze({
+  'pull-request.json': 'pullRequest',
+  'work-items.json': 'workItems',
+  'policies.json': 'policies',
+  'iterations.json': 'iterations',
+  'changes.json': 'changes',
+  'threads.json': 'existingThreads',
+  'diff.patch': 'diff'
+});
+
+function sanitizeMessage(message) {
+  return String(message).replace(/\s+/g, ' ').trim();
+}
+
 function assertCapabilityData(name, data) {
   switch (name) {
     case 'identity': {
@@ -326,44 +352,113 @@ export function assembleAzureFragments(inputFragments) {
 export async function fragmentFromRawDirectory(directory, source) {
   await Promise.all(RAW_FILES.map(file => access(path.join(directory, file))));
   const raw = await loadRawDirectory('azure-devops', directory);
-  const pr = raw.pullRequest;
   return {
     schemaVersion: '1.0',
     source: { ...source, capturedAt: source.capturedAt ?? new Date().toISOString() },
-    capabilities: {
-      identity: complete({
-        pullRequestId: pr.pullRequestId,
-        url: pr._links?.web?.href ?? `${pr.repository.webUrl}/pullrequest/${pr.pullRequestId}`,
-        repository: pr.repository
-      }),
-      metadata: complete({
-        title: pr.title ?? '',
-        description: pr.description ?? '',
-        createdBy: pr.createdBy ?? null,
-        status: pr.status ?? null,
-        isDraft: Boolean(pr.isDraft),
-        sourceRefName: pr.sourceRefName ?? '',
-        targetRefName: pr.targetRefName ?? '',
-        reviewers: pr.reviewers ?? []
-      }),
-      snapshot: complete({
-        lastMergeSourceCommit: pr.lastMergeSourceCommit,
-        lastMergeTargetCommit: pr.lastMergeTargetCommit
-      }),
-      workItems: complete(raw.workItems),
-      // `az repos pr policy list` has no partial-list mode: it always returns the
-      // complete evaluation set, so the CLI route can attest to exhaustion directly.
-      policies: complete({ value: asArray(raw.policies), exhausted: true }),
-      iterations: complete(raw.iterations),
-      changes: complete(raw.changes),
-      existingThreads: complete(raw.existingThreads),
-      diff: complete({
-        repository: pr.repository,
-        baseSha: pr.lastMergeTargetCommit?.commitId ?? '',
-        headSha: pr.lastMergeSourceCommit?.commitId ?? '',
-        patch: raw.diff
-      })
+    capabilities: capabilitiesFromRaw(raw)
+  };
+}
+
+// Shaping must be total: a missing or malformed field becomes a capability that
+// assertCapabilityData rejects, never an exception that discards the
+// capabilities collected alongside it.
+export function capabilitiesFromRaw(raw) {
+  const pr = raw.pullRequest ?? {};
+  const repository = pr.repository ?? {};
+  const webUrl = String(repository.webUrl ?? '').trim();
+  return {
+    identity: complete({
+      pullRequestId: pr.pullRequestId,
+      url: pr._links?.web?.href ?? (webUrl ? `${webUrl}/pullrequest/${pr.pullRequestId}` : ''),
+      repository
+    }),
+    metadata: complete({
+      title: pr.title ?? '',
+      description: pr.description ?? '',
+      createdBy: pr.createdBy ?? null,
+      status: pr.status ?? null,
+      isDraft: Boolean(pr.isDraft),
+      sourceRefName: pr.sourceRefName ?? '',
+      targetRefName: pr.targetRefName ?? '',
+      reviewers: pr.reviewers ?? []
+    }),
+    snapshot: complete({
+      lastMergeSourceCommit: pr.lastMergeSourceCommit,
+      lastMergeTargetCommit: pr.lastMergeTargetCommit
+    }),
+    workItems: complete(raw.workItems),
+    // `az repos pr policy list` has no partial-list mode: it always returns the
+    // complete evaluation set, so the CLI route can attest to exhaustion directly.
+    policies: complete({ value: asArray(raw.policies), exhausted: true }),
+    iterations: complete(raw.iterations),
+    changes: complete(raw.changes),
+    existingThreads: complete(raw.existingThreads),
+    diff: complete({
+      repository,
+      baseSha: pr.lastMergeTargetCommit?.commitId ?? '',
+      headSha: pr.lastMergeSourceCommit?.commitId ?? '',
+      patch: raw.diff
+    })
+  };
+}
+
+async function readFailureSidecar(directory, name) {
+  let text;
+  try {
+    text = await readFile(path.join(directory, `${name}.failure`), 'utf8');
+  } catch {
+    return null;
+  }
+  const lines = text.split('\n');
+  const category = sanitizeMessage(lines[0] ?? '');
+  if (!category) return { category: 'malformed', message: `${name} failure record is empty` };
+  const message = sanitizeMessage(lines.slice(1).join(' '));
+  return { category, message: message || `${name} was not collected` };
+}
+
+// Each raw file is read independently so one unreadable response cannot discard
+// the responses collected next to it, and a file that was never written is
+// never defaulted to an empty collection.
+async function readRawFiles(directory) {
+  const values = {};
+  const failures = {};
+  await Promise.all(Object.entries(RAW_FILE_KEYS).map(async ([file, key]) => {
+    try {
+      const text = await readFile(path.join(directory, file), 'utf8');
+      values[key] = file === 'diff.patch' ? text : JSON.parse(text);
+    } catch (error) {
+      failures[file] = {
+        category: 'malformed',
+        message: error.code === 'ENOENT'
+          ? `${file} was not collected`
+          : `${file} could not be read: ${error.code ?? 'invalid JSON'}`
+      };
     }
+  }));
+  return { values, failures };
+}
+
+export async function fragmentFromPartialRawDirectory(directory, source) {
+  const { values, failures } = await readRawFiles(directory);
+  const shaped = capabilitiesFromRaw(values);
+  const capabilities = {};
+
+  for (const name of REQUIRED_AZURE_CAPABILITIES) {
+    const recorded = await readFailureSidecar(directory, name);
+    if (recorded) {
+      capabilities[name] = { complete: false, failure: recorded };
+      continue;
+    }
+    const unreadable = CAPABILITY_SOURCES[name].map(file => failures[file]).filter(Boolean);
+    capabilities[name] = unreadable.length
+      ? { complete: false, failure: unreadable[0] }
+      : shaped[name];
+  }
+
+  return {
+    schemaVersion: '1.0',
+    source: { ...source, capturedAt: source.capturedAt ?? new Date().toISOString() },
+    capabilities: downgradeMalformedCapabilities(capabilities)
   };
 }
 
