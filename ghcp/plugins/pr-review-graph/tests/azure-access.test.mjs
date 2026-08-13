@@ -719,6 +719,41 @@ test('REST rejects a multi-step iteration-change cursor cycle (A→B→A)', asyn
   assert.equal(calls, 3);
 });
 
+test('REST accepts the documented terminal page with changeEntries and no cursor fields', async () => {
+  const result = await pagedIterationChanges(
+    'https://dev.azure.com/acme/project/_apis/git/repositories/repo/pullRequests/77',
+    2,
+    async () => ({ changeEntries: [{ changeId: 1 }] })
+  );
+  assert.deepEqual(result, {
+    changeEntries: [{ changeId: 1 }],
+    nextSkip: 0,
+    nextTop: 0
+  });
+});
+
+test('REST rejects an iteration-change half-cursor with nextSkip only', async () => {
+  await assert.rejects(
+    () => pagedIterationChanges(
+      'https://dev.azure.com/acme/project/_apis/git/repositories/repo/pullRequests/77',
+      2,
+      async () => ({ changeEntries: [], nextSkip: 100 })
+    ),
+    /ambiguous half-cursor/
+  );
+});
+
+test('REST rejects an iteration-change half-cursor with nextTop only', async () => {
+  await assert.rejects(
+    () => pagedIterationChanges(
+      'https://dev.azure.com/acme/project/_apis/git/repositories/repo/pullRequests/77',
+      2,
+      async () => ({ changeEntries: [], nextTop: 100 })
+    ),
+    /ambiguous half-cursor/
+  );
+});
+
 test('REST rejects an iteration-change page with no changeEntries field', async () => {
   await assert.rejects(
     () => pagedIterationChanges(

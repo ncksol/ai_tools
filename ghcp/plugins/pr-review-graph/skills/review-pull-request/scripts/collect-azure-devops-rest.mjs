@@ -81,14 +81,21 @@ export async function pagedIterationChanges(pullRoot, iterationId, get) {
     }
     allEntries.push(...page.changeEntries);
 
-    if (
-      !Number.isInteger(page.nextSkip) || page.nextSkip < 0 ||
-      !Number.isInteger(page.nextTop)  || page.nextTop  < 0
-    ) {
-      throw accessError('malformed', `iteration ${iterationId} changes page has invalid pagination fields`);
+    // nextSkip / nextTop are optional: both absent means terminal.
+    // If either is present, both must be present non-negative integers.
+    const skipAbsent = page.nextSkip === undefined;
+    const topAbsent = page.nextTop === undefined;
+    if (skipAbsent && topAbsent) {
+      return { changeEntries: allEntries, nextSkip: 0, nextTop: 0 };
+    }
+    if (skipAbsent !== topAbsent) {
+      throw accessError('malformed', `iteration ${iterationId} changes page has ambiguous half-cursor`);
     }
     const nextSkip = page.nextSkip;
     const nextTop = page.nextTop;
+    if (!Number.isInteger(nextSkip) || nextSkip < 0 || !Number.isInteger(nextTop) || nextTop < 0) {
+      throw accessError('malformed', `iteration ${iterationId} changes page has invalid pagination fields`);
+    }
     if (nextSkip === 0 && nextTop === 0) {
       return { changeEntries: allEntries, nextSkip: 0, nextTop: 0 };
     }
