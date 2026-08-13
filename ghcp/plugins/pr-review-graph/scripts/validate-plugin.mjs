@@ -86,6 +86,9 @@ if (!skillText.includes('--output-format json --stream off --silent')) {
 if (!skillText.includes('extract-agent-response.mjs')) {
   errors.push('SKILL.md must extract raw agent responses');
 }
+if (!/empty assistant messages[^.]*structural frames[^.]*regardless of tool requests/i.test(skillText)) {
+  errors.push('SKILL.md must classify empty assistant messages as structural frames');
+}
 for (const name of ['prg-verifier', 'prg-deduplicator', 'prg-editor']) {
   const dispatch = skillText.indexOf(`\`${name}\``);
   if (dispatch < 0 || !skillText.slice(dispatch, dispatch + 1_800).includes('extract-agent-response.mjs')) {

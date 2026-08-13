@@ -89,7 +89,6 @@ function analyzeEvents(events) {
         || !event.data.turnId
         || typeof event.data.content !== 'string'
         || !Array.isArray(event.data.toolRequests)
-        || (!event.data.content && event.data.toolRequests.length === 0)
         || (event.data.content && event.data.toolRequests.length > 0)
       ) {
         return { status: invalid('transport-invalid-event', safeEventDetails(event, eventIndex)) };
