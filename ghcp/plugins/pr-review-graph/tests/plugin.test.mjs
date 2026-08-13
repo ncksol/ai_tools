@@ -55,6 +55,7 @@ function agentEventStream(content, options = {}) {
       type: 'assistant.turn_start',
       data: { turnId, interactionId: `interaction-${turnId}` }
     },
+    ...(options.beforePayload ?? []),
     {
       type: 'assistant.message',
       data: { turnId, content, toolRequests: options.toolRequests ?? [] }
@@ -145,6 +146,105 @@ test('agent response transport accepts structural tool events before the final p
 
     assert.equal(result.status, 'complete');
     assert.equal(await readFile(responseFile, 'utf8'), payload);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('agent response transport ignores an empty tool-free reasoning frame', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-agent-empty-frame-'));
+  try {
+    const eventsFile = path.join(directory, 'events.jsonl');
+    const responseFile = path.join(directory, 'response.json');
+    const statusFile = path.join(directory, 'status.json');
+    await writeFile(eventsFile, agentEventStream('[]', {
+      beforePayload: [{
+        type: 'assistant.message',
+        data: {
+          turnId: 'turn-final',
+          content: '',
+          toolRequests: [],
+          encryptedContent: 'synthetic-encrypted-frame',
+          reasoningOpaque: 'synthetic-reasoning-frame'
+        }
+      }]
+    }), { mode: 0o600 });
+
+    const result = await extractAgentResponse(eventsFile, responseFile, statusFile);
+
+    assert.equal(result.status, 'complete');
+    assert.equal(await readFile(responseFile, 'utf8'), '[]');
+    assert.deepEqual(JSON.parse(await readFile(statusFile, 'utf8')), {
+      schemaVersion: '1.0',
+      status: 'complete'
+    });
+    await assert.rejects(access(eventsFile), { code: 'ENOENT' });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('captured reliability stream shape extracts and ingests the final candidate array', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-agent-reliability-shape-'));
+  try {
+    const eventsFile = path.join(directory, 'events.jsonl');
+    const responseFile = path.join(directory, 'response.json');
+    const statusFile = path.join(directory, 'status.json');
+    const candidate = discoveryCandidate('reliability', {
+      title: 'Terminal payload survives empty reasoning frames',
+      problem: 'valid final discovery output is discarded before strict ingestion',
+      trigger: 'a long Copilot turn emits empty tool-free reasoning frames',
+      consequence: 'the planned reliability batch is recorded as failed',
+      evidence: 'the terminal assistant payload remains a strict candidate array',
+      recommendation: 'exclude empty assistant frames from payload candidacy'
+    });
+    const payload = JSON.stringify([candidate]);
+    const reasoningFrames = Array.from({ length: 7 }, (_, index) => ({
+      type: 'assistant.message',
+      data: {
+        turnId: 'turn-final',
+        content: '',
+        toolRequests: [],
+        encryptedContent: `synthetic-encrypted-${index + 1}`,
+        reasoningOpaque: `synthetic-reasoning-${index + 1}`
+      }
+    }));
+    await writeFile(eventsFile, agentEventStream(payload, {
+      preceding: [
+        { type: 'assistant.turn_start', data: { turnId: 'turn-tool' } },
+        {
+          type: 'assistant.message',
+          data: {
+            turnId: 'turn-tool',
+            content: '',
+            toolRequests: [{ toolCallId: 'call-1', name: 'skill' }]
+          }
+        },
+        {
+          type: 'tool.execution_start',
+          data: { turnId: 'turn-tool', toolCallId: 'call-1', toolName: 'skill' }
+        },
+        {
+          type: 'tool.execution_complete',
+          data: { turnId: 'turn-tool', toolCallId: 'call-1', success: true }
+        },
+        { type: 'assistant.turn_end', data: { turnId: 'turn-tool' } }
+      ],
+      beforePayload: reasoningFrames
+    }), { mode: 0o600 });
+
+    const transport = await extractAgentResponse(eventsFile, responseFile, statusFile);
+    assert.equal(transport.status, 'complete');
+    assert.equal(await readFile(responseFile, 'utf8'), payload);
+
+    const ingestion = await ingestDiscoveryResponse(
+      responseFile,
+      path.join(directory, 'results'),
+      path.join(directory, 'diagnostics'),
+      { agent: 'prg-reliability', batch: 1, attempt: 1 }
+    );
+    assert.equal(ingestion.status, 'complete');
+    assert.deepEqual(ingestion.findings, [candidate]);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -264,6 +364,20 @@ test('agent response transport fails closed on ambiguous or rendered streams', a
       label: 'malformed event object',
       stream: asJsonl([{}, ...finalTurn, resultEvent]),
       kind: 'transport-invalid-event'
+    },
+    {
+      label: 'empty tool-free message outside a turn',
+      stream: asJsonl([{
+        type: 'assistant.message',
+        data: {
+          turnId: 'turn-orphan',
+          content: '',
+          toolRequests: [],
+          encryptedContent: 'synthetic-encrypted-frame',
+          reasoningOpaque: 'synthetic-reasoning-frame'
+        }
+      }, ...finalTurn, resultEvent]),
+      kind: 'transport-non-terminal-payload'
     }
   ];
 
