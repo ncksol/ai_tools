@@ -363,11 +363,28 @@ test('capturedAt must be a string containing a valid ISO date-time', () => {
     /RFC 3339 date-time string/
   );
 
-  // Semantically invalid calendar date (Feb 30): V8 normalises overflow dates
-  // rather than returning NaN, so this is accepted by the runtime. Document the
-  // known limitation — the regex already prevents out-of-range components such as
-  // month 13 or hour 24, which covers the practical attack surface.
-  // (No assertion here; see comment in validateAzureFragment for the design note.)
+  // Semantically invalid calendar dates are rejected by the explicit day-bound check
+  // (Date.parse alone is insufficient because V8 normalises overflow dates).
+  assert.throws(
+    () => validateAzureFragment({ ...base, source: { ...base.source, capturedAt: '2026-02-30T12:00:00Z' } }),
+    /RFC 3339 date-time string/,
+    'Feb 30 must be rejected'
+  );
+  assert.throws(
+    () => validateAzureFragment({ ...base, source: { ...base.source, capturedAt: '2026-04-31T12:00:00Z' } }),
+    /RFC 3339 date-time string/,
+    'Apr 31 must be rejected'
+  );
+  assert.throws(
+    () => validateAzureFragment({ ...base, source: { ...base.source, capturedAt: '2026-02-29T12:00:00Z' } }),
+    /RFC 3339 date-time string/,
+    'Feb 29 in a non-leap year must be rejected'
+  );
+  // Leap year: Feb 29 is a real calendar date.
+  assert.doesNotThrow(
+    () => validateAzureFragment({ ...base, source: { ...base.source, capturedAt: '2024-02-29T12:00:00Z' } }),
+    'Feb 29 in a leap year must be accepted'
+  );
 
   // Valid ISO instant passes.
   assert.doesNotThrow(

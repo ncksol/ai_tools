@@ -182,9 +182,17 @@ export function downgradeMalformedCapabilities(capabilities) {
 }
 
 // RFC 3339 date-time: T separator and timezone offset (Z or ±HH:MM) are mandatory.
-// Range constraints on each component are checked in the pattern; Date.parse then
-// rejects semantically invalid calendar dates (e.g. Feb 30) that the pattern allows.
+// Component ranges are checked in the pattern (month 01-12, hour 00-23, etc.).
 const RFC3339_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T([01]\d|2[0-3]):[0-5]\d:[0-5]\d(\.\d+)?(Z|[+-]([01]\d|2[0-3]):[0-5]\d)$/;
+
+// Returns true when year/month/day form a valid calendar date.
+// V8 normalises day-overflow dates (e.g. Feb 30 → Mar 2) instead of returning
+// NaN from Date.parse, so we must check the day bound explicitly.
+// new Date(Date.UTC(year, month, 0)) uses JS's 0-indexed months: day 0 of
+// month M (1-indexed) is the last day of month M-1 (0-indexed) = month M.
+function isValidCalendarDate(year, month, day) {
+  return day <= new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
 
 export function validateAzureFragment(fragment) {
   if (fragment?.schemaVersion !== '1.0') throw new Error('Azure access fragment schemaVersion must be 1.0');
@@ -192,7 +200,11 @@ export function validateAzureFragment(fragment) {
     if (!String(fragment.source?.[key] ?? '').trim()) throw new Error(`Azure access fragment source.${key} is required`);
   }
   const capturedAt = fragment.source?.capturedAt;
-  if (typeof capturedAt !== 'string' || !RFC3339_RE.test(capturedAt) || isNaN(Date.parse(capturedAt))) {
+  if (typeof capturedAt !== 'string' || !RFC3339_RE.test(capturedAt)) {
+    throw new Error('Azure access fragment source.capturedAt must be a valid RFC 3339 date-time string');
+  }
+  const [, yr, mo, dy] = capturedAt.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!isValidCalendarDate(Number(yr), Number(mo), Number(dy))) {
     throw new Error('Azure access fragment source.capturedAt must be a valid RFC 3339 date-time string');
   }
   const names = Object.keys(fragment.capabilities ?? {});
