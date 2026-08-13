@@ -48,7 +48,7 @@ function asValue(value) {
 export async function pagedPolicyEvaluations(root, artifactId, get) {
   const all = [];
   let skip = 0;
-  let seenPage = null;
+  const seenPages = new Set();
   for (;;) {
     const encodedArtifactId = encodeURIComponent(artifactId);
     const url = `${root}/_apis/policy/evaluations?artifactId=${encodedArtifactId}&includeNotApplicable=true&api-version=7.1&%24top=100&%24skip=${skip}`;
@@ -57,10 +57,10 @@ export async function pagedPolicyEvaluations(root, artifactId, get) {
     all.push(...items);
     if (items.length < 100) break;
     const signature = JSON.stringify(items);
-    if (signature === seenPage) {
+    if (seenPages.has(signature)) {
       throw accessError('malformed', 'repeated Azure policy evaluation page');
     }
-    seenPage = signature;
+    seenPages.add(signature);
     skip += items.length;
   }
   return { value: all };
@@ -70,7 +70,7 @@ export async function pagedIterationChanges(pullRoot, iterationId, get) {
   const allEntries = [];
   let skip = 0;
   let top = 2000;
-  let seenCursor = null;
+  const seenCursors = new Set();
 
   for (;;) {
     const url = `${pullRoot}/iterations/${iterationId}/changes?%24compareTo=0&%24top=${top}&%24skip=${skip}`;
@@ -84,10 +84,10 @@ export async function pagedIterationChanges(pullRoot, iterationId, get) {
     }
 
     const cursor = `${nextSkip}:${nextTop}`;
-    if (cursor === seenCursor) {
+    if (seenCursors.has(cursor)) {
       throw accessError('malformed', 'repeated Azure iteration-change cursor');
     }
-    seenCursor = cursor;
+    seenCursors.add(cursor);
     skip = nextSkip;
     top = nextTop;
   }

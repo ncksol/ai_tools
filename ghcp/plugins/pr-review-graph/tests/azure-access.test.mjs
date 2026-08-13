@@ -355,6 +355,51 @@ test('REST rejects a repeated iteration-change cursor instead of accepting a par
   assert.equal(calls, 2);
 });
 
+test('REST rejects a multi-step iteration-change cursor cycle (A→B→A)', async () => {
+  // Cursors alternate: 100:100, 200:100, 100:100, ... — never immediately repeated.
+  // The old single-value guard would not catch this; a Set must.
+  const cursors = [
+    { nextSkip: 100, nextTop: 100 },
+    { nextSkip: 200, nextTop: 100 },
+    { nextSkip: 100, nextTop: 100 }
+  ];
+  let calls = 0;
+  await assert.rejects(
+    () => pagedIterationChanges(
+      'https://dev.azure.com/acme/project/_apis/git/repositories/repo/pullRequests/77',
+      2,
+      async () => {
+        const response = cursors[Math.min(calls, cursors.length - 1)];
+        calls += 1;
+        return { changeEntries: [], ...response };
+      }
+    ),
+    /repeated Azure iteration-change cursor/
+  );
+  assert.equal(calls, 3);
+});
+
+test('REST rejects a multi-step policy-evaluation page cycle (A→B→A)', async () => {
+  // Two distinct 100-item pages alternate; the old single-value guard misses the revisit.
+  const pageA = Array.from({ length: 100 }, (_, i) => ({ evaluationId: `a${i}` }));
+  const pageB = Array.from({ length: 100 }, (_, i) => ({ evaluationId: `b${i}` }));
+  const pages = [pageA, pageB, pageA];
+  let calls = 0;
+  await assert.rejects(
+    () => pagedPolicyEvaluations(
+      'https://dev.azure.com/acme/project',
+      'vstfs:///CodeReview/CodeReviewId/project-guid/77',
+      async () => {
+        const page = pages[Math.min(calls, pages.length - 1)];
+        calls += 1;
+        return { value: page };
+      }
+    ),
+    /repeated Azure policy evaluation page/
+  );
+  assert.equal(calls, 3);
+});
+
 test('REST keeps independent capabilities when linked work-item details are forbidden', async () => {
   const fetchImpl = async url => {
     const value = String(url);
