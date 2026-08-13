@@ -562,8 +562,10 @@ test('machine-response transport is required for every tool-less agent stage', a
   assert.match(graph, /empty assistant messages[^.]*structural frames[^.]*regardless of tool requests/i);
   assert.match(readme, /empty assistant messages[^.]*structural frames[^.]*regardless of tool requests/i);
   assert.match(readme, /## Opt-in transport smoke/);
-  assert.match(readme, /--available-tools=skill --allow-tool=skill/);
-  assert.match(readme, /emptyNoToolFrames/);
+  assert.match(readme, /EXPECTED_BASE/);
+  assert.match(readme, /pr-review-graph:prg-reliability/);
+  assert.match(readme, /normalize-context\.mjs/);
+  assert.doesNotMatch(readme, /--available-tools=skill --allow-tool=skill/);
 });
 
 test('GitHub raw data normalizes into an immutable canonical packet', async () => {
