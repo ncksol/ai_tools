@@ -1073,13 +1073,14 @@ test('failure CLI mode rejects an unknown capability name', () => {
   assert.throws(() => validateAzureFragment(fragment), /Unknown Azure capability: unknownCapability/);
 });
 
-test('Azure CLI collector routes its complete raw directory through the access assembler', async () => {
+test('Azure CLI collector routes its raw directory through the access assembler with a fragment', async () => {
   const collector = await readFile(
     path.join(root, 'skills/review-pull-request/scripts/collect-azure-devops.sh'),
     'utf8'
   );
   assert.match(collector, /assemble-azure-context\.mjs" directory/);
   assert.match(collector, /PRG_AZURE_CREDENTIAL_CONTEXT:-current-environment/);
+  assert.match(collector, /fragment_file/);
   assert.doesNotMatch(collector, /normalize-context\.mjs" \\\n\s+--provider azure-devops/);
 });
 
