@@ -301,9 +301,9 @@ function githubRepoUrl(value) {
 export function organizationFromUrl(value) {
   const text = String(value ?? '');
   const modern = text.match(/dev\.azure\.com\/([^/]+)/i);
-  if (modern) return modern[1];
+  if (modern) return modern[1].toLowerCase();
   const legacy = text.match(/https?:\/\/([^.]+)\.visualstudio\.com/i);
-  return legacy?.[1] ?? null;
+  return legacy ? legacy[1].toLowerCase() : null;
 }
 
 function stripRef(value) {
