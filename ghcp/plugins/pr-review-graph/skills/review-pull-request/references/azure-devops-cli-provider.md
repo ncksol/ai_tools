@@ -20,10 +20,16 @@ Never persist raw provider responses, fragments, or packets inside the project t
 
 ## 2. CLI fast path
 
-Run the collector once with the current environment:
+Run the collector once with the current environment, under an explicit deadline so a
+stalled `az` request or `git fetch` cannot block every fallback adapter behind it. The
+default budgets three `az` calls, three `az devops invoke` calls, and one `git fetch`; set
+`PRG_AZURE_CLI_DEADLINE_MS` for slower environments:
 
 ```bash
-bash <SKILL_DIR>/scripts/collect-azure-devops.sh <PR_ID> <PACKET_JSON>
+node <SKILL_DIR>/scripts/run-with-deadline.mjs \
+  --deadline-ms "${PRG_AZURE_CLI_DEADLINE_MS:-120000}" \
+  -- bash <SKILL_DIR>/scripts/collect-azure-devops.sh <PR_ID> <PACKET_JSON>
+cli_current_status=$?
 ```
 
 Run it a second time only when `AZURE_DEVOPS_EXT_PAT` is present and the first command failed, with the injected PAT removed so the collector falls back to a stored `az login` context:
@@ -31,23 +37,43 @@ Run it a second time only when `AZURE_DEVOPS_EXT_PAT` is present and the first c
 ```bash
 env -u AZURE_DEVOPS_EXT_PAT \
   PRG_AZURE_CREDENTIAL_CONTEXT=stored-az-login \
-  bash <SKILL_DIR>/scripts/collect-azure-devops.sh <PR_ID> <PACKET_JSON>
+  node <SKILL_DIR>/scripts/run-with-deadline.mjs \
+  --deadline-ms "${PRG_AZURE_CLI_DEADLINE_MS:-120000}" \
+  -- bash <SKILL_DIR>/scripts/collect-azure-devops.sh <PR_ID> <PACKET_JSON>
+cli_stored_status=$?
 ```
 
 Do not print either command's raw authentication error to the user or into any persisted file.
 
-After a failed CLI collector attempt, record a sanitized failure fragment before trying the next adapter:
+After a failed CLI collector attempt, record a sanitized failure fragment before trying the
+next adapter. Exit code `124` from `run-with-deadline.mjs` means the deadline was exceeded
+and the whole process tree (the shell, `az`, and `git`) was terminated — record that as
+`transient`, distinct from an authentication or tool-availability failure:
 
 ```bash
-node <SKILL_DIR>/scripts/assemble-azure-context.mjs failure \
-  azure-cli current-environment authentication \
-  "Azure CLI did not produce a complete PR packet" all \
-  <WORK_DIR>/cli-current-failure.json
+if [ "$cli_current_status" -eq 124 ]; then
+  node <SKILL_DIR>/scripts/assemble-azure-context.mjs failure \
+    azure-cli current-environment transient \
+    "Azure CLI collector timed out after ${PRG_AZURE_CLI_DEADLINE_MS:-120000}ms" all \
+    <WORK_DIR>/cli-current-failure.json
+elif [ "$cli_current_status" -ne 0 ]; then
+  node <SKILL_DIR>/scripts/assemble-azure-context.mjs failure \
+    azure-cli current-environment authentication \
+    "Azure CLI did not produce a complete PR packet" all \
+    <WORK_DIR>/cli-current-failure.json
+fi
 
-node <SKILL_DIR>/scripts/assemble-azure-context.mjs failure \
-  azure-cli stored-az-login authentication \
-  "Azure CLI stored login did not produce a complete PR packet" all \
-  <WORK_DIR>/cli-stored-failure.json
+if [ "$cli_stored_status" -eq 124 ]; then
+  node <SKILL_DIR>/scripts/assemble-azure-context.mjs failure \
+    azure-cli stored-az-login transient \
+    "Azure CLI stored login collector timed out after ${PRG_AZURE_CLI_DEADLINE_MS:-120000}ms" all \
+    <WORK_DIR>/cli-stored-failure.json
+elif [ "$cli_stored_status" -ne 0 ]; then
+  node <SKILL_DIR>/scripts/assemble-azure-context.mjs failure \
+    azure-cli stored-az-login authentication \
+    "Azure CLI stored login did not produce a complete PR packet" all \
+    <WORK_DIR>/cli-stored-failure.json
+fi
 ```
 
 Use `tool-unavailable` instead of `authentication` when `az` or the Azure DevOps extension is absent.

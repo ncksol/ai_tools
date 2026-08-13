@@ -101,6 +101,7 @@ if (!azureProviderText.includes('<WORK_DIR>/bluebird.json')) errors.push('Azure 
 if (!azureProviderText.includes('complete read packet')) errors.push('Azure DevOps provider must require a complete read packet');
 if (!azureProviderText.includes('collect-azure-devops-rest.mjs')) errors.push('Azure DevOps provider must document the REST collector');
 if (!azureProviderText.includes('assemble-azure-context.mjs')) errors.push('Azure DevOps provider must document the fragment assembler');
+if (!azureProviderText.includes('run-with-deadline.mjs')) errors.push('Azure DevOps provider must document the deadline wrapper for the CLI-first attempt');
 
 for (const match of skillText.matchAll(/\]\((references\/[^)]+|scripts\/[^)]+)\)/g)) {
   await exists(path.join('skills/review-pull-request', match[1]), `SKILL.md reference ${match[1]}`);
@@ -124,7 +125,8 @@ const requiredScripts = [
   'collect-github.sh',
   'collect-azure-devops.sh',
   'collect-azure-devops-rest.mjs',
-  'assemble-azure-context.mjs'
+  'assemble-azure-context.mjs',
+  'run-with-deadline.mjs'
 ];
 for (const file of requiredScripts) await exists(path.join('skills/review-pull-request/scripts', file), `script ${file}`);
 

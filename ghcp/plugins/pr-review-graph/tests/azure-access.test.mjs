@@ -610,6 +610,7 @@ test('the standalone capability CLI mode binds a local-git diff to its repositor
 });
 
 import {
+  authorizationForMode,
   AZURE_DEVOPS_RESOURCE,
   collectAzureDevOpsRest,
   failedAzureRestFragment,
@@ -1333,4 +1334,47 @@ test('packet CLI mode writes a sanitized assembled:false failure artifact when c
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('authorizationForMode(entra) reports a sanitized transient timeout instead of hanging', async () => {
+  const hangingExecFileImpl = () => new Promise(() => {
+    // Never resolves — simulates a stalled `az account get-access-token`. If
+    // authorizationForMode did not bound this call, this test would hang forever.
+  });
+  await assert.rejects(
+    () => authorizationForMode('entra', {
+      env: { PRG_AZURE_ENTRA_TOKEN_DEADLINE_MS: '50' },
+      execFileImpl: hangingExecFileImpl
+    }),
+    error => {
+      assert.equal(error.category, 'transient');
+      assert.match(error.message, /timed out after 50ms/);
+      return true;
+    }
+  );
+});
+
+test('authorizationForMode(entra) still reports authentication failure for a real rejection', async () => {
+  const failingExecFileImpl = async () => {
+    throw new Error('az: command not found');
+  };
+  await assert.rejects(
+    () => authorizationForMode('entra', {
+      env: { PRG_AZURE_ENTRA_TOKEN_DEADLINE_MS: '5000' },
+      execFileImpl: failingExecFileImpl
+    }),
+    error => {
+      assert.equal(error.category, 'authentication');
+      return true;
+    }
+  );
+});
+
+test('authorizationForMode(entra) uses a sane default deadline when unset', async () => {
+  const fastExecFileImpl = async () => ({ stdout: 'token-value\n' });
+  const authorization = await authorizationForMode('entra', {
+    env: {},
+    execFileImpl: fastExecFileImpl
+  });
+  assert.equal(authorization, 'Bearer token-value');
 });

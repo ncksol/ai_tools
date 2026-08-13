@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { isMain, writeJson } from './lib.mjs';
 import { downgradeMalformedCapabilities, validateAzureFragment } from './assemble-azure-context.mjs';
+import { withDeadline } from './run-with-deadline.mjs';
 
 const execFileAsync = promisify(execFile);
 export const AZURE_DEVOPS_RESOURCE = '499b84ac-1321-427f-aa17-267ca6975798';
@@ -146,9 +147,10 @@ export async function authorizationForMode(mode, {
     return `Basic ${Buffer.from(`:${token}`).toString('base64')}`;
   }
   if (mode === 'entra') {
+    const deadlineMs = Number(env.PRG_AZURE_ENTRA_TOKEN_DEADLINE_MS) || 15_000;
     let stdout;
     try {
-      ({ stdout } = await execFileImpl('az', [
+      ({ stdout } = await withDeadline(execFileImpl('az', [
         'account',
         'get-access-token',
         '--resource',
@@ -157,8 +159,9 @@ export async function authorizationForMode(mode, {
         'accessToken',
         '--output',
         'tsv'
-      ], { encoding: 'utf8', maxBuffer: 1024 * 1024 }));
-    } catch {
+      ], { encoding: 'utf8', maxBuffer: 1024 * 1024, timeout: deadlineMs }), deadlineMs));
+    } catch (error) {
+      if (error?.timedOut) throw accessError('transient', `Azure CLI token request timed out after ${deadlineMs}ms`);
       throw accessError('authentication', 'Azure CLI could not provide an Azure DevOps access token');
     }
     const token = stdout.trim();
