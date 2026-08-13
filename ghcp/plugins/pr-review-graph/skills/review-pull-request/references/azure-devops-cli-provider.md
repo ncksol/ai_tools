@@ -205,7 +205,29 @@ node <SKILL_DIR>/scripts/assemble-azure-context.mjs packet \
 
 A partially successful CLI fragment is a contributor like any other: the capabilities it completed are selected normally, and the other adapters need only cover the capabilities it marked incomplete.
 
-Include only files that exist. For a capability more than one fragment completed, the assembler prefers `azure-cli` and `azure-rest` over hand-transcribed MCP or manual fragments regardless of capture order, and every candidate stays in the attempt ledger. A malformed capability in one fragment — for example a broken `bluebird.json` — is downgraded to an incomplete/malformed entry in that ledger rather than aborting assembly of the other fragments; a fragment too broken to sanitize at all (missing `schemaVersion` or every capability) is dropped and listed in `providerData.access.rejectedFragments`. If the `packet` command exits non-zero, `<PACKET_JSON>` itself holds a sanitized `assembled: false` failure artifact — `missingCapabilities`, `selectedCapabilities` (sources for capabilities that did complete), the full `attempts` ledger, and `rejectedFragments` — so read that file rather than relying on the printed message alone before stopping. A complete provider packet with all nine capabilities is required; code-only access is insufficient even when the diff and changed files are complete.
+Include only files that exist. For a capability more than one fragment completed, the assembler prefers `azure-cli` and `azure-rest` over hand-transcribed MCP or manual fragments regardless of capture order, and every candidate stays in the attempt ledger. A malformed capability in one fragment — for example a broken `bluebird.json` — is downgraded to an incomplete/malformed entry in that ledger rather than aborting assembly of the other fragments; a fragment too broken to sanitize at all (missing `schemaVersion` or every capability) is dropped and listed in `providerData.access.rejectedFragments`.
+
+Any non-zero `packet` or `directory` assembly replaces `<PACKET_JSON>` with current, sanitized `assembled: false` diagnostics, including immutable identity/SHA conflicts, an empty diff for a non-empty change list, unreadable fragment/raw-directory input, and unexpected errors. This prevents a packet or artifact from an earlier run surviving a failed attempt:
+
+```json
+{
+  "schemaVersion": "1.0",
+  "provider": "azure-devops",
+  "assembled": false,
+  "failedAt": "<RFC3339 timestamp>",
+  "failure": {
+    "category": "incomplete | conflict | malformed | unexpected",
+    "reason": "missing-capabilities | identity-conflict | empty-diff | unreadable-fragment | unreadable-raw-directory | unexpected-error",
+    "message": "<sanitized single-line summary>"
+  },
+  "missingCapabilities": [],
+  "selectedCapabilities": {},
+  "attempts": [],
+  "rejectedFragments": []
+}
+```
+
+The diagnostic arrays/objects contain only projected capability names, adapter source labels, completion states, and sanitized failure categories/messages — never fragment payloads, response bodies, credentials, or tokens. Read this artifact rather than relying on stderr alone, then stop before agent dispatch. A complete provider packet with all nine capabilities is required; code-only access is insufficient even when the diff and changed files are complete.
 
 ## Line tracking
 

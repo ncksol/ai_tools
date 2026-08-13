@@ -52,6 +52,17 @@ function sanitizeMessage(message) {
   return String(message).replace(/\s+/g, ' ').trim();
 }
 
+function assemblyError(category, reason, message, diagnostics = {}) {
+  const error = new Error(message);
+  error.assembly = {
+    category,
+    reason,
+    message: sanitizeMessage(message),
+    diagnostics
+  };
+  return error;
+}
+
 function assertCapabilityData(name, data) {
   switch (name) {
     case 'identity': {
@@ -131,8 +142,14 @@ function assertCapabilityData(name, data) {
   }
 }
 
-function assertImmutableAgreement(fragments) {
+function assertImmutableAgreement(fragments, rejectedFragments = []) {
   const seen = new Map();
+  const conflict = message => assemblyError(
+    'conflict',
+    'identity-conflict',
+    message,
+    { rejectedFragments }
+  );
 
   // An absent key is no evidence: adapters legitimately carry GUIDs only or
   // display names only. Compare id-to-id and name-to-name, never across keys.
@@ -141,7 +158,7 @@ function assertImmutableAgreement(fragments) {
     if (!text) return;
     const previous = seen.get(key);
     if (previous === undefined) seen.set(key, text);
-    else if (previous !== text) throw new Error(message);
+    else if (previous !== text) throw conflict(message);
   };
 
   for (const fragment of fragments) {
@@ -159,10 +176,10 @@ function assertImmutableAgreement(fragments) {
     const snap = fragment.capabilities?.snapshot;
     if (snap?.complete) {
       const head = String(snap.data.lastMergeSourceCommit?.commitId ?? '').trim();
-      if (!head) throw new Error('Conflicting Azure head SHA');
+      if (!head) throw conflict('Conflicting Azure head SHA');
       agree('head', head, 'Conflicting Azure head SHA');
       const base = String(snap.data.lastMergeTargetCommit?.commitId ?? '').trim();
-      if (!base) throw new Error('Conflicting Azure base SHA');
+      if (!base) throw conflict('Conflicting Azure base SHA');
       agree('base', base, 'Conflicting Azure base SHA');
     }
     const diff = fragment.capabilities?.diff;
@@ -277,7 +294,7 @@ export function assembleAzureFragments(inputFragments) {
   const fragments = inputFragments
     .map(fragment => sanitizeAzureFragment(fragment, rejectedFragments))
     .filter(fragment => fragment !== null);
-  assertImmutableAgreement(fragments);
+  assertImmutableAgreement(fragments, rejectedFragments);
   const selected = {};
   const attempts = [];
 
@@ -306,8 +323,19 @@ export function assembleAzureFragments(inputFragments) {
             `${name} <= ${attempt.source.adapter}/${attempt.source.credentialContext}: ${attempt.failure.category}: ${attempt.failure.message}`)
         : [`${name} <= no adapter produced a complete result`];
     });
-    const error = new Error(
-      `Incomplete Azure DevOps context: ${missing.join(', ')}\n${blockers.join('\n')}`
+    const message = `Incomplete Azure DevOps context: ${missing.join(', ')}\n${blockers.join('\n')}`;
+    const error = assemblyError(
+      'incomplete',
+      'missing-capabilities',
+      message,
+      {
+        missingCapabilities: missing,
+        selectedCapabilities: Object.fromEntries(
+          Object.entries(selected).map(([name, value]) => [name, value.source])
+        ),
+        attempts,
+        rejectedFragments
+      }
     );
     error.attempts = attempts;
     error.missingCapabilities = missing;
@@ -320,7 +348,18 @@ export function assembleAzureFragments(inputFragments) {
 
   const changeEntries = selected.changes.capability.data.changeEntries;
   if (changeEntries.length && !String(selected.diff.capability.data.patch).trim()) {
-    throw new Error('Incomplete Azure DevOps context: diff is empty for a non-empty change list');
+    throw assemblyError(
+      'conflict',
+      'empty-diff',
+      'Incomplete Azure DevOps context: diff is empty for a non-empty change list',
+      {
+        selectedCapabilities: Object.fromEntries(
+          Object.entries(selected).map(([name, value]) => [name, value.source])
+        ),
+        attempts,
+        rejectedFragments
+      }
+    );
   }
 
   const identity = selected.identity.capability.data;
@@ -466,35 +505,133 @@ function complete(data) {
   return { complete: true, data };
 }
 
-function buildFailureArtifact(error) {
+function projectSource(source) {
   return {
-    provider: 'azure-devops',
-    assembled: false,
-    message: error.message,
-    missingCapabilities: error.missingCapabilities ?? [],
-    selectedCapabilities: error.selectedCapabilities ?? {},
-    attempts: error.attempts ?? [],
-    rejectedFragments: error.rejectedFragments ?? []
+    adapter: sanitizeMessage(source?.adapter),
+    credentialContext: sanitizeMessage(source?.credentialContext),
+    capturedAt: sanitizeMessage(source?.capturedAt)
   };
 }
 
-// Both `directory` and `packet` CLI modes assemble fragments and write PACKET_JSON. When
-// assembly fails on missing capabilities, write the same sanitized ledger the caller would
-// have seen on `providerData.access` to that same path instead of leaving only a printed
-// message, so the operator (or a re-read of PACKET_JSON) can see the full attempt/rejection
-// ledger before stopping.
-async function assembleAndWrite(inputFragments, packetJsonPath) {
-  let packet;
+function projectFailure(failure) {
+  return {
+    category: sanitizeMessage(failure?.category),
+    message: sanitizeMessage(failure?.message)
+  };
+}
+
+function projectAttempts(attempts = []) {
+  return attempts.map(attempt => ({
+    capability: sanitizeMessage(attempt.capability),
+    source: projectSource(attempt.source),
+    complete: Boolean(attempt.complete),
+    failure: attempt.failure ? projectFailure(attempt.failure) : null
+  }));
+}
+
+function projectRejectedFragments(rejectedFragments = []) {
+  return rejectedFragments.map(entry => ({
+    source: entry.source ? projectSource(entry.source) : null,
+    failure: projectFailure(entry.failure)
+  }));
+}
+
+function projectSelectedCapabilities(selectedCapabilities = {}) {
+  return Object.fromEntries(
+    Object.entries(selectedCapabilities).map(([name, source]) => [
+      sanitizeMessage(name),
+      projectSource(source)
+    ])
+  );
+}
+
+function readFailureKind(error) {
+  if (error?.code) return sanitizeMessage(error.code);
+  if (error instanceof SyntaxError) return 'invalid JSON';
+  return 'unusable content';
+}
+
+async function readFragmentFile(file) {
   try {
-    packet = assembleAzureFragments(inputFragments);
+    return await readJson(path.resolve(file));
   } catch (error) {
-    if (!error.attempts) throw error;
-    await writeJson(packetJsonPath, buildFailureArtifact(error));
-    error.message += `\nfailure artifact: ${packetJsonPath}`;
+    throw assemblyError(
+      'malformed',
+      'unreadable-fragment',
+      `Azure access fragment could not be read: ${path.basename(file)} (${readFailureKind(error)})`
+    );
+  }
+}
+
+async function readRawDirectoryFragment(directory, source, partial) {
+  try {
+    return partial
+      ? await fragmentFromPartialRawDirectory(directory, source)
+      : await fragmentFromRawDirectory(directory, source);
+  } catch (error) {
+    throw assemblyError(
+      'malformed',
+      'unreadable-raw-directory',
+      `Azure raw capture directory could not be read (${readFailureKind(error)})`
+    );
+  }
+}
+
+export function buildFailureArtifact(error, failedAt = new Date()) {
+  const assembly = error?.assembly;
+  const diagnostics = assembly?.diagnostics ?? {};
+  const message = assembly?.message
+    ? sanitizeMessage(assembly.message)
+    : 'Azure DevOps context assembly failed before a packet could be produced';
+  const missingCapabilities = diagnostics.missingCapabilities ?? error?.missingCapabilities ?? [];
+  const selectedCapabilities = diagnostics.selectedCapabilities ?? error?.selectedCapabilities ?? {};
+  const attempts = diagnostics.attempts ?? error?.attempts ?? [];
+  const rejectedFragments = diagnostics.rejectedFragments ?? error?.rejectedFragments ?? [];
+
+  return {
+    schemaVersion: '1.0',
+    provider: 'azure-devops',
+    assembled: false,
+    failedAt: failedAt.toISOString(),
+    failure: {
+      category: sanitizeMessage(assembly?.category ?? 'unexpected'),
+      reason: sanitizeMessage(assembly?.reason ?? 'unexpected-error'),
+      message
+    },
+    // Retain the original diagnostic fields for consumers of the first failure-artifact
+    // contract while adding explicit failure classification above.
+    message,
+    missingCapabilities: missingCapabilities.map(sanitizeMessage),
+    selectedCapabilities: projectSelectedCapabilities(selectedCapabilities),
+    attempts: projectAttempts(attempts),
+    rejectedFragments: projectRejectedFragments(rejectedFragments)
+  };
+}
+
+// Both `directory` and `packet` CLI modes replace PACKET_JSON on every assembly failure,
+// including conflicts and unreadable inputs, so stale output from an earlier run cannot
+// survive. A build function lets input reads happen inside the protected failure path.
+async function assembleAndWrite(inputFragmentsOrBuild, packetJsonPath) {
+  const build = typeof inputFragmentsOrBuild === 'function'
+    ? inputFragmentsOrBuild
+    : async () => assembleAzureFragments(inputFragmentsOrBuild);
+  try {
+    const packet = await build();
+    await mkdir(path.dirname(packetJsonPath), { recursive: true });
+    await writeJson(packetJsonPath, packet);
+    return packet;
+  } catch (error) {
+    let artifactWritten = false;
+    try {
+      await mkdir(path.dirname(packetJsonPath), { recursive: true });
+      await writeJson(packetJsonPath, buildFailureArtifact(error));
+      artifactWritten = true;
+    } catch {
+      // Preserve the original assembly failure when the diagnostic path is unwritable.
+    }
+    if (artifactWritten) error.message += `\nfailure artifact: ${packetJsonPath}`;
     throw error;
   }
-  await writeJson(packetJsonPath, packet);
-  return packet;
 }
 
 async function main() {
@@ -506,32 +643,43 @@ async function main() {
       throw new Error('Usage: assemble-azure-context.mjs directory <RAW_DIR> <ADAPTER> <CREDENTIAL_CONTEXT> <PACKET_JSON> [<FRAGMENT_JSON>]');
     }
     if (!fragmentJson) {
-      const fragment = await fragmentFromRawDirectory(path.resolve(rawDir), { adapter, credentialContext });
-      await assembleAndWrite([fragment], path.resolve(packetJson));
+      await assembleAndWrite(async () => {
+        const fragment = await readRawDirectoryFragment(
+          path.resolve(rawDir),
+          { adapter, credentialContext },
+          false
+        );
+        return assembleAzureFragments([fragment]);
+      }, path.resolve(packetJson));
       console.log(`packet: ${packetJson} (source: ${adapter}/${credentialContext})`);
       return;
     }
 
-    const fragment = await fragmentFromPartialRawDirectory(path.resolve(rawDir), { adapter, credentialContext });
     try {
-      await mkdir(path.dirname(path.resolve(fragmentJson)), { recursive: true });
-      await writeJson(path.resolve(fragmentJson), fragment);
-    } catch (error) {
-      throw Object.assign(
-        new Error(`Could not write the Azure access fragment: ${error.code ?? error.message}`),
-        { exitCode: 2 }
-      );
-    }
-    console.log(`fragment: ${fragmentJson} (source: ${adapter}/${credentialContext})`);
+      await assembleAndWrite(async () => {
+        const fragment = await readRawDirectoryFragment(
+          path.resolve(rawDir),
+          { adapter, credentialContext },
+          true
+        );
+        try {
+          await mkdir(path.dirname(path.resolve(fragmentJson)), { recursive: true });
+          await writeJson(path.resolve(fragmentJson), fragment);
+        } catch (error) {
+          throw Object.assign(
+            new Error(`Could not write the Azure access fragment: ${error.code ?? error.message}`),
+            { exitCode: 2 }
+          );
+        }
+        console.log(`fragment: ${fragmentJson} (source: ${adapter}/${credentialContext})`);
 
-    const incomplete = REQUIRED_AZURE_CAPABILITIES.filter(name => !fragment.capabilities[name].complete);
-    for (const name of incomplete) {
-      console.error(`incomplete: ${name} (${fragment.capabilities[name].failure.category})`);
-    }
+        const incomplete = REQUIRED_AZURE_CAPABILITIES.filter(name => !fragment.capabilities[name].complete);
+        for (const name of incomplete) {
+          console.error(`incomplete: ${name} (${fragment.capabilities[name].failure.category})`);
+        }
 
-    await mkdir(path.dirname(path.resolve(packetJson)), { recursive: true });
-    try {
-      await assembleAndWrite([fragment], path.resolve(packetJson));
+        return assembleAzureFragments([fragment]);
+      }, path.resolve(packetJson));
     } catch (error) {
       if (error.attempts) error.exitCode = 1;
       throw error;
@@ -604,9 +752,12 @@ async function main() {
     if (!packetJson || !fragmentPaths.length) {
       throw new Error('Usage: assemble-azure-context.mjs packet <PACKET_JSON> <FRAGMENT_JSON>...');
     }
-    const fragments = await Promise.all(fragmentPaths.map(p => readJson(path.resolve(p))));
-    await assembleAndWrite(fragments, path.resolve(packetJson));
-    const sources = fragments.map(f => `${f.source.adapter}/${f.source.credentialContext}`).join(', ');
+    let sources = '';
+    await assembleAndWrite(async () => {
+      const fragments = await Promise.all(fragmentPaths.map(readFragmentFile));
+      sources = fragments.map(f => `${f?.source?.adapter}/${f?.source?.credentialContext}`).join(', ');
+      return assembleAzureFragments(fragments);
+    }, path.resolve(packetJson));
     console.log(`packet: ${packetJson} (sources: ${sources})`);
     return;
   }

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   assembleAzureFragments,
+  buildFailureArtifact,
   downgradeMalformedCapabilities,
   fragmentFromPartialRawDirectory,
   fragmentFromRawDirectory,
@@ -1515,6 +1516,122 @@ test('a still-paginated change response fails only the changes capability', asyn
 });
 
 const assembler = path.join(root, 'skills/review-pull-request/scripts/assemble-azure-context.mjs');
+
+async function writeFragmentFiles(directory, values) {
+  return Promise.all(values.map(async (fragment, index) => {
+    const file = path.join(directory, `fragment-${index}.json`);
+    await writeFile(file, JSON.stringify(fragment));
+    return file;
+  }));
+}
+
+test('packet mode replaces a stale packet when immutable SHAs conflict', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'prg-azure-conflict-'));
+  try {
+    const packetJson = path.join(dir, 'packet.json');
+    await writeFile(packetJson, JSON.stringify({ stale: 'previous packet' }));
+    const input = structuredClone(fragments());
+    input.push({
+      schemaVersion: '1.0',
+      source: source('conflicting-adapter'),
+      capabilities: {
+        snapshot: complete({
+          lastMergeSourceCommit: { commitId: 'f'.repeat(40) },
+          lastMergeTargetCommit: raw.pullRequest.lastMergeTargetCommit
+        })
+      }
+    });
+    const files = await writeFragmentFiles(dir, input);
+
+    const result = spawnSync(process.execPath, [assembler, 'packet', packetJson, ...files], { encoding: 'utf8' });
+    assert.equal(result.status, 1);
+    const artifact = JSON.parse(await readFile(packetJson, 'utf8'));
+    assert.equal(artifact.assembled, false);
+    assert.equal(artifact.failure.category, 'conflict');
+    assert.equal(artifact.failure.reason, 'identity-conflict');
+    assert.equal(artifact.stale, undefined);
+    assert.equal(JSON.stringify(artifact).includes('"data"'), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('packet mode replaces a stale packet when changes exist but the diff is empty', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'prg-azure-empty-diff-'));
+  try {
+    const packetJson = path.join(dir, 'packet.json');
+    await writeFile(packetJson, JSON.stringify({ stale: 'previous packet' }));
+    const input = structuredClone(fragments());
+    input.find(fragment => fragment.capabilities.diff).capabilities.diff.data.patch = '';
+    const files = await writeFragmentFiles(dir, input);
+
+    const result = spawnSync(process.execPath, [assembler, 'packet', packetJson, ...files], { encoding: 'utf8' });
+    assert.equal(result.status, 1);
+    const artifact = JSON.parse(await readFile(packetJson, 'utf8'));
+    assert.equal(artifact.assembled, false);
+    assert.equal(artifact.failure.category, 'conflict');
+    assert.equal(artifact.failure.reason, 'empty-diff');
+    assert.equal(artifact.stale, undefined);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('packet mode replaces stale output when a fragment is unreadable without leaking its contents', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'prg-azure-unreadable-'));
+  try {
+    const packetJson = path.join(dir, 'packet.json');
+    await writeFile(packetJson, JSON.stringify({ stale: 'previous packet' }));
+    const files = await writeFragmentFiles(dir, fragments());
+    const broken = path.join(dir, 'broken.json');
+    await writeFile(broken, '{"token":"must-not-appear"');
+
+    const result = spawnSync(process.execPath, [assembler, 'packet', packetJson, ...files, broken], { encoding: 'utf8' });
+    assert.equal(result.status, 1);
+    const text = await readFile(packetJson, 'utf8');
+    const artifact = JSON.parse(text);
+    assert.equal(artifact.assembled, false);
+    assert.equal(artifact.failure.category, 'malformed');
+    assert.equal(artifact.failure.reason, 'unreadable-fragment');
+    assert.doesNotMatch(text, /must-not-appear/);
+    assert.equal(artifact.stale, undefined);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('directory mode replaces stale output when the raw capture is unreadable', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'prg-azure-raw-failure-'));
+  try {
+    const rawDir = path.join(dir, 'raw');
+    const packetJson = path.join(dir, 'packet.json');
+    await writeFile(packetJson, JSON.stringify({ stale: 'previous packet' }));
+
+    const result = spawnSync(process.execPath, [
+      assembler,
+      'directory',
+      rawDir,
+      'azure-cli',
+      'current-environment',
+      packetJson
+    ], { encoding: 'utf8' });
+    assert.equal(result.status, 1);
+    const artifact = JSON.parse(await readFile(packetJson, 'utf8'));
+    assert.equal(artifact.assembled, false);
+    assert.equal(artifact.failure.category, 'malformed');
+    assert.equal(artifact.failure.reason, 'unreadable-raw-directory');
+    assert.equal(artifact.stale, undefined);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('an untagged error produces a fixed sanitized failure message', () => {
+  const artifact = buildFailureArtifact(new Error('{"token":"must-not-appear"}'));
+  assert.equal(artifact.failure.category, 'unexpected');
+  assert.equal(artifact.failure.reason, 'unexpected-error');
+  assert.doesNotMatch(JSON.stringify(artifact), /must-not-appear/);
+});
 
 test('directory mode writes a fragment and failure artifact when a capability is missing', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'prg-azure-dirmode-'));
