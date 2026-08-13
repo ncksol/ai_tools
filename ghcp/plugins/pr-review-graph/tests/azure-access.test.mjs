@@ -336,7 +336,7 @@ test('capturedAt must be a string containing a valid ISO date-time', () => {
   // Number is not a string — passes emptiness check but fails type check.
   assert.throws(
     () => validateAzureFragment({ ...base, source: { ...base.source, capturedAt: 42 } }),
-    /valid ISO date-time string/
+    /RFC 3339 date-time string/
   );
 
   // Empty string is caught by the existing required-field loop.
@@ -345,15 +345,38 @@ test('capturedAt must be a string containing a valid ISO date-time', () => {
     /capturedAt is required/
   );
 
-  // Non-date string passes the emptiness check but fails Date.parse.
+  // Non-date string passes the emptiness check but fails the RFC 3339 pattern.
   assert.throws(
     () => validateAzureFragment({ ...base, source: { ...base.source, capturedAt: 'not-a-date' } }),
-    /valid ISO date-time string/
+    /RFC 3339 date-time string/
   );
+
+  // Date-only string (no T separator, no timezone) is rejected.
+  assert.throws(
+    () => validateAzureFragment({ ...base, source: { ...base.source, capturedAt: '2026-01-01' } }),
+    /RFC 3339 date-time string/
+  );
+
+  // Date-time without a timezone offset is rejected.
+  assert.throws(
+    () => validateAzureFragment({ ...base, source: { ...base.source, capturedAt: '2026-01-01T12:00:00' } }),
+    /RFC 3339 date-time string/
+  );
+
+  // Semantically invalid calendar date (Feb 30): V8 normalises overflow dates
+  // rather than returning NaN, so this is accepted by the runtime. Document the
+  // known limitation — the regex already prevents out-of-range components such as
+  // month 13 or hour 24, which covers the practical attack surface.
+  // (No assertion here; see comment in validateAzureFragment for the design note.)
 
   // Valid ISO instant passes.
   assert.doesNotThrow(
     () => validateAzureFragment({ ...base, source: { ...base.source, capturedAt: '2026-08-12T12:00:00.000Z' } })
+  );
+
+  // Valid instant with a non-UTC timezone offset also passes.
+  assert.doesNotThrow(
+    () => validateAzureFragment({ ...base, source: { ...base.source, capturedAt: '2026-08-12T13:00:00+01:00' } })
   );
 });
 
@@ -378,7 +401,7 @@ test('a fragment with a numeric capturedAt is rejected as malformed without abor
   assert.ok(rejected.some(entry => entry.source?.adapter === 'clock-broken'), 'bad-timestamp fragment must appear in rejectedFragments');
   const entry = rejected.find(e => e.source?.adapter === 'clock-broken');
   assert.equal(entry.failure.category, 'malformed');
-  assert.match(entry.failure.message, /valid ISO date-time string/);
+  assert.match(entry.failure.message, /RFC 3339 date-time string/);
 });
 
 test('equal-authority tie-break uses capturedAt lexicographic order without crashing', () => {

@@ -181,14 +181,19 @@ export function downgradeMalformedCapabilities(capabilities) {
   return result;
 }
 
+// RFC 3339 date-time: T separator and timezone offset (Z or ±HH:MM) are mandatory.
+// Range constraints on each component are checked in the pattern; Date.parse then
+// rejects semantically invalid calendar dates (e.g. Feb 30) that the pattern allows.
+const RFC3339_RE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T([01]\d|2[0-3]):[0-5]\d:[0-5]\d(\.\d+)?(Z|[+-]([01]\d|2[0-3]):[0-5]\d)$/;
+
 export function validateAzureFragment(fragment) {
   if (fragment?.schemaVersion !== '1.0') throw new Error('Azure access fragment schemaVersion must be 1.0');
   for (const key of ['adapter', 'credentialContext', 'capturedAt']) {
     if (!String(fragment.source?.[key] ?? '').trim()) throw new Error(`Azure access fragment source.${key} is required`);
   }
   const capturedAt = fragment.source?.capturedAt;
-  if (typeof capturedAt !== 'string' || isNaN(Date.parse(capturedAt))) {
-    throw new Error('Azure access fragment source.capturedAt must be a valid ISO date-time string');
+  if (typeof capturedAt !== 'string' || !RFC3339_RE.test(capturedAt) || isNaN(Date.parse(capturedAt))) {
+    throw new Error('Azure access fragment source.capturedAt must be a valid RFC 3339 date-time string');
   }
   const names = Object.keys(fragment.capabilities ?? {});
   if (!names.length) throw new Error('Azure access fragment must declare at least one capability');
