@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
   assembleAzureFragments,
+  fragmentFromRawDirectory,
   REQUIRED_AZURE_CAPABILITIES,
   validateAzureFragment
 } from '../skills/review-pull-request/scripts/assemble-azure-context.mjs';
@@ -64,7 +67,14 @@ function fragments() {
     {
       schemaVersion: '1.0',
       source: source('local-git'),
-      capabilities: { diff: complete(raw.diff) }
+      capabilities: {
+        diff: complete({
+          repository: pr.repository,
+          baseSha: pr.lastMergeTargetCommit.commitId,
+          headSha: pr.lastMergeSourceCommit.commitId,
+          patch: raw.diff
+        })
+      }
     }
   ];
 }
@@ -312,6 +322,134 @@ test('a structurally broken fragment is dropped, not fatal, and is visible in di
   for (const entry of rejected) {
     assert.equal(entry.failure.category, 'malformed');
     assert.ok(entry.failure.message.length > 0);
+  }
+});
+
+test('a diff fragment must declare repository, baseSha, headSha, and patch, not a bare string', () => {
+  const input = fragments();
+  const diffFragment = input.find(fragment => fragment.source.adapter === 'local-git');
+  diffFragment.capabilities.diff = complete(raw.diff);
+  assert.throws(
+    () => assembleAzureFragments(input),
+    /Azure capability diff needs an object with repository, baseSha, headSha, and patch/
+  );
+});
+
+test('a diff fragment missing baseSha or headSha fails shape validation', () => {
+  const pr = raw.pullRequest;
+  const input = fragments();
+  const diffFragment = input.find(fragment => fragment.source.adapter === 'local-git');
+  diffFragment.capabilities.diff = complete({
+    repository: pr.repository,
+    baseSha: '',
+    headSha: pr.lastMergeSourceCommit.commitId,
+    patch: raw.diff
+  });
+  assert.throws(
+    () => assembleAzureFragments(input),
+    /Azure capability diff needs a non-empty baseSha/
+  );
+});
+
+test('a bound diff fragment composes into the packet when its repository and SHAs agree', () => {
+  const packet = assembleAzureFragments(fragments());
+  assert.equal(packet.providerData.access.capabilities.diff.adapter, 'local-git');
+  assert.ok(packet.files.some(file => file.patch?.includes('email TEXT NOT NULL')));
+});
+
+test('a diff fragment from a different repository is rejected before normalization', () => {
+  const pr = raw.pullRequest;
+  const input = fragments();
+  const diffFragment = input.find(fragment => fragment.source.adapter === 'local-git');
+  diffFragment.capabilities.diff = complete({
+    repository: { id: 'unrelated-repo-guid', name: 'other-repo', project: { id: pr.repository.project.id } },
+    baseSha: pr.lastMergeTargetCommit.commitId,
+    headSha: pr.lastMergeSourceCommit.commitId,
+    patch: raw.diff
+  });
+  assert.throws(() => assembleAzureFragments(input), /Conflicting Azure PR identity/);
+});
+
+test('a diff fragment whose head SHA disagrees with the snapshot is rejected before normalization', () => {
+  const pr = raw.pullRequest;
+  const input = fragments();
+  const diffFragment = input.find(fragment => fragment.source.adapter === 'local-git');
+  diffFragment.capabilities.diff = complete({
+    repository: pr.repository,
+    baseSha: pr.lastMergeTargetCommit.commitId,
+    headSha: 'ffffffffffffffffffffffffffffffffffffffff',
+    patch: raw.diff
+  });
+  assert.throws(() => assembleAzureFragments(input), /Conflicting Azure head SHA/);
+});
+
+test('a diff fragment whose base SHA disagrees with the snapshot is rejected before normalization', () => {
+  const pr = raw.pullRequest;
+  const input = fragments();
+  const diffFragment = input.find(fragment => fragment.source.adapter === 'local-git');
+  diffFragment.capabilities.diff = complete({
+    repository: pr.repository,
+    baseSha: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+    headSha: pr.lastMergeSourceCommit.commitId,
+    patch: raw.diff
+  });
+  assert.throws(() => assembleAzureFragments(input), /Conflicting Azure base SHA/);
+});
+
+test('the CLI-directory fast path produces a diff fragment bound to repository and snapshot SHAs', async () => {
+  const pr = structuredClone(raw.pullRequest);
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'azure-raw-'));
+  try {
+    await writeFile(path.join(dir, 'pull-request.json'), JSON.stringify(pr));
+    await writeFile(path.join(dir, 'work-items.json'), JSON.stringify(raw.workItems));
+    await writeFile(path.join(dir, 'policies.json'), JSON.stringify(raw.policies));
+    await writeFile(path.join(dir, 'iterations.json'), JSON.stringify(raw.iterations));
+    await writeFile(path.join(dir, 'changes.json'), JSON.stringify(raw.changes));
+    await writeFile(path.join(dir, 'threads.json'), JSON.stringify(raw.existingThreads));
+    await writeFile(path.join(dir, 'diff.patch'), raw.diff);
+
+    const fragment = await fragmentFromRawDirectory(dir, { adapter: 'azure-cli', credentialContext: 'current-environment' });
+
+    assert.equal(fragment.capabilities.diff.data.patch, raw.diff);
+    assert.equal(fragment.capabilities.diff.data.baseSha, pr.lastMergeTargetCommit.commitId);
+    assert.equal(fragment.capabilities.diff.data.headSha, pr.lastMergeSourceCommit.commitId);
+    assert.deepEqual(fragment.capabilities.diff.data.repository, pr.repository);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('the standalone capability CLI mode binds a local-git diff to its repository and SHAs', async () => {
+  const pr = raw.pullRequest;
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'azure-diff-cli-'));
+  try {
+    const repositoryJson = path.join(dir, 'repository.json');
+    const diffPatch = path.join(dir, 'diff.patch');
+    const fragmentJson = path.join(dir, 'fragment.json');
+    await writeFile(repositoryJson, JSON.stringify(pr.repository));
+    await writeFile(diffPatch, raw.diff);
+
+    const result = spawnSync(process.execPath, [
+      path.join(root, 'skills/review-pull-request/scripts/assemble-azure-context.mjs'),
+      'capability',
+      'local-git',
+      'configured-origin',
+      'diff',
+      repositoryJson,
+      pr.lastMergeTargetCommit.commitId,
+      pr.lastMergeSourceCommit.commitId,
+      diffPatch,
+      fragmentJson
+    ], { encoding: 'utf8' });
+
+    assert.equal(result.status, 0, result.stderr);
+    const fragment = JSON.parse(await readFile(fragmentJson, 'utf8'));
+    assert.equal(fragment.capabilities.diff.data.patch, raw.diff);
+    assert.equal(fragment.capabilities.diff.data.baseSha, pr.lastMergeTargetCommit.commitId);
+    assert.equal(fragment.capabilities.diff.data.headSha, pr.lastMergeSourceCommit.commitId);
+    assert.deepEqual(fragment.capabilities.diff.data.repository, pr.repository);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 });
 

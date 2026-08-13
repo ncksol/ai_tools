@@ -75,8 +75,20 @@ function assertCapabilityData(name, data) {
       break;
     }
     case 'diff': {
-      if (typeof data !== 'string')
-        throw new Error('Azure capability diff needs a string');
+      if (typeof data !== 'object' || data === null || Array.isArray(data))
+        throw new Error('Azure capability diff needs an object with repository, baseSha, headSha, and patch');
+      if (typeof data.patch !== 'string')
+        throw new Error('Azure capability diff needs a string patch');
+      const repo = data.repository ?? {};
+      if (!String(repo.id ?? repo.name ?? '').trim())
+        throw new Error('Azure capability diff needs a non-empty repository id or name');
+      const project = repo.project ?? {};
+      if (!String(project.id ?? project.name ?? '').trim())
+        throw new Error('Azure capability diff needs a non-empty project id or name');
+      if (!String(data.baseSha ?? '').trim())
+        throw new Error('Azure capability diff needs a non-empty baseSha');
+      if (!String(data.headSha ?? '').trim())
+        throw new Error('Azure capability diff needs a non-empty headSha');
       break;
     }
     // no default — unknown names are caught in validateAzureFragment
@@ -115,6 +127,17 @@ function assertImmutableAgreement(fragments) {
       const base = String(snap.data.lastMergeTargetCommit?.commitId ?? '').trim();
       if (!base) throw new Error('Conflicting Azure base SHA');
       agree('base', base, 'Conflicting Azure base SHA');
+    }
+    const diff = fragment.capabilities?.diff;
+    if (diff?.complete) {
+      const repo = diff.data.repository ?? {};
+      const project = repo.project ?? {};
+      agree('repository.id', repo.id, 'Conflicting Azure PR identity');
+      agree('repository.name', repo.name, 'Conflicting Azure PR identity');
+      agree('project.id', project.id, 'Conflicting Azure PR identity');
+      agree('project.name', project.name, 'Conflicting Azure PR identity');
+      agree('head', diff.data.headSha, 'Conflicting Azure head SHA');
+      agree('base', diff.data.baseSha, 'Conflicting Azure base SHA');
     }
   }
 }
@@ -233,7 +256,7 @@ export function assembleAzureFragments(inputFragments) {
   }
 
   const changeEntries = selected.changes.capability.data.changeEntries;
-  if (changeEntries.length && !String(selected.diff.capability.data).trim()) {
+  if (changeEntries.length && !String(selected.diff.capability.data.patch).trim()) {
     throw new Error('Incomplete Azure DevOps context: diff is empty for a non-empty change list');
   }
 
@@ -250,7 +273,7 @@ export function assembleAzureFragments(inputFragments) {
     iterations: selected.iterations.capability.data,
     changes: selected.changes.capability.data,
     existingThreads: selected.existingThreads.capability.data,
-    diff: selected.diff.capability.data
+    diff: selected.diff.capability.data.patch
   };
   const packet = normalize(raw);
   packet.providerData.access = {
@@ -295,7 +318,12 @@ export async function fragmentFromRawDirectory(directory, source) {
       iterations: complete(raw.iterations),
       changes: complete(raw.changes),
       existingThreads: complete(raw.existingThreads),
-      diff: complete(raw.diff)
+      diff: complete({
+        repository: pr.repository,
+        baseSha: pr.lastMergeTargetCommit?.commitId ?? '',
+        headSha: pr.lastMergeSourceCommit?.commitId ?? '',
+        patch: raw.diff
+      })
     }
   };
 }
@@ -320,13 +348,32 @@ async function main() {
   }
 
   if (mode === 'capability') {
-    const [adapter, credentialContext, capability, dataFile, fragmentJson] = args;
-    if (!adapter || !credentialContext || !capability || !dataFile || !fragmentJson) {
-      throw new Error('Usage: assemble-azure-context.mjs capability <ADAPTER> <CREDENTIAL_CONTEXT> <CAPABILITY> <DATA_FILE> <FRAGMENT_JSON>');
+    const [adapter, credentialContext, capability] = args;
+    if (!adapter || !credentialContext || !capability) {
+      throw new Error(
+        'Usage: assemble-azure-context.mjs capability <ADAPTER> <CREDENTIAL_CONTEXT> <CAPABILITY> <DATA_FILE> <FRAGMENT_JSON>\n' +
+        '       assemble-azure-context.mjs capability <ADAPTER> <CREDENTIAL_CONTEXT> diff <REPOSITORY_JSON> <BASE_SHA> <HEAD_SHA> <DIFF_PATCH> <FRAGMENT_JSON>'
+      );
     }
-    const data = capability === 'diff'
-      ? await readFile(path.resolve(dataFile), 'utf8')
-      : await readJson(path.resolve(dataFile));
+    let data;
+    let fragmentJson;
+    if (capability === 'diff') {
+      const [repositoryJson, baseSha, headSha, diffPatch, fragJson] = args.slice(3);
+      if (!repositoryJson || !baseSha || !headSha || !diffPatch || !fragJson) {
+        throw new Error('Usage: assemble-azure-context.mjs capability <ADAPTER> <CREDENTIAL_CONTEXT> diff <REPOSITORY_JSON> <BASE_SHA> <HEAD_SHA> <DIFF_PATCH> <FRAGMENT_JSON>');
+      }
+      const repository = await readJson(path.resolve(repositoryJson));
+      const patch = await readFile(path.resolve(diffPatch), 'utf8');
+      data = { repository, baseSha, headSha, patch };
+      fragmentJson = fragJson;
+    } else {
+      const [dataFile, fragJson] = args.slice(3);
+      if (!dataFile || !fragJson) {
+        throw new Error('Usage: assemble-azure-context.mjs capability <ADAPTER> <CREDENTIAL_CONTEXT> <CAPABILITY> <DATA_FILE> <FRAGMENT_JSON>');
+      }
+      data = await readJson(path.resolve(dataFile));
+      fragmentJson = fragJson;
+    }
     const fragment = {
       schemaVersion: '1.0',
       source: { adapter, credentialContext, capturedAt: new Date().toISOString() },
