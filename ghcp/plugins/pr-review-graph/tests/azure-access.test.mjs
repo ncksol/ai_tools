@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import os, { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
   assembleAzureFragments,
+  downgradeMalformedCapabilities,
   fragmentFromRawDirectory,
   REQUIRED_AZURE_CAPABILITIES,
   validateAzureFragment
@@ -58,7 +59,7 @@ function fragments() {
           lastMergeTargetCommit: pr.lastMergeTargetCommit
         }),
         workItems: complete(raw.workItems),
-        policies: complete(raw.policies),
+        policies: complete({ value: raw.policies, exhausted: true }),
         iterations: complete(raw.iterations),
         changes: complete(raw.changes),
         existingThreads: complete(raw.existingThreads)
@@ -106,7 +107,7 @@ test('enumerated empty Azure collections are complete rather than missing', () =
   const input = fragments();
   const rest = input.find(fragment => fragment.source.adapter === 'azure-rest');
   rest.capabilities.workItems = complete([]);
-  rest.capabilities.policies = complete([]);
+  rest.capabilities.policies = complete({ value: [], exhausted: true });
   rest.capabilities.existingThreads = complete({ value: [] });
 
   const packet = assembleAzureFragments(input);
@@ -507,6 +508,7 @@ test('REST collection captures all provider capabilities and pages iteration cha
   }
   assert.equal(fragment.capabilities.metadata.data.description, raw.pullRequest.description);
   assert.equal(fragment.capabilities.workItems.data[0].id, 901);
+  assert.equal(fragment.capabilities.policies.data.exhausted, true);
   assert.equal(fragment.capabilities.changes.data.changeEntries.length, 1);
   assert.equal(fragment.capabilities.changes.data.nextSkip, 0);
   assert.equal(fragment.capabilities.changes.data.nextTop, 0);
@@ -685,6 +687,67 @@ test('REST rejects a repeated policy-evaluation page instead of looping forever'
   assert.equal(calls, 2);
 });
 
+test('pagedPolicyEvaluations reports exhausted evidence after a genuine multi-page fetch', async () => {
+  const fullPage = { value: Array.from({ length: 100 }, (unused, index) => ({ evaluationId: `full-${index}` })) };
+  const shortPage = { value: [{ evaluationId: 'last' }] };
+  let calls = 0;
+  const result = await pagedPolicyEvaluations(
+    'https://dev.azure.com/acme/project',
+    'vstfs:///CodeReview/CodeReviewId/project-guid/77',
+    async () => {
+      calls += 1;
+      return calls === 1 ? structuredClone(fullPage) : structuredClone(shortPage);
+    }
+  );
+  assert.equal(calls, 2);
+  assert.equal(result.exhausted, true);
+  assert.equal(result.value.length, 101);
+});
+
+test('an empty policy-evaluation result is exhausted evidence, not missing data', async () => {
+  const result = await pagedPolicyEvaluations(
+    'https://dev.azure.com/acme/project',
+    'vstfs:///CodeReview/CodeReviewId/project-guid/77',
+    async () => ({ value: [] })
+  );
+  assert.deepEqual(result, { value: [], exhausted: true });
+});
+
+test('a hand-built fragment cannot mark policies complete without exhausted evidence', () => {
+  const input = fragments();
+  const rest = input.find(fragment => fragment.source.adapter === 'azure-rest');
+  rest.capabilities.policies = complete(raw.policies);
+  assert.throws(
+    () => assembleAzureFragments(input),
+    /Azure capability policies needs an object with a value array/
+  );
+});
+
+test('a hand-built fragment cannot mark policies complete with exhausted=false', () => {
+  const input = fragments();
+  const rest = input.find(fragment => fragment.source.adapter === 'azure-rest');
+  rest.capabilities.policies = complete({ value: raw.policies, exhausted: false });
+  assert.throws(
+    () => assembleAzureFragments(input),
+    /Azure capability policies needs exhausted=true evidence that pagination ended/
+  );
+});
+
+test('an adapter-produced policies capability without exhausted evidence downgrades to malformed and fails the read gate', () => {
+  const capabilities = downgradeMalformedCapabilities({ policies: complete(raw.policies) });
+  assert.equal(capabilities.policies.complete, false);
+  assert.equal(capabilities.policies.failure.category, 'malformed');
+  assert.match(capabilities.policies.failure.message, /Azure capability policies needs an object with a value array/);
+
+  const input = fragments();
+  const rest = input.find(fragment => fragment.source.adapter === 'azure-rest');
+  rest.capabilities.policies = capabilities.policies;
+  assert.throws(
+    () => assembleAzureFragments(input),
+    /Incomplete Azure DevOps context: policies/
+  );
+});
+
 test('one malformed REST capability is downgraded without discarding the others', async () => {
   const pr = structuredClone(raw.pullRequest);
   pr.lastMergeSourceCommit = { commitId: '' };
@@ -819,4 +882,23 @@ test('dev.azure.com and visualstudio.com URL forms for the same org are treated 
   });
   // The second identity (from the fixture) uses dev.azure.com/acme — same org slug.
   assert.doesNotThrow(() => assembleAzureFragments(input));
+});
+
+test('CLI-sourced policies carry exhausted evidence because az has no partial-list mode', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'prg-azure-raw-'));
+  try {
+    await writeFile(path.join(dir, 'pull-request.json'), JSON.stringify(raw.pullRequest));
+    await writeFile(path.join(dir, 'work-items.json'), JSON.stringify(raw.workItems));
+    await writeFile(path.join(dir, 'policies.json'), JSON.stringify(raw.policies));
+    await writeFile(path.join(dir, 'iterations.json'), JSON.stringify(raw.iterations));
+    await writeFile(path.join(dir, 'changes.json'), JSON.stringify(raw.changes));
+    await writeFile(path.join(dir, 'threads.json'), JSON.stringify(raw.existingThreads));
+    await writeFile(path.join(dir, 'diff.patch'), raw.diff);
+
+    const fragment = await fragmentFromRawDirectory(dir, { adapter: 'azure-cli', credentialContext: 'current-environment' });
+    assert.deepEqual(fragment.capabilities.policies.data, { value: raw.policies, exhausted: true });
+    validateAzureFragment(fragment);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

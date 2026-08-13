@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { access, readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { isMain, readJson, writeJson } from './lib.mjs';
+import { asArray, isMain, readJson, writeJson } from './lib.mjs';
 import { loadRawDirectory, normalize, organizationFromUrl } from './normalize-context.mjs';
 
 export const REQUIRED_AZURE_CAPABILITIES = Object.freeze([
@@ -60,11 +60,21 @@ function assertCapabilityData(name, data) {
       break;
     }
     case 'workItems':
-    case 'policies':
     case 'iterations':
     case 'existingThreads': {
+      // These endpoints return the full result set in one call — no continuation
+      // parameters exist to prove or disprove, so array shape is complete evidence.
       if (!Array.isArray(data) && !Array.isArray(data?.value))
         throw new Error(`Azure capability ${name} needs an array or an object with a value array`);
+      break;
+    }
+    case 'policies': {
+      // Policy evaluations are $top/$skip paginated, so array shape alone cannot
+      // distinguish a fully enumerated result from an unproven first page.
+      if (!Array.isArray(data?.value))
+        throw new Error('Azure capability policies needs an object with a value array');
+      if (data.exhausted !== true)
+        throw new Error('Azure capability policies needs exhausted=true evidence that pagination ended');
       break;
     }
     case 'changes': {
@@ -315,7 +325,9 @@ export async function fragmentFromRawDirectory(directory, source) {
         lastMergeTargetCommit: pr.lastMergeTargetCommit
       }),
       workItems: complete(raw.workItems),
-      policies: complete(raw.policies),
+      // `az repos pr policy list` has no partial-list mode: it always returns the
+      // complete evaluation set, so the CLI route can attest to exhaustion directly.
+      policies: complete({ value: asArray(raw.policies), exhausted: true }),
       iterations: complete(raw.iterations),
       changes: complete(raw.changes),
       existingThreads: complete(raw.existingThreads),

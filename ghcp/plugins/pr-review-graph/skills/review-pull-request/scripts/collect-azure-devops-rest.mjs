@@ -63,7 +63,7 @@ export async function pagedPolicyEvaluations(root, artifactId, get) {
     seenPages.add(signature);
     skip += items.length;
   }
-  return { value: all };
+  return { value: all, exhausted: true };
 }
 
 export async function pagedIterationChanges(pullRoot, iterationId, get) {
