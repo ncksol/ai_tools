@@ -36,8 +36,16 @@ For subprocess dispatch, use JSONL and extract the one terminal assistant payloa
 
 ```bash
 umask 077
-copilot --agent pr-review-graph:<PRG_AGENT> \
+PLUGIN_DIR="$(cd "<SKILL_DIR>/../.." && pwd -P)"
+[ -f "$PLUGIN_DIR/plugin.json" ] && [ -d "$PLUGIN_DIR/agents" ] || {
+  printf '%s\n' 'PRG plugin root is unavailable' >&2
+  exit 1
+}
+COPILOT_AUTO_UPDATE=false \
+copilot --plugin-dir "$PLUGIN_DIR" \
+  --agent pr-review-graph:<PRG_AGENT> \
   --output-format json --stream off --silent \
+  --no-auto-update \
   -p "<AGENT_PROMPT>" > <EVENTS_JSONL>
 node <SKILL_DIR>/scripts/extract-agent-response.mjs \
   <EVENTS_JSONL> <RAW_RESPONSE_FILE> <TRANSPORT_STATUS_JSON>

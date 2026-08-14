@@ -83,6 +83,12 @@ if (!skillText.includes('Never dispatch a discovery agent, or a batch, that is a
 if (!skillText.includes('--output-format json --stream off --silent')) {
   errors.push('SKILL.md must require JSONL agent transport');
 }
+if (!skillText.includes('copilot --plugin-dir "$PLUGIN_DIR"')) {
+  errors.push('SKILL.md must load subprocess agents from the current plugin root');
+}
+if (!skillText.includes('COPILOT_AUTO_UPDATE=false') || !skillText.includes('--no-auto-update')) {
+  errors.push('SKILL.md must disable subprocess auto-updates');
+}
 if (!skillText.includes('extract-agent-response.mjs')) {
   errors.push('SKILL.md must extract raw agent responses');
 }
