@@ -519,7 +519,7 @@ test('static plugin validation passes and declares no MCP integration', async ()
   ));
   const validator = await readFile(path.join(root, 'scripts/validate-plugin.mjs'), 'utf8');
   assert.equal(manifest.name, 'pr-review-graph');
-  assert.equal(manifest.version, '0.2.7');
+  assert.equal(manifest.version, '0.2.8');
   assert.equal(
     marketplace.plugins.find(plugin => plugin.name === manifest.name)?.version,
     manifest.version
@@ -541,6 +541,20 @@ test('both provider adapters delegate CLI conventions to external skills', async
   assert.match(skill, /separately installed `azure-devops-cli` skill/);
   assert.match(github, /First load and follow the separately installed `gh-cli` skill/);
   assert.match(azure, /Load and follow the separately installed `azure-devops-cli` skill/);
+});
+
+test('subprocess transport loads the plugin explicitly without auto-updating', async () => {
+  const skill = await readFile(path.join(root, 'skills/review-pull-request/SKILL.md'), 'utf8');
+  const start = skill.indexOf('## Machine-response transport');
+  const end = skill.indexOf('## Phase 1: Resolve and snapshot');
+  const transport = skill.slice(start, end);
+
+  assert.match(transport, /PLUGIN_DIR="\$\(cd "<SKILL_DIR>\/\.\.\/\.\." && pwd -P\)"/);
+  assert.match(
+    transport,
+    /COPILOT_AUTO_UPDATE=false \\\n\s*copilot --plugin-dir "\$PLUGIN_DIR" \\/
+  );
+  assert.match(transport, /--no-auto-update/);
 });
 
 test('machine-response transport is required for every tool-less agent stage', async () => {
