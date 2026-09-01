@@ -77,8 +77,8 @@ if (skillText.split(/\r?\n/).length > 500) errors.push('SKILL.md exceeds 500 lin
 if (!skillText.includes('separately installed `gh-cli` skill')) errors.push('SKILL.md must require the gh-cli skill for GitHub');
 if (!skillText.includes('separately installed `azure-devops-cli` skill')) errors.push('SKILL.md must require the azure-devops-cli skill for Azure DevOps');
 if (!skillText.includes('`prg-deduplicator`')) errors.push('SKILL.md must include semantic existing-review deduplication');
-if (!skillText.includes('Never dispatch a discovery agent, or a batch, that is absent from `PLAN_JSON`')) {
-  errors.push('SKILL.md must forbid dispatching discovery agents absent from PLAN_JSON');
+if (!skillText.includes('Never dispatch a discovery agent, review unit, or batch that is absent from `PLAN_JSON`')) {
+  errors.push('SKILL.md must forbid dispatching discovery work absent from PLAN_JSON');
 }
 if (!skillText.includes('--output-format json --stream off --silent')) {
   errors.push('SKILL.md must require JSONL agent transport');
@@ -88,6 +88,12 @@ if (!skillText.includes('copilot --plugin-dir "$PLUGIN_DIR"')) {
 }
 if (!skillText.includes('COPILOT_AUTO_UPDATE=false') || !skillText.includes('--no-auto-update')) {
   errors.push('SKILL.md must disable subprocess auto-updates');
+}
+if (!skillText.includes('run-discovery.mjs') || !skillText.includes('--max-concurrency 4')) {
+  errors.push('SKILL.md must use the bounded discovery dispatcher');
+}
+if (!skillText.includes('--max-prompt-chars 120000')) {
+  errors.push('SKILL.md must enforce the discovery prompt budget');
 }
 if (!skillText.includes('extract-agent-response.mjs')) {
   errors.push('SKILL.md must extract raw agent responses');
@@ -115,6 +121,8 @@ for (const file of ['packet.schema.json', 'finding.schema.json', 'deduplication.
 const requiredScripts = [
   'normalize-context.mjs',
   'build-review-plan.mjs',
+  'build-discovery-prompt.mjs',
+  'run-discovery.mjs',
   'extract-agent-response.mjs',
   'process-discovery.mjs',
   'validate-findings.mjs',

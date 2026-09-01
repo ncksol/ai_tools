@@ -90,7 +90,9 @@ node <SKILL_DIR>/scripts/build-review-plan.mjs <PACKET_JSON> <PLAN_JSON>
 
 Always include `prg-contract`, `prg-correctness`, and `prg-tests`. The router adds `prg-security`, `prg-data-compatibility`, or `prg-reliability` automatically when file patterns match.
 
-`PLAN_JSON` is the authoritative discovery coverage contract: `finalize` only recognizes results for the agents and batches it records, so anything dispatched outside it produces no coverage evidence. A context-required conditional reviewer that the router did not select may still be used, but only after it is added to `PLAN_JSON` — with its `name`, `reason`, `files`, and `batches` — before dispatch. Never dispatch a discovery agent, or a batch, that is absent from `PLAN_JSON`.
+`PLAN_JSON` is the authoritative discovery coverage contract: `finalize` only recognizes results for the agents, review units, and batches it records, so anything dispatched outside it produces no coverage evidence. A normal patch is one review unit. An oversized single-line JSON replacement is converted into deterministic JSON-pointer delta units that retain the real file path and changed line. If an oversized patch cannot be split safely, planning fails with `DISCOVERY_UNIT_CAPACITY`; stop before dispatch and report the path, content size, and configured limit.
+
+A context-required conditional reviewer that the router did not select may still be used, but only after it is added to `PLAN_JSON` — with its `name`, `reason`, `files`, `units`, and `batches` — before dispatch. Never dispatch a discovery agent, review unit, or batch that is absent from `PLAN_JSON`.
 
 Give each discovery agent:
 
@@ -102,27 +104,23 @@ Give each discovery agent:
 
 When a patch is insufficient to resolve a caller, guard, type, or test, retrieve the smallest necessary file snapshot at the captured base or head SHA. Use `git show <SHA>:<PATH>` when the commit object is locally available; otherwise use the provider's read API described in its reference. Never substitute a working-tree file unless its commit exactly matches the captured SHA.
 
-Create `RESULTS_DIR`, `DIAGNOSTICS_DIR`, and a staging directory inside the mode-`0700` run directory. Every event capture, transport status, and raw agent response staging file must be mode `0600`. Never print a raw response.
-
-Do not give discovery agents shell, editing, network, or publishing access. Dispatch independent discovery agents in parallel when supported.
-
-For each agent batch, apply the machine-response transport above. On extraction success, ingest attempt 1:
+Do not give discovery agents shell, editing, network, or publishing access. Use the bundled dispatcher so every prompt is built from the recorded review units, checked against a hard rendered-prompt budget, and sent through the machine-response transport above:
 
 ```bash
-node <SKILL_DIR>/scripts/process-discovery.mjs ingest \
-  <RAW_RESPONSE_FILE> <RESULTS_DIR> <DIAGNOSTICS_DIR> \
-  --agent <PRG_AGENT> --batch <ONE_BASED_INDEX> --attempt 1
+PLUGIN_DIR="$(cd "<SKILL_DIR>/../.." && pwd -P)"
+set +e
+node <SKILL_DIR>/scripts/run-discovery.mjs \
+  <PACKET_JSON> <PLAN_JSON> <RUN_DIR> \
+  --plugin-dir "$PLUGIN_DIR" \
+  --max-concurrency 4 \
+  --max-prompt-chars 120000
+DISCOVERY_EXIT=$?
+set -e
 ```
 
-On extraction failure, record the current attempt without staging the JSONL:
+The dispatcher creates `RESULTS_DIR`, `DIAGNOSTICS_DIR`, and a staging directory inside the mode-`0700` run directory. Every event capture, transport status, and raw agent response file is mode `0600`. It runs at most four independent batches concurrently.
 
-```bash
-node <SKILL_DIR>/scripts/process-discovery.mjs transport-failure \
-  <TRANSPORT_STATUS_JSON> <RESULTS_DIR> <DIAGNOSTICS_DIR> \
-  --agent <PRG_AGENT> --batch <ONE_BASED_INDEX> --attempt 1
-```
-
-If extraction or ingestion exits non-zero, read only the safe attempt-result JSON. Retry that batch once, repeating the exact JSON-array contract and supplying only the failure kind and numeric location. Extract the retry through `extract-agent-response.mjs`, then either ingest it or record its transport failure with `--attempt 2`. Do not include the raw response, JSONL capture, or diagnostic body in the retry prompt.
+Malformed transport or candidate output receives the single allowed retry with only safe failure metadata. `execution-capacity`, `execution-spawn`, and `execution-exit` failures are not retried with the same prompt. The dispatcher records prompt size, configured limit, exit state, and redacted stderr where available. Never print a raw response.
 
 After all routed batches settle, finalize them against the immutable plan:
 
@@ -131,7 +129,7 @@ node <SKILL_DIR>/scripts/process-discovery.mjs finalize \
   <PLAN_JSON> <RESULTS_DIR> <CANDIDATES_JSON> <COVERAGE_JSON>
 ```
 
-If finalization exits non-zero, stop before Phase 3. Lead with `REVIEW FAILED - DISCOVERY INCOMPLETE`, show each scope's completed and failed batch counts plus every redacted diagnostic path, and do not say `no findings`, `no publishable findings`, `clean`, or equivalent. Do not preview or publish a review. Remove unredacted staging files and provider data; retain only the redacted diagnostics and coverage report in the reported temporary directory.
+Always run finalization even when `DISCOVERY_EXIT` is non-zero. If finalization exits non-zero, stop before Phase 3. Lead with `REVIEW FAILED - DISCOVERY INCOMPLETE`, show each scope's completed and failed batch counts plus every redacted diagnostic path, and do not say `no findings`, `no publishable findings`, `clean`, or equivalent. Do not preview or publish a review. Remove unredacted staging files and provider data; retain only the redacted diagnostics and coverage report in the reported temporary directory.
 
 ## Phase 3: Verify and reduce
 

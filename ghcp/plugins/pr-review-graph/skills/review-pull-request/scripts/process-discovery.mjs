@@ -17,6 +17,11 @@ export const DISCOVERY_CATEGORIES = Object.freeze({
 
 const SECRET_NAME = '(?:authorization|token|access[_-]?token|api[_-]?key|client[_-]?secret|password|passwd|cookie|set-cookie|private[_-]?key)';
 const TRANSPORT_FAILURE_KIND_SET = new Set(TRANSPORT_FAILURE_KINDS);
+const EXECUTION_FAILURE_KIND_SET = new Set([
+  'execution-capacity',
+  'execution-spawn',
+  'execution-exit'
+]);
 const TRANSPORT_DETAIL_KEYS = new Set(['line', 'eventIndex', 'eventType', 'count']);
 const SAFE_TRANSPORT_EVENT_TYPES = new Set([
   'assistant.turn_start',
@@ -215,6 +220,63 @@ export async function recordDiscoveryTransportFailure(
   }
 }
 
+export async function recordDiscoveryExecutionFailure(
+  resultDirectory,
+  diagnosticsDirectory,
+  options,
+  failure
+) {
+  const metadata = normalizeMetadata(options);
+  const kind = String(failure?.kind ?? '');
+  if (!EXECUTION_FAILURE_KIND_SET.has(kind)) {
+    throw new Error('Unsupported discovery execution failure kind');
+  }
+  const numeric = {};
+  for (const key of ['promptChars', 'maxPromptChars', 'exitCode']) {
+    if (failure?.[key] !== undefined) {
+      if (!Number.isInteger(failure[key]) || failure[key] < 0) {
+        throw new Error(`Discovery execution failure ${key} must be a non-negative integer`);
+      }
+      numeric[key] = failure[key];
+    }
+  }
+  const signal = failure?.signal == null ? null : String(failure.signal);
+  const diagnostic = path.join(
+    diagnosticsDirectory,
+    diagnosticFileName(metadata.agent, metadata.batch, metadata.attempt)
+  );
+  await writePrivateJson(diagnostic, {
+    schemaVersion: '1.0',
+    ...metadata,
+    failureKind: kind,
+    ...numeric,
+    ...(signal ? { signal } : {}),
+    ...(failure?.stderr ? { stderr: redactDiagnosticText(failure.stderr) } : {})
+  });
+  try {
+    const result = {
+      schemaVersion: '1.0',
+      ...metadata,
+      status: 'invalid',
+      failure: {
+        kind,
+        retryable: false,
+        ...numeric,
+        ...(signal ? { signal } : {}),
+        diagnostic
+      }
+    };
+    await writePrivateJson(
+      path.join(resultDirectory, discoveryResultFileName(metadata.agent, metadata.batch, metadata.attempt)),
+      result
+    );
+    return result;
+  } catch (error) {
+    await rm(diagnostic, { force: true });
+    throw error;
+  }
+}
+
 export async function ingestDiscoveryResponse(
   rawFile,
   resultDirectory,
@@ -367,7 +429,7 @@ async function listResultFiles(resultDirectory) {
   }
 }
 
-function validateAgentPlanCoverage(agentPlan) {
+function validateAgentPlanCoverage(agentPlan, reviewUnitById) {
   const problems = [];
   const label = `Discovery plan entry for ${agentPlan.name}`;
   if (agentPlan.batches.length === 0) return problems;
@@ -377,24 +439,51 @@ function validateAgentPlanCoverage(agentPlan) {
     problems.push(`${label}.files must contain non-empty file paths`);
   }
 
-  const batchedFiles = [];
-  for (const [index, batch] of agentPlan.batches.entries()) {
-    if (!Array.isArray(batch) || !batch.length || batch.some(file => typeof file !== 'string' || !file.trim())) {
-      problems.push(`${label}.batches[${index}] must contain non-empty file paths`);
-      continue;
-    }
-    batchedFiles.push(...batch);
+  const usesReviewUnits = Array.isArray(agentPlan.units);
+  const declaredItems = usesReviewUnits ? agentPlan.units : files;
+  const itemLabel = usesReviewUnits ? 'review unit IDs' : 'file paths';
+  if (
+    !Array.isArray(declaredItems)
+    || !declaredItems.length
+    || declaredItems.some(item => typeof item !== 'string' || !item.trim())
+  ) {
+    problems.push(`${label}.${usesReviewUnits ? 'units' : 'files'} must contain non-empty ${itemLabel}`);
   }
 
-  if (Array.isArray(files) && files.length) {
-    const declaredFiles = new Set(files);
-    const coveredFiles = new Set(batchedFiles);
-    const exactlyCovered = declaredFiles.size === files.length
-      && coveredFiles.size === batchedFiles.length
-      && files.length === batchedFiles.length
-      && files.every(file => coveredFiles.has(file));
+  const batchedItems = [];
+  for (const [index, batch] of agentPlan.batches.entries()) {
+    if (!Array.isArray(batch) || !batch.length || batch.some(item => typeof item !== 'string' || !item.trim())) {
+      problems.push(`${label}.batches[${index}] must contain non-empty ${itemLabel}`);
+      continue;
+    }
+    batchedItems.push(...batch);
+  }
+
+  if (Array.isArray(declaredItems) && declaredItems.length) {
+    const declared = new Set(declaredItems);
+    const covered = new Set(batchedItems);
+    const exactlyCovered = declared.size === declaredItems.length
+      && covered.size === batchedItems.length
+      && declaredItems.length === batchedItems.length
+      && declaredItems.every(item => covered.has(item));
     if (!exactlyCovered) {
-      problems.push(`${label}.batches must cover every declared file exactly once`);
+      problems.push(`${label}.batches must cover every declared ${usesReviewUnits ? 'review unit' : 'file'} exactly once`);
+    }
+  }
+
+  if (usesReviewUnits && Array.isArray(files) && files.length) {
+    const units = agentPlan.units.map(id => reviewUnitById.get(id));
+    const missingUnits = agentPlan.units.filter((id, index) => !units[index]);
+    if (missingUnits.length) {
+      problems.push(`${label}.units contains IDs absent from plan.reviewUnits`);
+    } else {
+      const declaredFiles = new Set(files);
+      if (units.some(unit => !declaredFiles.has(unit.path))) {
+        problems.push(`${label}.units must reference only declared files`);
+      }
+      if (files.some(file => !units.some(unit => unit.path === file))) {
+        problems.push(`${label}.units must cover every declared file`);
+      }
     }
   }
   return problems;
@@ -406,6 +495,21 @@ export async function finalizeDiscovery(plan, resultDirectory) {
   const partialFindings = [];
   const expectedFiles = new Set();
   const planProblems = [];
+  const reviewUnits = Array.isArray(plan?.reviewUnits) ? plan.reviewUnits : [];
+  const reviewUnitById = new Map();
+  for (const unit of reviewUnits) {
+    if (
+      typeof unit?.id !== 'string'
+      || !unit.id.trim()
+      || typeof unit?.path !== 'string'
+      || !unit.path.trim()
+      || reviewUnitById.has(unit.id)
+    ) {
+      planProblems.push('Discovery plan reviewUnits must have unique non-empty IDs and file paths');
+      continue;
+    }
+    reviewUnitById.set(unit.id, unit);
+  }
 
   // A missing or empty agents array is a malformed or wrong plan, not a
   // vacuously-complete review: `[].every(...)` would otherwise report
@@ -423,7 +527,7 @@ export async function finalizeDiscovery(plan, resultDirectory) {
       planProblems.push(`Invalid discovery plan entry for ${agentPlan?.name ?? '<unnamed>'}`);
       continue;
     }
-    const coverageProblems = validateAgentPlanCoverage(agentPlan);
+    const coverageProblems = validateAgentPlanCoverage(agentPlan, reviewUnitById);
     if (coverageProblems.length) {
       planProblems.push(...coverageProblems);
       continue;

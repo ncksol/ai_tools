@@ -519,7 +519,7 @@ test('static plugin validation passes and declares no MCP integration', async ()
   ));
   const validator = await readFile(path.join(root, 'scripts/validate-plugin.mjs'), 'utf8');
   assert.equal(manifest.name, 'pr-review-graph');
-  assert.equal(manifest.version, '0.2.8');
+  assert.equal(manifest.version, '0.2.9');
   assert.equal(
     marketplace.plugins.find(plugin => plugin.name === manifest.name)?.version,
     manifest.version
@@ -674,6 +674,230 @@ test('risk router selects only relevant conditional specialists', async () => {
   assert.ok(names.includes('prg-security'));
   assert.ok(!names.includes('prg-data-compatibility'));
   assert.ok(!names.includes('prg-reliability'));
+});
+
+test('risk router splits oversized single-line JSON replacements into bounded semantic units', () => {
+  const before = {
+    records: Array.from({ length: 2_000 }, (_, index) => ({
+      id: `record-${index}`,
+      value: `before-${index}-${'x'.repeat(80)}`
+    }))
+  };
+  const after = {
+    records: before.records.map((record, index) => ({
+      ...record,
+      value: `after-${index}-${'y'.repeat(80)}`
+    }))
+  };
+  const pathName = 'data/wide/profile.json';
+  const packet = {
+    provider: 'github',
+    repository: { id: 'acme/widgets' },
+    pullRequest: {
+      number: 42,
+      base: { sha: '1'.repeat(40) },
+      head: { sha: '2'.repeat(40) }
+    },
+    files: [{
+      path: pathName,
+      previousPath: null,
+      status: 'modified',
+      isBinary: false,
+      changeTrackingId: 1,
+      patch: [
+        `diff --git a/${pathName} b/${pathName}`,
+        'index 1111111..2222222 100644',
+        `--- a/${pathName}`,
+        `+++ b/${pathName}`,
+        '@@ -1 +1 @@',
+        `-${JSON.stringify(before)}`,
+        `+${JSON.stringify(after)}`,
+        ''
+      ].join('\n')
+    }],
+    limits: { warnings: [], truncatedFiles: [] }
+  };
+
+  assert.ok(packet.files[0].patch.length > 393_054);
+  const plan = buildReviewPlan(packet, { maxBatchChars: 12_000 });
+  const contract = plan.agents.find(agent => agent.name === 'prg-contract');
+  const units = plan.reviewUnits.filter(unit => unit.path === pathName);
+
+  assert.ok(units.length > 1);
+  assert.ok(units.every(unit => unit.representation === 'semantic-json-delta'));
+  assert.ok(units.every(unit => unit.content.length <= 12_000));
+  assert.ok(units.every(unit => unit.changedLine === 1));
+  assert.deepEqual(contract.files, [pathName]);
+  assert.deepEqual(new Set(contract.batches.flat()), new Set(contract.units));
+  assert.deepEqual(new Set(contract.units), new Set(units.map(unit => unit.id)));
+  assert.match(units.map(unit => unit.content).join('\n'), /"path":"\/records\/0\/value"/);
+  assert.doesNotMatch(units.map(unit => unit.content).join('\n'), /"id":"record-0"/);
+});
+
+test('risk router fails before dispatch when an oversized patch cannot be split safely', () => {
+  const pathName = 'src/generated.js';
+  const patch = [
+    `diff --git a/${pathName} b/${pathName}`,
+    `--- a/${pathName}`,
+    `+++ b/${pathName}`,
+    '@@ -1 +1 @@',
+    `-${'a'.repeat(2_000)}`,
+    `+${'b'.repeat(2_000)}`,
+    ''
+  ].join('\n');
+  const packet = {
+    provider: 'github',
+    repository: { id: 'acme/widgets' },
+    pullRequest: {
+      number: 42,
+      base: { sha: '1'.repeat(40) },
+      head: { sha: '2'.repeat(40) }
+    },
+    files: [{
+      path: pathName,
+      previousPath: null,
+      status: 'modified',
+      isBinary: false,
+      changeTrackingId: 1,
+      patch
+    }],
+    limits: { warnings: [], truncatedFiles: [] }
+  };
+
+  assert.throws(
+    () => buildReviewPlan(packet, { maxBatchChars: 1_000 }),
+    error => error?.code === 'DISCOVERY_UNIT_CAPACITY'
+      && error.path === pathName
+      && error.contentChars === patch.length
+  );
+});
+
+test('discovery prompt uses planned review units and enforces the rendered prompt budget', async () => {
+  const { buildDiscoveryPrompt } = await import(
+    '../skills/review-pull-request/scripts/build-discovery-prompt.mjs'
+  );
+  const pathName = 'data/wide/profile.json';
+  const unit = {
+    id: 'unit-0001-0001',
+    path: pathName,
+    previousPath: null,
+    status: 'modified',
+    changeTrackingId: 1,
+    representation: 'semantic-json-delta',
+    changedLine: 1,
+    part: 1,
+    totalParts: 1,
+    content: JSON.stringify({
+      representation: 'semantic-json-delta',
+      path: pathName,
+      changedLine: 1,
+      operations: [{ op: 'replace', path: '/records/0/value', before: 'old', after: 'new' }]
+    })
+  };
+  const packet = {
+    provider: 'github',
+    repository: { id: 'acme/widgets', name: 'widgets', url: 'https://github.com/acme/widgets' },
+    pullRequest: {
+      number: 42,
+      title: 'Update wide profile',
+      description: 'Update one generated profile.',
+      base: { sha: '1'.repeat(40) },
+      head: { sha: '2'.repeat(40) }
+    },
+    files: [{
+      path: pathName,
+      previousPath: null,
+      status: 'modified',
+      changeTrackingId: 1,
+      patch: `raw-oversized-patch-${'x'.repeat(300_000)}`
+    }],
+    requirements: [],
+    checks: [],
+    existingThreads: []
+  };
+  const plan = {
+    schemaVersion: '1.0',
+    reviewUnits: [unit],
+    agents: [{
+      name: 'prg-contract',
+      files: [pathName],
+      units: [unit.id],
+      batches: [[unit.id]]
+    }]
+  };
+
+  const prompt = buildDiscoveryPrompt(packet, plan, {
+    agent: 'prg-contract',
+    batch: 1,
+    maxPromptChars: 6_000
+  });
+
+  assert.ok(prompt.length <= 6_000);
+  assert.match(prompt, /semantic-json-delta/);
+  assert.match(prompt, /"path":"\/records\/0\/value"/);
+  assert.doesNotMatch(prompt, /raw-oversized-patch/);
+  assert.throws(
+    () => buildDiscoveryPrompt(packet, plan, {
+      agent: 'prg-contract',
+      batch: 1,
+      maxPromptChars: 500
+    }),
+    error => error?.code === 'DISCOVERY_PROMPT_CAPACITY'
+      && error.promptChars > error.maxPromptChars
+  );
+  assert.throws(
+    () => buildDiscoveryPrompt(packet, plan, {
+      agent: 'prg-contract',
+      batch: 1,
+      maxPromptChars: 120_001
+    }),
+    error => error?.code === 'DISCOVERY_PROMPT_LIMIT'
+  );
+});
+
+test('discovery prompt remains compatible with legacy file-path batches', async () => {
+  const { buildDiscoveryPrompt } = await import(
+    '../skills/review-pull-request/scripts/build-discovery-prompt.mjs'
+  );
+  const pathName = 'src/file.js';
+  const patch = '@@ -1 +1 @@\n-old\n+new\n';
+  const packet = {
+    provider: 'github',
+    repository: { id: 'acme/widgets', name: 'widgets' },
+    pullRequest: {
+      number: 42,
+      title: 'Update file',
+      description: '',
+      base: { sha: '1'.repeat(40) },
+      head: { sha: '2'.repeat(40) }
+    },
+    files: [{
+      path: pathName,
+      previousPath: null,
+      status: 'modified',
+      changeTrackingId: 1,
+      patch
+    }],
+    requirements: [],
+    checks: [],
+    existingThreads: []
+  };
+  const plan = {
+    schemaVersion: '1.0',
+    agents: [{
+      name: 'prg-correctness',
+      files: [pathName],
+      batches: [[pathName]]
+    }]
+  };
+
+  const prompt = buildDiscoveryPrompt(packet, plan, {
+    agent: 'prg-correctness',
+    batch: 1
+  });
+
+  assert.match(prompt, /"representation":"unified-diff"/);
+  assert.match(prompt, /\\n-old\\n\+new\\n/);
 });
 
 test('finding validation enforces verification and security confidence', async () => {
@@ -1217,6 +1441,37 @@ test('discovery finalization treats a valid retry as complete coverage', async (
   }
 });
 
+test('discovery finalization requires every semantic review unit for an oversized file', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-units-'));
+  try {
+    await ingestText(directory, '[]', {
+      agent: 'prg-correctness', batch: 1, attempt: 1
+    });
+    await ingestText(directory, '[]', {
+      agent: 'prg-correctness', batch: 2, attempt: 1
+    });
+    const result = await finalizeDiscovery({
+      schemaVersion: '1.0',
+      reviewUnits: [
+        { id: 'unit-0001-0001', path: 'data/wide/profile.json' },
+        { id: 'unit-0001-0002', path: 'data/wide/profile.json' }
+      ],
+      agents: [{
+        name: 'prg-correctness',
+        files: ['data/wide/profile.json'],
+        units: ['unit-0001-0001', 'unit-0001-0002'],
+        batches: [['unit-0001-0001'], ['unit-0001-0002']]
+      }]
+    }, path.join(directory, 'results'));
+
+    assert.equal(result.coverage.status, 'complete');
+    assert.equal(result.coverage.scopes[0].expectedBatches, 2);
+    assert.deepEqual(result.findings, []);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('discovery transport failure can recover on the one allowed retry', async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-transport-retry-'));
   try {
@@ -1268,6 +1523,125 @@ test('discovery transport failure can recover on the one allowed retry', async (
     assert.equal(diagnostic.response, undefined);
     assert.doesNotMatch(JSON.stringify(diagnostic), /Using strict-code-review|\[\]/);
     await assert.rejects(access(statusFile), { code: 'ENOENT' });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery execution capacity failure is recorded safely without an identical retry', async () => {
+  const { recordDiscoveryExecutionFailure } = await import(
+    '../skills/review-pull-request/scripts/process-discovery.mjs'
+  );
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-capacity-'));
+  try {
+    const result = await recordDiscoveryExecutionFailure(
+      path.join(directory, 'results'),
+      path.join(directory, 'diagnostics'),
+      { agent: 'prg-correctness', batch: 1, attempt: 1 },
+      {
+        kind: 'execution-capacity',
+        promptChars: 393_054,
+        maxPromptChars: 120_000,
+        stderr: 'token=secret-value request too large'
+      }
+    );
+
+    assert.equal(result.status, 'invalid');
+    assert.equal(result.failure.kind, 'execution-capacity');
+    assert.equal(result.failure.retryable, false);
+    const diagnostic = JSON.parse(await readFile(result.failure.diagnostic, 'utf8'));
+    assert.equal(diagnostic.promptChars, 393_054);
+    assert.equal(diagnostic.maxPromptChars, 120_000);
+    assert.match(diagnostic.stderr, /token=<redacted>/);
+    assert.doesNotMatch(diagnostic.stderr, /secret-value/);
+
+    const finalized = await finalizeDiscovery(
+      discoveryPlan('prg-correctness', 1),
+      path.join(directory, 'results')
+    );
+    assert.equal(finalized.coverage.status, 'failed');
+    assert.deepEqual(finalized.coverage.failures[0].protocolStates, ['invalid', 'missing']);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery runner caps concurrent agent executions and ingests every planned batch', async () => {
+  const { runDiscovery } = await import(
+    '../skills/review-pull-request/scripts/run-discovery.mjs'
+  );
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-runner-'));
+  let active = 0;
+  let maxActive = 0;
+  try {
+    const reviewUnits = Array.from({ length: 6 }, (_, index) => ({
+      id: `unit-0001-${String(index + 1).padStart(4, '0')}`,
+      path: `src/file-${index + 1}.js`,
+      previousPath: null,
+      status: 'modified',
+      changeTrackingId: index + 1,
+      representation: 'unified-diff',
+      changedLine: null,
+      part: 1,
+      totalParts: 1,
+      content: `@@ -1 +1 @@\n-old-${index}\n+new-${index}\n`
+    }));
+    const packet = {
+      provider: 'github',
+      repository: { id: 'acme/widgets', name: 'widgets' },
+      pullRequest: {
+        number: 42,
+        title: 'Update files',
+        description: '',
+        base: { sha: '1'.repeat(40) },
+        head: { sha: '2'.repeat(40) }
+      },
+      requirements: [],
+      checks: [],
+      existingThreads: []
+    };
+    const plan = {
+      schemaVersion: '1.0',
+      reviewUnits,
+      agents: [{
+        name: 'prg-correctness',
+        files: reviewUnits.map(unit => unit.path),
+        units: reviewUnits.map(unit => unit.id),
+        batches: reviewUnits.map(unit => [unit.id])
+      }]
+    };
+
+    const results = await runDiscovery(packet, plan, {
+      runDirectory: directory,
+      maxConcurrency: 2,
+      executeAgent: async () => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise(resolve => setTimeout(resolve, 10));
+        active -= 1;
+        return { exitCode: 0, signal: null, stdout: agentEventStream('[]'), stderr: '' };
+      }
+    });
+
+    assert.equal(maxActive, 2);
+    assert.equal(results.length, 6);
+    assert.ok(results.every(result => result.status === 'complete'));
+    const stored = await readdir(path.join(directory, 'results'));
+    assert.equal(stored.filter(file => file.endsWith('-attempt-1.json')).length, 6);
+    assert.equal(stored.filter(file => file.endsWith('-attempt-2.json')).length, 0);
+    await assert.rejects(
+      runDiscovery(packet, plan, {
+        runDirectory: path.join(directory, 'too-many-workers'),
+        maxConcurrency: 5,
+        executeAgent: async () => ({
+          exitCode: 0,
+          signal: null,
+          stdout: agentEventStream('[]'),
+          stderr: ''
+        })
+      }),
+      /maxConcurrency cannot exceed 4/
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
