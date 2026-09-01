@@ -21,7 +21,10 @@ export function parseLosslessJson(source) {
   }
 
   function skipWhitespace() {
-    while (index < text.length && /\s/.test(text[index])) index += 1;
+    while (
+      index < text.length
+      && (text[index] === ' ' || text[index] === '\t' || text[index] === '\n' || text[index] === '\r')
+    ) index += 1;
   }
 
   function parseValue() {
