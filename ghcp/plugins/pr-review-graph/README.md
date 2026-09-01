@@ -67,6 +67,8 @@ The default is preview-only. After inspecting the proposed comments, explicitly 
 1. Resolve the provider and capture an immutable base/head snapshot.
 2. Build a canonical review packet.
 3. Route relevant slices to focused specialist agents.
+   Oversized single-line JSON replacements are converted into bounded semantic delta units with exact numeric lexemes instead of being sent as one prompt.
+   Discovery prompts have hard rendered and command-transport limits, and run through a dispatcher capped at four concurrent Copilot subprocesses with a five-minute attempt timeout.
    A routed batch that remains invalid after one retry fails the review before verification; partial coverage is never reported as a clean review.
    Every machine-response stage extracts the raw final assistant payload from Copilot JSONL; rendered transcript text is never parsed as agent JSON. Empty assistant messages are structural frames regardless of tool requests and remain subject to assistant-turn validation.
 4. Verify every candidate against the PR snapshot.
@@ -115,7 +117,7 @@ directory removed on exit.
 Run every numbered block below in one non-interactive shell so `set -euo
 pipefail`, the exported variables, and the `EXIT` trap share state across
 blocks; sourcing them into separate shells, or an interactive session that
-resets `$?` between commands, breaks the trap and the identity checks. Step 6
+resets `$?` between commands, breaks the trap and the identity checks. Step 8
 (prompt construction) mirrors the dispatch contract in SKILL.md's
 [Phase 2: Build the graph](skills/review-pull-request/SKILL.md#phase-2-build-the-graph);
 re-read that section before changing this step so the two do not drift.
@@ -237,12 +239,16 @@ jq -e --argjson batch "$BATCH" '
 **8. Construct the batch prompt (private — do not print or retain outside
 `$scratch`).**
 
-Read `"$scratch/plan.json"`, select only the planned `prg-reliability` batch
-`$BATCH`, and write to `"$scratch/prompt.txt"` (mode `0600`). The prompt must
-contain only the selected batch patches, the exact base/head identity, and
-normalized PR intent and requirements. No raw provider data outside the packet
-slice. Do not print, copy, or execute its contents. This mirrors the batch
-prompt SKILL.md's Phase 2 builds for real dispatch; keep the two consistent.
+```bash
+node skills/review-pull-request/scripts/build-discovery-prompt.mjs \
+  "$scratch/packet.json" "$scratch/plan.json" \
+  prg-reliability "$BATCH" "$scratch/prompt.txt" \
+  --max-prompt-chars 120000
+```
+
+The builder selects only the planned review units, preserves the exact
+base/head identity and normalized requirements, and rejects prompts above the
+hard limit. Do not print, copy, or execute the prompt contents.
 
 **9. Invoke the local `pr-review-graph:prg-reliability` agent.**
 
