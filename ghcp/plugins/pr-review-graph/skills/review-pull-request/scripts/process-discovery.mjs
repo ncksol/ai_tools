@@ -233,13 +233,24 @@ export async function recordDiscoveryExecutionFailure(
     throw new Error('Unsupported discovery execution failure kind');
   }
   const numeric = {};
-  for (const key of ['promptChars', 'maxPromptChars', 'exitCode', 'attemptTimeoutMs']) {
+  for (const key of [
+    'promptChars',
+    'maxPromptChars',
+    'exitCode',
+    'attemptTimeoutMs',
+    'transportSize',
+    'transportLimit'
+  ]) {
     if (failure?.[key] !== undefined) {
       if (!Number.isInteger(failure[key]) || failure[key] < 0) {
         throw new Error(`Discovery execution failure ${key} must be a non-negative integer`);
       }
       numeric[key] = failure[key];
     }
+  }
+  const strings = {};
+  for (const key of ['platform', 'transportMetric']) {
+    if (failure?.[key] !== undefined) strings[key] = String(failure[key]);
   }
   const signal = failure?.signal == null ? null : String(failure.signal);
   const diagnostic = path.join(
@@ -251,6 +262,7 @@ export async function recordDiscoveryExecutionFailure(
     ...metadata,
     failureKind: kind,
     ...numeric,
+    ...strings,
     ...(signal ? { signal } : {}),
     ...(failure?.stderr ? { stderr: redactDiagnosticText(failure.stderr) } : {})
   });
@@ -263,6 +275,7 @@ export async function recordDiscoveryExecutionFailure(
         kind,
         retryable: false,
         ...numeric,
+        ...strings,
         ...(signal ? { signal } : {}),
         diagnostic
       }

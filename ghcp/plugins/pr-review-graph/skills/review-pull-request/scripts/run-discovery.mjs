@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url';
 
 import {
   buildDiscoveryPrompt,
-  DiscoveryPromptCapacityError
+  DiscoveryPromptCapacityError,
+  DiscoveryPromptTransportCapacityError
 } from './build-discovery-prompt.mjs';
 import { extractAgentResponse } from './extract-agent-response.mjs';
 import { isMain, parseFlags, readJson } from './lib.mjs';
@@ -50,6 +51,7 @@ export async function runDiscovery(packet, plan, options = {}) {
     'attemptTimeoutMs'
   );
   const executeAgent = options.executeAgent ?? executeCopilotAgent;
+  const platform = options.platform ?? process.platform;
   const pluginDirectory = path.resolve(options.pluginDirectory ?? defaultPluginDirectory);
   const resultsDirectory = path.join(runDirectory, 'results');
   const diagnosticsDirectory = path.join(runDirectory, 'diagnostics');
@@ -81,6 +83,7 @@ export async function runDiscovery(packet, plan, options = {}) {
         diagnosticsDirectory,
         stagingDirectory,
         maxPromptChars,
+        platform,
         attemptTimeoutMs,
         pluginDirectory,
         executeAgent
@@ -102,10 +105,17 @@ async function runJob(job, context) {
       prompt = buildDiscoveryPrompt(context.packet, context.plan, {
         ...job,
         maxPromptChars: context.maxPromptChars,
+        platform: context.platform,
         retry
       });
     } catch (error) {
-      if (!(error instanceof DiscoveryPromptCapacityError)) throw error;
+      if (
+        !(error instanceof DiscoveryPromptCapacityError)
+        && !(error instanceof DiscoveryPromptTransportCapacityError)
+      ) {
+        throw error;
+      }
+      const transportFailure = error instanceof DiscoveryPromptTransportCapacityError;
       const result = await recordDiscoveryExecutionFailure(
         context.resultsDirectory,
         context.diagnosticsDirectory,
@@ -113,7 +123,15 @@ async function runJob(job, context) {
         {
           kind: 'execution-capacity',
           promptChars: error.promptChars,
-          maxPromptChars: error.maxPromptChars
+          maxPromptChars: transportFailure
+            ? context.maxPromptChars
+            : error.maxPromptChars,
+          ...(transportFailure ? {
+            platform: error.platform,
+            transportSize: error.transportSize,
+            transportLimit: error.transportLimit,
+            transportMetric: error.transportMetric
+          } : {})
         }
       );
       return jobSummary(result);

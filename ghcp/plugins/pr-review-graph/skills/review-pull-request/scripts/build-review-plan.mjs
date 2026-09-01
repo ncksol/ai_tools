@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { isMain, parseFlags, readJson, writeJson } from './lib.mjs';
+import { isJsonNumberLexeme, parseLosslessJson } from './lossless-json.mjs';
 
 const ROUTES = [
   {
@@ -160,8 +161,8 @@ function semanticJsonDelta(file) {
   let before;
   let after;
   try {
-    before = JSON.parse(removed[0]);
-    after = JSON.parse(added[0]);
+    before = parseLosslessJson(removed[0]);
+    after = parseLosslessJson(added[0]);
   } catch {
     return null;
   }
@@ -171,6 +172,16 @@ function semanticJsonDelta(file) {
 }
 
 function diffJson(before, after, pointer, operations, beforePresent, afterPresent) {
+  if (beforePresent && afterPresent && isJsonNumberLexeme(before) && isJsonNumberLexeme(after)) {
+    if (before.value === after.value) return;
+    operations.push({
+      op: 'replace',
+      path: pointer || '/',
+      before,
+      after
+    });
+    return;
+  }
   if (beforePresent && afterPresent && Object.is(before, after)) return;
 
   if (beforePresent && afterPresent && isRecord(before) && isRecord(after)) {
@@ -248,7 +259,10 @@ function diffJson(before, after, pointer, operations, beforePresent, afterPresen
 }
 
 function isRecord(value) {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  return Boolean(value)
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && Object.getPrototypeOf(value) === Object.prototype;
 }
 
 function escapePointer(value) {

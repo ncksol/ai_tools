@@ -123,6 +123,7 @@ for (const file of ['packet.schema.json', 'finding.schema.json', 'deduplication.
 
 const requiredScripts = [
   'normalize-context.mjs',
+  'lossless-json.mjs',
   'build-review-plan.mjs',
   'build-discovery-prompt.mjs',
   'run-discovery.mjs',

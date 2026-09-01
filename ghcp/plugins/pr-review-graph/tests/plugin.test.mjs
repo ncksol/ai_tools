@@ -789,6 +789,72 @@ test('semantic JSON deltas preserve parent container presence', () => {
   ]);
 });
 
+test('semantic JSON deltas preserve numeric lexemes outside the safe integer range', () => {
+  const pathName = 'data/wide/profile.json';
+  const padding = 'x'.repeat(2_000);
+  const before = `{"padding":"${padding}","id":9007199254740992,"status":"old"}`;
+  const after = `{"padding":"${padding}","id":9007199254740993,"status":"new"}`;
+  const packet = {
+    provider: 'github',
+    repository: { id: 'acme/widgets' },
+    pullRequest: {
+      number: 42,
+      base: { sha: '1'.repeat(40) },
+      head: { sha: '2'.repeat(40) }
+    },
+    files: [{
+      path: pathName,
+      previousPath: null,
+      status: 'modified',
+      isBinary: false,
+      changeTrackingId: 1,
+      patch: [
+        `diff --git a/${pathName} b/${pathName}`,
+        `--- a/${pathName}`,
+        `+++ b/${pathName}`,
+        '@@ -1 +1 @@',
+        `-${before}`,
+        `+${after}`,
+        ''
+      ].join('\n')
+    }],
+    limits: { warnings: [], truncatedFiles: [] }
+  };
+
+  const operations = buildReviewPlan(packet, { maxBatchChars: 1_000 }).reviewUnits
+    .flatMap(unit => JSON.parse(unit.content).operations);
+
+  assert.deepEqual(
+    operations.find(operation => operation.path === '/id'),
+    {
+      op: 'replace',
+      path: '/id',
+      before: { type: 'json-number', value: '9007199254740992' },
+      after: { type: 'json-number', value: '9007199254740993' }
+    }
+  );
+  assert.deepEqual(
+    operations.find(operation => operation.path === '/status'),
+    { op: 'replace', path: '/status', before: 'old', after: 'new' }
+  );
+});
+
+test('lossless JSON parsing treats __proto__ as data', async () => {
+  const { parseLosslessJson } = await import(
+    '../skills/review-pull-request/scripts/lossless-json.mjs'
+  );
+
+  const value = parseLosslessJson('{"__proto__":{"id":9007199254740993}}');
+
+  assert.equal(Object.hasOwn(value, '__proto__'), true);
+  const serialized = JSON.parse(JSON.stringify(value));
+  assert.equal(Object.hasOwn(serialized, '__proto__'), true);
+  assert.deepEqual(
+    serialized.__proto__.id,
+    { type: 'json-number', value: '9007199254740993' }
+  );
+});
+
 test('risk router fails before dispatch when an oversized patch cannot be split safely', () => {
   const pathName = 'src/generated.js';
   const patch = [
@@ -907,6 +973,32 @@ test('discovery prompt uses planned review units and enforces the rendered promp
       maxPromptChars: 120_001
     }),
     error => error?.code === 'DISCOVERY_PROMPT_LIMIT'
+  );
+
+  const linuxPacket = structuredClone(packet);
+  linuxPacket.pullRequest.description = '界'.repeat(40_000);
+  assert.throws(
+    () => buildDiscoveryPrompt(linuxPacket, plan, {
+      agent: 'prg-contract',
+      batch: 1,
+      platform: 'linux'
+    }),
+    error => error?.code === 'DISCOVERY_PROMPT_TRANSPORT_CAPACITY'
+      && error.platform === 'linux'
+      && error.transportSize > error.transportLimit
+  );
+
+  const windowsPacket = structuredClone(packet);
+  windowsPacket.pullRequest.description = 'value '.repeat(5_000);
+  assert.throws(
+    () => buildDiscoveryPrompt(windowsPacket, plan, {
+      agent: 'prg-contract',
+      batch: 1,
+      platform: 'win32'
+    }),
+    error => error?.code === 'DISCOVERY_PROMPT_TRANSPORT_CAPACITY'
+      && error.platform === 'win32'
+      && error.transportSize > error.transportLimit
   );
 });
 
@@ -1764,6 +1856,71 @@ test('discovery runner aborts a hung attempt and records a terminal timeout', as
     assert.equal(results[0].failure.kind, 'execution-timeout');
     assert.equal(results[0].failure.retryable, false);
     assert.equal(results[0].failure.attemptTimeoutMs, 20);
+    const stored = await readdir(path.join(directory, 'results'));
+    assert.deepEqual(stored, ['prg-correctness-batch-001-attempt-1.json']);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('discovery runner rejects an oversized encoded prompt before spawning', async () => {
+  const { runDiscovery } = await import(
+    '../skills/review-pull-request/scripts/run-discovery.mjs'
+  );
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-discovery-transport-capacity-'));
+  let executed = false;
+  try {
+    const unit = {
+      id: 'unit-0001-0001',
+      path: 'src/file.js',
+      previousPath: null,
+      status: 'modified',
+      changeTrackingId: 1,
+      representation: 'unified-diff',
+      changedLine: null,
+      part: 1,
+      totalParts: 1,
+      content: '@@ -1 +1 @@\n-old\n+new\n'
+    };
+    const packet = {
+      provider: 'github',
+      repository: { id: 'acme/widgets', name: 'widgets' },
+      pullRequest: {
+        number: 42,
+        title: 'Update file',
+        description: '界'.repeat(40_000),
+        base: { sha: '1'.repeat(40) },
+        head: { sha: '2'.repeat(40) }
+      },
+      requirements: [],
+      checks: [],
+      existingThreads: []
+    };
+    const plan = {
+      schemaVersion: '1.0',
+      reviewUnits: [unit],
+      agents: [{
+        name: 'prg-correctness',
+        files: [unit.path],
+        units: [unit.id],
+        batches: [[unit.id]]
+      }]
+    };
+
+    const results = await runDiscovery(packet, plan, {
+      runDirectory: directory,
+      platform: 'linux',
+      executeAgent: async () => {
+        executed = true;
+        return { exitCode: 0, signal: null, stdout: agentEventStream('[]'), stderr: '' };
+      }
+    });
+
+    assert.equal(executed, false);
+    assert.equal(results[0].status, 'invalid');
+    assert.equal(results[0].failure.kind, 'execution-capacity');
+    assert.equal(results[0].failure.platform, 'linux');
+    assert.ok(results[0].failure.transportSize > results[0].failure.transportLimit);
     const stored = await readdir(path.join(directory, 'results'));
     assert.deepEqual(stored, ['prg-correctness-batch-001-attempt-1.json']);
   } finally {

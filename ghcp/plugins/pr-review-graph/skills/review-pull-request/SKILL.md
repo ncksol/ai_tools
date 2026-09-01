@@ -90,7 +90,7 @@ node <SKILL_DIR>/scripts/build-review-plan.mjs <PACKET_JSON> <PLAN_JSON>
 
 Always include `prg-contract`, `prg-correctness`, and `prg-tests`. The router adds `prg-security`, `prg-data-compatibility`, or `prg-reliability` automatically when file patterns match.
 
-`PLAN_JSON` is the authoritative discovery coverage contract: `finalize` only recognizes results for the agents, review units, and batches it records, so anything dispatched outside it produces no coverage evidence. A normal patch is one review unit. An oversized single-line JSON replacement is converted into deterministic JSON-pointer delta units that retain the real file path and changed line. If an oversized patch cannot be split safely, planning fails with `DISCOVERY_UNIT_CAPACITY`; stop before dispatch and report the path, content size, and configured limit.
+`PLAN_JSON` is the authoritative discovery coverage contract: `finalize` only recognizes results for the agents, review units, and batches it records, so anything dispatched outside it produces no coverage evidence. A normal patch is one review unit. An oversized single-line JSON replacement is converted into deterministic JSON-pointer delta units that retain the real file path, changed line, and exact numeric lexemes. If an oversized patch cannot be split safely, planning fails with `DISCOVERY_UNIT_CAPACITY`; stop before dispatch and report the path, content size, and configured limit.
 
 A context-required conditional reviewer that the router did not select may still be used, but only after it is added to `PLAN_JSON` — with its `name`, `reason`, `files`, `units`, and `batches` — before dispatch. Never dispatch a discovery agent, review unit, or batch that is absent from `PLAN_JSON`.
 
@@ -119,9 +119,9 @@ DISCOVERY_EXIT=$?
 set -e
 ```
 
-The dispatcher creates `RESULTS_DIR`, `DIAGNOSTICS_DIR`, and a staging directory inside the mode-`0700` run directory. Every event capture, transport status, and raw agent response file is mode `0600`. It runs at most four independent batches concurrently and terminates an attempt that exceeds five minutes.
+The dispatcher creates `RESULTS_DIR`, `DIAGNOSTICS_DIR`, and a staging directory inside the mode-`0700` run directory. Every event capture, transport status, and raw agent response file is mode `0600`. It checks the encoded command transport before spawn, runs at most four independent batches concurrently, and terminates an attempt that exceeds five minutes.
 
-Malformed transport or candidate output receives the single allowed retry with only safe failure metadata. `execution-capacity`, `execution-spawn`, `execution-exit`, and `execution-timeout` failures are not retried with the same prompt. The dispatcher records prompt size, configured limit, timeout, exit state, and redacted stderr where available. Never print a raw response.
+Malformed transport or candidate output receives the single allowed retry with only safe failure metadata. `execution-capacity`, `execution-spawn`, `execution-exit`, and `execution-timeout` failures are not retried with the same prompt. The dispatcher records prompt size, encoded transport size and limit, timeout, exit state, and redacted stderr where available. Never print a raw response.
 
 After all routed batches settle, finalize them against the immutable plan:
 

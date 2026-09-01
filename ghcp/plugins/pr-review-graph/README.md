@@ -67,8 +67,8 @@ The default is preview-only. After inspecting the proposed comments, explicitly 
 1. Resolve the provider and capture an immutable base/head snapshot.
 2. Build a canonical review packet.
 3. Route relevant slices to focused specialist agents.
-   Oversized single-line JSON replacements are converted into bounded semantic delta units instead of being sent as one prompt.
-   Discovery prompts have a hard size limit and run through a dispatcher capped at four concurrent Copilot subprocesses with a five-minute attempt timeout.
+   Oversized single-line JSON replacements are converted into bounded semantic delta units with exact numeric lexemes instead of being sent as one prompt.
+   Discovery prompts have hard rendered and command-transport limits, and run through a dispatcher capped at four concurrent Copilot subprocesses with a five-minute attempt timeout.
    A routed batch that remains invalid after one retry fails the review before verification; partial coverage is never reported as a clean review.
    Every machine-response stage extracts the raw final assistant payload from Copilot JSONL; rendered transcript text is never parsed as agent JSON. Empty assistant messages are structural frames regardless of tool requests and remain subject to assistant-turn validation.
 4. Verify every candidate against the PR snapshot.

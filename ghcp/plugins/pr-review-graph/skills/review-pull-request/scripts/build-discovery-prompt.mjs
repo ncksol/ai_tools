@@ -6,6 +6,8 @@ import { isMain, parseFlags, readJson } from './lib.mjs';
 import { DISCOVERY_CATEGORIES } from './process-discovery.mjs';
 
 const DEFAULT_MAX_PROMPT_CHARS = 120_000;
+const MAX_POSIX_PROMPT_BYTES = 120_000;
+const MAX_WINDOWS_PROMPT_ARGUMENT_UNITS = 28_000;
 
 export class DiscoveryPromptCapacityError extends Error {
   constructor(promptChars, maxPromptChars) {
@@ -25,6 +27,22 @@ export class DiscoveryPromptLimitError extends Error {
     this.name = 'DiscoveryPromptLimitError';
     this.code = 'DISCOVERY_PROMPT_LIMIT';
     this.maxPromptChars = maxPromptChars;
+  }
+}
+
+export class DiscoveryPromptTransportCapacityError extends Error {
+  constructor(platform, promptChars, transportSize, transportLimit, transportMetric) {
+    super(
+      `Discovery prompt exceeds the ${platform} command transport limit: `
+      + `${transportSize} > ${transportLimit} ${transportMetric}`
+    );
+    this.name = 'DiscoveryPromptTransportCapacityError';
+    this.code = 'DISCOVERY_PROMPT_TRANSPORT_CAPACITY';
+    this.platform = platform;
+    this.promptChars = promptChars;
+    this.transportSize = transportSize;
+    this.transportLimit = transportLimit;
+    this.transportMetric = transportMetric;
   }
 }
 
@@ -112,6 +130,7 @@ export function buildDiscoveryPrompt(packet, plan, options) {
     'Report only concrete, actionable defects introduced or materially exposed by these changes.',
     'A location must use a changed line recorded in the supplied review unit. Use null only when no stable changed-line location exists.',
     'A semantic-json-delta unit is a deterministic representation of one oversized JSON line. Review every operation in every supplied part as source evidence.',
+    'A value shaped as {"type":"json-number","value":"<lexeme>"} preserves the exact numeric token from the JSON source.',
     'Return exactly one JSON array and no prose, Markdown fence, JSON comments, or trailing commas.',
     'Every item must match this exact shape and use the fixed category:',
     JSON.stringify(contract),
@@ -146,7 +165,50 @@ export function buildDiscoveryPrompt(packet, plan, options) {
   if (prompt.length > maxPromptChars) {
     throw new DiscoveryPromptCapacityError(prompt.length, maxPromptChars);
   }
+  enforceCommandTransport(prompt, options?.platform ?? process.platform);
   return prompt;
+}
+
+function enforceCommandTransport(prompt, platform) {
+  if (platform === 'darwin') return;
+  const transport = platform === 'win32'
+    ? {
+        size: windowsArgumentUnits(prompt),
+        limit: MAX_WINDOWS_PROMPT_ARGUMENT_UNITS,
+        metric: 'UTF-16 command-line units'
+      }
+    : {
+        size: Buffer.byteLength(prompt, 'utf8'),
+        limit: MAX_POSIX_PROMPT_BYTES,
+        metric: 'UTF-8 bytes'
+      };
+  if (transport.size > transport.limit) {
+    throw new DiscoveryPromptTransportCapacityError(
+      platform,
+      prompt.length,
+      transport.size,
+      transport.limit,
+      transport.metric
+    );
+  }
+}
+
+function windowsArgumentUnits(value) {
+  if (!/[\s"]/u.test(value)) return value.length;
+  let units = 1;
+  let backslashes = 0;
+  for (const character of value) {
+    if (character === '\\') {
+      backslashes += 1;
+    } else if (character === '"') {
+      units += (backslashes * 2) + 2;
+      backslashes = 0;
+    } else {
+      units += backslashes + character.length;
+      backslashes = 0;
+    }
+  }
+  return units + (backslashes * 2) + 1;
 }
 
 function legacyReviewUnit(file) {
