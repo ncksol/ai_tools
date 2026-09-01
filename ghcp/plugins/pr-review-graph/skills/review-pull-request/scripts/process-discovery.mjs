@@ -20,7 +20,8 @@ const TRANSPORT_FAILURE_KIND_SET = new Set(TRANSPORT_FAILURE_KINDS);
 const EXECUTION_FAILURE_KIND_SET = new Set([
   'execution-capacity',
   'execution-spawn',
-  'execution-exit'
+  'execution-exit',
+  'execution-timeout'
 ]);
 const TRANSPORT_DETAIL_KEYS = new Set(['line', 'eventIndex', 'eventType', 'count']);
 const SAFE_TRANSPORT_EVENT_TYPES = new Set([
@@ -232,7 +233,7 @@ export async function recordDiscoveryExecutionFailure(
     throw new Error('Unsupported discovery execution failure kind');
   }
   const numeric = {};
-  for (const key of ['promptChars', 'maxPromptChars', 'exitCode']) {
+  for (const key of ['promptChars', 'maxPromptChars', 'exitCode', 'attemptTimeoutMs']) {
     if (failure?.[key] !== undefined) {
       if (!Number.isInteger(failure[key]) || failure[key] < 0) {
         throw new Error(`Discovery execution failure ${key} must be a non-negative integer`);

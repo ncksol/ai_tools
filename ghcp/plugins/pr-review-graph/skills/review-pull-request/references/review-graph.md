@@ -30,7 +30,7 @@ Conditionally dispatch:
 - `prg-data-compatibility` for schemas, migrations, persistence, serialization, public payloads, or version skew.
 - `prg-reliability` for concurrency, async work, I/O, networking, retries, resources, infrastructure, or lifecycle changes.
 
-Dispatch independent reviewers with `run-discovery.mjs`, capped at four concurrent subprocesses. Give each reviewer only relevant review units and necessary context. Preserve the packet's provider line coordinates.
+Dispatch independent reviewers with `run-discovery.mjs`, capped at four concurrent subprocesses and five minutes per attempt. Give each reviewer only relevant review units and necessary context. Preserve the packet's provider line coordinates.
 
 Normal patches become one review unit. Oversized single-line JSON replacements become deterministic JSON-pointer delta units, each bound to the real file path and changed line. Planning stops before dispatch when an oversized patch cannot be represented within the unit budget. The dispatcher also rejects any rendered prompt above its hard prompt limit.
 
@@ -39,7 +39,7 @@ Every discovery, verifier, deduplicator, and editor subprocess uses Copilot JSON
 ## Bounded loops
 
 - Ingest every discovery response with `process-discovery.mjs`. Retry a batch once only when ingestion reports an invalid result. Never repair or silently drop malformed output.
-- Do not retry `execution-capacity`, `execution-spawn`, or `execution-exit` with an identical prompt. Record the safe execution diagnostic and leave the batch failed.
+- Do not retry `execution-capacity`, `execution-spawn`, `execution-exit`, or `execution-timeout` with an identical prompt. Record the safe execution diagnostic and leave the batch failed.
 - After all routed batches settle, finalize discovery coverage against the immutable review plan. If any batch remains invalid, stop before verification.
 - A verification transport failure rejects that candidate without retry; malformed transport can never create a verified finding. Otherwise verify each candidate once. If the verifier requests dynamic evidence, suppress the finding unless the user authorizes the exact safe command and the result proves it.
 - If the head SHA changes, rebuild the packet and rerun only scopes intersecting changed files, but re-deduplicate the full finding set.

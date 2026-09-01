@@ -113,14 +113,15 @@ node <SKILL_DIR>/scripts/run-discovery.mjs \
   <PACKET_JSON> <PLAN_JSON> <RUN_DIR> \
   --plugin-dir "$PLUGIN_DIR" \
   --max-concurrency 4 \
-  --max-prompt-chars 120000
+  --max-prompt-chars 120000 \
+  --attempt-timeout-ms 300000
 DISCOVERY_EXIT=$?
 set -e
 ```
 
-The dispatcher creates `RESULTS_DIR`, `DIAGNOSTICS_DIR`, and a staging directory inside the mode-`0700` run directory. Every event capture, transport status, and raw agent response file is mode `0600`. It runs at most four independent batches concurrently.
+The dispatcher creates `RESULTS_DIR`, `DIAGNOSTICS_DIR`, and a staging directory inside the mode-`0700` run directory. Every event capture, transport status, and raw agent response file is mode `0600`. It runs at most four independent batches concurrently and terminates an attempt that exceeds five minutes.
 
-Malformed transport or candidate output receives the single allowed retry with only safe failure metadata. `execution-capacity`, `execution-spawn`, and `execution-exit` failures are not retried with the same prompt. The dispatcher records prompt size, configured limit, exit state, and redacted stderr where available. Never print a raw response.
+Malformed transport or candidate output receives the single allowed retry with only safe failure metadata. `execution-capacity`, `execution-spawn`, `execution-exit`, and `execution-timeout` failures are not retried with the same prompt. The dispatcher records prompt size, configured limit, timeout, exit state, and redacted stderr where available. Never print a raw response.
 
 After all routed batches settle, finalize them against the immutable plan:
 

@@ -18,8 +18,18 @@ import {
 
 const DEFAULT_MAX_CONCURRENCY = 4;
 const DEFAULT_MAX_PROMPT_CHARS = 120_000;
+const DEFAULT_ATTEMPT_TIMEOUT_MS = 300_000;
+const TERMINATION_GRACE_MS = 5_000;
 const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const defaultPluginDirectory = path.resolve(scriptDirectory, '../../..');
+
+class DiscoveryExecutionTimeoutError extends Error {
+  constructor(attemptTimeoutMs) {
+    super(`Discovery agent exceeded the attempt timeout: ${attemptTimeoutMs}ms`);
+    this.name = 'DiscoveryExecutionTimeoutError';
+    this.attemptTimeoutMs = attemptTimeoutMs;
+  }
+}
 
 export async function runDiscovery(packet, plan, options = {}) {
   const runDirectory = path.resolve(String(options.runDirectory ?? ''));
@@ -34,6 +44,10 @@ export async function runDiscovery(packet, plan, options = {}) {
   const maxPromptChars = positiveInteger(
     options.maxPromptChars ?? DEFAULT_MAX_PROMPT_CHARS,
     'maxPromptChars'
+  );
+  const attemptTimeoutMs = positiveInteger(
+    options.attemptTimeoutMs ?? DEFAULT_ATTEMPT_TIMEOUT_MS,
+    'attemptTimeoutMs'
   );
   const executeAgent = options.executeAgent ?? executeCopilotAgent;
   const pluginDirectory = path.resolve(options.pluginDirectory ?? defaultPluginDirectory);
@@ -67,6 +81,7 @@ export async function runDiscovery(packet, plan, options = {}) {
         diagnosticsDirectory,
         stagingDirectory,
         maxPromptChars,
+        attemptTimeoutMs,
         pluginDirectory,
         executeAgent
       });
@@ -106,22 +121,30 @@ async function runJob(job, context) {
 
     let execution;
     try {
-      execution = await context.executeAgent(prompt, {
-        ...job,
-        attempt,
-        pluginDirectory: context.pluginDirectory,
-        cwd: process.cwd()
-      });
+      execution = await executeWithTimeout(
+        context.executeAgent,
+        prompt,
+        {
+          ...job,
+          attempt,
+          pluginDirectory: context.pluginDirectory,
+          cwd: process.cwd()
+        },
+        context.attemptTimeoutMs
+      );
     } catch (error) {
+      const timedOut = error instanceof DiscoveryExecutionTimeoutError;
       const result = await recordDiscoveryExecutionFailure(
         context.resultsDirectory,
         context.diagnosticsDirectory,
         { ...job, attempt },
         {
-          kind: 'execution-spawn',
+          kind: timedOut ? 'execution-timeout' : 'execution-spawn',
           promptChars: prompt.length,
           maxPromptChars: context.maxPromptChars,
-          stderr: error?.message
+          ...(timedOut
+            ? { attemptTimeoutMs: error.attemptTimeoutMs }
+            : { stderr: error?.message })
         }
       );
       return jobSummary(result);
@@ -197,6 +220,24 @@ function positiveInteger(value, name) {
   return number;
 }
 
+async function executeWithTimeout(executeAgent, prompt, context, attemptTimeoutMs) {
+  const controller = new AbortController();
+  let timer;
+  try {
+    return await Promise.race([
+      executeAgent(prompt, { ...context, signal: controller.signal }),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new DiscoveryExecutionTimeoutError(attemptTimeoutMs));
+        }, attemptTimeoutMs);
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function executeCopilotAgent(prompt, context) {
   const args = [
     '--plugin-dir', context.pluginDirectory,
@@ -223,8 +264,26 @@ async function executeCopilotAgent(prompt, context) {
     child.stderr.on('data', chunk => {
       stderr += chunk;
     });
-    child.once('error', reject);
+    let forceKillTimer;
+    const cleanup = () => {
+      context.signal.removeEventListener('abort', abort);
+      clearTimeout(forceKillTimer);
+    };
+    const abort = () => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      child.kill('SIGTERM');
+      forceKillTimer = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      }, TERMINATION_GRACE_MS);
+      forceKillTimer.unref?.();
+    };
+    context.signal.addEventListener('abort', abort, { once: true });
+    child.once('error', error => {
+      cleanup();
+      reject(error);
+    });
     child.once('close', (exitCode, signal) => {
+      cleanup();
       resolve({ exitCode, signal, stdout, stderr });
     });
   });
@@ -235,7 +294,7 @@ async function main() {
   const [packetFile, planFile, runDirectory] = flags._;
   if (!packetFile || !planFile || !runDirectory) {
     throw new Error(
-      'Usage: run-discovery.mjs PACKET_JSON PLAN_JSON RUN_DIR [--max-concurrency N] [--max-prompt-chars N] [--plugin-dir DIR]'
+      'Usage: run-discovery.mjs PACKET_JSON PLAN_JSON RUN_DIR [--max-concurrency N] [--max-prompt-chars N] [--attempt-timeout-ms N] [--plugin-dir DIR]'
     );
   }
   const results = await runDiscovery(
@@ -245,6 +304,7 @@ async function main() {
       runDirectory,
       maxConcurrency: flags['max-concurrency'],
       maxPromptChars: flags['max-prompt-chars'],
+      attemptTimeoutMs: flags['attempt-timeout-ms'],
       pluginDirectory: flags['plugin-dir']
     }
   );

@@ -95,6 +95,9 @@ if (!skillText.includes('run-discovery.mjs') || !skillText.includes('--max-concu
 if (!skillText.includes('--max-prompt-chars 120000')) {
   errors.push('SKILL.md must enforce the discovery prompt budget');
 }
+if (!skillText.includes('--attempt-timeout-ms 300000') || !skillText.includes('`execution-timeout`')) {
+  errors.push('SKILL.md must enforce and report discovery attempt timeouts');
+}
 if (!skillText.includes('extract-agent-response.mjs')) {
   errors.push('SKILL.md must extract raw agent responses');
 }

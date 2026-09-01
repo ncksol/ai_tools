@@ -204,6 +204,11 @@ function diffJson(before, after, pointer, operations, beforePresent, afterPresen
   }
 
   if (!beforePresent && afterPresent && (isRecord(after) || Array.isArray(after))) {
+    operations.push({
+      op: 'add-container',
+      path: pointer || '/',
+      container: Array.isArray(after) ? 'array' : 'object'
+    });
     const entries = Array.isArray(after)
       ? after.map((value, index) => [String(index), value])
       : Object.entries(after).sort(([left], [right]) => left.localeCompare(right));
@@ -213,9 +218,15 @@ function diffJson(before, after, pointer, operations, beforePresent, afterPresen
       }
       return;
     }
+    return;
   }
 
   if (beforePresent && !afterPresent && (isRecord(before) || Array.isArray(before))) {
+    operations.push({
+      op: 'remove-container',
+      path: pointer || '/',
+      container: Array.isArray(before) ? 'array' : 'object'
+    });
     const entries = Array.isArray(before)
       ? before.map((value, index) => [String(index), value])
       : Object.entries(before).sort(([left], [right]) => left.localeCompare(right));
@@ -225,6 +236,7 @@ function diffJson(before, after, pointer, operations, beforePresent, afterPresen
       }
       return;
     }
+    return;
   }
 
   operations.push({
