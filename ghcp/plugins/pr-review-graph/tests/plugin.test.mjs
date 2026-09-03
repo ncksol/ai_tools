@@ -250,6 +250,89 @@ test('captured reliability stream shape extracts and ingests the final candidate
   }
 });
 
+test('agent response transport recovers a redaction-corrupted user message envelope', async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'prg-agent-redacted-prompt-'));
+  try {
+    const eventsFile = path.join(directory, 'events.jsonl');
+    const responseFile = path.join(directory, 'response.json');
+    const statusFile = path.join(directory, 'status.json');
+    const corruptedUserMessage = [
+      '{"type":"user.message","data":{"content":"echo \\\\\\"Authorization: ******"\\\\n",',
+      '"transformedContent":"echo \\\\\\"Authorization: ******"\\\\n",',
+      '"messageId":"4033adda-ef88-4295-8d74-dd5d0d00fd74",',
+      '"supportedNativeDocumentMimeTypes":[],"delivery":"idle",',
+      '"interactionId":"d851268b-caec-44a3-b30f-9bb45f527c35","turnId":"0",',
+      '"parentAgentTaskId":"4bf66cb0-3171-485c-9229-7f5be541edaa"},',
+      '"id":"69f36226-0a8a-48ee-9738-d69608a5d074",',
+      '"timestamp":"2026-09-03T12:59:32.483Z",',
+      '"parentId":"7b273c56-b1d3-40b1-a4e4-9ab1c13122a8"}'
+    ].join('');
+    await writeFile(
+      eventsFile,
+      `${corruptedUserMessage}\n${agentEventStream('[]')}`,
+      { mode: 0o600 }
+    );
+
+    const result = await extractAgentResponse(eventsFile, responseFile, statusFile);
+
+    assert.equal(result.status, 'complete');
+    assert.equal(await readFile(responseFile, 'utf8'), '[]');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('agent response transport rejects malformed prompt echoes outside the redaction shape', async () => {
+  const validSuffix = [
+    '","messageId":"4033adda-ef88-4295-8d74-dd5d0d00fd74",',
+    '"supportedNativeDocumentMimeTypes":[],"delivery":"idle",',
+    '"interactionId":"d851268b-caec-44a3-b30f-9bb45f527c35","turnId":"0",',
+    '"parentAgentTaskId":"4bf66cb0-3171-485c-9229-7f5be541edaa"},',
+    '"id":"69f36226-0a8a-48ee-9738-d69608a5d074",',
+    '"timestamp":"2026-09-03T12:59:32.483Z",',
+    '"parentId":"7b273c56-b1d3-40b1-a4e4-9ab1c13122a8"}'
+  ].join('');
+  const cases = [
+    [
+      '{"type":"user.message","data":{"content":"echo \\\\\\"Authorization: ******"\\\\n",',
+      '"transformedContent":"safe transformed prompt',
+      validSuffix
+    ].join(''),
+    [
+      '{"type":"user.message","data":{"content":"echo \\\\\\"Authorization: ******"\\\\n",',
+      '"transformedContent":"echo \\\\\\"Authorization: ******"\\\\n",',
+      '"messageId":"4033adda-ef88-4295-8d74-dd5d0d00fd74",',
+      '"supportedNativeDocumentMimeTypes":[],"delivery":"idle",',
+      '"interactionId":"d851268b-caec-44a3-b30f-9bb45f527c35","turnId":"0"},',
+      '"id":"69f36226-0a8a-48ee-9738-d69608a5d074",',
+      '"timestamp":"2026-09-03T12:59:32.483Z",',
+      '"parentId":"7b273c56-b1d3-40b1-a4e4-9ab1c13122a8"}'
+    ].join('')
+  ];
+
+  for (const [index, malformedUserMessage] of cases.entries()) {
+    const directory = await mkdtemp(path.join(os.tmpdir(), `prg-agent-redacted-invalid-${index}-`));
+    try {
+      const eventsFile = path.join(directory, 'events.jsonl');
+      const responseFile = path.join(directory, 'response.json');
+      const statusFile = path.join(directory, 'status.json');
+      await writeFile(
+        eventsFile,
+        `${malformedUserMessage}\n${agentEventStream('[]')}`,
+        { mode: 0o600 }
+      );
+
+      const result = await extractAgentResponse(eventsFile, responseFile, statusFile);
+
+      assert.equal(result.status, 'invalid');
+      assert.equal(result.failure.kind, 'transport-invalid-jsonl');
+      await assert.rejects(access(responseFile), { code: 'ENOENT' });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+});
+
 test('agent response transport fails closed on ambiguous or rendered streams', async () => {
   const preamble = [
     { type: 'assistant.turn_start', data: { turnId: 'turn-preamble' } },
@@ -519,7 +602,7 @@ test('static plugin validation passes and declares no MCP integration', async ()
   ));
   const validator = await readFile(path.join(root, 'scripts/validate-plugin.mjs'), 'utf8');
   assert.equal(manifest.name, 'pr-review-graph');
-  assert.equal(manifest.version, '0.2.9');
+  assert.equal(manifest.version, '0.2.10');
   assert.equal(
     marketplace.plugins.find(plugin => plugin.name === manifest.name)?.version,
     manifest.version

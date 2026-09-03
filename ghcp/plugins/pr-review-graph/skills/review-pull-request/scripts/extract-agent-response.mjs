@@ -36,6 +36,64 @@ function invalid(kind, details = {}) {
   };
 }
 
+function recoverRedactionCorruptedUserMessage(line) {
+  const prefix = '{"type":"user.message","data":{"content":"';
+  const transformedPrefix = ',"transformedContent":"';
+  const metadataPrefix = ',"messageId":';
+  if (!line.startsWith(prefix)) return null;
+  const metadataIndex = line.lastIndexOf(metadataPrefix);
+  const transformedIndex = line.lastIndexOf(transformedPrefix, metadataIndex);
+  if (transformedIndex < prefix.length || metadataIndex < transformedIndex) return null;
+  const content = line.slice(prefix.length, transformedIndex);
+  const transformedContent = line.slice(transformedIndex + transformedPrefix.length, metadataIndex);
+  const redactionCorruption = /Authorization: \*{6}"/;
+  if (
+    !content.endsWith('"')
+    || !transformedContent.endsWith('"')
+    || !redactionCorruption.test(content)
+    || !redactionCorruption.test(transformedContent)
+  ) {
+    return null;
+  }
+
+  let event;
+  try {
+    event = JSON.parse(`${prefix}"${line.slice(metadataIndex)}`);
+  } catch {
+    return null;
+  }
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const timestamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+  const dataKeys = [
+    'content',
+    'delivery',
+    'interactionId',
+    'messageId',
+    'parentAgentTaskId',
+    'supportedNativeDocumentMimeTypes',
+    'turnId'
+  ];
+  const eventKeys = ['data', 'id', 'parentId', 'timestamp', 'type'];
+  if (
+    event?.type !== 'user.message'
+    || Object.keys(event).sort().join(',') !== eventKeys.join(',')
+    || Object.keys(event.data ?? {}).sort().join(',') !== dataKeys.join(',')
+    || !uuid.test(event.data.messageId)
+    || !Array.isArray(event.data.supportedNativeDocumentMimeTypes)
+    || event.data.supportedNativeDocumentMimeTypes.some(type => typeof type !== 'string')
+    || event.data.delivery !== 'idle'
+    || !uuid.test(event.data.interactionId)
+    || !/^\d+$/.test(event.data.turnId)
+    || !uuid.test(event.data.parentAgentTaskId)
+    || !uuid.test(event.id)
+    || !timestamp.test(event.timestamp)
+    || !uuid.test(event.parentId)
+  ) {
+    return null;
+  }
+  return event;
+}
+
 function parseEvents(text) {
   const events = [];
   const lines = text.split('\n');
@@ -46,7 +104,13 @@ function parseEvents(text) {
     try {
       event = JSON.parse(line);
     } catch {
-      return { status: invalid('transport-invalid-jsonl', { line: index + 1 }) };
+      // Copilot's stdout redactor can remove JSON escaping inside the echoed
+      // prompt. Recover only its metadata envelope; prompt text is not trusted
+      // or used to select the terminal assistant payload.
+      event = recoverRedactionCorruptedUserMessage(line);
+      if (!event) {
+        return { status: invalid('transport-invalid-jsonl', { line: index + 1 }) };
+      }
     }
     if (!event || typeof event !== 'object' || Array.isArray(event) || typeof event.type !== 'string') {
       return { status: invalid('transport-invalid-event', { eventIndex: events.length }) };
