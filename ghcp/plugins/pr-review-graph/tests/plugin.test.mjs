@@ -307,6 +307,23 @@ test('agent response transport rejects malformed prompt echoes outside the redac
       '"id":"69f36226-0a8a-48ee-9738-d69608a5d074",',
       '"timestamp":"2026-09-03T12:59:32.483Z",',
       '"parentId":"7b273c56-b1d3-40b1-a4e4-9ab1c13122a8"}'
+    ].join(''),
+    [
+      '{"type":"user.message","data":{"content":"echo \\\\\\"Authorization: ******"\\q",',
+      '"transformedContent":"echo \\\\\\"Authorization: ******"\\q',
+      validSuffix
+    ].join(''),
+    [
+      '{"type":"user.message","data":{"content":"echo \\\\\\"Authorization: ******"\\\\n",',
+      '"transformedContent":"echo \\\\\\"Authorization: ******"\\\\n",',
+      '"messageId":"11111111-1111-4111-8111-111111111111",',
+      '"messageId":"4033adda-ef88-4295-8d74-dd5d0d00fd74",',
+      '"supportedNativeDocumentMimeTypes":[],"delivery":"idle",',
+      '"interactionId":"d851268b-caec-44a3-b30f-9bb45f527c35","turnId":"0",',
+      '"parentAgentTaskId":"4bf66cb0-3171-485c-9229-7f5be541edaa"},',
+      '"id":"69f36226-0a8a-48ee-9738-d69608a5d074",',
+      '"timestamp":"2026-09-03T12:59:32.483Z",',
+      '"parentId":"7b273c56-b1d3-40b1-a4e4-9ab1c13122a8"}'
     ].join('')
   ];
 

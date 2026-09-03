@@ -40,28 +40,30 @@ function recoverRedactionCorruptedUserMessage(line) {
   const prefix = '{"type":"user.message","data":{"content":"';
   const transformedPrefix = ',"transformedContent":"';
   const metadataPrefix = ',"messageId":';
+  const corruptedSignature = 'Authorization: ******"';
   if (!line.startsWith(prefix)) return null;
   const metadataIndex = line.lastIndexOf(metadataPrefix);
   const transformedIndex = line.lastIndexOf(transformedPrefix, metadataIndex);
   if (transformedIndex < prefix.length || metadataIndex < transformedIndex) return null;
   const content = line.slice(prefix.length, transformedIndex);
   const transformedContent = line.slice(transformedIndex + transformedPrefix.length, metadataIndex);
-  const redactionCorruption = /Authorization: \*{6}"/;
   if (
     !content.endsWith('"')
     || !transformedContent.endsWith('"')
-    || !redactionCorruption.test(content)
-    || !redactionCorruption.test(transformedContent)
+    || !content.includes(corruptedSignature)
+    || !transformedContent.includes(corruptedSignature)
   ) {
     return null;
   }
 
+  const repairedLine = line.replaceAll(corruptedSignature, 'Authorization: ******\\"');
   let event;
   try {
-    event = JSON.parse(`${prefix}"${line.slice(metadataIndex)}`);
+    event = JSON.parse(repairedLine);
   } catch {
     return null;
   }
+  if (JSON.stringify(event) !== repairedLine) return null;
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const timestamp = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
   const dataKeys = [
@@ -71,6 +73,7 @@ function recoverRedactionCorruptedUserMessage(line) {
     'messageId',
     'parentAgentTaskId',
     'supportedNativeDocumentMimeTypes',
+    'transformedContent',
     'turnId'
   ];
   const eventKeys = ['data', 'id', 'parentId', 'timestamp', 'type'];
@@ -78,6 +81,8 @@ function recoverRedactionCorruptedUserMessage(line) {
     event?.type !== 'user.message'
     || Object.keys(event).sort().join(',') !== eventKeys.join(',')
     || Object.keys(event.data ?? {}).sort().join(',') !== dataKeys.join(',')
+    || typeof event.data.content !== 'string'
+    || typeof event.data.transformedContent !== 'string'
     || !uuid.test(event.data.messageId)
     || !Array.isArray(event.data.supportedNativeDocumentMimeTypes)
     || event.data.supportedNativeDocumentMimeTypes.some(type => typeof type !== 'string')
@@ -91,7 +96,18 @@ function recoverRedactionCorruptedUserMessage(line) {
   ) {
     return null;
   }
-  return event;
+  return {
+    ...event,
+    data: {
+      content: '',
+      messageId: event.data.messageId,
+      supportedNativeDocumentMimeTypes: event.data.supportedNativeDocumentMimeTypes,
+      delivery: event.data.delivery,
+      interactionId: event.data.interactionId,
+      turnId: event.data.turnId,
+      parentAgentTaskId: event.data.parentAgentTaskId
+    }
+  };
 }
 
 function parseEvents(text) {

@@ -51,7 +51,7 @@ node <SKILL_DIR>/scripts/extract-agent-response.mjs \
   <EVENTS_JSONL> <RAW_RESPONSE_FILE> <TRANSPORT_STATUS_JSON>
 ```
 
-The extractor writes `assistant.message.data.content` unchanged. It does not parse JSON, trim whitespace, strip prose or fences, or repair malformed assistant output. It may discard the text fields from a malformed `user.message` prompt echo only when the remaining metadata envelope proves the known Copilot stdout-redaction corruption; that prompt echo is non-authoritative. Read only `TRANSPORT_STATUS_JSON` when extraction fails; it contains structural metadata and never response text. Empty assistant messages are structural frames regardless of tool requests; they remain subject to matching turn boundaries and are never payload candidates.
+The extractor writes `assistant.message.data.content` unchanged. It does not parse JSON, trim whitespace, strip prose or fences, or repair malformed assistant output. It may discard the text fields from a malformed `user.message` prompt echo only when restoring the known missing escape makes the complete event valid and canonical; that prompt echo is non-authoritative. Read only `TRANSPORT_STATUS_JSON` when extraction fails; it contains structural metadata and never response text. Empty assistant messages are structural frames regardless of tool requests; they remain subject to matching turn boundaries and are never payload candidates.
 
 Native Task or subsession dispatch may bypass JSONL extraction only when its API exposes an explicit raw final-response field that is structurally separate from transcript, progress, tool, skill, reasoning, and summary fields. Stage that field unchanged. If the API exposes only rendered or concatenated text, record a transport failure instead.
 
