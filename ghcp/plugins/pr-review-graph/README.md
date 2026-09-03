@@ -70,7 +70,7 @@ The default is preview-only. After inspecting the proposed comments, explicitly 
    Oversized single-line JSON replacements are converted into bounded semantic delta units with exact numeric lexemes instead of being sent as one prompt.
    Discovery prompts have hard rendered and command-transport limits, and run through a dispatcher capped at four concurrent Copilot subprocesses with a five-minute attempt timeout.
    A routed batch that remains invalid after one retry fails the review before verification; partial coverage is never reported as a clean review.
-   Every machine-response stage extracts the raw final assistant payload from Copilot JSONL; rendered transcript text is never parsed as agent JSON. Empty assistant messages are structural frames regardless of tool requests and remain subject to assistant-turn validation.
+   Every machine-response stage extracts the raw final assistant payload from Copilot JSONL; rendered transcript text is never parsed as agent JSON. Empty assistant messages are structural frames regardless of tool requests and remain subject to assistant-turn validation. The extractor tolerates Copilot's stdout-redaction corruption only when restoring the known missing escape makes the complete `user.message` prompt echo valid and canonical; it then discards that non-authoritative prompt text and never repairs assistant output.
 4. Verify every candidate against the PR snapshot.
 5. Compare verified findings with every existing inline comment, review body and PR conversation comment.
 6. Suppress confirmed duplicates and hold uncertain matches for human judgement.
