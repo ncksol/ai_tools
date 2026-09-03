@@ -56,7 +56,14 @@ function recoverRedactionCorruptedUserMessage(line) {
     return null;
   }
 
-  const repairedLine = line.replaceAll(corruptedSignature, 'Authorization: ******\\"');
+  const repairedSignature = 'Authorization: ******\\"';
+  const repairedLine = [
+    prefix,
+    content.replaceAll(corruptedSignature, repairedSignature),
+    transformedPrefix,
+    transformedContent.replaceAll(corruptedSignature, repairedSignature),
+    line.slice(metadataIndex)
+  ].join('');
   let event;
   try {
     event = JSON.parse(repairedLine);
