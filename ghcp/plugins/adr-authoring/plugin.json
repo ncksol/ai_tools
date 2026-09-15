@@ -1,0 +1,18 @@
+{
+  "name": "adr-authoring",
+  "description": "Evidence-led architecture decision records with a stable template and Microsoft Learn-inspired writing style.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Nick Sologoub"
+  },
+  "license": "MIT",
+  "keywords": [
+    "adr",
+    "architecture",
+    "documentation",
+    "microsoft-style"
+  ],
+  "category": "development",
+  "agents": "agents/",
+  "skills": "skills/"
+}

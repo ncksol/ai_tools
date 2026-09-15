@@ -25,6 +25,23 @@
         "azure-devops",
         "multi-agent"
       ]
+    },
+    {
+      "name": "adr-authoring",
+      "description": "Evidence-led architecture decision records with a stable template and Microsoft Learn-inspired writing style.",
+      "version": "0.1.0",
+      "source": "./ghcp/plugins/adr-authoring",
+      "author": {
+        "name": "Nick Sologoub"
+      },
+      "license": "MIT",
+      "category": "development",
+      "keywords": [
+        "adr",
+        "architecture",
+        "documentation",
+        "microsoft-style"
+      ]
     }
   ]
 }

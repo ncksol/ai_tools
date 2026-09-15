@@ -38,8 +38,11 @@ This repo is also a **Copilot CLI plugin marketplace** (`ai-tools`). Plugins are
 | Plugin | What it does | Install |
 |---|---|---|
 | [`pr-review-graph`](./ghcp/plugins/pr-review-graph/README.md) | Reviews an **already-open** PR through a bounded multi-agent graph: captures an immutable base/head snapshot, routes slices to nine focused read-only specialists, verifies every candidate finding against the snapshot, deduplicates against existing review comments, and previews author-facing comments. Publishes nothing without explicit confirmation. GitHub and Azure DevOps, via the `gh-cli` / `azure-devops-cli` skills. | `copilot plugin install pr-review-graph@ai-tools` |
+| [`adr-authoring`](./ghcp/plugins/adr-authoring/README.md) | Writes evidence-led architecture decision records in **Microsoft Learn-inspired style**. Bundles an agent, a skill, a fixed template, three example pairs, structural validation, and ten evaluation briefs. Preserves accepted records and makes missing evidence explicit. | `copilot plugin install adr-authoring@ai-tools` |
 
 `pr-review-graph` overlaps in subject with the standalone review skills below but is a different tool: the skills are single-pass prompts you read the output of, the plugin is a verified multi-agent pipeline that can post comments back to the PR once you approve them.
+
+`adr-authoring` is a documentation workflow, not a PR-review tool. Ask it to draft an ADR in chat, write an authorized Markdown file, or review an existing ADR. It records supplied decisions by default and recommends architecture only when explicitly asked. Its structural checks do not establish factual accuracy or model-output consistency.
 
 ### Skills
 
@@ -218,12 +221,21 @@ ai_tools/
     │   ├── andrej.agent.md
     │   └── azure-arch-diagram.agent.md
     └── plugins/
-        └── pr-review-graph/           ← self-contained plugin (own manifest, tests, LICENSE)
+        ├── pr-review-graph/           ← self-contained plugin (own manifest, tests, LICENSE)
+        │   ├── plugin.json
+        │   ├── package.json
+        │   ├── agents/                ← 9 × prg-*.agent.md specialists
+        │   ├── skills/
+        │   │   └── review-pull-request/
+        │   └── tests/
+        └── adr-authoring/
             ├── plugin.json
             ├── package.json
-            ├── agents/                ← 9 × prg-*.agent.md specialists
+            ├── agents/                ← adr-writer.agent.md
             ├── skills/
-            │   └── review-pull-request/
+            │   └── adr-write/         ← template, style, rubric, and examples
+            ├── evaluations/           ← ten briefs and a repeatability procedure
+            ├── scripts/               ← structural and packaging validators
             └── tests/
 ```
 
