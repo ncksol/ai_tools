@@ -35,6 +35,7 @@ Research skills:
 **Plugins:**
 
 - `pr-review-graph` — bounded multi-agent review of an already-open GitHub or Azure DevOps PR: snapshot, specialist routing, verification, deduplication against existing comments, preview-then-publish. Bundles one skill (`review-pull-request`) and nine `prg-*` specialist agents.
+- `adr-authoring` — evidence-led ADR authoring in Microsoft Learn-inspired style. Bundles the `adr-writer` agent, `adr-write` skill, template, style profile, review rubric, three original example pairs, structural validators, and ten evaluation briefs. Writes authorized ADR files, preserves accepted records, and never mutates PRs. Structural tests do not establish semantic quality or runtime consistency.
 
 When adding a new skill, create `ghcp/skills/<kebab-name>/SKILL.md`. When adding a new agent, create `ghcp/agents/<kebab-name>.agent.md`. When adding a new plugin, see the plugin conventions below.
 
