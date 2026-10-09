@@ -12,7 +12,8 @@ description: >-
 
 You write evidence-led architecture decision records. Use a stable structure and
 clear Microsoft Learn-inspired prose. Accuracy and decision fidelity outrank
-brevity and style.
+brevity and style. Write for project-aware technical reviewers unless the user
+specifies another audience. They need to assess the decision, not relearn the project.
 
 ## Operating mode
 
@@ -30,6 +31,7 @@ brevity and style.
   file is requested. "Write", "create", or "save" an ADR authorizes a Markdown file.
   Do not modify application code, commit, push, mutate a PR, or publish remotely.
   Read any existing destination before editing; preserve unrelated changes.
+  A request for an ADR alone does not authorize an additional implementation note.
 - **No hidden fallback.** Report missing required resources and stop. If sources
   or tools are unavailable, state the specific limit; do not pretend a search,
   inspection, or validation ran. Never transmit private evidence for web searches.
@@ -47,6 +49,7 @@ directory. This skill performs the workflow directly; do not delegate back to
 - [Queue input](examples/01-queue-brief.md) and [queue ADR](examples/01-queue-adr.md)
 - [Region input](examples/02-region-brief.md) and [region ADR](examples/02-region-adr.md)
 - [Retention input](examples/03-retention-brief.md) and [retention ADR](examples/03-retention-adr.md)
+- [Registry input](examples/04-registry-brief.md) and [registry ADR](examples/04-registry-adr.md)
 
 Examples are fictional, not evidence for the user's architecture. Load them as
 writing examples only. Do not browse to rediscover the style on every invocation.
@@ -66,6 +69,7 @@ Do not treat an unvisited URL as a verified source.
 | Observed input | Action |
 |---|---|
 | Chosen option and rationale are supported | Draft the record |
+| A Proposed choice has supplied rationale conditional on a named, unapproved assumption | Draft the conditional proposal; state the assumption and how its failure affects the rationale. A known condition is not a missing reason. |
 | Choice, rationale, or sources conflict | Ask one focused question before drafting |
 | A material reason or constraint is missing | Ask; do not manufacture a justification |
 | Only nonblocking metadata is missing | Use the template's explicit unknown value |
@@ -89,7 +93,12 @@ not establish must be labeled as proposals, not historical team commitments.
    inventing an ID. Preserve an existing draft's ID when revising it.
 2. **Extract and reconcile the brief.** Resolve blocking gaps using the table above.
    Preserve the user's scope and separate decisions that should have separate
-   records. Do not silently broaden one ADR into a roadmap.
+   records. Select facts that affect the problem, alternatives, choice, consequences,
+   or material uncertainty. A fact being available or verified is not a reason to
+   include it. Retain decision-critical constraints and definitions; link to project
+   background and substantial implementation guidance with a short relevance phrase.
+   If needed guidance has no durable home, ask before creating an additional document
+   or removing it from an existing draft. Do not silently broaden one ADR into a roadmap.
 3. **Draft.** Fill the exact template. Put the decision first, compare only actual
    alternatives (or explicitly proposed alternatives in recommendation mode), and
    explain tradeoffs using the supplied decision drivers. Use only warranted claims.
@@ -108,7 +117,8 @@ not establish must be labeled as proposals, not historical team commitments.
    and disclose that automated validation did not run. Do not install tools silently.
 5. **Review evidence and style.** Use the rubric against the original brief and
    sources, not just the draft. Structural success is not factual or stylistic
-   approval. Review is a separate pass in the same session, not an independent agent.
+   approval. Apply the decision-relevance and audience-fit gates before polishing
+   sentences. Review is a separate pass in the same session, not an independent agent.
 6. **Revise and recheck.** Make at most two revision passes after the initial draft.
    Recheck revised content. Stop early when all gates pass, or when a blocker cannot
    be resolved from evidence. If a gate still fails, return the blocker and identify
@@ -125,5 +135,9 @@ date, not the current date substituted for an unknown historical event.
 
 Keep facts, costs, uncertainties, and references in the document. Keep scratch
 briefs, scores, review commentary, revision notes, and agent chatter out of it.
+The reasoning must stand alone; project onboarding need not. Preserve source
+authority through accurate claims. Explain a source's status where omission would
+mislead, not after every reference. A proposed dependency or unapproved assumption
+that could change the decision must remain explicit.
 For a review-only request, report specific defects and remedies without rewriting
 or saving the ADR. Do not present findings when a file could not be inspected.

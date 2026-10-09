@@ -2,7 +2,7 @@
 
 Write architecture decision records with a stable structure, explicit evidence,
 and Microsoft Learn-inspired prose. This plugin packages one `adr-writer` agent
-and one `adr-write` skill with a template, style profile, review rubric, and three
+and one `adr-write` skill with a template, style profile, review rubric, and four
 original fictional examples.
 
 The workflow records a supplied decision by default. It recommends architecture
@@ -78,6 +78,14 @@ reconsideration; References.
 - One drafting pass, then at most two revision passes. Remaining hard-gate failures
   are reported as blockers, not successful completion.
 
+The default audience is project-aware technical reviewers. The ADR gives them
+standalone decision reasoning, not a project introduction. Decision relevance and
+audience fit are hard review gates alongside fidelity and grounding: keep context
+that affects the choice, retain material uncertainty, and use short supporting
+references instead of source recaps. Substantial implementation guidance belongs
+in linked material; creating a companion needs separate authorization. There is
+no fixed word cap or external editing-skill dependency.
+
 The [style profile](skills/adr-write/references/style-guide.md) cites official
 Microsoft writing and ADR guidance. It is bundled and versioned; authoring does
 not require live browsing. Research may verify technical claims when sources and
@@ -130,10 +138,12 @@ contains only `description`; skill frontmatter contains `name` and `description`
 ## Evaluating output quality
 
 Read the [evaluation procedure](evaluations/README.md) and
-[ten evaluation cases](evaluations/cases.md). They cover complete evidence, genuine
+[fourteen evaluation cases](evaluations/cases.md). They cover complete evidence, genuine
 tradeoffs, unknown metadata, material gaps, contradictions, recommendations,
 unsupported numerical claims, historical dates, accepted records, and instructions
-embedded in sources.
+embedded in sources. Paired registry/hosting cases test when the same context
+belongs in a decision and when it does not. Discovery and conditional-choice cases
+test concise attribution without hiding approval status or material uncertainty.
 
 Neither `npm test` nor `npm run validate` runs a model. The examples are
 hand-authored. Run repeated, independently assessed trials before claiming a
@@ -153,6 +163,7 @@ averages.
 | [Queue brief](skills/adr-write/examples/01-queue-brief.md) / [ADR](skills/adr-write/examples/01-queue-adr.md) | A straightforward accepted choice |
 | [Region brief](skills/adr-write/examples/02-region-brief.md) / [ADR](skills/adr-write/examples/02-region-adr.md) | Recovery targets and a significant tradeoff |
 | [Retention brief](skills/adr-write/examples/03-retention-brief.md) / [ADR](skills/adr-write/examples/03-retention-adr.md) | A proposal with nonblocking unknowns |
+| [Registry brief](skills/adr-write/examples/04-registry-brief.md) / [ADR](skills/adr-write/examples/04-registry-adr.md) | Selecting decision evidence from a larger project packet |
 
 ## License
 

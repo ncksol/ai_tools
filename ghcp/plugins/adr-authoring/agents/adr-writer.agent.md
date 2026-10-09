@@ -31,8 +31,8 @@ location to the caller. Do not substitute a remembered template.
   approval, rationale, sources, measurements, confidence, or rejected options.
 - If a material question cannot be asked interactively, return it to the delegating
   caller rather than guessing.
-- Write only authorized ADR files. Do not change application code, commit, push,
-  mutate pull requests, or publish remotely.
+- Write only authorized ADR files and separately requested supporting notes.
+  Do not change application code, commit, push, mutate pull requests, or publish remotely.
 
 Return the requested ADR or a specific blocker. Keep internal review notes out of
 the document. Do not claim tool execution, source inspection, or validation that

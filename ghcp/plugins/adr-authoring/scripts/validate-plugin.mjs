@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { validateAdr } from './adr-contract.mjs';
 
 const skillRoot = 'skills/adr-write';
-const exampleNames = ['01-queue', '02-region', '03-retention'];
+const exampleNames = ['01-queue', '02-region', '03-retention', '04-registry'];
 const resources = [
   'README.md',
   'LICENSE',
@@ -183,8 +183,8 @@ export async function validatePlugin(root, repositoryRoot) {
   const cases = texts.get('evaluations/cases.md');
   if (cases !== null) {
     const numbers = [...cases.matchAll(/^## Case (\d{2}): /gm)].map(match => Number(match[1]));
-    if (numbers.join(',') !== '1,2,3,4,5,6,7,8,9,10') {
-      errors.push('evaluations/cases.md must contain ten numbered cases (01 through 10)');
+    if (numbers.join(',') !== '1,2,3,4,5,6,7,8,9,10,11,12,13,14') {
+      errors.push('evaluations/cases.md must contain fourteen numbered cases (01 through 14)');
     }
   }
   for (const [file, text] of texts) {

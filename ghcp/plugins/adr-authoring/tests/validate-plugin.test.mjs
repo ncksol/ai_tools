@@ -16,8 +16,9 @@ async function fixture(t) {
   await cp(source, root, { recursive: true });
   await mkdir(path.join(repository, '.github/plugin'), { recursive: true });
   const marketplace = path.join(repository, '.github/plugin/marketplace.json');
+  const { version } = JSON.parse(await readFile(path.join(root, 'plugin.json'), 'utf8'));
   await writeFile(marketplace, JSON.stringify({
-    plugins: [{ name: 'adr-authoring', version: '0.1.0', source: './ghcp/plugins/adr-authoring' }],
+    plugins: [{ name: 'adr-authoring', version, source: './ghcp/plugins/adr-authoring' }],
   }));
   return { root, repository, marketplace };
 }
@@ -133,7 +134,30 @@ test('checks example structure, example pairs, and the evaluation case count', a
   const errors = (await validatePlugin(root, repository)).join('\n');
   assert.match(errors, /01-queue-adr/);
   assert.match(errors, /02-region-brief/);
-  assert.match(errors, /ten|10/i);
+  assert.match(errors, /numbered cases/i);
+});
+
+test('requires the complex registry example and its evidence brief', async t => {
+  const { root, repository } = await fixture(t);
+  for (const suffix of ['brief', 'adr']) {
+    await rm(path.join(root, `skills/adr-write/examples/04-registry-${suffix}.md`), { force: true });
+  }
+  const errors = (await validatePlugin(root, repository)).join('\n');
+  assert.match(errors, /04-registry-brief\.md/);
+  assert.match(errors, /04-registry-adr\.md/);
+});
+
+test('validates the complex example as an ADR rather than just checking its existence', async t => {
+  const { root, repository } = await fixture(t);
+  await writeFile(path.join(root, 'skills/adr-write/examples/04-registry-adr.md'), '# Incomplete\n');
+  assert.match((await validatePlugin(root, repository)).join('\n'), /04-registry-adr\.md/);
+});
+
+test('requires the relevance cases as well as the original evidence cases', async t => {
+  const { root, repository } = await fixture(t);
+  const cases = path.join(root, 'evaluations/cases.md');
+  await writeFile(cases, (await readFile(cases, 'utf8')).split('\n## Case 11:')[0]);
+  assert.match((await validatePlugin(root, repository)).join('\n'), /numbered cases/i);
 });
 
 test('rejects links escaping the installed plugin resource boundary', async t => {
