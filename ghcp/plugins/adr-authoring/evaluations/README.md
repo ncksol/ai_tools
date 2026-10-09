@@ -1,13 +1,13 @@
 # Evaluating ADR consistency
 
 These are evaluation inputs and a procedure, not results. No live model benchmark
-is run by `npm test` or `npm run validate`. The three bundled ADRs are hand-authored
+is run by `npm test` or `npm run validate`. The four bundled ADRs are hand-authored
 examples, not proof of runtime behavior.
 
 ## Procedure
 
 1. Select an installed plugin version and record the model/runtime version.
-2. Run each of the [ten cases](cases.md) in three fresh sessions with the same input
+2. Run each of the [fourteen cases](cases.md) in three fresh sessions with the same input
    and tool permissions. Keep other skill/agent configuration stable. Do not seed
    each session with outputs from previous runs.
 3. Use isolated temporary repositories for cases involving files. Do not run a
@@ -33,8 +33,18 @@ Do not put this bookkeeping into a generated ADR.
 
 All hard gates must pass for every run: no unsupported material facts, no altered
 decision or approval status, no loss of material uncertainty, and no unauthorized
-write or rewrite of accepted history. A structurally valid but invented document
-fails. A correct blocker response passes its case.
+write or rewrite of accepted history. Decision relevance and audience fit must also
+pass: supported but unnecessary project recaps, implementation tutorials, and
+repeated authority commentary fail even when accurate. Check against the
+[authoring rubric](../skills/adr-write/references/review-rubric.md).
+A structurally valid but invented document fails. A correct blocker response
+passes its case.
+
+For cases 11-14, record both unnecessary inclusions and harmful omissions, with
+specific passages and the source fact each judgment rests on. Cases 11 and 12 use
+the same background to test selection, not a ban on geography. Case 13 tests concise
+attribution without approval inflation; case 14 tests an uncertainty that brevity
+must not hide. Word counts may describe outputs, but are not acceptance criteria.
 
 Score these dimensions separately, from 1 to 3:
 
@@ -43,7 +53,7 @@ Score these dimensions separately, from 1 to 3:
 | Decision clarity | Choice or scope is hard to identify | Choice is clear but scope needs editing | Choice and scope are explicit at the start |
 | Rationale and tradeoffs | Generic or disconnected | Mostly relevant with a gap | Directly tied to supplied drivers and actual alternatives |
 | Prose | Inflated, repetitive, or instructional | Usable with light editing | Neutral, precise, concise, and consistent |
-| Standalone usefulness | Depends on unstated context | Understandable with source lookup | Understandable on its own, with traceable evidence |
+| Standalone usefulness | Decision reasoning depends on unstated facts | Reasoning needs a source lookup | Reasoning stands alone for the intended audience, with traceable evidence and no project onboarding |
 
 For a v1 release candidate, require all hard gates, structural success for all
 completed ADRs, and at least 2 on every applicable dimension in every run. This is
@@ -51,6 +61,6 @@ a proposed project acceptance threshold, not a Microsoft standard. Calibrate it
 with human judgments before treating model-generated scores as reliable.
 
 Report the worst result and variation across repetitions, not just an average.
-Thirty passing trials provide limited evidence; they do not guarantee identical
+Forty-two passing trials provide limited evidence; they do not guarantee identical
 output or eliminate the need for review. Re-run affected cases after changing the
 template, examples, prompts, model, or runtime.

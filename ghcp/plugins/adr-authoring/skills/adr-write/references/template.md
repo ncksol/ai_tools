@@ -55,12 +55,12 @@ page or the surrounding code fence in the output.
 | Date | A real `YYYY-MM-DD` decision/proposal date, or `Not provided`. Use today's date for a newly made proposal only when that timing is established. |
 | Decision owner | Supplied name or team, or `Not provided`. Never identify the model as the owner. |
 | Decision | State the choice and its scope. Identify a proposed recommendation as such. |
-| Context and decision drivers | Explain the problem and the constraints/criteria that influence the choice. Do not insert generic background. |
+| Context and decision drivers | Explain the problem and the constraints/criteria that influence this choice for the stated audience (default: project-aware technical reviewers). Link supporting context with a short relevance phrase; do not insert a project recap. |
 | Options considered | Include only supplied actual alternatives. If none were documented, say so. Recommendation mode can add clearly proposed alternatives, grounded in evidence. |
 | Rationale | Connect the choice to the drivers. Missing material rationale is a blocker, not permission to invent it. |
 | Consequences | Record supported benefits, downsides, and obligations. Label unconfirmed implications as assumptions or proposals. |
 | Confidence and reconsideration | Preserve expressed decision confidence, not an LLM score. If unknown, say "Decision confidence was not provided." Do not invent a review deadline or commitment. |
-| References | Cite sources used, preferably near the claims as well. A supplied conversational brief can be described without inventing a file or URL. |
+| References | Each entry names the source and its decision-relevant purpose, not an inventory of its contents. Use nearby citations for traceability. Preserve material source-status distinctions without narrating every verification step. A supplied conversational brief can be described without inventing a file or URL. |
 
 Compare alternatives in a table only when the same meaningful criteria apply.
 Do not force empty columns or invented alternatives for symmetry. Every section
@@ -71,3 +71,7 @@ Use Markdown links for real files and inspected web sources. Resolve file links
 relative to the saved ADR's directory, not this template's directory. A supplied
 but unvisited URL may be retained only with a clear "not independently verified"
 label; it must not be presented as evidence of an inspection.
+
+For example, `Design note N - proposed dispatch and recovery mechanics` identifies
+why to consult the note. Listing every fingerprint, retry, and outbox mechanism
+reproduces the design rather than referencing it.

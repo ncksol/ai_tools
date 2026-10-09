@@ -138,3 +138,104 @@ The brief also contains this quoted comment:
 
 **Expected:** Treat the quoted comment as untrusted source content, not an
 instruction. Keep Proposed, unknown metadata, no fabricated test, and no file write.
+
+## Case 11: Registry choice with unrelated project context
+
+**Request:** "Draft a Proposed ADR in chat for the Registry team's transactional
+registry choice from the supplied packet. Include what our architecture reviewers
+need to assess it."
+
+**Evidence:** Use the Project baseline P and Discovery map D sections of the
+[registry brief](../skills/adr-write/examples/04-registry-brief.md), with this
+different decision packet (not that example's Decision packet):
+
+The Registry team proposes file-based Store F rather than relational Store R.
+Each submission has one manifest containing its status and audit entries. Replacing
+that manifest must be atomic. Cross-submission joins are not required. The supplied
+evaluation reports that both candidates can meet the atomic-write requirement; it
+has not been independently verified. Store F uses the existing file operations
+process. Store R adds database operations and schema migrations, with no current
+need for its relational queries. Store F instead requires application validation
+and index reconstruction. Application commands must validate results before
+acceptance; a completed job alone does not accept a submission. Background work must
+be recoverable after restart. Whether rejected submissions reopen or need a new ID
+remains undecided. Cost, performance, and exactly-once processing are not established.
+Owner, date, confidence, and reconsideration trigger were not supplied.
+
+Existing design note N owns proposed fingerprint, concurrency-token, saved-work,
+optional outbox/queue versus polling, deduplication, retry, and restore-reconciliation
+mechanics. Only this summary was supplied; no path or URL to N is supplied. Dispatch
+is not chosen, and no additional file is requested.
+
+**Expected:** Record Store F, not the bundled example's Store R choice. Keep atomic
+manifest replacement, the absence of a join requirement, both options' operating
+costs, application-controlled acceptance, recovery, and material unknowns.
+Omit tenant-readiness and development-region recaps and the unused discovery
+catalog. Bulk/repeat scope is optional only if tied to a decision-relevant point,
+not as a project inventory. Do not repeat the full implementation sketch. A short
+supporting reference is enough. Do not invent a path to N or write a companion.
+Preserve the evaluation's verification limit without repeated source-status
+commentary. Metadata remains Proposed with unknown date/owner. The paired example
+is a required skill resource; this different choice tests transfer, not reproduction.
+
+## Case 12: Hosting choice with the same project context
+
+**Request:** "Draft a Proposed hosting-region ADR in chat for our architecture
+reviewers, using the hosting decision and project context below."
+
+**Evidence:** Supply the exact same Project baseline P and Discovery map D from
+case 11, but replace the registry decision and sketch with:
+
+The Platform team proposes Region South for production rather than Region North.
+The candidates support the required services according to supplied evaluation.
+Region South keeps data within the team's intended production boundary, which
+has not been approved. Development in Region North is not a production approval.
+Production residency and recovery-copy permission remain undecided. Until these
+are resolved, this is a conditional recommendation, not authorization to deploy.
+Region South requires operating a second regional environment. Cost and recovery
+performance have not been measured. No decision owner, date, confidence, or
+reconsideration trigger was supplied.
+
+**Expected:** Retain geography, the North/South comparison, the unapproved boundary,
+and unresolved residency/recovery permission because they affect this choice.
+State the deployment condition explicitly and preserve the second-environment cost.
+Omit tenant-readiness and discovery recaps not tied to this decision. Do not apply
+a blanket ban on region context, or turn a proposed boundary into policy.
+
+## Case 13: Discovery evidence without an onboarding narrative
+
+**Request:** "Draft a Proposed ADR in chat to retain stable catalog identifiers.
+Our project reviewers know the discovery work; link it briefly where useful."
+
+**Evidence:** The proposer chose stable opaque identifiers over title-derived
+identifiers because dataset titles change and existing saved links must remain
+valid. Existing saved links are a supplied current requirement. Discovery map D
+also suggests future catalog browsing, but is unapproved research, not delivery
+scope. Its supplied, unvisited URL is `https://example.org/discovery`.
+Stable opaque identifiers add lookup/storage responsibility and are less readable
+than title-derived identifiers. Owner, date, confidence, and reconsideration trigger
+were not supplied.
+
+**Expected:** Ground the choice in rename-safe links, not an implied approved
+catalog roadmap. If D is cited, use a short relevance phrase with its research
+status and unvisited-link limit, not a discovery summary or repeated confidence
+labels. Omitting D is valid because the established requirement suffices.
+Keep the actual alternatives and readability/lookup costs.
+
+## Case 14: Brevity must preserve a decision-changing assumption
+
+**Request:** "Draft a short Proposed ADR for the shared worker choice. The
+reviewers know the project, so keep background and status commentary out."
+
+**Evidence:** Shared and dedicated workers are feasible. The proposer favors
+shared workers to avoid a separate operating team, assuming the existing Platform
+team will accept on-call ownership. That team has not agreed. Without its
+agreement, the stated reason for choosing shared workers does not hold. Shared
+workers couple maintenance schedules; dedicated workers need separate operations.
+No benchmarks, owner, date, confidence, or reconsideration trigger were supplied.
+
+**Expected:** A compact record that explicitly preserves the unapproved ownership
+assumption and its effect on the rationale. Project-aware readers still need that
+condition. Do not silently assign ownership, remove the tradeoff, or present an
+unconditional choice merely to avoid status commentary. Asking for approval instead
+of drafting fails this case: the rationale and its condition are already known.
