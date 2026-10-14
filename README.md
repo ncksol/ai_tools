@@ -65,6 +65,7 @@ Those three are **safe by design**: they only inspect and report. They will not 
 |---|---|---|
 | [`andrej`](./ghcp/agents/andrej.agent.md) | Karpathy-flavoured coding guidelines: think before coding, simplicity first, surface tradeoffs, no speculative abstractions. Useful as a delegate for any non-trivial code change where you want a more careful, less eager collaborator. | Ask Copilot to delegate to the `andrej` agent, or wire it into your own workflows. |
 | [`azure-arch-diagram`](./ghcp/agents/azure-arch-diagram.agent.md) | Expert Azure architecture diagram creator. Produces **editable draw.io (`.drawio`) files** as raw mxGraph XML, following Microsoft Azure Architecture Centre style guidelines — official Azure2 icons, directional arrows, grouping containers, and a consistent colour palette. Ships ready-made templates for system, network, data-flow, context, and deployment diagrams. | Ask Copilot to delegate to the `azure-arch-diagram` agent, e.g. "draw an Azure architecture diagram for…". |
+| [`orchestrator`](./ghcp/agents/orchestrator.agent.md) | Coordinator for multi-PR work. Plans, delegates, and tracks, but has **no shell, edit, search, web, or MCP tools**, so every lookup and change goes elsewhere: owned work (a branch, PR, or ongoing workstream) to a nested child session, one-off jobs to a sub-agent. Keeps its plan and a registry of child sessions in the session SQL database. | Select it as the session's agent before your first message: add the `orchestrator` chip from the composer's **+** menu in the GitHub Copilot app, or run `/agent orchestrator` (`copilot --agent orchestrator` from a terminal). |
 
 ---
 
@@ -98,7 +99,7 @@ You are ...
 ~/.copilot/agents/<agent-name>.agent.md
 ```
 
-Agents are explicitly delegated to (via Copilot's `task` tool / sub-agent mechanism) rather than auto-routed. They define a persona or ruleset that runs in its own context window. Frontmatter is just a short `description`; the body is the agent's system prompt:
+Agents are never auto-routed. You either delegate to one (via Copilot's `task` tool / sub-agent mechanism), where it runs in its own context window, or select one as the session's main agent (`/agent`, `--agent`, or the app's composer). Frontmatter is usually just a short `description`; the body is the agent's system prompt:
 
 ```yaml
 ---
@@ -110,7 +111,9 @@ description: One-line description shown in the agent picker.
 Behavioural rules, persona, and operating instructions go here.
 ```
 
-Rule of thumb: use a **skill** when the CLI should pick it up automatically from a user phrase, and an **agent** when you (or another agent) want to deliberately hand off a chunk of work to a specialist.
+An agent can also limit itself with a `tools` allowlist: tools not on the list don't exist in that session. `orchestrator` uses this to remove every execution tool, and sets `disable-model-invocation: true` so other agents can't start it as a sub-agent.
+
+Rule of thumb: use a **skill** when the CLI should pick it up automatically from a user phrase, and an **agent** when you (or another agent) want to deliberately hand off a chunk of work to a specialist, or run a whole session under a fixed role.
 
 ---
 
@@ -219,7 +222,8 @@ ai_tools/
     │       └── SKILL.md
     ├── agents/
     │   ├── andrej.agent.md
-    │   └── azure-arch-diagram.agent.md
+    │   ├── azure-arch-diagram.agent.md
+    │   └── orchestrator.agent.md
     └── plugins/
         ├── pr-review-graph/           ← self-contained plugin (own manifest, tests, LICENSE)
         │   ├── plugin.json

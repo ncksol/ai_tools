@@ -31,6 +31,7 @@ Research skills:
 
 - `andrej` — Karpathy-flavoured coding-discipline persona; behavioural rules to reduce common LLM coding mistakes.
 - `azure-arch-diagram` — expert Azure architecture diagram creator; emits editable draw.io (`.drawio`) mxGraph XML following Microsoft Azure Architecture Centre style (official Azure2 icons, directional arrows, grouping containers, consistent colour palette).
+- `orchestrator` — session-level coordinator selected with `/agent` or the app composer. Its `tools` allowlist removes shell, edit, search, web and MCP tools, so it must delegate: owned work (branch, PR, workstream) to nested child sessions, one-off jobs to `task` sub-agents. Keeps plan state and a child-session registry in the session SQL database.
 
 **Plugins:**
 
@@ -98,7 +99,7 @@ When extending an existing skill, keep that skill's established section ordering
 Agent files (`ghcp/agents/<name>.agent.md`) are simpler than skills:
 
 - Single file, no enclosing per-agent directory.
-- Frontmatter contains only `description:` (a short line shown in the agent picker — not a router intent string).
+- Frontmatter contains `description:` (a short line shown in the agent picker — not a router intent string). Add other fields only when the agent needs them, as `orchestrator.agent.md` does for a session-level agent with hard limits: `name`, a `tools` allowlist (unlisted tools are removed; app tools such as `create_session` are listed by bare name), `include-custom-instructions: true`, and `disable-model-invocation: true` (stops other agents starting it as a sub-agent).
 - Body is the agent's system prompt: persona, behavioural rules, operating mode. No mandatory sections.
 
 ## Authoring rules specific to this repo
