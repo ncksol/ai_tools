@@ -4600,8 +4600,8 @@ git commit -m "feat(swarm-dashboard): add run history and the run summary"
 
 **Interfaces:**
 - Consumes: nothing (every function is self-contained so its source can run in the browser).
-- Produces: `oklchToSrgb(l, c, h)`, `parseColor(text): {r,g,b,a}|null` (accepts `rgb()`, `rgba()`, `oklch()` and `color(srgb …)`, the formats Chrome 155 returns for computed colours, including resolved `color-mix()`), `composite(top, bottom)`, `luminance(color)`, `contrastRatio(a, b)` (WCAG 2), `auditPage(options): { checks, issues: [{ rule, target, detail }] }`, `AUDIT_DEFAULTS`, `auditScript(options = AUDIT_DEFAULTS): string` (an expression for `Runtime.evaluate`).
-- Rules (issue `rule` names): `overlap` (the visible parts of two boxes that are not nested intersect by more than 0.5 px; content clipped by an `overflow: hidden` ancestor does not count), `spill` (a block's text overflows a visible-overflow box), `clipped` (hidden overflow without an ellipsis), `outside` (text extends past its card, panel or row), `hscroll` (the page scrolls sideways), `font-family`, `font-size`, `line-height`, `font-weight`, `font-style`, `text-transform`, `letter-spacing`, `contrast` (below 4.5:1 against the composited background), `colour` (a computed colour the parser cannot read), `grid` (a padding or gap off the 4 px grid), `padding` (16 or 12 px where the spec says so), `height` (chips 24, badges and pills 20, buttons 28 or 24 in the timeline bar, rings 40, bars 4, history tracks 12).
+- Produces: `oklchToSrgb(l, c, h)`, `parseColor(text): {r,g,b,a}|null` (accepts `rgb()`, `rgba()`, `oklch()` and `color(srgb …)`, the formats Chrome 155 returns for computed colours, including resolved `color-mix()`), `composite(top, bottom)`, `luminance(color)`, `contrastRatio(a, b)` (WCAG 2), `showsEllipsis(style): boolean` (only block containers draw an ellipsis), `cutsBox(box, area, style): boolean` (an ancestor's hidden overflow cuts the box), `auditPage(options): { checks, issues: [{ rule, target, detail }] }`, `AUDIT_DEFAULTS`, `auditScript(options = AUDIT_DEFAULTS): string` (an expression for `Runtime.evaluate`).
+- Rules (issue `rule` names): `overlap` (the visible parts of two boxes that are not nested intersect by more than 0.5 px; content clipped by an `overflow: hidden` ancestor does not count), `spill` (a block's text overflows a visible-overflow box), `clipped` (hidden overflow without an ellipsis that shows; flex and grid containers draw none), `hidden-lines` (a box's hidden overflow hides lines of its text), `cut` (an ancestor's hidden overflow cuts text off: across unless that ancestor shows an ellipsis, and down always), `outside` (text extends past its card, panel or row), `hscroll` (the page scrolls sideways), `font-family`, `font-size`, `line-height`, `font-weight`, `font-style`, `text-transform`, `letter-spacing`, `contrast` (below 4.5:1 against the composited background), `colour` (a computed colour the parser cannot read), `grid` (a padding or gap off the 4 px grid), `padding` (16 or 12 px where the spec says so), `height` (chips 24, badges and pills 20, buttons 28 or 24 in the timeline bar, rings 40, bars 4, history tracks 12).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -4610,7 +4610,7 @@ git commit -m "feat(swarm-dashboard): add run history and the run summary"
 ```js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { AUDIT_DEFAULTS, auditScript, composite, contrastRatio, oklchToSrgb, parseColor } from '../scripts/lib/page-audit.mjs';
+import { AUDIT_DEFAULTS, auditScript, composite, contrastRatio, cutsBox, oklchToSrgb, parseColor, showsEllipsis } from '../scripts/lib/page-audit.mjs';
 
 const close = (actual, expected, tolerance = 0.005) => assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} is not about ${expected}`);
 
@@ -4635,6 +4635,30 @@ test('contrast follows WCAG 2 and reproduces the palette\'s round-2 measurements
   const archived = contrastRatio(oklchToSrgb(0.55, 0.012, 250), surface);
   assert.ok(archived >= 4.5 && archived < 4.9, `archived text on a board card: ${archived}`);
   close(composite({ r: 0, g: 0, b: 0, a: 0.5 }, { r: 1, g: 1, b: 1, a: 1 }).r, 0.5);
+});
+
+test('only block containers show an ellipsis, so text a flex row cuts counts as cut', () => {
+  assert.equal(showsEllipsis({ textOverflow: 'ellipsis', display: 'block' }), true);
+  assert.equal(showsEllipsis({ textOverflow: 'ellipsis', display: 'inline-block' }), true);
+  assert.equal(showsEllipsis({ textOverflow: 'ellipsis', display: 'flex' }), false);
+  assert.equal(showsEllipsis({ textOverflow: 'ellipsis', display: 'inline-grid' }), false);
+  assert.equal(showsEllipsis({ textOverflow: 'clip', display: 'block' }), false);
+});
+
+test('an ancestor cuts a box across unless it shows an ellipsis, and down always', () => {
+  const area = { left: 0, top: 0, right: 100, bottom: 20 };
+  const wide = { left: 10, top: 0, right: 160, bottom: 20 };
+  const tall = { left: 10, top: 0, right: 90, bottom: 40 };
+  const hidden = { overflowX: 'hidden', overflowY: 'hidden', textOverflow: 'clip', display: 'flex' };
+  assert.equal(cutsBox(wide, area, hidden), true);
+  assert.equal(cutsBox(tall, area, hidden), true);
+  assert.equal(cutsBox({ left: 10, top: 0, right: 100.4, bottom: 20.4 }, area, hidden), false);
+  const ellipsis = { ...hidden, textOverflow: 'ellipsis', display: 'block' };
+  assert.equal(cutsBox(wide, area, ellipsis), false);
+  assert.equal(cutsBox(tall, area, ellipsis), true);
+  assert.equal(cutsBox(wide, area, { ...hidden, overflowX: 'visible', overflowY: 'visible' }), false);
+  assert.equal(cutsBox(wide, area, { ...hidden, overflowX: 'auto' }), false);
+  assert.equal(cutsBox(wide, area, { ...hidden, overflowX: 'clip' }), true);
 });
 
 test('the audit script is self-contained and carries its options', () => {
@@ -4709,6 +4733,19 @@ export function luminance(color) {
 export function contrastRatio(a, b) {
   const [high, low] = [luminance(a), luminance(b)].sort((x, y) => y - x);
   return (high + 0.05) / (low + 0.05);
+}
+
+/** Whether an element shows an ellipsis where it cuts its text: block containers draw one, flex and grid containers do not. */
+export function showsEllipsis(style) {
+  return style.textOverflow === 'ellipsis' && !/flex|grid/.test(style.display);
+}
+
+/** Whether an ancestor that hides its overflow cuts a box: across unless the ancestor shows an ellipsis there, or down. `area` is its padding box. */
+export function cutsBox(box, area, style) {
+  const hides = value => value === 'hidden' || value === 'clip';
+  const across = hides(style.overflowX) && !showsEllipsis(style) && (box.left < area.left - 0.5 || box.right > area.right + 0.5);
+  const down = hides(style.overflowY) && (box.top < area.top - 0.5 || box.bottom > area.bottom + 0.5);
+  return across || down;
 }
 
 /** Check the rendered page under options.root and return { checks, issues }. Runs in the browser. */
@@ -4824,13 +4861,29 @@ export function auditPage(options) {
     }
   }
 
+  // The nearest ancestor whose hidden overflow cuts the element's box.
+  const cutBy = el => {
+    const box = el.getBoundingClientRect();
+    for (let node = el.parentElement; node && node !== document.documentElement; node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if (style.overflowX === 'visible' && style.overflowY === 'visible') continue;
+      const outer = node.getBoundingClientRect();
+      const left = outer.left + node.clientLeft;
+      const top = outer.top + node.clientTop;
+      if (cutsBox(box, { left, top, right: left + node.clientWidth, bottom: top + node.clientHeight }, style)) return node;
+    }
+    return null;
+  };
   for (const el of texts) {
     const style = getComputedStyle(el);
     checks += 1;
     if (style.display !== 'inline' && el.scrollWidth > el.clientWidth + 1) {
       if (style.overflowX === 'visible') report('spill', el, `${el.scrollWidth}px of content in ${el.clientWidth}px`);
-      else if (style.textOverflow !== 'ellipsis') report('clipped', el, `${el.scrollWidth}px of content in ${el.clientWidth}px`);
+      else if (!showsEllipsis(style)) report('clipped', el, `${el.scrollWidth}px of content in ${el.clientWidth}px`);
     }
+    if (style.display !== 'inline' && style.overflowY !== 'visible' && el.scrollHeight > el.clientHeight + 1) report('hidden-lines', el, `${el.scrollHeight}px of lines in ${el.clientHeight}px`);
+    const cut = cutBy(el);
+    if (cut) report('cut', el, `cut off by ${describe(cut)}`);
     const container = el.parentElement && el.parentElement.closest(options.containers);
     if (container) {
       const box = clippedBox(el);
@@ -4887,7 +4940,7 @@ export const AUDIT_DEFAULTS = Object.freeze({
 
 /** The audit as one expression for Runtime.evaluate. */
 export function auditScript(options = AUDIT_DEFAULTS) {
-  const source = [oklchToSrgb, parseColor, composite, luminance, contrastRatio, auditPage].map(fn => fn.toString()).join('\n');
+  const source = [oklchToSrgb, parseColor, composite, luminance, contrastRatio, showsEllipsis, cutsBox, auditPage].map(fn => fn.toString()).join('\n');
   return `(() => {\n${source}\nreturn auditPage(${JSON.stringify(options)});\n})()`;
 }
 ```
@@ -4895,7 +4948,7 @@ export function auditScript(options = AUDIT_DEFAULTS) {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/page-audit.test.mjs`
-Expected: PASS, 3 tests.
+Expected: PASS, 5 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -5152,12 +5205,18 @@ body { margin: 0; padding: 16px; font: 400 14px/20px system-ui, -apple-system, "
 .dash { display: flex; flex-direction: column; gap: 16px; padding: 16px; border: 1px solid #ddd; }
 .b-card { display: flex; flex-direction: column; gap: 8px; padding: 16px; border: 1px solid #ddd; }
 .chip { display: inline-flex; align-items: center; height: 24px; padding: 0 8px; font-size: 12px; line-height: 16px; border: 1px solid #ddd; }
+.narrow { width: 120px; }
+.cell { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row { display: flex; align-items: center; gap: 8px; overflow: hidden; }
+.dot { flex: none; width: 8px; height: 8px; background: #222; }
 </style>
 </head>
 <body>
 <main class="dash">
   <article class="b-card"><span>First card</span><span class="chip">explore 3m</span></article>
   <article class="b-card"><span>Second card</span></article>
+  <article class="b-card narrow"><div class="cell">A long label with <span>an inline part</span> that ends in an ellipsis</div></article>
+  <article class="b-card narrow"><div class="row"><span class="dot"></span><span class="cell">A flex item that ends in an ellipsis</span></div></article>
 </main>
 </body>
 </html>
@@ -5195,8 +5254,10 @@ body { margin: 0; padding: 16px; font: 400 14px/20px system-ui, -apple-system, "
   <p style="color: #bbb">Low contrast text</p>
   <div style="display: flex; gap: 6px"><span>Off</span><span>grid</span></div>
   <article class="b-card narrow"><div style="white-space: nowrap">This block of text spills out of its card</div></article>
-  <article class="b-card narrow"><div style="white-space: nowrap; overflow: hidden">This text is clipped without an ellipsis</div></article>
+  <article class="b-card narrow"><div style="display: flex; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">A flex row cuts this text without an ellipsis</div></article>
   <article class="b-card narrow" style="display: block"><span style="white-space: nowrap">This inline text runs past the card edge</span></article>
+  <article class="b-card narrow"><div style="height: 20px; overflow: hidden">These words wrap onto lines that the box hides</div></article>
+  <article class="b-card narrow"><div style="display: flex; overflow: hidden"><span style="flex: none">Its row cuts this text off</span></div></article>
   <div class="wide"></div>
 </main>
 </body>
@@ -5232,7 +5293,7 @@ export const VIEWS = [
   { name: 'history', params: { page: 'history' }, history: true },
   { name: 'run', params: { page: 'run', run: 'RUN' }, history: true },
 ];
-export const SELF_TEST_RULES = ['overlap', 'font-size', 'font-style', 'text-transform', 'font-weight', 'letter-spacing', 'line-height', 'contrast', 'grid', 'height', 'spill', 'clipped', 'outside', 'hscroll'];
+export const SELF_TEST_RULES = ['overlap', 'font-size', 'font-style', 'text-transform', 'font-weight', 'letter-spacing', 'line-height', 'contrast', 'grid', 'height', 'spill', 'clipped', 'hidden-lines', 'cut', 'outside', 'hscroll'];
 export const USAGE = `Usage: check-layout [--scenario example|stress | --live <url>] [--width <px>] [--screenshots <dir>]
 
 Checks every dashboard view for overlap, clipped text, type, spacing, sizes, contrast and console errors in a
