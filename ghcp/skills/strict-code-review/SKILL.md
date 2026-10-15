@@ -181,7 +181,7 @@ Each kind of input has its own adapter file in the `references` directory next t
 - Local branch, or the current branch: [references/local.md](references/local.md)
 - Pasted diff: [references/pasted-diff.md](references/pasted-diff.md)
 
-Once you know the kind of input (step 1 of “General review flow”), read its adapter file and follow it for steps 2 and 3. You need only that file, and every rule in this file still applies. If you cannot read it, do not work out the steps yourself: report `Review incomplete`, and list the failed read under `Failed commands`.
+Once you know the kind of input (step 1 of “General review flow”), read its adapter file and follow it for steps 2 and 3. You need only that file, and every rule in this file still applies. If you cannot read it, do not work out the steps yourself: report `Review incomplete`, list the failed read under `Failed commands`, and say under `Needed to finish` how to allow the read: approve it, or run the review again with read access to this skill’s resolved directory, for example `--add-dir "$(realpath ~/.copilot/skills/strict-code-review)"`.
 
 ## Project context to inspect
 

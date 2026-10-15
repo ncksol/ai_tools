@@ -214,6 +214,14 @@ Pasted diffs, local branch names, and Azure DevOps URLs all work too.
 
 For a PR URL, start the prompt with `/strict-code-review`. When many skills are installed, the CLI may describe only some of them to the model, so a prompt such as "Review this PR: `<url>`" can go to another review skill, such as `review-pull-request` from the `pr-review-graph` plugin.
 
+`strict-code-review` reads files from its `references/` directory while it runs. In non-interactive runs (`copilot -p`), the CLI cannot ask for approval, so it refuses those reads unless you give it read access to the skill's resolved directory. Installed skills are often symlinks and the CLI checks the real path, so `--add-dir ~/.copilot/skills` is not enough:
+
+```bash
+copilot -p "<your request>" --add-dir "$(realpath ~/.copilot/skills/strict-code-review)"
+```
+
+Without that access, the skill stops with `Review incomplete` and says how to grant it.
+
 ---
 
 ## 🗂 Repository layout
