@@ -33,9 +33,12 @@ export function parseEnvelope(transformed) {
     const match = new RegExp(`^${name}:[ \\t]*(.*)$`, 'm').exec(block);
     return match && match[1].trim() ? ownString(match[1].trim()) : null;
   };
+  const fromSessionId = field('from_session_id');
+  const fromProjectSessionId = field('from_project_session_id');
+  if (!fromSessionId && !fromProjectSessionId) return null;
   return {
-    fromSessionId: field('from_session_id'),
-    fromProjectSessionId: field('from_project_session_id'),
+    fromSessionId,
+    fromProjectSessionId,
     fromName: field('from_project_session_name') ?? field('from_display_name'),
     sourceToolCallId: field('source_tool_call_id'),
   };
@@ -45,7 +48,7 @@ export function recordUserMessage(state, data, at) {
   state.lastInboundAt = at;
   if (state.turn) state.turn.progressAt = at;
   const transformed = typeof data.transformedContent === 'string' ? data.transformedContent : '';
-  if (transformed.includes('<session_automation')) {
+  if (data.source === 'system' && transformed.includes('<session_automation')) {
     pushBounded(state.automation.wakes, at, LIMITS.wakes);
     addMark(state, at, 'monitor', 'PR monitor check');
     addFeed(state, at, 'monitor-check', 'PR monitor check');
@@ -69,7 +72,7 @@ export function recordToolStart(state, name, args, callId, at) {
     }, LIMITS.sent);
     countPrMentions(state, message, at);
   } else if (name === 'save_session_automation') {
-    const clear = args.clear === true;
+    const clear = args.clear === true || args.clear === 'true';
     const minutes = Number(args.every_minutes);
     const everyMinutes = Number.isFinite(minutes) && minutes > 0 ? Math.round(minutes) : null;
     pushBounded(state.automation.saves, { at, clear, everyMinutes, target: typeof args.session_id === 'string' ? args.session_id : null }, LIMITS.saves);

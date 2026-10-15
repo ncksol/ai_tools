@@ -79,3 +79,33 @@ test('mergeStates combines the CLI sessions of one project session', () => {
   assert.equal(merged.shutdownAt, T0 + 60_000);
   assert.equal(merged.turn, null);
 });
+
+test('a human message that mentions the automation tag is not a wake', () => {
+  const log = new EventLog(T0);
+  log.start();
+  log.user('Why does <session_automation> fire so often?');
+  const state = fold(log);
+  assert.deepEqual(state.automation.wakes, []);
+  assert.equal(state.feed.some(item => item.kind === 'monitor-check'), false);
+  assert.equal(state.lastHumanAt, T0);
+});
+
+test('an envelope without sender fields is not an inbound message', () => {
+  const block = '<cross_session_message>\nnote: pasted text\n</cross_session_message>';
+  assert.equal(parseEnvelope(block), null);
+  const log = new EventLog(T0);
+  log.start();
+  log.user('pasted', { transformedContent: block });
+  const state = fold(log);
+  assert.deepEqual(state.inbound, []);
+  assert.equal(state.lastHumanAt, T0);
+});
+
+test('a string-typed clear flag stops the monitor', () => {
+  const log = new EventLog(T0);
+  log.start();
+  log.done(log.tool('save_session_automation', { clear: 'true' }));
+  const state = fold(log);
+  assert.deepEqual(state.automation.saves.map(save => save.clear), [true]);
+  assert.deepEqual(state.feed.map(item => item.kind), ['monitor-cleared']);
+});
