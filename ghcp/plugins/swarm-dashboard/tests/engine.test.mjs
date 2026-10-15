@@ -1,11 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { createSwarmEngine } from '../engine/engine.mjs';
+import { createPrLookup } from '../engine/model/pr-lookup.mjs';
 import { validateRunListItem, validateRunSummary, validateSnapshot, validateSwarmListItem } from '../engine/schema.mjs';
 import { HOUR, MINUTE } from '../engine/time.mjs';
+import { CopilotHome } from './helpers/copilot-home.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { DAY, T0, alwaysAlive, at, scenario } from './helpers/scenario.mjs';
 import { tempDir } from './helpers/temp.mjs';
@@ -224,4 +226,105 @@ test('a finished run that is first requested through getRunSummary is written on
   assert.deepEqual(validateRunSummary(summary), []);
   assert.ok(existsSync(stored));
   assert.equal(readsAfterWrite, 0);
+});
+
+const readSummary = file => JSON.parse(readFileSync(file, 'utf8'));
+
+test('a resumed run returns to Live and leaves History', async () => {
+  const home = scenario();
+  const historyDir = path.join(tempDir('swarm-engine-'), 'history');
+  const stored = path.join(historyDir, 'runs', 'ws-old.json');
+  const lastEvent = T0 - 30 * DAY + MINUTE;
+  let clock = at(0);
+  const engine = createSwarmEngine({ copilotHome: home.root, historyDir, now: () => clock, processProbe: alwaysAlive, prLookup: 'off' });
+  const first = await engine.getRunSummary('ws-old');
+  assert.equal(first.finishedAt, lastEvent);
+  assert.ok(existsSync(stored));
+  assert.equal(engine.listSwarms().find(swarm => swarm.id === 'ws-old').lifecycle, 'finished');
+  assert.deepEqual((await engine.listHistory()).map(item => item.id), ['ws-old']);
+  const before = { text: readFileSync(stored, 'utf8'), ino: statSync(stored).ino };
+
+  const resumeAt = at(10);
+  const later = new EventLog(resumeAt);
+  later.turnStart();
+  home.writeEvents('cli-old', later.events, { append: true });
+  clock = at(15);
+  await engine.refresh();
+  assert.equal(engine.listSwarms().find(swarm => swarm.id === 'ws-old').lifecycle, 'live');
+  assert.deepEqual((await engine.listHistory()).map(item => item.id), []);
+  const live = await engine.getRunSummary('ws-old');
+  assert.deepEqual(validateRunSummary(live), []);
+  assert.equal(live.finishedAt, resumeAt);
+  assert.equal(live.computedAt, clock);
+  assert.deepEqual({ text: readFileSync(stored, 'utf8'), ino: statSync(stored).ino }, before);
+
+  clock = resumeAt + 2 * HOUR + MINUTE;
+  await engine.refresh();
+  assert.equal(engine.listSwarms().find(swarm => swarm.id === 'ws-old').lifecycle, 'finished');
+  const history = await engine.listHistory();
+  assert.deepEqual(history.map(item => [item.id, item.finishedAt]), [['ws-old', resumeAt]]);
+  assert.equal(readSummary(stored).finishedAt, resumeAt);
+  assert.equal((await engine.getRunSummary('ws-old')).finishedAt, resumeAt);
+});
+
+test('a tracked run that finished shows Live after one refresh when work resumes', async () => {
+  const home = scenario();
+  const lastEvent = T0 - 30 * DAY + MINUTE;
+  let clock = lastEvent + HOUR;
+  const engine = createSwarmEngine({
+    copilotHome: home.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => clock, processProbe: alwaysAlive, prLookup: 'off',
+  });
+  const lifecycleOf = () => engine.listSwarms().find(swarm => swarm.id === 'ws-old').lifecycle;
+  await engine.refresh();
+  assert.equal(lifecycleOf(), 'live');
+  clock = lastEvent + 2 * HOUR + MINUTE;
+  await engine.refresh();
+  assert.equal(lifecycleOf(), 'finished');
+  const resumeAt = lastEvent + 3 * HOUR;
+  const later = new EventLog(resumeAt);
+  later.turnStart();
+  home.writeEvents('cli-old', later.events, { append: true });
+  clock = resumeAt + MINUTE;
+  await engine.refresh();
+  assert.equal(lifecycleOf(), 'live');
+});
+
+test('a throwing log callback cannot break polling', async () => {
+  const home = scenario();
+  rmSync(home.storeDb, { force: true });
+  rmSync(`${home.storeDb}-wal`, { force: true });
+  rmSync(`${home.storeDb}-shm`, { force: true });
+  let calls = 0;
+  const engine = createSwarmEngine({
+    copilotHome: home.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => at(60), processProbe: alwaysAlive, prLookup: 'off',
+    log: () => { calls += 1; throw new Error('a broken logger'); },
+  });
+  await engine.refresh();
+  await engine.refresh();
+  assert.ok(calls > 0);
+  assert.ok(engine.diagnostics().some(item => item.source === 'session-store.db' && item.level === 'warn'));
+});
+
+test('a missing data.db keeps the last good app data and its revisions', async () => {
+  const home = scenario();
+  let clock = at(60);
+  const engine = createSwarmEngine({ copilotHome: home.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => clock, processProbe: alwaysAlive, prLookup: 'off' });
+  const before = (await engine.getSnapshot('ws-root')).revision;
+  const aside = path.join(tempDir('swarm-aside-'), 'moved');
+  mkdirSync(aside);
+  const suffixes = ['', '-wal', '-shm'];
+  for (const suffix of suffixes) if (existsSync(home.dataDb + suffix)) renameSync(home.dataDb + suffix, path.join(aside, `data.db${suffix}`));
+  await engine.refresh();
+  assert.ok(engine.listSwarms().some(swarm => swarm.id === 'ws-root'));
+  assert.ok(engine.diagnostics().some(item => item.source === 'data.db' && item.level === 'warn'));
+  const during = (await engine.getSnapshot('ws-root')).revision;
+  assert.ok(during >= before);
+  for (const suffix of suffixes) if (existsSync(path.join(aside, `data.db${suffix}`))) renameSync(path.join(aside, `data.db${suffix}`), home.dataDb + suffix);
+  const asking = new EventLog(at(61));
+  asking.turnStart();
+  home.writeEvents('cli-ui', asking.events, { append: true });
+  clock = at(62);
+  await engine.refresh();
+  assert.ok(engine.diagnostics().every(item => item.source !== 'data.db'));
+  assert.ok((await engine.getSnapshot('ws-root')).revision > during);
 });

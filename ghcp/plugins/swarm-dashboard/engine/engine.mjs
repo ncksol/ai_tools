@@ -59,7 +59,13 @@ export function createSwarmEngine(options = {}) {
   const now = options.now ?? Date.now;
   const thresholds = resolveThresholds(options.thresholds);
   const sqlite = { backend: options.sqlite ?? 'auto' };
-  const log = typeof options.log === 'function' ? options.log : () => {};
+  const log = item => {
+    try {
+      if (typeof options.log === 'function') options.log(item);
+    } catch {
+      // a failing logger must not break polling
+    }
+  };
   const probe = options.processProbe ?? createProcessProbe();
   const lookup = options.prLookup === 'off' ? null
     : options.prLookup && typeof options.prLookup === 'object' ? options.prLookup : createPrLookup({ now });
@@ -134,7 +140,8 @@ export function createSwarmEngine(options = {}) {
         }
       }
     }
-    const tracked = snapshots.get(root.id)?.snapshot ?? null;
+    const entry = snapshots.get(root.id);
+    const tracked = entry && entry.last === last ? entry.snapshot : null;
     const lifecycle = tracked ? tracked.run.lifecycle
       : knownFinished.get(root.id) === last ? 'finished'
         : recent || (runningFlag && alive) ? 'live' : 'finished';
@@ -230,7 +237,7 @@ export function createSwarmEngine(options = {}) {
         app = data;
         diag.push(...data.diagnostics);
       } else {
-        app = emptyApp();
+        app = app ?? emptyApp();
         diag.push({ level: 'warn', source: 'data.db', message: 'The Copilot app database was not found.' });
       }
     } catch (error) {
@@ -265,9 +272,10 @@ export function createSwarmEngine(options = {}) {
         if (entry && entry.hash === hash) {
           snapshot.revision = entry.revision;
           entry.snapshot = snapshot;
+          entry.last = cheapLast.get(rootId);
         } else {
           snapshot.revision = (entry?.revision ?? revisions.get(rootId) ?? 0) + 1;
-          snapshots.set(rootId, { snapshot, hash, revision: snapshot.revision });
+          snapshots.set(rootId, { snapshot, hash, revision: snapshot.revision, last: cheapLast.get(rootId) });
           revisions.set(rootId, snapshot.revision);
           changed.push(rootId);
         }
@@ -341,9 +349,10 @@ export function createSwarmEngine(options = {}) {
   async function listHistory() {
     if (!forest) await refresh();
     const items = new Map();
-    for (const summary of await history.list()) items.set(summary.id, listItemOf(summary));
+    const live = new Set(swarms.filter(swarm => swarm.lifecycle === 'live').map(swarm => swarm.id));
+    for (const summary of await history.list()) if (!live.has(summary.id)) items.set(summary.id, listItemOf(summary));
     for (const { snapshot } of snapshots.values()) {
-      if (snapshot.run.lifecycle === 'finished' && !items.has(snapshot.run.id)) {
+      if (snapshot.run.lifecycle === 'finished' && !live.has(snapshot.run.id) && !items.has(snapshot.run.id)) {
         items.set(snapshot.run.id, listItemOf(summarizeRun(snapshot, { computedAt: now() })));
       }
     }
@@ -359,6 +368,11 @@ export function createSwarmEngine(options = {}) {
   }
 
   async function getRunSummary(runId) {
+    if (!forest) await refresh();
+    if (swarms.some(swarm => swarm.id === runId && swarm.lifecycle === 'live')) {
+      const current = await getSnapshot(runId);
+      if (current?.run.lifecycle === 'live') return summarizeRun(current, { computedAt: now() });
+    }
     const stored = await history.get(runId);
     if (stored) return stored;
     const snapshot = await getSnapshot(runId);
