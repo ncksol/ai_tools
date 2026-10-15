@@ -164,19 +164,22 @@ function readRegistry(input, root) {
     const id = resolveNodeId(input.forest, row.sessionId);
     if (id && id !== root.id) byNode.set(id, row);
   }
-  return { present: sets.length > 0, rows: units, byNode, invalid };
+  return { present: units.size > 0, rows: units, byNode, invalid };
 }
 
 function assignLabels(root, nodes, registry) {
   const labels = new Map([[root.id, initials(root.name)]]);
   const derived = deriveLabels(nodes.map(node => node.name));
   const used = new Set();
-  nodes.forEach((node, index) => {
-    const base = registry.byNode.get(node.id)?.unit ?? derived[index];
+  const give = (node, base) => {
     let label = base;
     for (let n = 2; used.has(label.toLowerCase()); n += 1) label = `${base}-${n}`;
     used.add(label.toLowerCase());
     labels.set(node.id, label);
+  };
+  for (const node of nodes) if (registry.byNode.has(node.id)) give(node, registry.byNode.get(node.id).unit);
+  nodes.forEach((node, index) => {
+    if (!registry.byNode.has(node.id)) give(node, derived[index]);
   });
   return labels;
 }
@@ -190,15 +193,17 @@ function sessionView(input, c, label, evaluation, report, title, extraMarks, out
   const openTool = current && current.openTools.size ? [...current.openTools.values()].sort((a, b) => a.startedAt - b.startedAt)[0] : null;
   const tool = evaluation.tool ?? (openTool ? toolView(openTool, toolLimitMs(openTool, thresholds)) : null);
   const openWaits = current ? [...current.waits.values()] : [];
-  const busy = [...all.busySpans, ...(current?.turn ? [[current.turn.startedAt, now]] : [])];
-  const waits = [...all.waitSpans, ...openWaits.map(wait => [wait.startedAt, now, wait.kind])];
+  const clockEnd = endedAt === null ? now : Math.min(now, endedAt);
+  const openEnd = start => Math.max(start, clockEnd);
+  const busy = [...all.busySpans, ...(current?.turn ? [[current.turn.startedAt, openEnd(current.turn.startedAt)]] : [])];
+  const waits = [...all.waitSpans, ...openWaits.map(wait => [wait.startedAt, openEnd(wait.startedAt), wait.kind])];
   return {
     id: node.id, kind: node.kind, label, name: title ?? node.name ?? '', cliSessionIds: [...node.cliSessionIds],
     branch: node.branch ?? null, model: current?.model ?? c.sessionRow?.model ?? all.model ?? null,
     status, statusDetail: evaluation.detail, bucket, since: evaluation.since, reason: evaluation.reason,
     startedAt, endedAt, lastEventAt: all.lastEventAt,
-    busyMs: Math.max(0, Math.round(all.busyMs + (current?.turn ? now - current.turn.startedAt : 0))),
-    waitingOnUserMs: Math.max(0, Math.round(all.waitingMs + openWaits.reduce((sum, wait) => sum + (now - wait.startedAt), 0))),
+    busyMs: Math.max(0, Math.round(all.busyMs + (current?.turn ? openEnd(current.turn.startedAt) - current.turn.startedAt : 0))),
+    waitingOnUserMs: Math.max(0, Math.round(all.waitingMs + openWaits.reduce((sum, wait) => sum + (openEnd(wait.startedAt) - wait.startedAt), 0))),
     alive: c.alive,
     cost: { credits: credits(c.cost.nanoAiu), calls: c.cost.calls },
     activity: { label: activityLabel(evaluation.detail, tool, current), tool, lastEventAt: all.lastEventAt },
@@ -348,6 +353,7 @@ function buildNeeds(contexts, rootId, labels, flags) {
   const labelIndex = new Map([...labels].filter(([id]) => id !== rootId).map(([id, label]) => [label.toLowerCase(), id]));
   const needs = [];
   for (const [id, c] of contexts) {
+    if (c.alive === false || (c.node.archivedAt !== null && c.node.archivedAt !== undefined)) continue;
     for (const wait of c.current ? c.current.waits.values() : []) {
       const tag = wait.kind === 'question' ? parseQuestionTag(wait.text) : null;
       if (tag) flags.questionTags = true;
@@ -365,12 +371,16 @@ function buildNeeds(contexts, rootId, labels, flags) {
   return needs.sort((a, b) => a.since - b.since);
 }
 
-function buildFeed(contexts, labels, extraFeed) {
+function buildFeed(contexts, labels, extraFeed, flags) {
   const items = [...extraFeed];
   for (const [id, c] of contexts) {
     for (const item of c.all.feed) {
       let text = item.text;
-      if (item.kind === 'question' && text.startsWith('asked: ')) text = `asked: ${parseQuestionTag(text.slice(7))?.text ?? text.slice(7)}`;
+      if (item.kind === 'question' && text.startsWith('asked: ')) {
+        const tag = parseQuestionTag(text.slice(7));
+        if (tag) flags.questionTags = true;
+        text = `asked: ${tag?.text ?? text.slice(7)}`;
+      }
       items.push({ id: `${id}:${item.kind}:${item.source}`, at: item.at, unitId: id, label: labels.get(id), kind: item.kind, text });
     }
   }
@@ -444,7 +454,7 @@ export function buildSnapshot(input) {
   const stalled = lifecycle === 'live'
     ? swarmStalled({ orchestratorDetail: orchestrator.statusDetail, unitDetails: units.map(unit => unit.statusDetail), monitorDue, lastActivityAt })
     : null;
-  const { feed, recent } = buildFeed(contexts, labels, extraFeed);
+  const { feed, recent } = buildFeed(contexts, labels, extraFeed, flags);
   for (const view of [orchestrator, ...units]) view.recent = recent.get(view.id) ?? [];
 
   return {

@@ -241,3 +241,53 @@ test('timeline segments merge short gaps and show waits and a live stuck tail', 
     { start: at(50), end: null, state: 'stuck' },
   ]);
 });
+
+test('a session whose process is gone stops counting time, and its open questions leave the needs', () => {
+  const data = input(true);
+  data.alive.set('cli-root', false);
+  const early = buildSnapshot(data);
+  const late = buildSnapshot({ ...data, now: data.now + 24 * HOUR });
+  assert.equal(early.orchestrator.endedAt, early.orchestrator.lastEventAt);
+  assert.equal(late.orchestrator.endedAt, late.orchestrator.lastEventAt);
+  assert.ok(early.orchestrator.busyMs >= 0);
+  assert.equal(late.orchestrator.busyMs, early.orchestrator.busyMs);
+  assert.equal(late.orchestrator.waitingOnUserMs, early.orchestrator.waitingOnUserMs);
+  assert.deepEqual(early.needs, []);
+  assert.deepEqual(late.needs, []);
+});
+
+test('an empty registry table keeps the heuristics', () => {
+  const plain = buildSnapshot(input(false));
+  const data = input(false);
+  data.sessionDbs.get('cli-root').children = [];
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(snapshot.planned, plain.planned);
+  assert.deepEqual(snapshot.units.map(unit => unit.todoId), plain.units.map(unit => unit.todoId));
+  assert.equal(snapshot.run.contract.registry, false);
+});
+
+test('answered tagged questions still count as contract use', () => {
+  const data = input(true);
+  const root = new EventLog(T0);
+  root.start();
+  root.at(at(100));
+  root.turnStart();
+  const question = root.ask('[unit=api need=pr] Publish PR !4711?');
+  root.at(at(101));
+  root.done(question, { result: 'Yes, publish it.' });
+  data.states.set('cli-root', fold(root, 'cli-root'));
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(snapshot.needs, []);
+  assert.equal(snapshot.run.contract.questionTags, true);
+});
+
+test('registry labels are assigned before derived labels', () => {
+  const data = input(true);
+  const rows = data.sessionDbs.get('cli-root').children
+    .filter(row => row.unit !== 'api')
+    .map(row => (row.unit === 'ui' ? { ...row, unit: 'a1' } : row));
+  data.sessionDbs.get('cli-root').children = rows;
+  const snapshot = buildSnapshot(data);
+  assert.equal(snapshot.units.find(unit => unit.id === 'ws-ui').label, 'a1');
+  assert.equal(snapshot.units.find(unit => unit.id === 'ws-api').label, 'a1-2');
+});
