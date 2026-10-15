@@ -89,3 +89,38 @@ test('a PR without a repository is looked up only from an existing worktree', as
   assert.equal(lookup.get({ provider: 'ado', id: 7, repo: null }).state, 'unknown');
   assert.match(lookup.get({ provider: 'ado', id: 7, repo: null }).error, /worktree is gone/);
 });
+
+test('a registry repository that is not organization/project/repo adds no organization and keeps the worktree fallback', async () => {
+  const pr = { provider: 'ado', id: 42, repo: 'project/repo' };
+  assert.deepEqual(adoArgs(pr), ['repos', 'pr', 'show', '--id', '42', '--output', 'json']);
+  const calls = [];
+  const lookup = createPrLookup({
+    run: async (command, args, options) => { calls.push([args, options.cwd]); return '{"status":"active"}'; },
+    exists: () => true,
+  });
+  lookup.request(pr, { cwd: '/synthetic/worktree' });
+  await lookup.settle();
+  assert.deepEqual(calls, [[['repos', 'pr', 'show', '--id', '42', '--output', 'json'], '/synthetic/worktree']]);
+});
+
+test('pending is true from the request until its lookup resolves or fails', async () => {
+  const gates = [];
+  const run = () => new Promise((resolve, reject) => gates.push({ resolve, reject }));
+  const lookup = createPrLookup({ run });
+  const first = { provider: 'github', id: 1, repo: 'o/r' };
+  const second = { provider: 'github', id: 2, repo: 'o/r' };
+  const third = { provider: 'github', id: 3, repo: 'o/r' };
+  assert.equal(lookup.pending(first), false);
+  for (const pr of [first, second, third]) lookup.request(pr);
+  assert.deepEqual([first, second, third].map(pr => lookup.pending(pr)), [true, true, true]);
+  gates[0].resolve('{"state":"OPEN"}');
+  gates[1].reject(new Error('gh failed'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual([first, second].map(pr => lookup.pending(pr)), [false, false]);
+  assert.equal(lookup.pending(third), true);
+  gates[2].resolve('{"state":"MERGED"}');
+  await lookup.settle();
+  assert.equal(lookup.pending(third), false);
+  assert.equal(lookup.get(second).error, 'gh failed');
+  assert.equal(lookup.pending(null), false);
+});

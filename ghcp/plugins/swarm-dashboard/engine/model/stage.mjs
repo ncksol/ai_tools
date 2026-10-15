@@ -7,7 +7,7 @@ export function hostOf(workspaceFile, project) {
   if (workspaceFile?.hostType === 'ado') return { provider: 'ado', repo: repository && ADO_REPO.test(repository) ? repository : null };
   if (workspaceFile?.hostType === 'github') return { provider: 'github', repo: repository && GITHUB_REPO.test(repository) ? repository : null };
   if (project?.githubOwner && project?.githubRepo) return { provider: 'github', repo: `${project.githubOwner}/${project.githubRepo}` };
-  return { provider: project ? 'ado' : null, repo: null };
+  return { provider: null, repo: null };
 }
 
 /** Most-mentioned PR in the unit's reports, for Azure DevOps hosts only (design section 12). */
@@ -33,7 +33,9 @@ function bestMention(mentions, host) {
 export function resolvePr({ registry = null, statusLines = [], createdPr = null, mentions = new Map(), host = null } = {}) {
   const repoFor = provider => (host?.provider === provider ? host.repo : null);
   if (registry?.prProvider && registry.prId) {
-    return { provider: registry.prProvider, id: registry.prId, repo: registry.prRepo ?? repoFor(registry.prProvider), url: registry.prUrl ?? null, source: 'registry', knownAt: null };
+    const valid = registry.prProvider === 'ado' ? ADO_REPO : registry.prProvider === 'github' ? GITHUB_REPO : null;
+    const repo = valid && typeof registry.prRepo === 'string' && valid.test(registry.prRepo) ? registry.prRepo : repoFor(registry.prProvider);
+    return { provider: registry.prProvider, id: registry.prId, repo, url: registry.prUrl ?? null, source: 'registry', knownAt: null };
   }
   const line = statusLines.find(item => item.pr);
   if (line) {
@@ -76,14 +78,14 @@ export function deriveStage({ archivedAt = null, outcome = null, pr = null, moni
 }
 
 /** Monitor state from the unit's automation rows and its wake and schedule history (builder decision 8). */
-export function deriveMonitor({ stage, hasPr, automations = [], wakes = [], saves = [], prKnownAt = null, now, thresholds }) {
+export function deriveMonitor({ stage, hasPr, closedWithoutMerge = false, automations = [], wakes = [], saves = [], prKnownAt = null, now, thresholds }) {
   const lastWake = wakes.length ? wakes[wakes.length - 1] : null;
   const row = [...automations].sort((a, b) => (b.nextRunAt ?? 0) - (a.nextRunAt ?? 0))[0] ?? null;
   const lastSave = saves.length ? saves[saves.length - 1] : null;
   const everyMinutes = row?.everyMinutes ?? (lastSave && !lastSave.clear ? lastSave.everyMinutes : null);
   const lastCheckAt = maxTime(row?.lastRunAt ?? null, lastWake);
   const view = (state, extra = {}) => ({ state, lastCheckAt, nextCheckAt: row?.nextRunAt ?? null, everyMinutes, since: null, ...extra });
-  if (stage === 'merged' || stage === 'archived') return view(hasPr ? 'ended' : 'none', { nextCheckAt: null });
+  if (stage === 'merged' || stage === 'archived' || closedWithoutMerge) return view(hasPr ? 'ended' : 'none', { nextCheckAt: null });
   if (row && row.pausedAt !== null && row.pausedAt !== undefined) return view('paused', { since: row.pausedAt });
   if (row) {
     if (row.nextRunAt !== null && row.nextRunAt !== undefined && row.nextRunAt < now - thresholds.monitorGraceMs) return view('missing', { since: row.nextRunAt });

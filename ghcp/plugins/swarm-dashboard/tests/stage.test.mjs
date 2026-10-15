@@ -7,6 +7,17 @@ import { MINUTE } from '../engine/time.mjs';
 const T0 = Date.UTC(2026, 9, 15, 8, 0, 0);
 const mention = (provider, repo, id, count, at = T0) => [`${provider ?? 'any'}:${repo ?? ''}:${id}`, { provider, repo, id, count, firstAt: at, lastAt: at }];
 
+test('a registry repository is kept only when it is valid for its provider', () => {
+  const registry = (prProvider, prRepo) => ({ prProvider, prId: 42, prRepo, prUrl: null });
+  const adoHost = { provider: 'ado', repo: 'org/project/repo' };
+  assert.equal(resolvePr({ registry: registry('ado', 'project/repo'), host: adoHost }).repo, 'org/project/repo');
+  assert.equal(resolvePr({ registry: registry('ado', 'project/repo'), host: { provider: 'ado', repo: null } }).repo, null);
+  assert.equal(resolvePr({ registry: registry('ado', 'project/repo'), host: { provider: 'github', repo: 'sample-org/sample-repo' } }).repo, null);
+  assert.equal(resolvePr({ registry: registry('ado', 'org/project/other'), host: adoHost }).repo, 'org/project/other');
+  assert.equal(resolvePr({ registry: registry('github', 'org/project/repo'), host: { provider: 'github', repo: 'sample-org/sample-repo' } }).repo, 'sample-org/sample-repo');
+  assert.equal(resolvePr({ registry: registry('github', 'sample-org/sample-repo'), host: null }).repo, 'sample-org/sample-repo');
+});
+
 test('PR identity follows the contract order', () => {
   const registry = { prProvider: 'ado', prId: 4711, prRepo: 'org/project/repo', prUrl: 'https://dev.azure.com/org/project/_git/repo/pullrequest/4711' };
   const statusLines = [{ at: T0 + 2, pr: { provider: 'github', id: 7 } }, { at: T0 + 1, pr: { provider: 'github', id: 7 } }];
@@ -33,7 +44,8 @@ test('the code host comes from workspace.yaml, else from the project', () => {
   assert.deepEqual(hostOf({ hostType: 'github', repository: 'sample-org/sample-repo' }, null), { provider: 'github', repo: 'sample-org/sample-repo' });
   assert.deepEqual(hostOf({ hostType: 'ado', repository: '--evil' }, null), { provider: 'ado', repo: null });
   assert.deepEqual(hostOf(null, { githubOwner: 'sample-org', githubRepo: 'sample-repo' }), { provider: 'github', repo: 'sample-org/sample-repo' });
-  assert.deepEqual(hostOf({ cwd: '/synthetic/worktree', hostType: null, repository: null }, { githubOwner: null, githubRepo: null }), { provider: 'ado', repo: null });
+  assert.deepEqual(hostOf({ cwd: '/synthetic/worktree', hostType: null, repository: null }, { githubOwner: null, githubRepo: null }), { provider: null, repo: null });
+  assert.deepEqual(hostOf(null, { githubOwner: null, githubRepo: null }), { provider: null, repo: null });
   assert.deepEqual(hostOf(null, null), { provider: null, repo: null });
 });
 
@@ -78,4 +90,14 @@ test('monitors are alive, missing, paused, ended or none', () => {
   assert.equal(deriveMonitor({ ...base, stage: 'coding', hasPr: false }).state, 'none');
   assert.equal(deriveMonitor({ ...base, stage: 'merged' }).state, 'ended');
   assert.equal(deriveMonitor({ ...base, stage: 'archived', hasPr: false }).state, 'none');
+});
+
+test('a PR closed without merge ends its monitor, with no stage change', () => {
+  const base = { hasPr: true, automations: [], wakes: [], saves: [], prKnownAt: T0, now: T0 + 60 * MINUTE, thresholds: DEFAULT_THRESHOLDS };
+  const row = { sessionId: 'cli-1', interval: 'minutes', everyMinutes: 10, lastRunAt: T0 + 55 * MINUTE, nextRunAt: T0 + 65 * MINUTE, pausedAt: null, name: 'PR monitor' };
+  assert.deepEqual(deriveMonitor({ ...base, stage: 'pr_open', closedWithoutMerge: true }),
+    { state: 'ended', lastCheckAt: null, nextCheckAt: null, everyMinutes: null, since: null });
+  assert.deepEqual(deriveMonitor({ ...base, stage: 'in_review', closedWithoutMerge: true, automations: [row] }).nextCheckAt, null);
+  assert.equal(deriveMonitor({ ...base, stage: 'coding', hasPr: false, closedWithoutMerge: true }).state, 'none');
+  assert.equal(deriveMonitor({ ...base, stage: 'pr_open', closedWithoutMerge: false }).state, 'missing');
 });

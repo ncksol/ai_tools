@@ -256,7 +256,7 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
   const monitorEver = automations.length > 0 || c.all.automation.wakes.length > 0 || c.all.automation.saves.some(save => !save.clear);
   const { stage, merged, closedWithoutMerge } = deriveStage({ archivedAt: node.archivedAt, outcome: row?.outcome ?? null, pr, monitorEver });
   const monitor = deriveMonitor({
-    stage, hasPr: Boolean(pr), automations, wakes: c.all.automation.wakes, saves: c.all.automation.saves,
+    stage, hasPr: Boolean(pr), closedWithoutMerge, automations, wakes: c.all.automation.wakes, saves: c.all.automation.saves,
     prKnownAt: pr?.openedAt ?? identity?.knownAt ?? null, now: input.now, thresholds: input.thresholds,
   });
   const evaluation = evaluateStatus({

@@ -4,7 +4,6 @@ import { MINUTE, parseTime } from '../time.mjs';
 
 export const GITHUB_REPO = /^[A-Za-z0-9][\w.-]*\/[\w.-]+$/;
 export const ADO_REPO = /^[A-Za-z0-9][\w.-]*\/[^/\r\n]+\/[^/\r\n]+$/;
-const ADO_ORG = /^[A-Za-z0-9][\w.-]*$/;
 const EMPTY_INFO = Object.freeze({ state: 'unknown', title: null, openedAt: null, mergedAt: null, closedAt: null, reviewNote: null, url: null });
 
 export function runCommand(command, args, { cwd, timeoutMs }) {
@@ -23,10 +22,7 @@ export function runCommand(command, args, { cwd, timeoutMs }) {
 
 export const prKey = pr => `${pr.provider}:${pr.repo ?? ''}:${pr.id}`;
 
-const adoOrg = pr => {
-  const org = pr.repo ? pr.repo.split('/')[0] : null;
-  return org && ADO_ORG.test(org) ? org : null;
-};
+const adoOrg = pr => (typeof pr.repo === 'string' && ADO_REPO.test(pr.repo) ? pr.repo.split('/')[0] : null);
 
 export function adoArgs(pr) {
   const args = ['repos', 'pr', 'show', '--id', String(pr.id), '--output', 'json'];
@@ -122,6 +118,7 @@ export function createPrLookup({ run = runCommand, now = Date.now, ttlMs = 5 * M
   return {
     get: pr => cache.get(prKey(pr)) ?? null,
     request,
+    pending: pr => Boolean(pr) && inflight.has(prKey(pr)),
     settle: () => (active || queue.length ? new Promise(resolve => waiters.push(resolve)) : Promise.resolve()),
     errors: () => [...cache].filter(([, info]) => info.error).map(([key, info]) => ({ key, error: info.error })),
   };

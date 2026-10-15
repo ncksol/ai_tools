@@ -291,3 +291,27 @@ test('registry labels are assigned before derived labels', () => {
   assert.equal(snapshot.units.find(unit => unit.id === 'ws-ui').label, 'a1');
   assert.equal(snapshot.units.find(unit => unit.id === 'ws-api').label, 'a1-2');
 });
+
+test('an unarchived unit whose PR was closed has an ended monitor', () => {
+  const data = input(true);
+  const lookup = data.prInfo;
+  data.prInfo = (pr, options) => (pr.provider === 'ado' && pr.id === 4711
+    ? { state: 'closed', title: 'API', openedAt: at(29), mergedAt: null, closedAt: at(100), reviewNote: null, url: null, checkedAt: at(115), error: null }
+    : lookup(pr, options));
+  const api = buildSnapshot(data).units.find(unit => unit.id === 'ws-api');
+  assert.equal(api.closedWithoutMerge, true);
+  assert.equal(api.stage, 'pr_open');
+  assert.equal(api.monitor.state, 'ended');
+  assert.equal(api.monitor.nextCheckAt, null);
+});
+
+test('a unit on an unknown code host gets no PR from mentions', () => {
+  const data = input(false);
+  assert.equal(buildSnapshot(data).units[0].pr.source, 'heuristic');
+  data.workspaceFiles.set('cli-api', { cwd: '/synthetic/worktrees/api', branch: 'feature/api', hostType: null, repository: null });
+  data.requests.length = 0;
+  const [api] = buildSnapshot(data).units;
+  assert.equal(api.pr, null);
+  assert.equal(api.stage, 'coding');
+  assert.equal(data.requests.length, 0);
+});
