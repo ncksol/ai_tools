@@ -31,6 +31,32 @@ test('the example snapshot shows the main states and consistent counts', () => {
   assert.equal(Math.round(total * 10) / 10, snapshot.cost.credits);
 });
 
+test('the example snapshot is internally consistent', () => {
+  const snapshot = fixture('example-snapshot.json');
+  const children = new Map();
+  for (const unit of snapshot.units) children.set(unit.parentId, [...(children.get(unit.parentId) ?? []), unit]);
+  const order = [];
+  const walk = id => {
+    for (const unit of [...(children.get(id) ?? [])].sort((a, b) => a.startedAt - b.startedAt)) {
+      order.push(unit.id);
+      walk(unit.id);
+    }
+  };
+  walk(snapshot.orchestrator.id);
+  assert.deepEqual(snapshot.units.map(unit => unit.id), order, 'units are depth-first by creation time');
+  const sum = values => Math.round(values.reduce((total, value) => total + value, 0) * 10) / 10;
+  const sessions = [snapshot.orchestrator, ...snapshot.units];
+  assert.equal(sum(snapshot.cost.byModel.map(entry => entry.credits)), snapshot.cost.credits);
+  assert.equal(sum(snapshot.cost.byModel.map(entry => entry.calls)), sum(sessions.map(session => session.cost.calls)));
+  assert.equal(snapshot.cost.maxUnitCredits, Math.max(...snapshot.units.map(unit => unit.cost.credits)));
+  const { series } = snapshot.cost;
+  series.forEach((point, index) => {
+    assert.equal(point.at % (5 * 60 * 1000), 0, `series[${index}] starts a 5-minute bucket`);
+    if (index) assert.ok(point.credits >= series[index - 1].credits, `series[${index}] is cumulative`);
+  });
+  assert.equal(series[series.length - 1].credits, snapshot.cost.credits);
+});
+
 test('the validator reports missing, unexpected and invalid fields with their paths', () => {
   const snapshot = fixture('example-snapshot.json');
   delete snapshot.units[0].stage;
