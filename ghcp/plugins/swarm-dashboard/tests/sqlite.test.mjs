@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFileSync, existsSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
@@ -158,6 +158,13 @@ test('openTarget follows the decision table for WAL databases', { skip: !canWrit
   assert.equal(openTarget(empty).immutable, true);
   rmSync(`${empty}-wal`);
   assert.equal(openTarget(empty).immutable, true);
+  writeFileSync(`${empty}-shm`, '');
+  assert.equal(openTarget(empty).immutable, true, 'a missing -wal is immutable whatever the -shm');
+  writeFileSync(`${empty}-wal`, '');
+  assert.deepEqual(openTarget(empty), { target: empty, immutable: false, live: true });
+  rmSync(`${empty}-shm`);
+  assert.equal(openTarget(empty).immutable, true, 'an empty -wal with no -shm is immutable');
+  assert.deepEqual(openTarget(rollback), { target: rollback, immutable: false });
   writeFileSync(`${withData}-shm`, '');
   assert.deepEqual(openTarget(withData), { target: withData, immutable: false, live: true });
 });
@@ -239,6 +246,17 @@ test('the reader takes the immutable path only for a missing or empty -wal', { s
         writeFileSync(`${emptyWal}-wal`, '');
         assert.deepEqual((await reader.read(emptyWal, values)).map(row => row.v), ['w']);
         assert.equal(reader.lastPath, 'immutable');
+        const shmOnly = path.join(folder, 'shm-only.db');
+        copyFileSync(closedWal, shmOnly);
+        writeFileSync(`${shmOnly}-shm`, '');
+        assert.deepEqual((await reader.read(shmOnly, values)).map(row => row.v), ['w']);
+        assert.equal(reader.lastPath, 'immutable', 'a missing -wal is immutable whatever the -shm');
+        const emptyWithShm = path.join(folder, 'empty-wal-shm.db');
+        copyFileSync(closedWal, emptyWithShm);
+        writeFileSync(`${emptyWithShm}-wal`, '');
+        writeFileSync(`${emptyWithShm}-shm`, '');
+        assert.deepEqual((await reader.read(emptyWithShm, values)).map(row => row.v), ['w']);
+        assert.equal(reader.lastPath, backend === 'node' ? 'live' : 'plain', 'an empty -wal with a -shm is a live database');
         const noShm = walDataWithoutShm(`reader-${backend}`);
         await assert.rejects(reader.read(noShm, values), UnsafeReadError);
         const live = path.join(folder, 'live.db');
@@ -255,6 +273,41 @@ test('the reader takes the immutable path only for a missing or empty -wal', { s
         reader.close();
       }
     });
+  }
+});
+
+test('a live writer with an empty log keeps the locked read path, and the connection survives a checkpoint', { skip: !canWriteWithNode }, async () => {
+  const folder = tempDir('swarm-empty-log-');
+  const file = path.join(folder, 'live.db');
+  const writer = openWriter(file);
+  const reader = createSqliteReader({ backend: 'node' });
+  try {
+    writer.exec(`${SCHEMA} INSERT INTO t (v) VALUES ('first');`);
+    assert.equal(writer.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get().busy, 0);
+    assert.equal(statSync(`${file}-wal`).size, 0);
+    assert.equal(existsSync(`${file}-shm`), true);
+    for (const backend of backends) {
+      const db = await openReadOnly(file, { backend });
+      try {
+        assert.equal(db.immutable, false, `${backend}: the one-shot helper uses the plain path`);
+        assert.deepEqual((await values(db)).map(row => row.v), ['first']);
+      } finally {
+        db.close();
+      }
+    }
+    assert.deepEqual((await reader.read(file, values)).map(row => row.v), ['first']);
+    assert.equal(reader.lastPath, 'live');
+    writer.exec("INSERT INTO t (v) VALUES ('second');");
+    assert.equal(writer.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get().busy, 0);
+    assert.equal(statSync(`${file}-wal`).size, 0);
+    writer.exec("INSERT INTO t (v) VALUES ('third');");
+    assert.deepEqual((await reader.read(file, values)).map(row => row.v), ['first', 'second', 'third']);
+    assert.equal(reader.opened, 1);
+    assert.equal(reader.openConnections, 1);
+    assert.deepEqual(names(folder), ['live.db', 'live.db-shm', 'live.db-wal']);
+  } finally {
+    reader.close();
+    writer.close();
   }
 });
 

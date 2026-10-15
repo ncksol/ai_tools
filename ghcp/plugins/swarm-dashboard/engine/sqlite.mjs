@@ -58,20 +58,24 @@ export function inspectDatabase(file) {
   }
 }
 
+/** Size of a file in bytes, or null when it does not exist. */
 function sizeOf(file) {
   try {
     return statSync(file).size;
   } catch {
-    return 0;
+    return null;
   }
 }
 
 /**
  * How to open a database without side effects.
  * - Rollback journal: a plain read-only open.
- * - WAL with a missing or empty -wal: the main file holds every committed row, so it is read through the immutable=1 URI
- *   (a plain open would create -wal and -shm beside it).
- * - WAL with data in -wal and a -shm file: a plain read-only open (`live: true`; createSqliteReader holds one connection).
+ * - WAL with a missing -wal: the main file holds every committed row, so it is read through the immutable=1 URI
+ *   (a plain open would create -wal and -shm beside it), whatever the -shm.
+ * - WAL with a -wal (any size) and a -shm file: a writer or reader holds the database, so it takes the locked path: a plain
+ *   read-only open (`live: true`; createSqliteReader holds one connection). An immutable read takes no lock and could see
+ *   torn pages if that writer writes and checkpoints during the read.
+ * - WAL with an empty -wal and no -shm file: immutable=1.
  * - WAL with data in -wal and no -shm file: immutable mode would silently drop the committed rows in the -wal, and a plain
  *   open would create side files, so it throws UnsafeReadError.
  */
@@ -79,8 +83,11 @@ export function openTarget(file) {
   const info = inspectDatabase(file);
   if (!info || !info.sqlite) return null;
   if (!info.wal) return { target: file, immutable: false };
-  if (sizeOf(`${file}-wal`) === 0) return { target: `${pathToFileURL(file).href}?immutable=1`, immutable: true };
+  const walSize = sizeOf(`${file}-wal`);
+  const immutable = { target: `${pathToFileURL(file).href}?immutable=1`, immutable: true };
+  if (walSize === null) return immutable;
   if (existsSync(`${file}-shm`)) return { target: file, immutable: false, live: true };
+  if (walSize === 0) return immutable;
   throw new UnsafeReadError(`${path.basename(file)}: its write-ahead log has data but no shared-memory file, so it cannot be read safely now.`);
 }
 
