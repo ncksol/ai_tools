@@ -72,7 +72,7 @@ Limit: the app renders canvases in WKWebView (the app is built on Tauri: its bin
 - From PR 1 (`0ddae04`): `FeedItem.id` and `NeedItem.id` (opaque, unique within each list, the same for the same item everywhere) key animations; `SessionView.recent` (up to 6, latest first, possibly empty) feeds the detail panel's Recent activity; `findSwarm(sessionId): Promise<string|null>` picks the canvas's swarm; `endedAt` is the outcome time for units with an outcome. Until PR 1's real engine lands, `unitEnd()` keeps a fallback to the PR's merge or close time; Task 20 removes it.
 - `getSnapshot()` without an id returns the most recently active live swarm, else the most recently active swarm, else null. When the page did not ask for a specific swarm and the snapshot is finished, Live shows an empty state that links to that run's summary.
 - a. A `progress` report badge in busy ink on a 12% tint, labelled "progress".
-- b. With two or more live swarms, a small select in the top bar beside Live/History; the choice is remembered.
+- b. With two or more live swarms, a small select in the top bar beside Live/History; the choice is remembered. (After the final review: a picked or remembered swarm applies only while it is live, and the picker also appears when the page shows a swarm that has ended while another is live. See Final review fixes.)
 - c. A stalled swarm (`run.stalled`) is the first Needs you item, in stuck colours, naming the rule that fired and how long it has been stalled.
 - d. The light palette whatever the host theme; fonts from the host's `--font-sans`, with fallbacks.
 - e. Warn-level diagnostics: a muted "1 data warning" at the top right, with details on hover.
@@ -6724,6 +6724,18 @@ Expected: both print nothing (the plan under `docs/` is left out because it quot
 
 Push the branch under the coordinator's push rules (as the owner's account, with a token for the push command only; `--force-with-lease` is approved until the pull request opens). Send the coordinator: the commands above and their results; `npm run check:layout` on the example and stress scenarios at every width (its summary lines); the `--live` run against the real engine (counts, issues and update times only); the update time per render on the demo and on real data; the in-app screenshots from Task 17 (paths on this machine, not committed); the public-repo scan from Step 4; and the repository, branch and pushed SHA. Do not open a pull request until the coordinator says so.
 
+## Final review fixes
+
+The whole-branch review after Task 21 found no Critical issue. One fix wave followed, with a scoped re-review; the code then differs from the task code above in these places:
+
+- Swarm choice (decision b): a swarm named in the address always applies; one picked in the picker or remembered from an earlier visit applies only while it is live (`staleChoice` in `ui/app.mjs`, used by `ui/main.mjs`). A page that asked for no swarm follows the default again once its swarm is no longer live while another is (`server/hub.mjs`); session pages keep their session's swarm. The picker also appears when the page shows a swarm that has ended while another is live, and the empty state then says "Swarm finished".
+- Server: pages hear `hello` before anything else; a HEAD request for `/api/events` opens no connection; an engine dropped while a read ran is stopped again; tests assert `engine.stop()` on the idle drop, on close and in the canvas host.
+- Canvas host: a canvas is counted before its server starts, so a close or `dispose()` during `open()` is not lost, and a server bound by the watchdog after the last close gets its grace timer.
+- Sample data never mixes with real data: `/api/health` reports `demo`; the launcher reuses only a dashboard with the same data and otherwise exits 1 with a hint to use `--port`; a canvas refuses a sample-data dashboard on the port.
+- Views: the sub-agent pill word is escaped (a test renders every view from hostile text); the header counts are a labelled group; unknown statuses sort last; clocks of a finished run stop at its end (`runEnd`, `unitEnd(session, snapshot)`); an empty report title reads "Untitled report"; the scroll position is restored only when it moved; a slow run summary cannot replace the one shown; `html { scrollbar-gutter: stable; }` keeps classic scrollbars from switching layouts; the history legend names failed units.
+- Layout check: the live-update phase opens the page at 1440 × 600, reports re-created activity items, and names any check it could not measure (an error on the synthetic run); `DASHBOARD_FILES` includes the self-test pages.
+- Docs: the only network requests are read-only `gh` and `az` queries; the port is 7927 by default; the stalled-child stuck rule; the port and sample-data messages; a demo beside your own dashboard needs `--port`.
+
 ## Self-review
 
 Spec coverage, by the spec section that sets each requirement:
@@ -6759,7 +6771,7 @@ Type consistency, checked across tasks: `createDashboardServer({ createEngine, h
 
 Known limits, also reported to the coordinator:
 - The layout check runs in Chrome; the app's panel is WebKit. Task 17's in-app check covers the difference.
-- Browsers allow about six open connections per site, and every dashboard page holds one. Pages free theirs when hidden or cached, but more than about six open dashboard pages at once make later ones wait (plugin README, Troubleshooting).
+- Browsers allow about six open connections per site, and every dashboard page holds one. Pages free theirs when unloaded or kept in the back-forward cache, but more than about six open dashboard pages at once make later ones wait (plugin README, Troubleshooting).
 - The extension imports `../../../server/`, which assumes the CLI runs plugin extensions from the installed plugin folder (its changelog and runtime messages point that way). The first install from the marketplace confirms it.
 - After an update, a session that still runs the old extension can keep hosting the old server until it ends; a canvas that finds another version on the port logs a warning.
 
