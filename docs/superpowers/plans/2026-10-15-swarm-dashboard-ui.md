@@ -17,7 +17,7 @@
 - `package.json` keeps `"private": true`, `"type": "module"`, `"engines": {"node": ">=18"}`, `npm test` = `node --test tests/*.test.mjs`, `npm run validate` = `node scripts/validate-plugin.mjs`, and no `dependencies` or `devDependencies` (the validator rejects both). This PR adds only the `start` and `check:layout` scripts.
 - No build step and no third-party code. Shipped modules import only `node:` built-ins and relative paths; the one exception is the canvas wrapper's `@github/copilot-sdk/extension`, which the host provides. The page loads nothing from outside its own server.
 - Server, launcher, scripts and tests run on Node 18.0+: no `toSorted`, `toReversed`, `toSpliced`, `Object.groupBy`, `Map.groupBy`, `Promise.withResolvers`, `Array.fromAsync`, Set methods, `t.after()` or `mock` from `node:test`. The canvas runs on the Copilot CLI's Node v24.20.0.
-- Read-only. The server, UI and scripts never write to `~/.copilot/data.db`, `~/.copilot/session-store.db` or anything under `~/.copilot/session-state/`, and write no files except the temporary browser profile the layout check deletes (the engine's history folder is PR 1's). Code under `server/` never writes to stdout, because it runs inside the canvas extension, whose stdout carries JSON-RPC; only `scripts/*.mjs` print.
+- Read-only. The server, UI and scripts never write to `~/.copilot/data.db`, `~/.copilot/session-store.db` or anything under `~/.copilot/session-state/`, and write no files except the temporary browser profile the layout check deletes and, only when asked with `--screenshots`, screenshots of the synthetic swarms (`--live` refuses it, so no image of real data is written; the engine's history folder is PR 1's). Code under `server/` never writes to stdout, because it runs inside the canvas extension, whose stdout carries JSON-RPC; only `scripts/*.mjs` print.
 - Bind `127.0.0.1` only. Reject requests whose `Host` header is not `127.0.0.1:<port>` or `localhost:<port>`. Serve GET and HEAD only. Send nothing off the machine.
 - The canvas extension starts no timers and no server until a canvas is opened, and never starts a second engine: one dashboard server, with at most one engine, runs per machine.
 - Visual language exactly as spec section 8, with these approved choices: the light palette whatever the host theme; the font family from the host's `--font-sans` with the fallback `system-ui, -apple-system, "Segoe UI", sans-serif` and tabular numbers; sizes and line heights 12/16, 14/20 and 18/24 px; weights 400 and 500; no italic, uppercase or letter-spacing; a 4 px grid; padding 16 px on the dashboard, cards, rail and panels and 12 px on Needs you items, plan nodes and board cards; radius 8/4/2 px; chips 24 px, badges 20 px and buttons 28 px high; bars 4 px (12 px in history charts); rings 40 px with a 4 px stroke; rail 320 px (440 px with the detail panel); card columns at least 296 px, Needs you items 240 px, board columns 160 px; at most 1,920 px wide. Narrow mode below 900 px of dashboard inner width; 3×2 counts and single-column Needs you at 720 px or less. Motion as section 8, all of it stopped under `prefers-reduced-motion`.
@@ -4968,7 +4968,7 @@ git commit -m "test(swarm-dashboard): add the layout audit rules and colour cont
 
 **Interfaces:**
 - Consumes: `createDashboardServer` (Task 9), `createDemoEngine` (Task 8), `AUDIT_DEFAULTS`, `auditScript` (Task 15).
-- Produces: `findBrowser(env = process.env): string|null` (`CHROME_PATH`, standard Chrome, Chromium and Edge locations on macOS and Linux, then Playwright's cached Chromium); `launchBrowser(executable): Promise<{ product, send, onEvent, close }>` (headless, DevTools protocol over `--remote-debugging-pipe`, temporary profile removed on close); `openPage(browser): Promise<{ send, errors, goto(url, width, height = 900), evaluate(expression), waitFor(expression, timeoutMs = 8000), screenshot() }>` (reduced motion on; `errors` collects exceptions, console errors and error log entries); `WIDTHS`, `CANVAS_WIDTHS`, `VIEWS`, `SELF_TEST_RULES`, `buildStates({ scenarios, widths, canvasWidths, targets })` (targets: per scenario, an optional swarm to pin, the unit for the detail view and a finished run, either of which may be null to skip those views), `parseArguments(argv)` → `{ scenarios, widths, canvasWidths, screenshots, live, help }`, `describeTimes(durations): string` (`"3 updates; 4.2 ms median, 7.9 ms max"`), `main(argv, { stdout, stderr, env })`; `npm run check:layout [-- --scenario <name> | --live <url>] [-- --width <px>] [-- --screenshots <dir>]`. `--live http://127.0.0.1:<port>/` checks a running dashboard (real data) with the swarm, first unit and latest finished run it shows, and prints only counts before the issue list.
+- Produces: `findBrowser(env = process.env): string|null` (`CHROME_PATH`, standard Chrome, Chromium and Edge locations on macOS and Linux, then Playwright's cached Chromium); `launchBrowser(executable): Promise<{ product, send, onEvent, close }>` (headless, DevTools protocol over `--remote-debugging-pipe`, temporary profile removed on close); `openPage(browser): Promise<{ send, errors, goto(url, width, height = 900), evaluate(expression), waitFor(expression, timeoutMs = 8000), screenshot() }>` (reduced motion on; `errors` collects exceptions, console errors and error log entries); `WIDTHS`, `CANVAS_WIDTHS`, `VIEWS`, `SELF_TEST_RULES`, `buildStates({ scenarios, widths, canvasWidths, targets })` (targets: per scenario, an optional swarm to pin, the unit for the detail view and a finished run, either of which may be null to skip those views), `parseArguments(argv)` → `{ scenarios, widths, canvasWidths, screenshots, live, help }`, `describeTimes(durations): string` (`"3 updates; 4.2 ms median, 7.9 ms max"`), `main(argv, { stdout, stderr, env })`; `npm run check:layout [-- --scenario <name> | --live <url>] [-- --width <px>] [-- --screenshots <dir>]`. `--live http://127.0.0.1:<port>/` checks a running dashboard (real data) with the swarm, first unit and latest finished run it shows, prints only counts before the issue list, and refuses `--screenshots`, so it never writes an image of real data.
 - Update checks (approved decision 7): after the layout self-test, an update self-test runs `ui/morph.mjs` inside a dashboard page (nodes kept when an item is added at the top, keyed items reused in a new order, text and attributes patched, a running animation's delay kept, a changed or moved one's replaced, drawn containers kept, a select following the rendered choice, and a select in use left alone until it loses focus). After the views, the runner opens the cards view at 1440 px with motion on, waits for 3 live updates (a simulating demo server, or the `--live` dashboard for up to 25 s), and fails if cards were re-created, unchanged activity items were highlighted again, the scroll position moved or a busy ring fell more than 80 ms out of phase. It prints the update times from the page's `swarm-update` measures.
 
 - [ ] **Step 1: Write the failing test**
@@ -5011,6 +5011,7 @@ test('a running dashboard is checked with the swarm, unit and run it shows', () 
   assert.deepEqual(options.scenarios, ['live']);
   assert.throws(() => parseArguments(['--live', 'https://example.com/']), /--live/);
   assert.throws(() => parseArguments(['--live', 'http://127.0.0.1:7927/', '--scenario', 'stress']), /--live/);
+  assert.throws(() => parseArguments(['--live', 'http://127.0.0.1:7927/', '--screenshots', '/tmp/shots']), /--screenshots/);
   const targets = { live: { swarm: 'ws-a', detail: 'ws-b', run: null } };
   const states = buildStates({ scenarios: ['live'], widths: [1280], canvasWidths: [], targets });
   assert.deepEqual(states.map(state => state.view), ['cards', 'detail', 'activity', 'timeline', 'timeline-run', 'plan', 'board']);
@@ -5245,6 +5246,8 @@ body { margin: 0; padding: 16px; font: 400 14px/20px system-ui, -apple-system, "
 <main class="dash">
   <article class="b-card"><span>First card</span><span class="chip">explore 3m</span></article>
   <article class="b-card overlap"><span>Second card overlaps the first</span></article>
+  <article class="b-card" style="padding: 16px 12px"><span>A card with uneven padding</span></article>
+  <p style="font-family: Georgia, serif">Serif text</p>
   <p style="font-size: 13px">Thirteen pixel text</p>
   <p style="font-style: italic">Italic text</p>
   <p style="text-transform: uppercase">Uppercase text</p>
@@ -5252,6 +5255,7 @@ body { margin: 0; padding: 16px; font: 400 14px/20px system-ui, -apple-system, "
   <p style="letter-spacing: 1px">Spaced text</p>
   <p style="line-height: 18px">Odd line height</p>
   <p style="color: #bbb">Low contrast text</p>
+  <p style="color: lab(40 20 30)">A colour the check cannot read</p>
   <div style="display: flex; gap: 6px"><span>Off</span><span>grid</span></div>
   <article class="b-card narrow"><div style="white-space: nowrap">This block of text spills out of its card</div></article>
   <article class="b-card narrow"><div style="display: flex; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">A flex row cuts this text without an ellipsis</div></article>
@@ -5293,7 +5297,7 @@ export const VIEWS = [
   { name: 'history', params: { page: 'history' }, history: true },
   { name: 'run', params: { page: 'run', run: 'RUN' }, history: true },
 ];
-export const SELF_TEST_RULES = ['overlap', 'font-size', 'font-style', 'text-transform', 'font-weight', 'letter-spacing', 'line-height', 'contrast', 'grid', 'height', 'spill', 'clipped', 'hidden-lines', 'cut', 'outside', 'hscroll'];
+export const SELF_TEST_RULES = ['overlap', 'font-family', 'font-size', 'font-style', 'text-transform', 'font-weight', 'letter-spacing', 'line-height', 'contrast', 'colour', 'grid', 'padding', 'height', 'spill', 'clipped', 'hidden-lines', 'cut', 'outside', 'hscroll'];
 export const USAGE = `Usage: check-layout [--scenario example|stress | --live <url>] [--width <px>] [--screenshots <dir>]
 
 Checks every dashboard view for overlap, clipped text, type, spacing, sizes, contrast and console errors in a
@@ -5301,7 +5305,8 @@ local headless Chrome, Chromium or Edge (set CHROME_PATH to pick one). It proves
 tests the page's in-place updates, and then watches live updates arrive and reports how long each one takes.
 By default it serves the synthetic example and stress swarms itself; --live checks a running dashboard instead
 (for example http://127.0.0.1:7927/), whose report quotes your own data: keep it local.
-Screenshots, when asked for, are written to <dir> for review; do not commit them.
+Screenshots of the synthetic swarms, when asked for, are written to <dir> for review; do not commit them.
+--live never writes screenshots, because its pages show your own data.
 `;
 
 export function parseArguments(argv) {
@@ -5338,6 +5343,7 @@ export function parseArguments(argv) {
     }
   }
   if (options.live && scenarioChosen) throw new Error('--live checks a running dashboard, so it cannot be combined with --scenario');
+  if (options.live && options.screenshots) throw new Error('--live pages show your own data, so it cannot be combined with --screenshots');
   if (options.live) options.scenarios = ['live'];
   return options;
 }
