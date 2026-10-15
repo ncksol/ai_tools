@@ -3021,7 +3021,7 @@ git commit -m "feat(swarm-dashboard): serve the dashboard with live snapshot upd
 **Interfaces:**
 - Consumes: `isNarrow`, `renderApp` (Task 7); `tickText` (Task 1); `shortLabel` (Task 3); `timelineWindow`, `laneSvg`, `axisSvg`, `costSvg` (`ui/timeline.mjs`); `planFits`, `planGraphHtml`, `planListHtml` (`ui/plan.mjs`); the server's `/api/events`, `/api/history` and `/api/runs/<id>`.
 - Produces: browser behaviour only. URL parameters: `host=canvas|browser`, `swarm`, `session`, `page=live|history|run`, `tab`, `detail` (unit id), `span=3h|12h|run`, `run` (run id). `localStorage['swarm-dashboard:ui']` keeps `{ tab, span, swarm }`. After every render the page sets `<html data-host data-narrow="0|1" data-ready="0|1">`; `data-ready="1"` means the current page has its data (the layout check waits for it).
-- Produces (`ui/morph.mjs`): `morph(target, html)`. Every render, and every timeline and plan drawing, patches the existing DOM instead of replacing it, so updates (about every 3 s while a swarm is live) do not restart animations, reset ticking clocks or the scroll position, or flash items that did not change, and hover, focus, selection and tooltips survive. Siblings match by `data-key`, else `data-id`, `data-open` or `data-run`, else by position and tag; `data-drawn` containers keep their children (main.mjs draws them); `data-phase` elements keep their animation delay unless their class changes or they move. The layout check (Task 16) tests morph in a real browser.
+- Produces (`ui/morph.mjs`): `morph(target, html)`. Every render, and every timeline and plan drawing, patches the existing DOM instead of replacing it, so updates (about every 3 s while a swarm is live) do not restart animations, reset ticking clocks or the scroll position, or flash items that did not change, and hover, focus, selection and tooltips survive. Siblings match by `data-key`, else `data-id`, `data-open` or `data-run`, else by position and tag; `data-drawn` containers keep their children (main.mjs draws them); `data-phase` elements keep their animation delay unless their class changes or they move; a focused `<select>` (the swarm picker in use) keeps its options and choice until it loses focus, and the page re-renders then. The layout check (Task 16) tests morph in a real browser.
 - Produces (behaviour): each snapshot update adds a `performance.measure('swarm-update')` entry covering parsing, rendering and layout (the layout check reports these); a new item's highlight class stays for 1.7 s so a render during its animation does not cut it; a four-character ring label (`.ring-l[data-fit]`) that is wider than its 30 px box is cut with `shortLabel`.
 
 This module touches the DOM, so Node tests only check that it parses and keeps its contract with the server and the layout check; Task 11's preview and Task 16's layout check exercise it in a browser.
@@ -3141,11 +3141,17 @@ function syncNode(from, to, moved) {
   }
   syncAttributes(from, to, moved);
   if (from.hasAttribute('data-drawn') && to.hasAttribute('data-drawn')) return;
-  syncChildren(from, to, moved);
-  if (from.nodeName === 'SELECT') {
-    const chosen = to.querySelector('option[selected]') ?? to.querySelector('option');
-    if (chosen) from.value = chosen.getAttribute('value') ?? chosen.textContent;
+  if (from.nodeName !== 'SELECT') {
+    syncChildren(from, to, moved);
+    return;
   }
+  // Someone may be choosing in this select right now: leave its options and choice alone until it loses focus.
+  if (from === document.activeElement) return;
+  // Read the rendered choice before syncing, which moves new options out of `to`.
+  const chosen = to.querySelector('option[selected]') ?? to.querySelector('option');
+  const value = chosen ? chosen.getAttribute('value') ?? chosen.textContent : null;
+  syncChildren(from, to, moved);
+  if (value !== null) from.value = value;
 }
 
 function syncAttributes(from, to, moved) {
@@ -3216,7 +3222,6 @@ let source = null;
 let reconnectTimer = null;
 let justConnected = true;
 let renderQueued = false;
-let renderDeferred = false;
 let lastWidth = 0;
 let ticks = 0;
 let freshUntil = 0;
@@ -3318,11 +3323,6 @@ function isReady() {
 
 function render() {
   renderQueued = false;
-  if (document.activeElement?.matches('select[data-swarm]')) {
-    renderDeferred = true;
-    return;
-  }
-  renderDeferred = false;
   const started = performance.now();
   const width = dash.clientWidth;
   view.narrow = isNarrow(width);
@@ -3474,8 +3474,9 @@ dash.addEventListener('change', event => {
   connect();
   render();
 });
-dash.addEventListener('focusout', () => {
-  if (renderDeferred) scheduleRender();
+// morph() leaves the focused swarm picker alone, so bring it up to date once it loses focus.
+dash.addEventListener('focusout', event => {
+  if (event.target.matches('select[data-swarm]')) scheduleRender();
 });
 new ResizeObserver(() => {
   if (dash.clientWidth !== lastWidth) scheduleRender();
@@ -4877,7 +4878,7 @@ git commit -m "test(swarm-dashboard): add the layout audit rules and colour cont
 **Interfaces:**
 - Consumes: `createDashboardServer` (Task 9), `createDemoEngine` (Task 8), `AUDIT_DEFAULTS`, `auditScript` (Task 15).
 - Produces: `findBrowser(env = process.env): string|null` (`CHROME_PATH`, standard Chrome, Chromium and Edge locations on macOS and Linux, then Playwright's cached Chromium); `launchBrowser(executable): Promise<{ product, send, onEvent, close }>` (headless, DevTools protocol over `--remote-debugging-pipe`, temporary profile removed on close); `openPage(browser): Promise<{ send, errors, goto(url, width, height = 900), evaluate(expression), waitFor(expression, timeoutMs = 8000), screenshot() }>` (reduced motion on; `errors` collects exceptions, console errors and error log entries); `WIDTHS`, `CANVAS_WIDTHS`, `VIEWS`, `SELF_TEST_RULES`, `buildStates({ scenarios, widths, canvasWidths, targets })` (targets: per scenario, an optional swarm to pin, the unit for the detail view and a finished run, either of which may be null to skip those views), `parseArguments(argv)` → `{ scenarios, widths, canvasWidths, screenshots, live, help }`, `describeTimes(durations): string` (`"3 updates; 4.2 ms median, 7.9 ms max"`), `main(argv, { stdout, stderr, env })`; `npm run check:layout [-- --scenario <name> | --live <url>] [-- --width <px>] [-- --screenshots <dir>]`. `--live http://127.0.0.1:<port>/` checks a running dashboard (real data) with the swarm, first unit and latest finished run it shows, and prints only counts before the issue list.
-- Update checks (approved decision 7): after the layout self-test, an update self-test runs `ui/morph.mjs` inside a dashboard page (nodes kept when an item is added at the top, keyed items reused in a new order, text and attributes patched, a running animation's delay kept, a changed or moved one's replaced, drawn containers kept, a select following the rendered choice). After the views, the runner opens the cards view at 1440 px with motion on, waits for 3 live updates (a simulating demo server, or the `--live` dashboard for up to 25 s), and fails if cards were re-created, unchanged activity items were highlighted again, the scroll position moved or a busy ring fell more than 80 ms out of phase. It prints the update times from the page's `swarm-update` measures.
+- Update checks (approved decision 7): after the layout self-test, an update self-test runs `ui/morph.mjs` inside a dashboard page (nodes kept when an item is added at the top, keyed items reused in a new order, text and attributes patched, a running animation's delay kept, a changed or moved one's replaced, drawn containers kept, a select following the rendered choice, and a select in use left alone until it loses focus). After the views, the runner opens the cards view at 1440 px with motion on, waits for 3 live updates (a simulating demo server, or the `--live` dashboard for up to 25 s), and fails if cards were re-created, unchanged activity items were highlighted again, the scroll position moved or a busy ring fell more than 80 ms out of phase. It prints the update times from the page's `swarm-update` measures.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -5338,6 +5339,12 @@ async function morphSelfTest() {
     select.value = 'a';
     morph(box, '<select><option value="a">a</option><option value="b" selected>b</option></select>');
     expect(box.firstChild === select && select.value === 'b', 'a select did not follow the rendered choice');
+    select.focus();
+    morph(box, '<select><option value="a" selected>a</option><option value="b">b</option><option value="c">c</option></select>');
+    expect(select.value === 'b' && select.options.length === 2, 'a select in use was changed under the user');
+    select.blur();
+    morph(box, '<select><option value="a" selected>a</option><option value="b">b</option><option value="c">c</option></select>');
+    expect(select.value === 'a' && select.options.length === 3, 'a select did not catch up after losing focus');
   } finally {
     box.remove();
   }
