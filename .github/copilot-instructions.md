@@ -36,7 +36,6 @@ Research skills:
 
 **Plugins:**
 
-- `pr-review-graph` — bounded multi-agent review of an already-open GitHub or Azure DevOps PR: snapshot, specialist routing, verification, deduplication against existing comments, preview-then-publish. Bundles one skill (`review-pull-request`) and nine `prg-*` specialist agents.
 - `adr-authoring` — evidence-led ADR authoring in Microsoft Learn-inspired style. Bundles the `adr-writer` agent, `adr-write` skill, template, style profile, review rubric, four original example pairs, structural validators, and fourteen evaluation briefs. Writes authorized ADR files and separately requested supporting notes, preserves accepted records, and never mutates PRs. Decision relevance and audience fit are hard review gates; structural tests do not establish semantic quality or runtime consistency.
 
 When adding a new skill, create `ghcp/skills/<kebab-name>/SKILL.md`. When adding a new agent, create `ghcp/agents/<kebab-name>.agent.md`. When adding a new plugin, see the plugin conventions below.
@@ -45,11 +44,11 @@ When adding a new skill, create `ghcp/skills/<kebab-name>/SKILL.md`. When adding
 
 Plugins are **vendored intact** under `ghcp/plugins/<plugin-name>/`. A plugin keeps its own `plugin.json`, `package.json`, tests, scripts, LICENSE and README. Treat a vendored plugin as a unit: when updating it from an upstream drop, replace the directory rather than hand-editing individual files, then re-apply the two repo-specific deltas below.
 
-- **One marketplace manifest, at the repository root.** `.github/plugin/marketplace.json` lists every plugin, each with a `source` path pointing at its directory (e.g. `"./ghcp/plugins/pr-review-graph"`). A plugin must **not** carry its own `marketplace.json`; delete it when vendoring. Copilot CLI only reads the manifest at the repository root.
+- **One marketplace manifest, at the repository root.** `.github/plugin/marketplace.json` lists every plugin, each with a `source` path pointing at its directory (e.g. `"./ghcp/plugins/adr-authoring"`). A plugin must **not** carry its own `marketplace.json`; delete it when vendoring. Copilot CLI only reads the manifest at the repository root.
 - **`version` must match** between a plugin's `plugin.json` and its entry in the root marketplace manifest.
-- **Skill and agent names inside a plugin stay namespaced to that plugin** (e.g. `prg-*` for `pr-review-graph`) so they don't collide with the loose skills in `ghcp/skills/` or agents in `ghcp/agents/`.
+- **Skill and agent names inside a plugin stay namespaced to that plugin** (e.g. `adr-*` for `adr-authoring`) so they don't collide with the loose skills in `ghcp/skills/` or agents in `ghcp/agents/`.
 - Do **not** duplicate a plugin's skills or agents into `ghcp/skills/` or `ghcp/agents/`. A plugin ships as one installable unit.
-- If a plugin has a validation script, it must check its entry in the root marketplace manifest, not a local one. See `ghcp/plugins/pr-review-graph/scripts/validate-plugin.mjs`.
+- If a plugin has a validation script, it must check its entry in the root marketplace manifest, not a local one. See `ghcp/plugins/adr-authoring/scripts/validate-plugin.mjs`.
 
 Install and validate a plugin with:
 

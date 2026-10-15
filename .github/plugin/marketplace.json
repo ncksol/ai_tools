@@ -9,24 +9,6 @@
   },
   "plugins": [
     {
-      "name": "pr-review-graph",
-      "description": "High-signal pull request reviews through a bounded multi-agent graph, with gh-cli and azure-devops-cli skill-backed providers.",
-      "version": "0.2.10",
-      "source": "./ghcp/plugins/pr-review-graph",
-      "author": {
-        "name": "Nick Sologoub"
-      },
-      "license": "MIT",
-      "category": "development",
-      "keywords": [
-        "pull-request",
-        "code-review",
-        "github-cli",
-        "azure-devops",
-        "multi-agent"
-      ]
-    },
-    {
       "name": "adr-authoring",
       "description": "Evidence-led architecture decision records with a stable template and Microsoft Learn-inspired writing style.",
       "version": "0.1.1",

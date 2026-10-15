@@ -37,10 +37,7 @@ This repo is also a **Copilot CLI plugin marketplace** (`ai-tools`). Plugins are
 
 | Plugin | What it does | Install |
 |---|---|---|
-| [`pr-review-graph`](./ghcp/plugins/pr-review-graph/README.md) | Reviews an **already-open** PR through a bounded multi-agent graph: captures an immutable base/head snapshot, routes slices to nine focused read-only specialists, verifies every candidate finding against the snapshot, deduplicates against existing review comments, and previews author-facing comments. Publishes nothing without explicit confirmation. GitHub and Azure DevOps, via the `gh-cli` / `azure-devops-cli` skills. | `copilot plugin install pr-review-graph@ai-tools` |
 | [`adr-authoring`](./ghcp/plugins/adr-authoring/README.md) | Writes evidence-led architecture decision records in **Microsoft Learn-inspired style**. Bundles an agent, a skill, a fixed template, four example pairs, structural validation, and fourteen evaluation briefs. Preserves accepted records and checks decision relevance and audience fit. | `copilot plugin install adr-authoring@ai-tools` |
-
-`pr-review-graph` overlaps in subject with the standalone review skills below but is a different tool: the skills are single-pass prompts you read the output of, the plugin is a verified multi-agent pipeline that can post comments back to the PR once you approve them.
 
 `adr-authoring` is a documentation workflow, not a PR-review tool. Ask it to draft an ADR in chat, write an authorized Markdown file, or review an existing ADR. It records supplied decisions by default and recommends architecture only when explicitly asked. Its structural checks do not establish factual accuracy or model-output consistency.
 
@@ -126,7 +123,7 @@ Plugins install through the Copilot CLI. Skills and agents are plain files you s
 
 ```bash
 copilot plugin marketplace add ncksol/ai_tools
-copilot plugin install pr-review-graph@ai-tools
+copilot plugin install adr-authoring@ai-tools
 copilot plugin list
 ```
 
@@ -134,10 +131,10 @@ To iterate on a plugin locally, register your clone as the marketplace instead a
 
 ```bash
 copilot plugin marketplace add ~/src/ai_tools
-copilot plugin install pr-review-graph@ai-tools
+copilot plugin install adr-authoring@ai-tools
 ```
 
-Direct installs from a repo, URL or local path (`copilot plugin install ./ghcp/plugins/pr-review-graph`) still work, but the CLI marks them deprecated in favour of `plugin@marketplace`.
+Direct installs from a repo, URL or local path (`copilot plugin install ./ghcp/plugins/adr-authoring`) still work, but the CLI marks them deprecated in favour of `plugin@marketplace`.
 
 ### Option 1: Symlink (recommended — you get updates with `git pull`)
 
@@ -212,7 +209,7 @@ Once installed, describe what you want and the CLI routes to the best match, or 
 
 Pasted diffs, local branch names, and Azure DevOps URLs all work too.
 
-For a PR URL, start the prompt with `/strict-code-review`. When many skills are installed, the CLI may describe only some of them to the model, so a prompt such as "Review this PR: `<url>`" can go to another review skill, such as `review-pull-request` from the `pr-review-graph` plugin.
+For a PR URL, start the prompt with `/strict-code-review`. When many skills are installed, the CLI may describe only some of them to the model, so a prompt such as "Review this PR: `<url>`" can go to another review skill.
 
 `strict-code-review` reads files from its `references/` directory while it runs. In non-interactive runs (`copilot -p`), the CLI cannot ask for approval, so it refuses those reads unless you give it read access to the skill's resolved directory. Installed skills are often symlinks and the CLI checks the real path, so `--add-dir ~/.copilot/skills` is not enough:
 
@@ -250,14 +247,7 @@ ai_tools/
     │   ├── orchestrator.agent.md
     │   └── orchestrator-worker.agent.md
     └── plugins/
-        ├── pr-review-graph/           ← self-contained plugin (own manifest, tests, LICENSE)
-        │   ├── plugin.json
-        │   ├── package.json
-        │   ├── agents/                ← 9 × prg-*.agent.md specialists
-        │   ├── skills/
-        │   │   └── review-pull-request/
-        │   └── tests/
-        └── adr-authoring/
+        └── adr-authoring/             ← self-contained plugin (own manifest, tests, LICENSE)
             ├── plugin.json
             ├── package.json
             ├── agents/                ← adr-writer.agent.md
