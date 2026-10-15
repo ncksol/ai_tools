@@ -21,6 +21,7 @@
 - The engine writes only to its history folder (default `~/.copilot/swarm-dashboard/history/`), and only run summaries without free text (no report bodies, questions, prompts or tool arguments).
 - The engine never writes to stdout (a canvas extension's stdout carries JSON-RPC). Only `scripts/swarm-snapshot.mjs` prints JSON to stdout.
 - The engine starts no timers until `start()` is called.
+- Memory stays bounded: the engine never holds a whole log in memory. It reads `events.jsonl` in 256 KB chunks, keeps only bounded per-session state (`LIMITS`), and keeps copies (`ownString`) of any text it stores from a log line, because a V8 substring can keep its whole parent chunk alive.
 - Every fixture is synthetic. Never commit real session data, logs, database extracts, internal names, people's names, Azure DevOps ids, session ids or local user paths.
 - Snapshot times are epoch milliseconds (UTC); durations are milliseconds; credits = sum of `total_nano_aiu` / 1e9; dollars = credits × 0.01.
 - Parsers accept missing keys and string-typed tool arguments.
@@ -1292,7 +1293,7 @@ Send the coordinator a `progress` report with the pushed SHA and these paths: `e
 - Consumes: `tempDir()` (Task 1).
 - Produces:
   - `time.mjs`: `SECOND`, `MINUTE`, `HOUR`; `parseTime(value): number|null` (ISO 8601, SQLite `YYYY-MM-DD HH:MM:SS` as UTC, or epoch ms); `maxTime(...values): number|null`; `minTime(...values): number|null`; `formatDuration(ms): string` (`"23 min"`, `"2 h 5 min"`).
-  - `text.mjs`: `oneLine(value, max = 200): string`; `clip(value, max): string|null`; `firstLine(value): string|null`.
+  - `text.mjs`: `ownString(value: string): string` (a copy that keeps no larger string alive); `oneLine(value, max = 200): string` and `clip(value, max): string|null` (both return owned strings); `firstLine(value): string|null`.
   - `config.mjs`: `DEFAULT_THRESHOLDS` (frozen; keys `modelCallWarnMs`, `modelCallStuckMs`, `bashExtraMs`, `bashDefaultMs`, `readBashExtraMs`, `readAgentExtraMs`, `quickToolMs`, `subagentSilentMs`, `subagentSilentHeavyMs`, `silentBusyMs`, `stalledIdleMs`, `spinningWindowMs`, `spinningFailures`, `spinningRepeats`, `spinningCompactions`, `monitorGraceMs`, `runFinishedAfterMs`); `resolveThresholds(overrides): object`; `copilotPaths(home?): { home, dataDb, storeDb, stateDir, historyDir }`.
   - `sqlite.mjs`: `SqliteUnavailableError`; `loadNodeSqlite(): Promise<module|null>`; `inspectDatabase(file): {sqlite: boolean, wal: boolean}|null`; `openTarget(file): {target: string, immutable: boolean}|null`; `bindLiterals(sql, params): string`; `openReadOnly(file, options?): Promise<Db|null>` where `Db = { backend: 'node'|'cli', immutable: boolean, all(sql, params?): Promise<object[]>, close(): void }` and `options = { backend?: 'auto'|'node'|'cli', sqlite3Path?: string, execFileImpl?: Function }`; `withReadOnly(file, options, fn): Promise<result|null>`; `sqliteBackends(options?): Promise<('node'|'cli')[]>`.
   - `tests/helpers/sqlite-writer.mjs`: `canWriteWithNode: boolean`; `TEST_BACKENDS: ('node'|'cli')[]`; `execSql(file, sql): void` (creates the file); `openWriter(file): DatabaseSync|null` (node:sqlite only).
@@ -1357,7 +1358,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { HOUR, MINUTE, formatDuration, maxTime, minTime, parseTime } from '../engine/time.mjs';
-import { clip, firstLine, oneLine } from '../engine/text.mjs';
+import { clip, firstLine, oneLine, ownString } from '../engine/text.mjs';
 import { DEFAULT_THRESHOLDS, copilotPaths, resolveThresholds } from '../engine/config.mjs';
 
 test('parseTime reads ISO, SQLite UTC and epoch values', () => {
@@ -1380,7 +1381,10 @@ test('formatDuration uses minutes, then hours and minutes', () => {
   assert.equal(formatDuration(2 * HOUR), '2 h');
 });
 
-test('text helpers flatten and clip', () => {
+test('text helpers flatten, clip and copy', () => {
+  assert.equal(ownString('x'.repeat(40)), 'x'.repeat(40));
+  assert.equal(ownString('short'), 'short');
+  assert.equal(ownString(''), '');
   assert.equal(oneLine('  a\n  b\tc  '), 'a b c');
   assert.equal(oneLine('abcdef', 4), 'abc…');
   assert.equal(clip('abcdef', 4), 'abc…');
@@ -1558,14 +1562,23 @@ export function formatDuration(ms) {
 `engine/text.mjs`:
 
 ```js
+/**
+ * A copy of a string that keeps no larger string alive. V8 can represent a substring (from slice, split or a regex
+ * match) as a view into its parent, so a short text kept from a log line could pin the whole chunk it was read from.
+ * Concatenating forces a flat copy; the slice then refers to that copy only.
+ */
+export function ownString(value) {
+  return value.length ? (' ' + value).slice(1) : value;
+}
+
 export function oneLine(value, max = 200) {
   const text = String(value ?? '').replace(/\s+/g, ' ').trim();
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+  return ownString(text.length > max ? `${text.slice(0, max - 1)}…` : text);
 }
 
 export function clip(value, max) {
   if (typeof value !== 'string') return null;
-  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+  return ownString(value.length > max ? `${value.slice(0, max - 1)}…` : value);
 }
 
 export function firstLine(value) {
@@ -2847,8 +2860,8 @@ git commit -m "feat(swarm-dashboard): read session files and probe process liven
 - Test: `ghcp/plugins/swarm-dashboard/tests/events.test.mjs`
 
 **Interfaces:**
-- Consumes: `tempDir` (Task 1).
-- Produces: `createTail(file): Tail`; `readNewLines(tail, onLine: (line: string) => void, {chunkSize?, onReset?}): Promise<{ missing: boolean, reset: boolean, lines: number, bytes: number }>`. When the file shrank or was replaced, the tail restarts at byte 0, `onReset()` runs before any line is delivered (the caller rebuilds the session state there), and the result has `reset: true`. A trailing line without `\n` is held back until it is complete.
+- Consumes: `tempDir` (Task 1); `ownString` (Task 3).
+- Produces: `createTail(file): Tail`; `readNewLines(tail, onLine: (line: string) => void, {chunkSize?, onReset?}): Promise<{ missing: boolean, reset: boolean, lines: number, bytes: number }>`. When the file shrank or was replaced, the tail restarts at byte 0, `onReset()` runs before any line is delivered (the caller rebuilds the session state there), and the result has `reset: true`. A trailing line without `\n` is held back until it is complete. Reads use 256 KB chunks by default, so memory stays bounded however large the log is; the held-back partial line is an owned copy.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2935,16 +2948,18 @@ Expected: FAIL with `Cannot find module '.../engine/readers/events.mjs'`.
 ```js
 import { open, stat } from 'node:fs/promises';
 import { StringDecoder } from 'node:string_decoder';
+import { ownString } from '../text.mjs';
 
 export function createTail(file) {
   return { file, offset: 0, ino: null, remainder: '', decoder: new StringDecoder('utf8') };
 }
 
 /**
- * Deliver complete lines appended since the last call, reading by byte offset with async reads so large logs do not
- * block the event loop. A file that shrank or was replaced restarts at byte 0 and reports reset.
+ * Deliver complete lines appended since the last call, reading by byte offset in fixed-size chunks with async reads, so
+ * memory stays bounded however large the log is and large logs do not block the event loop. A file that shrank or was
+ * replaced restarts at byte 0 and reports reset.
  */
-export async function readNewLines(tail, onLine, { chunkSize = 4 * 1024 * 1024, onReset = null } = {}) {
+export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onReset = null } = {}) {
   let info;
   try {
     info = await stat(tail.file);
@@ -2974,7 +2989,7 @@ export async function readNewLines(tail, onLine, { chunkSize = 4 * 1024 * 1024, 
       tail.offset += bytesRead;
       bytes += bytesRead;
       const parts = (tail.remainder + tail.decoder.write(buffer.subarray(0, bytesRead))).split('\n');
-      tail.remainder = parts.pop();
+      tail.remainder = ownString(parts.pop());
       for (const part of parts) {
         const line = part.endsWith('\r') ? part.slice(0, -1) : part;
         if (!line) continue;
@@ -3276,7 +3291,7 @@ git commit -m "feat(swarm-dashboard): parse the orchestrator data contract"
 - Produces:
   - `state-utils.mjs`: `LIMITS` (`feed` 120, `marks` 400, `sent` 40, `inbound` 80, `taskCompletes` 20, `recent` 200, `spans` 5000, `saves` 50, `wakes` 500); `pushBounded(list, item, max)`; `addFeed(state, at, kind, text)`; `addMark(state, at, kind, text, status = null)`.
   - `tests/helpers/fold.mjs`: `fold(log, id = 'cli-1'): SessionState`.
-  - `session-state.mjs`: `SKIP_TYPES`; `createSessionState(cliId): SessionState`; `applyLine(state, line)`; `applyEvent(state, event)`. `SessionState` fields: `id, lines, parseErrors, firstEventAt, lastEventAt, lastEventType, lastMainAt, copilotVersion, model, mode, turn: {startedAt, progressAt}|null, busySince, lastTurnEndAt, busySpans: [start, end][], busyMs, openTools: Map<callId, {id, name, startedAt, args: {summary, mode, initialWait, delay, timeout, wait}}>, waits: Map<callId, {id, kind: 'question'|'plan', text, startedAt}>, waitSpans: [start, end, kind][], waitingMs, subagents: Map<callId, {id, name, type, mode, model, effort, task, launchedAt, startedAt, endedAt, durationMs, status, lastEventAt, agentId}>, agentToTask: Map<agentId, callId>, sent: [], inbound: [], lastInboundAt, lastHumanAt, taskCompletes: [], automation: {saves: [], wakes: []}, shutdownAt, abortAt, lastErrorAt, recent: {failures: number[], calls: {at, name, key, prompt}[], compactions: number[], denials: number[]}, prompts` (main-session user messages so far, feed: {at, kind, text}[], marks: {at, kind, text, status}[], prMentions: Map`. Task 10 fills `sent`, `inbound`, `taskCompletes`, `automation` and `prMentions`.
+  - `session-state.mjs`: `SKIP_TYPES`; `createSessionState(cliId): SessionState`; `applyLine(state, line)`; `applyEvent(state, event)`. `SessionState` fields: `id, lines, parseErrors, firstEventAt, lastEventAt, lastEventType, lastMainAt, copilotVersion, model, mode, turn: {startedAt, progressAt}|null, busySince, lastTurnEndAt, busySpans: [start, end][], busyMs, openTools: Map<callId, {id, name, startedAt, args: {summary, mode, initialWait, delay, timeout, wait}}>, waits: Map<callId, {id, kind: 'question'|'plan', text, startedAt}>, waitSpans: [start, end, kind][], waitingMs, subagents: Map<callId, {id, name, type, mode, model, effort, task, launchedAt, startedAt, endedAt, durationMs, status, lastEventAt, agentId}>, agentToTask: Map<agentId, callId>, sent: [], inbound: [], lastInboundAt, lastHumanAt, taskCompletes: [], automation: {saves: [], wakes: []}, shutdownAt, abortAt, lastErrorAt, recent: {failures: number[], calls: {at, name, key, prompt}[], compactions: number[], denials: number[]}, prompts` (main-session user messages so far), `feed: {at, kind, text}[], marks: {at, kind, text, status}[], prMentions: Map`. Task 10 fills `sent`, `inbound`, `taskCompletes`, `automation` and `prMentions`.
 
 Rules: an event with `data.parentToolCallId` or a top-level `agentId` belongs to a sub-agent and only refreshes that sub-agent's `lastEventAt`; a `user.message` whose `source` is `agent-<own id>` is the session's own sub-agent prompt and is ignored. `session.start` and `session.resume` end the previous process's open turn, waits, tools and sub-agents at the last main-agent event; `session.shutdown` does the same at its own time; `abort` ends the turn and sync sub-agents but keeps background ones. Turns less than 5 s apart form one busy period (`busySince`).
 
@@ -3493,7 +3508,7 @@ export function addMark(state, at, kind, text, status = null) {
 - [ ] **Step 4: Write `engine/model/session-state.mjs`**
 
 ```js
-import { clip, oneLine } from '../text.mjs';
+import { clip, oneLine, ownString } from '../text.mjs';
 import { parseTime } from '../time.mjs';
 import { LIMITS, addFeed, addMark, pushBounded } from './state-utils.mjs';
 
@@ -3502,6 +3517,8 @@ export const SKIP_TYPES = new Set([
   'session.usage_checkpoint', 'system.message', 'skill.context_delivered_ref', 'session.binary_asset',
   'session.workspace_file_changed', 'session.canvas.recorded', 'session.canvas.removed',
 ]);
+/** Each skip type mapped to its own constant: keeping head[1], a slice of the line, would pin the whole read chunk. */
+const SKIP_NAMES = new Map([...SKIP_TYPES].map(type => [type, type]));
 const WAIT_TOOLS = { ask_user: 'question', exit_plan_mode: 'plan' };
 const BUSY_JOIN_MS = 5000;
 
@@ -3527,9 +3544,10 @@ export function applyLine(state, line) {
   if (!line) return;
   state.lines += 1;
   const head = /^\{"type":"([^"]+)"/.exec(line);
-  if (head && SKIP_TYPES.has(head[1])) {
+  const skipped = head ? SKIP_NAMES.get(head[1]) : undefined;
+  if (skipped) {
     const at = sniffTimestamp(line);
-    if (at !== null) touch(state, at, head[1]);
+    if (at !== null) touch(state, at, skipped);
     return;
   }
   let event;
@@ -3706,7 +3724,7 @@ function toolArgs(name, args) {
 
 function callKey(name, raw) {
   const text = typeof raw === 'string' ? raw : JSON.stringify(raw ?? {});
-  return `${name}|${text.length}|${text.slice(0, 400)}`;
+  return ownString(`${name}|${text.length}|${text.slice(0, 400)}`);
 }
 
 function newSubagent(state, id, at, args) {
@@ -3931,7 +3949,7 @@ Expected: FAIL with `Cannot find module '.../engine/model/messages.mjs'`.
 - [ ] **Step 3: Write `engine/model/messages.mjs`**
 
 ```js
-import { clip } from '../text.mjs';
+import { clip, ownString } from '../text.mjs';
 import { LIMITS, addFeed, addMark, pushBounded } from './state-utils.mjs';
 
 const PR_PATTERNS = [
@@ -3964,7 +3982,7 @@ export function parseEnvelope(transformed) {
   const block = transformed.slice(start, end < 0 ? undefined : end);
   const field = name => {
     const match = new RegExp(`^${name}:[ \\t]*(.*)$`, 'm').exec(block);
-    return match && match[1].trim() ? match[1].trim() : null;
+    return match && match[1].trim() ? ownString(match[1].trim()) : null;
   };
   return {
     fromSessionId: field('from_session_id'),
@@ -6953,7 +6971,47 @@ console.log(JSON.stringify({ errors: validateRunSummary(r), tookHours: +(r.tookM
 
 Expected: a valid summary; "took" near the design's 72 hours at the time of that figure (or longer if the run continued).
 
-- [ ] **Step 7: Confirm the check wrote nothing**
+- [ ] **Step 7: Measure memory on the reference run**
+
+The engine runs for hours inside the extension process, so its memory must stay bounded. Measure the first read, then three minutes of incremental refreshes at the default 3-second interval:
+
+```bash
+cat > "$SCRATCH/memory.mjs" <<'EOF'
+const { createSwarmEngine } = await import(process.env.SWARM_ENGINE_URL);
+const mb = bytes => Math.round(bytes / 1048576);
+const usage = () => {
+  const m = process.memoryUsage();
+  return { rss: mb(m.rss), heapUsed: mb(m.heapUsed), heapTotal: mb(m.heapTotal) };
+};
+const engine = createSwarmEngine({ persistHistory: false, prLookup: 'off' });
+let started = Date.now();
+await engine.refresh();
+await engine.getSnapshot(process.env.SWARM_ROOT);
+const first = { ms: Date.now() - started, peakRss: mb(process.resourceUsage().maxRSS * 1024), ...usage() };
+global.gc();
+const firstAfterGc = usage();
+const refreshes = [];
+for (const end = Date.now() + 180_000; Date.now() < end;) {
+  await new Promise(resolve => setTimeout(resolve, 3000));
+  started = Date.now();
+  await engine.refresh();
+  await engine.getSnapshot(process.env.SWARM_ROOT);
+  refreshes.push({ ms: Date.now() - started, ...usage() });
+}
+global.gc();
+const times = refreshes.map(item => item.ms).sort((a, b) => a - b);
+console.log(JSON.stringify({
+  first, firstAfterGc, refreshes: refreshes.length, refreshMs: { median: times[times.length >> 1], max: times[times.length - 1] },
+  maxRssDuringRefreshes: Math.max(...refreshes.map(item => item.rss)), lastRefresh: refreshes[refreshes.length - 1], afterGc: usage(),
+}, null, 2));
+process.exit(0);
+EOF
+SWARM_ENGINE_URL="file://$PWD/engine/engine.mjs" SWARM_ROOT="$ROOT" node --expose-gc "$SCRATCH/memory.mjs"
+```
+
+Expected: the heap kept after GC (`firstAfterGc.heapUsed`, `afterGc.heapUsed`) is tens of MB and does not grow between the first read and the end; RSS during refreshes stays below the first-read peak; incremental refreshes take well under a second. Report the first-read peak RSS, steady-state RSS (`maxRssDuringRefreshes` and `lastRefresh.rss`), the heap kept after GC, and refresh times. If the kept heap grows, find what retains it with a heap snapshot and fix it through a new task, test first.
+
+- [ ] **Step 8: Confirm the check wrote nothing**
 
 ```bash
 ls -1 "$HOME/.copilot" | sort > "$SCRATCH/copilot-after.txt"
@@ -6964,7 +7022,7 @@ git status --short
 
 Expected: no new entries (the app's own `-wal`/`-shm` files may come and go with its writers; any difference must be explained before reporting), no history folder, and a clean working tree.
 
-- [ ] **Step 8: Smoke-test the engine inside the extension runtime**
+- [ ] **Step 9: Smoke-test the engine inside the extension runtime**
 
 The Copilot CLI binary runs extensions as `copilot extension_bootstrap.mjs`; the bootstrap imports `EXTENSION_PATH` when `COPILOT_EXTENSION_PARENT_PID` is the parent's PID. This starts no session.
 
@@ -6990,7 +7048,7 @@ cat "$SCRATCH/sea.json"
 
 Expected: the runtime's Node version (v24.x), `Reading SQLite through node:sqlite.`, the same unit count as Step 5, and the elapsed time.
 
-- [ ] **Step 9: Push and report**
+- [ ] **Step 10: Push and report**
 
 ```bash
 git push
@@ -6998,7 +7056,7 @@ git rev-parse HEAD
 rm -rf "$SCRATCH"
 ```
 
-Send the coordinator a `handoff` report: status, a short summary, the commands from Steps 1–8 with their outcomes (test counts, Node versions, timings, aggregate real-data figures, read-only confirmation), the repository (`ncksol/ai_tools`), the branch and the pushed SHA, and any blockers. Do not open a PR.
+Send the coordinator a `handoff` report: status, a short summary, the commands from Steps 1–9 with their outcomes (test counts, Node versions, timings, memory, aggregate real-data figures, read-only confirmation), the repository (`ncksol/ai_tools`), the branch and the pushed SHA, and any blockers. Do not open a PR.
 
 ## Self-review
 
@@ -7023,4 +7081,4 @@ Out of scope and left to PR 2: server, UI, canvas extension, launcher, plugin RE
 
 **Type consistency.** Interface lines were checked against the code they describe, including the names shared across tasks: `readWorkspaceYaml` returns `{cwd, branch, hostType, repository}`, which `hostOf` reads; `resolvePr` takes a `host`; `SessionState.prompts` and `recent.calls[].prompt` feed `spinningReason`; `RunSummary.children.noOutcome` is the same in the typedef, validator, fixture, summary code and test; `prInfo(pr, {cwd})` matches `createPrLookup().request`.
 
-**Dry run.** All code blocks were extracted into a scratch tree outside the repository and run: 125 tests pass on Node 24.19 and 22.16 (both SQLite backends), the suite passes on Node 18.11 (`sqlite3` CLI backend), and the validator passes. The same code was run read-only against the owner's data on this machine: listing swarms, a snapshot of the reference run with PR lookups, history, a run summary, and the extension-runtime smoke test. Builder decisions 2 and 5 rest on that run. Its results went to the coordinator and are not recorded here.
+**Dry run.** All code blocks were extracted into a scratch tree outside the repository and run: 125 tests pass on Node 24.19 and 22.16 (both SQLite backends), the suite passes on Node 18.11 (`sqlite3` CLI backend), and the validator passes. The same code was run read-only against the owner's data on this machine: listing swarms, a snapshot of the reference run with PR lookups, history, a run summary, and the extension-runtime smoke test. Builder decisions 2 and 5, the 256 KB read chunk and `ownString` rest on that run. Its results went to the coordinator and are not recorded here.
