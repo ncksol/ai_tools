@@ -151,7 +151,7 @@ When the user has given a model policy, set `kickoff.model` and `kickoff.reasoni
 
 ### Report format
 
-Copy everything inside this block into every kickoff prompt, unchanged:
+Copy everything inside this block into every kickoff prompt, word for word. Don't shorten or reword any line:
 
 ```text
 How to report to the orchestrator
@@ -201,7 +201,7 @@ Which status to use:
 
 ## Lifecycle
 
-- When a child opens a PR, fill its row's PR columns (see "State and registry"). When it publishes the PR, check that they are filled, then have it start monitoring that PR straight away.
+- When a child opens a PR, fill its row's PR columns (see "State and registry"). Opening a PR that isn't a draft also publishes it. When a child publishes a PR, check that its PR columns are filled, then have the child start monitoring the PR straight away.
 - Bring plans, questions, and approvals that need the user's decision to the user, tagged with the child's label (see "Talking to the user"): a child's plan is `need=plan`, a go-ahead to open, publish or merge a PR is `need=pr`, and a child's question uses the default kind. Do not approve on their behalf unless they told you to.
 - When a child's PR is merged, set its row's `outcome` to `merged` as soon as the merge is confirmed. Then tell the child to stop its PR monitor and any Agent merge, and confirm that its branch is pushed and that it has no open work, other PR, automation, or active Agent merge. Record the archive in `child_notes`, then archive the child. If anything is unclear, leave it running and tell the user.
 - When a unit ends without a merge, set its `outcome` to `closed` or `failed` before you archive its child.
