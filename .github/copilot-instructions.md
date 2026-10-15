@@ -8,7 +8,7 @@ Most deliverables are markdown prompts loaded by the Copilot CLI at runtime — 
 
 ## Layout
 
-- Skills: `ghcp/skills/<skill-name>/SKILL.md`
+- Skills: `ghcp/skills/<skill-name>/SKILL.md`, plus any supporting files it links to by relative path (for example `references/*.md`); `SKILL.md` says when to read each one
 - Custom agents: `ghcp/agents/<agent-name>.agent.md` (single file, not a directory)
 - Plugins: `ghcp/plugins/<plugin-name>/` (self-contained bundle)
 - Marketplace manifest: `.github/plugin/marketplace.json` (repository root, one file for all plugins)
@@ -19,7 +19,7 @@ Current contents:
 
 PR-review skills (provider-neutral, inspection-only):
 
-- `strict-code-review` — first-pass strict PR review (analysis-only).
+- `strict-code-review` — the strict first-pass reviewer for GitHub and Azure DevOps PR URLs, local branches and pasted diffs (inspection-only; it never posts comments). Its provider adapters and review checklist are in `references/`. Users can invoke it explicitly with `/strict-code-review`.
 - `analyse-pr-feedback` — triage reviewer feedback into a decision table (analysis-only).
 - `rereview-pr` — focused follow-up review after a previous review cycle (analysis-only).
 
@@ -85,7 +85,7 @@ The body is a prompt addressed to the future Copilot session ("You are…"), not
 **PR-review conventions (the `strict-code-review`, `analyse-pr-feedback`, `rereview-pr` family only):**
 
 - A **Supported providers** section. These skills are provider-neutral and must support both **GitHub** (`github.com/.../pull/<n>`) and **Azure DevOps** (`dev.azure.com/.../pullrequest/<id>` and `*.visualstudio.com/.../pullrequest/<id>`).
-- Separate **provider adapter** sections with the exact CLI commands to use:
+- Separate **provider adapter** sections, in `SKILL.md` or in supporting files it links to, with the exact CLI commands to use:
   - GitHub: `gh pr view`, `gh pr diff`, `gh api repos/.../pulls/...`, and a GraphQL query for `reviewThreads` (REST does not reliably expose thread resolution state).
   - Azure DevOps: `az repos pr show`, `az repos pr work-item list`, `az repos pr policy list`, and `az devops invoke --area git --resource pullRequestThreads ... --api-version 7.1`.
 - A working-tree safety check: run `git status` first; if the tree is not clean, do **not** check out the PR — fall back to remote metadata + diff.
@@ -112,6 +112,6 @@ Agent files (`ghcp/agents/<name>.agent.md`) are simpler than skills:
 
 ## Working in this repo
 
-- Skills and agents have nothing to build, test, or lint. Validation = read the changed `SKILL.md` / `.agent.md` and confirm frontmatter parses and the structure matches the conventions above.
+- Skills and agents have nothing to build, test, or lint. Validation = read the changed `SKILL.md` / `.agent.md` and any supporting files it links to, and confirm frontmatter parses, links resolve and the structure matches the conventions above.
 - Plugins **do** have tests. After touching anything under `ghcp/plugins/<name>/` or the root `.github/plugin/marketplace.json`, run `npm test && npm run validate` from that plugin's directory.
 - Commits in this repo follow the user's global policy (no `Co-authored-by` trailers).
