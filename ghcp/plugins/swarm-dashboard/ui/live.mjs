@@ -69,8 +69,11 @@ export const activityHtml = ctx => `<section class="rail" aria-label="Activity">
 const SUBAGENT_PILLS = { running: ['busy', 'running'], completed: ['merged', 'finished'], failed: ['blocked', 'failed'], stuck: ['stuck', 'stuck'] };
 const SUBAGENT_LIMIT = 12;
 
+/** The engine also gives reasons to units that are fine (a slow model call, a normal stop); only these get the alarm box. */
+const WHY_STATUSES = new Set(['stuck', 'blocked']);
+
 function whyHtml(unit) {
-  if (!unit.reason) return '';
+  if (!unit.reason || !WHY_STATUSES.has(unit.status)) return '';
   const word = unit.status === 'stuck' ? 'stuck' : unit.statusDetail === 'crashed' ? 'crashed' : unit.statusDetail === 'failed' ? 'failed' : 'blocked';
   return `<div class="dt-why st-${unit.status === 'stuck' ? 'stuck' : 'blocked'}"><h4>Why this counts as ${word}</h4><p>${esc(unit.reason)}</p></div>`;
 }
@@ -137,6 +140,7 @@ export function detailHtml(unitId, inMain, ctx) {
     + `<div class="kv"><span class="k">Stage</span><span class="v">${STAGE_NAMES[unit.stage]}</span></div>`
     + `<div class="kv"><span class="k">Model</span><span class="v">${esc(unit.model ?? 'unknown')}</span></div></div>`;
   const current = `<div class="dt-sec"><h4>Current activity</h4><div class="dt-kv"><span class="k">Doing</span><span>${esc(activity.label)}</span>`
+    + (unit.reason && !WHY_STATUSES.has(unit.status) ? `<span class="k">Note</span><span>${esc(unit.reason)}</span>` : '')
     + (activity.tool ? `<span class="k">Tool call</span><span><span class="code">${esc(activity.tool.summary)}</span> · ${elapsed(activity.tool.startedAt, now)}</span>` : '')
     + `<span class="k">Last event</span><span>${activity.lastEventAt ? ago(activity.lastEventAt, now) : 'none yet'}</span></div></div>`;
   return `<section class="detail" aria-label="Details for ${esc(unit.label)}">${top}${facts}${whyHtml(unit)}${current}`

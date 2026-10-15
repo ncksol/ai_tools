@@ -32,6 +32,15 @@ test('the detail panel explains a stuck unit', () => {
   assert.match(words, /Recent activity No recent activity$/);
 });
 
+test('a reason on a unit that is neither stuck nor blocked is a note, not an alarm', () => {
+  const snapshot = exampleSnapshot();
+  const b1 = snapshot.units.find(unit => unit.label === 'B1');
+  Object.assign(b1, { statusDetail: 'slow_model_call', reason: 'Waiting 6m for a model response; it counts as stuck after 10m.' });
+  const html = detailHtml(b1.id, false, context(snapshot));
+  assert.doesNotMatch(html, /dt-why/);
+  assert.match(html, /<span class="k">Note<\/span><span>Waiting 6m for a model response; it counts as stuck after 10m\.<\/span>/);
+});
+
 test('the detail panel shows a PR closed without merging with the badge and when it closed', () => {
   const html = detailHtml('ws-0007-d5', false, context(closedSnapshot()));
   assert.match(html, /<span class="k">State<\/span><span class="pr-state"><span class="badge rp-blocked">closed, not merged<\/span><span>/);
