@@ -1,0 +1,99 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { existsSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import {
+  SqliteUnavailableError, bindLiterals, inspectDatabase, openReadOnly, openTarget, sqliteBackends, withReadOnly,
+} from '../engine/sqlite.mjs';
+import { TEST_BACKENDS, canWriteWithNode, execSql, openWriter } from './helpers/sqlite-writer.mjs';
+import { tempDir } from './helpers/temp.mjs';
+
+const dir = tempDir('swarm-sqlite-');
+const backends = TEST_BACKENDS;
+const rollback = path.join(dir, 'rollback.db');
+execSql(rollback, "CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT); INSERT INTO t (v) VALUES ('a''q'), ('b'), ('c');");
+const closedWal = path.join(dir, 'closed-wal.db');
+execSql(closedWal, "PRAGMA journal_mode = WAL; CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT); INSERT INTO t (v) VALUES ('w');");
+
+test('at least one SQLite backend is available, and the engine finds the same ones', async () => {
+  assert.ok(backends.length > 0, 'install node:sqlite (Node >= 22.13) or the sqlite3 CLI');
+  assert.deepEqual(await sqliteBackends(), [...backends]);
+});
+
+test('inspectDatabase recognises missing, non-SQLite, rollback and WAL files', () => {
+  const text = path.join(dir, 'text.db');
+  writeFileSync(text, 'not a database');
+  assert.equal(inspectDatabase(path.join(dir, 'missing.db')), null);
+  assert.deepEqual(inspectDatabase(text), { sqlite: false, wal: false });
+  assert.deepEqual(inspectDatabase(rollback), { sqlite: true, wal: false });
+  assert.deepEqual(inspectDatabase(closedWal), { sqlite: true, wal: true });
+});
+
+test('a WAL database without -shm is opened immutable; others by path', () => {
+  assert.equal(existsSync(`${closedWal}-shm`), false);
+  const wal = openTarget(closedWal);
+  assert.equal(wal.immutable, true);
+  assert.match(wal.target, /^file:\/\/.*closed-wal\.db\?immutable=1$/);
+  assert.deepEqual(openTarget(rollback), { target: rollback, immutable: false });
+  assert.equal(openTarget(path.join(dir, 'missing.db')), null);
+});
+
+test('bindLiterals escapes strings and checks the parameter count', () => {
+  assert.equal(bindLiterals('SELECT ? , ?, ?, ?', ["it's", 7, null, 2n]), "SELECT 'it''s' , 7, NULL, 2");
+  assert.throws(() => bindLiterals('SELECT ?', []), /missing parameter/);
+  assert.throws(() => bindLiterals('SELECT 1', [1]), /too many parameters/);
+  assert.throws(() => bindLiterals('SELECT ?', ['a\u0000b']), /NUL/);
+  assert.throws(() => bindLiterals('SELECT ?', [{}]), /unsupported parameter type/);
+});
+
+for (const backend of backends) {
+  test(`${backend}: reads rows with bound parameters`, async () => {
+    const rows = await withReadOnly(rollback, { backend }, db => db.all('SELECT id, v FROM t WHERE id > ? AND v <> ? ORDER BY id', [0, 'c']));
+    assert.deepEqual(rows, [{ id: 1, v: "a'q" }, { id: 2, v: 'b' }]);
+  });
+
+  test(`${backend}: rejects writes`, async () => {
+    const db = await openReadOnly(rollback, { backend });
+    try {
+      await assert.rejects(db.all("INSERT INTO t (v) VALUES ('x')"));
+    } finally {
+      db.close();
+    }
+    const rows = await withReadOnly(rollback, { backend }, db2 => db2.all('SELECT count(*) AS n FROM t'));
+    assert.deepEqual(rows, [{ n: 3 }]);
+  });
+
+  test(`${backend}: reads a closed WAL database without creating side files`, async () => {
+    const rows = await withReadOnly(closedWal, { backend }, db => db.all('SELECT v FROM t'));
+    assert.deepEqual(rows, [{ v: 'w' }]);
+    assert.equal(existsSync(`${closedWal}-wal`), false);
+    assert.equal(existsSync(`${closedWal}-shm`), false);
+  });
+
+  test(`${backend}: reads committed rows of a WAL database with a live writer`, { skip: !canWriteWithNode }, async () => {
+    const file = path.join(dir, `live-${backend}.db`);
+    const writer = openWriter(file);
+    try {
+      writer.exec("PRAGMA journal_mode = WAL; CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT); INSERT INTO t (v) VALUES ('live');");
+      assert.equal(openTarget(file).immutable, false);
+      const rows = await withReadOnly(file, { backend }, db => db.all('SELECT v FROM t'));
+      assert.deepEqual(rows, [{ v: 'live' }]);
+    } finally {
+      writer.close();
+    }
+  });
+
+  test(`${backend}: returns null for a missing file without calling the reader`, async () => {
+    let called = false;
+    const result = await withReadOnly(path.join(dir, 'nope.db'), { backend }, async () => {
+      called = true;
+    });
+    assert.equal(result, null);
+    assert.equal(called, false);
+  });
+}
+
+test('the CLI backend reports a missing sqlite3 binary as SqliteUnavailableError', async () => {
+  const db = await openReadOnly(rollback, { backend: 'cli', sqlite3Path: path.join(dir, 'no-such-sqlite3') });
+  await assert.rejects(db.all('SELECT 1'), SqliteUnavailableError);
+});
