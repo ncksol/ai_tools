@@ -31,7 +31,8 @@ Research skills:
 
 - `andrej` — Karpathy-flavoured coding-discipline persona; behavioural rules to reduce common LLM coding mistakes.
 - `azure-arch-diagram` — expert Azure architecture diagram creator; emits editable draw.io (`.drawio`) mxGraph XML following Microsoft Azure Architecture Centre style (official Azure2 icons, directional arrows, grouping containers, consistent colour palette).
-- `orchestrator` — session-level coordinator for the GitHub Copilot app, selected with `/agent` or the composer. Its `tools` allowlist removes shell, file read/edit, search, web and MCP tools, so it must delegate: owned work (branch, PR, workstream) to nested child sessions, one-off jobs to `task` sub-agents. Keeps plan state and a child-session registry in the session SQL database.
+- `orchestrator` — session-level coordinator for the GitHub Copilot app, selected with `/agent` or the composer. Its `tools` allowlist removes shell, file read/edit, search, web and MCP tools, so it must delegate: owned work (branch, PR, workstream) and jobs that need other agents to nested child sessions, other one-off jobs to `orchestrator-worker` sub-agents. Keeps plan state and a child-session registry in the session SQL database.
+- `orchestrator-worker` — helper that `orchestrator` starts through the `task` tool for one-off jobs (research, checks, reviews, documents, commands). Its own `tools` list gives it shell, file, search, web and skill tools but no `task` or session tools, so it can't start sub-agents or create sessions. `user-invocable: false` keeps it out of the agent picker.
 
 **Plugins:**
 
@@ -99,7 +100,8 @@ When extending an existing skill, keep that skill's established section ordering
 Agent files (`ghcp/agents/<name>.agent.md`) are simpler than skills:
 
 - Single file, no enclosing per-agent directory.
-- Frontmatter contains `description:` (a short line shown in the agent picker — not a router intent string). Add other fields only when the agent needs them, as `orchestrator.agent.md` does for a session-level agent with hard limits: `name`, a `tools` allowlist (the agent can't call unlisted tools, but sub-agents it starts keep their own; app tools such as `create_session` are listed by bare name), `include-custom-instructions: true`, and `disable-model-invocation: true` (stops other agents starting it as a sub-agent).
+- Frontmatter contains `description:` (a short line shown in the agent picker — not a router intent string). Add other fields only when the agent needs them, as `orchestrator.agent.md` does for a session-level agent with hard limits: `name`, a `tools` allowlist (the agent can't call unlisted tools; app tools such as `create_session` are listed by bare name), `include-custom-instructions: true`, and `disable-model-invocation: true` (stops other agents starting it as a sub-agent). A helper agent that only other agents start, such as `orchestrator-worker`, sets `user-invocable: false` and must not set `disable-model-invocation: true`, which blocks `task` launches.
+- A `tools` allowlist also caps the built-in sub-agents the agent starts (`explore`, `task`, `research`, `rubber-duck`, `code-review`, `security-review`): `*` becomes the agent's own list, and `explore`'s fixed list ends up empty. `general-purpose` and custom agents with their own `tools` list keep their tools. This was checked on Copilot CLI 1.0.95-3, is not documented, and may change. In a `tools` list, name `grep`, `glob` and `web_fetch` directly: the `search` and `web` aliases match nothing in the CLI, and unknown names are dropped silently.
 - Body is the agent's system prompt: persona, behavioural rules, operating mode. No mandatory sections.
 
 ## Authoring rules specific to this repo
