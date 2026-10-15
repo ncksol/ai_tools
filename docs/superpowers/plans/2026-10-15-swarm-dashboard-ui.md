@@ -56,7 +56,7 @@ Evidence: the IANA service-name and port registry (CSV downloaded on 15 October 
 
 Decision: port 7927, overridable with `SWARM_DASHBOARD_PORT` (read by the launcher and the canvas) and the launcher's `--port`.
 
-- Launcher: it tries to bind. On `EADDRINUSE` it probes `/api/health`. If the dashboard answers, it prints `The swarm dashboard is already running at http://127.0.0.1:7927/` and exits 0. If another program holds the port, it prints `Port 7927 is used by another program. Start with --port <n> or set SWARM_DASHBOARD_PORT.` and exits 1. If the holder accepts connections but does not answer within 2.5 s three times, it says the port `is in use and not answering` and exits 1. It never falls back to a random port, because pages and bookmarks rely on the fixed URL.
+- Launcher: it probes `/api/health` first (macOS lets a loopback bind succeed beside a program that holds the port on every address), then binds, and on `EADDRINUSE` probes again. If the dashboard answers, it prints `The swarm dashboard is already running at http://127.0.0.1:7927/` and exits 0. If another program holds the port, it prints `Port 7927 is used by another program. Start with --port <n> or set SWARM_DASHBOARD_PORT.` and exits 1. If the holder accepts connections but does not answer within 2.5 s three times, it says the port `is in use and not answering` and exits 1. It never falls back to a random port, because pages and bookmarks rely on the fixed URL.
 - Canvas: the same bind-then-identify step. If another program holds the port, `open()` throws `CanvasError('port_in_use', ...)` with the same advice.
 
 ### 3. How the layout check runs headless without dependencies
@@ -3593,6 +3593,17 @@ test('the probe tells a free port, our dashboard, another program and a silent l
   }
 });
 
+test('a program holding the port on every address counts as taken, not as a free loopback port', async () => {
+  const port = await freePort();
+  const other = createServer((req, res) => res.end('hello'));
+  await new Promise(resolve => other.listen(port, '0.0.0.0', resolve));
+  try {
+    assert.deepEqual(await listenShared({ port, makeServer: () => dashboard(port) }), { status: 'taken' });
+  } finally {
+    await close(other);
+  }
+});
+
 test('listenShared starts a server, finds a running dashboard, or reports a taken port', async () => {
   const port = await freePort();
   const first = await listenShared({ port, makeServer: () => dashboard(port) });
@@ -3729,6 +3740,11 @@ export async function probePort(port, { timeoutMs = 2500 } = {}) {
  * probes the winner and reuses it if it is a dashboard.
  */
 export async function listenShared({ port, makeServer, probe = probePort, attempts = 3, pauseMs = 300 }) {
+  // Look before binding: macOS lets a loopback bind succeed beside a program that holds the port on every address.
+  const holder = await probe(port);
+  if (holder.state === 'ours') return { status: 'running', health: holder.health };
+  if (holder.state === 'other') return { status: 'taken' };
+  if (holder.state === 'unresponsive') return { status: 'unresponsive' };
   let status = 'taken';
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const server = makeServer();
@@ -3742,7 +3758,7 @@ export async function listenShared({ port, makeServer, probe = probePort, attemp
     if (found.state === 'ours') return { status: 'running', health: found.health };
     if (found.state === 'other') return { status: 'taken' };
     status = found.state === 'unresponsive' ? 'unresponsive' : 'taken';
-    await new Promise(resolve => setTimeout(resolve, pauseMs));
+    if (attempt < attempts - 1) await new Promise(resolve => setTimeout(resolve, pauseMs));
   }
   return { status };
 }
@@ -3850,7 +3866,7 @@ In `package.json`, add one line after the `validate` script (keep every other li
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/shared.test.mjs tests/launcher.test.mjs && npm test && npm run validate`
-Expected: PASS (3 + 4 new tests); the whole suite and validation pass.
+Expected: PASS (4 + 4 new tests); the whole suite and validation pass.
 
 - [ ] **Step 7: Commit**
 
