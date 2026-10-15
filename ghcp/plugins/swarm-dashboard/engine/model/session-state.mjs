@@ -1,5 +1,6 @@
 import { clip, oneLine, ownString } from '../text.mjs';
-import { parseTime } from '../time.mjs';
+import { maxTime, minTime, parseTime } from '../time.mjs';
+import { recordTaskComplete, recordToolComplete, recordToolStart, recordUserMessage } from './messages.mjs';
 import { LIMITS, addFeed, addMark, pushBounded } from './state-utils.mjs';
 
 /** Large event types the reducer does not need; only their timestamps are read. */
@@ -134,7 +135,10 @@ function onMainEvent(state, type, data, at) {
       break;
     case 'user.message':
       state.prompts += 1;
-      onUserMessage(state, data, at);
+      recordUserMessage(state, data, at);
+      break;
+    case 'session.task_complete':
+      recordTaskComplete(state, data, at);
       break;
     case 'session.shutdown':
       state.shutdownAt = at;
@@ -162,12 +166,6 @@ function onMainEvent(state, type, data, at) {
     default:
       break;
   }
-}
-
-function onUserMessage(state, data, at) {
-  state.lastInboundAt = at;
-  if (state.turn) state.turn.progressAt = at;
-  if (data.source === undefined || data.source === null) state.lastHumanAt = at;
 }
 
 function closeTurn(state, at) {
@@ -261,6 +259,8 @@ function onToolStart(state, data, at) {
   } else if (name === 'task') {
     const sub = newSubagent(state, id, at, args);
     addFeed(state, at, 'subagent-start', `started ${sub.type}: ${sub.name}${sub.mode === 'sync' ? ' (sync)' : ''}`);
+  } else {
+    recordToolStart(state, name, args, id, at);
   }
 }
 
@@ -297,6 +297,7 @@ function onToolComplete(state, data, at) {
       finishSubagent(sub, at, data.success === false ? 'failed' : 'completed', null);
     }
   }
+  recordToolComplete(state, id, data);
 }
 
 function onSubagentLifecycle(state, event, data, at) {
@@ -323,4 +324,50 @@ function onSubagentLifecycle(state, event, data, at) {
 function touchSubagent(state, owner, at) {
   const sub = owner ? state.subagents.get(owner) : null;
   if (sub && at > sub.lastEventAt) sub.lastEventAt = at;
+}
+
+/** Aggregate of one project session's CLI sessions, oldest first. Live fields stay empty. */
+export function mergeStates(states) {
+  const merged = createSessionState(states.map(state => state.id).join('+') || 'none');
+  for (const state of states) {
+    merged.lines += state.lines;
+    merged.parseErrors += state.parseErrors;
+    merged.firstEventAt = minTime(merged.firstEventAt, state.firstEventAt);
+    if (state.lastEventAt !== null && (merged.lastEventAt === null || state.lastEventAt >= merged.lastEventAt)) {
+      merged.lastEventAt = state.lastEventAt;
+      merged.lastEventType = state.lastEventType;
+    }
+    merged.copilotVersion = state.copilotVersion ?? merged.copilotVersion;
+    merged.model = state.model ?? merged.model;
+    merged.busyMs += state.busyMs;
+    merged.waitingMs += state.waitingMs;
+    merged.busySpans.push(...state.busySpans);
+    merged.waitSpans.push(...state.waitSpans);
+    for (const [id, sub] of state.subagents) merged.subagents.set(id, sub);
+    merged.sent.push(...state.sent);
+    merged.inbound.push(...state.inbound);
+    merged.taskCompletes.push(...state.taskCompletes);
+    merged.automation.saves.push(...state.automation.saves);
+    merged.automation.wakes.push(...state.automation.wakes);
+    merged.feed.push(...state.feed);
+    merged.marks.push(...state.marks);
+    for (const [key, value] of state.prMentions) {
+      const entry = merged.prMentions.get(key);
+      merged.prMentions.set(key, entry
+        ? { ...entry, count: entry.count + value.count, firstAt: Math.min(entry.firstAt, value.firstAt), lastAt: Math.max(entry.lastAt, value.lastAt) }
+        : { ...value });
+    }
+    merged.lastInboundAt = maxTime(merged.lastInboundAt, state.lastInboundAt);
+    merged.lastHumanAt = maxTime(merged.lastHumanAt, state.lastHumanAt);
+    merged.lastTurnEndAt = maxTime(merged.lastTurnEndAt, state.lastTurnEndAt);
+    merged.shutdownAt = maxTime(merged.shutdownAt, state.shutdownAt);
+    merged.abortAt = maxTime(merged.abortAt, state.abortAt);
+    merged.lastErrorAt = maxTime(merged.lastErrorAt, state.lastErrorAt);
+  }
+  const byAt = (a, b) => a.at - b.at;
+  for (const list of [merged.sent, merged.inbound, merged.taskCompletes, merged.feed, merged.marks, merged.automation.saves]) list.sort(byAt);
+  merged.automation.wakes.sort((a, b) => a - b);
+  merged.busySpans.sort((a, b) => a[0] - b[0]);
+  merged.waitSpans.sort((a, b) => a[0] - b[0]);
+  return merged;
 }
