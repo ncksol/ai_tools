@@ -176,6 +176,21 @@ test('spinning: failures, the same call in a row within a prompt, close compacti
   assert.equal(evaluate(fold(denied), T0 + MINUTE).detail, 'spinning');
 });
 
+test('a repeat streak ends at the next prompt, automation wake or cross-session message', () => {
+  const afterPrompt = { human: log => log.user('next step'), automation: log => log.automationWake(), message: log => log.crossSession({ fromSessionId: 'ws-child', content: 'hello' }) };
+  for (const [name, newPrompt] of Object.entries(afterPrompt)) {
+    const log = busyLog();
+    for (let i = 0; i < 3; i += 1) log.done(log.tool('bash', { command: 'npm test' }));
+    newPrompt(log);
+    log.done(log.tool('bash', { command: 'git status' }));
+    assert.equal(evaluate(fold(log), T0 + MINUTE).detail, 'busy', name);
+  }
+  const same = busyLog();
+  same.user('again');
+  for (let i = 0; i < 3; i += 1) same.done(same.tool('bash', { command: 'npm test' }));
+  assert.equal(evaluate(fold(same), T0 + MINUTE).detail, 'spinning');
+});
+
 test('idle units with unanswered reports are blocked or stalled', () => {
   const log = busyLog();
   log.wait(MINUTE);

@@ -101,8 +101,8 @@ function spinningReason(state, now, t) {
   let longest = 0;
   let previous = null;
   for (const call of state.recent.calls) {
-    if (call.at < from || POLLING_TOOLS.has(call.name)) continue;
-    const key = `${call.prompt}:${call.key}`;
+    if (call.at < from || call.prompt !== state.prompts || POLLING_TOOLS.has(call.name)) continue;
+    const key = call.key;
     run = key === previous ? run + 1 : 1;
     previous = key;
     longest = Math.max(longest, run);
