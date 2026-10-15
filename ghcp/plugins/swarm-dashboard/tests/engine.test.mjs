@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { createSwarmEngine } from '../engine/engine.mjs';
 import { createPrLookup } from '../engine/model/pr-lookup.mjs';
@@ -511,4 +511,23 @@ test('a run summary counts every sub-agent of the run, though each session lists
   const snapshot = await engine.getSnapshot('ws-many');
   assert.equal(snapshot.orchestrator.subagents.length, 500);
   assert.equal(snapshot.cost.credits, 600);
+});
+
+test('a log line over the size limit is skipped with a warning, and later lines still count', async () => {
+  const home = scenario();
+  let clock = at(60);
+  const engine = createSwarmEngine({ copilotHome: home.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => clock, processProbe: alwaysAlive, prLookup: 'off' });
+  await engine.getSnapshot('ws-root');
+  assert.ok(engine.diagnostics().every(item => item.source !== 'events'));
+  const file = path.join(home.dir('cli-ui'), 'events.jsonl');
+  appendFileSync(file, `${'x'.repeat(17 * 1024 * 1024)}\n`);
+  const later = new EventLog(at(61));
+  later.turnStart();
+  home.writeEvents('cli-ui', later.events, { append: true });
+  clock = at(62);
+  await engine.refresh();
+  const warning = engine.diagnostics().find(item => item.source === 'events');
+  assert.equal(warning.level, 'warn');
+  assert.match(warning.message, /^cli-ui: skipped 1 log line/);
+  assert.equal((await engine.getSnapshot('ws-root')).units.find(unit => unit.id === 'ws-ui').statusDetail, 'busy');
 });

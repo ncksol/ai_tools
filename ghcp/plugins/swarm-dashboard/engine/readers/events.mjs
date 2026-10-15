@@ -1,17 +1,37 @@
 import { open, stat } from 'node:fs/promises';
-import { StringDecoder } from 'node:string_decoder';
-import { ownString } from '../text.mjs';
+
+export const MAX_LINE_BYTES = 16 * 1024 * 1024;
+
+const NEWLINE = 10;
+const CARRIAGE_RETURN = 13;
+
+/**
+ * pending: Buffer copies of the unfinished last line, with their byte count. skipping: the current line was over the
+ * size limit, so its bytes are dropped (and counted in skipBytes) until the next newline.
+ */
+function freshPartial(tail) {
+  tail.pending = [];
+  tail.pendingBytes = 0;
+  tail.skipping = false;
+  tail.skipBytes = 0;
+}
 
 export function createTail(file) {
-  return { file, offset: 0, ino: null, remainder: '', decoder: new StringDecoder('utf8') };
+  const tail = { file, offset: 0, ino: null };
+  freshPartial(tail);
+  return tail;
 }
 
 /**
  * Deliver complete lines appended since the last call, reading by byte offset in fixed-size chunks with async reads, so
  * memory stays bounded however large the log is and large logs do not block the event loop. A file that shrank or was
  * replaced restarts at byte 0 and reports reset.
+ *
+ * An unfinished last line is kept as Buffer copies and decoded once, when its newline arrives (a newline byte never
+ * occurs inside a UTF-8 sequence). A line longer than maxLineBytes is never delivered: its bytes are dropped until the
+ * next newline, and the result reports it as skipped and skippedBytes (both present only when something was skipped).
  */
-export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onReset = null } = {}) {
+export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onReset = null, maxLineBytes = MAX_LINE_BYTES } = {}) {
   let info;
   try {
     info = await stat(tail.file);
@@ -22,8 +42,7 @@ export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onRes
   let reset = false;
   if ((tail.ino !== null && info.ino !== tail.ino) || info.size < tail.offset) {
     tail.offset = 0;
-    tail.remainder = '';
-    tail.decoder = new StringDecoder('utf8');
+    freshPartial(tail);
     reset = true;
     if (onReset) onReset();
   }
@@ -31,6 +50,16 @@ export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onRes
   if (info.size === tail.offset) return { missing: false, reset, lines: 0, bytes: 0 };
   let lines = 0;
   let bytes = 0;
+  let skipped = 0;
+  let skippedBytes = 0;
+  const deliver = (chunk, start, end) => {
+    let line = tail.pending.length ? Buffer.concat([...tail.pending, chunk.subarray(start, end)]) : chunk.subarray(start, end);
+    freshPartial(tail);
+    if (line.length && line[line.length - 1] === CARRIAGE_RETURN) line = line.subarray(0, -1);
+    if (!line.length) return;
+    lines += 1;
+    onLine(line.toString('utf8'));
+  };
   const handle = await open(tail.file, 'r');
   try {
     const buffer = Buffer.alloc(Math.max(1, Math.min(chunkSize, info.size - tail.offset)));
@@ -40,17 +69,35 @@ export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onRes
       if (bytesRead <= 0) break;
       tail.offset += bytesRead;
       bytes += bytesRead;
-      const parts = (tail.remainder + tail.decoder.write(buffer.subarray(0, bytesRead))).split('\n');
-      tail.remainder = ownString(parts.pop());
-      for (const part of parts) {
-        const line = part.endsWith('\r') ? part.slice(0, -1) : part;
-        if (!line) continue;
-        lines += 1;
-        onLine(line);
+      const chunk = buffer.subarray(0, bytesRead);
+      let start = 0;
+      while (start < chunk.length) {
+        const newline = chunk.indexOf(NEWLINE, start);
+        const end = newline === -1 ? chunk.length : newline;
+        if (!tail.skipping && tail.pendingBytes + (end - start) > maxLineBytes) {
+          tail.skipping = true;
+          tail.skipBytes = tail.pendingBytes;
+          tail.pending = [];
+          tail.pendingBytes = 0;
+        }
+        if (tail.skipping) {
+          tail.skipBytes += end - start;
+          if (newline !== -1) {
+            skipped += 1;
+            skippedBytes += tail.skipBytes + 1;
+            freshPartial(tail);
+          }
+        } else if (newline === -1) {
+          tail.pending.push(Buffer.from(chunk.subarray(start, end)));
+          tail.pendingBytes += end - start;
+        } else {
+          deliver(chunk, start, end);
+        }
+        start = end + 1;
       }
     }
   } finally {
     await handle.close();
   }
-  return { missing: false, reset, lines, bytes };
+  return skipped ? { missing: false, reset, lines, bytes, skipped, skippedBytes } : { missing: false, reset, lines, bytes };
 }

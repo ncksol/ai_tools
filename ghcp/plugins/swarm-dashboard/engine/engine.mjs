@@ -179,18 +179,23 @@ export function createSwarmEngine(options = {}) {
   async function tailSession(cliId, diag) {
     let entry = sessions.get(cliId);
     if (!entry) {
-      entry = { tail: createTail(path.join(paths.stateDir, cliId, 'events.jsonl')), state: createSessionState(cliId), missing: true };
+      entry = { tail: createTail(path.join(paths.stateDir, cliId, 'events.jsonl')), state: createSessionState(cliId), missing: true, skipped: 0 };
       sessions.set(cliId, entry);
     }
     try {
       const result = await readNewLines(entry.tail, line => applyLine(entry.state, line), {
         onReset: () => {
           entry.state = createSessionState(cliId);
+          entry.skipped = 0;
         },
       });
       entry.missing = result.missing;
+      entry.skipped += result.skipped ?? 0;
     } catch (error) {
       diag.push({ level: 'warn', source: 'events', message: `${shortId(cliId)}: ${error.message}` });
+    }
+    if (entry.skipped) {
+      diag.push({ level: 'warn', source: 'events', message: `${shortId(cliId)}: skipped ${entry.skipped} log line${entry.skipped === 1 ? '' : 's'} over the size limit.` });
     }
     return entry.missing ? null : entry.state;
   }
