@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { existsSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
-  SqliteUnavailableError, bindLiterals, inspectDatabase, openReadOnly, openTarget, sqliteBackends, withReadOnly,
+  SqliteUnavailableError, bindLiterals, inspectDatabase, loadNodeSqlite, nodeSqliteSupportsUri, openReadOnly, openTarget, sqliteBackends,
+  withReadOnly,
 } from '../engine/sqlite.mjs';
 import { TEST_BACKENDS, canWriteWithNode, execSql, openWriter } from './helpers/sqlite-writer.mjs';
 import { tempDir } from './helpers/temp.mjs';
@@ -16,7 +17,7 @@ const closedWal = path.join(dir, 'closed-wal.db');
 execSql(closedWal, "PRAGMA journal_mode = WAL; CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT); INSERT INTO t (v) VALUES ('w');");
 
 test('at least one SQLite backend is available, and the engine finds the same ones', async () => {
-  assert.ok(backends.length > 0, 'install node:sqlite (Node >= 22.13) or the sqlite3 CLI');
+  assert.ok(backends.length > 0, 'install node:sqlite (Node >= 22.15) or the sqlite3 CLI');
   assert.deepEqual(await sqliteBackends(), [...backends]);
 });
 
@@ -96,4 +97,36 @@ for (const backend of backends) {
 test('the CLI backend reports a missing sqlite3 binary as SqliteUnavailableError', async () => {
   const db = await openReadOnly(rollback, { backend: 'cli', sqlite3Path: path.join(dir, 'no-such-sqlite3') });
   await assert.rejects(db.all('SELECT 1'), SqliteUnavailableError);
+});
+
+test('nodeSqliteSupportsUri needs Node 22.15, 23.10 or later', () => {
+  const expected = { '22.13.0': false, '22.14.1': false, '22.15.0': true, '23.9.0': false, '23.10.0': true, '24.0.0': true, '25.1.0': true, '18.11.0': false, garbage: false };
+  for (const [version, supported] of Object.entries(expected)) assert.equal(nodeSqliteSupportsUri(version), supported, version);
+});
+
+test('auto falls back to the CLI for an immutable target when node:sqlite lacks file URIs', { skip: !backends.includes('cli') }, async () => {
+  const db = await openReadOnly(closedWal, { backend: 'auto', nodeVersion: '22.14.0' });
+  try {
+    assert.equal(db.backend, 'cli');
+    assert.equal(db.immutable, true);
+    assert.deepEqual(await db.all('SELECT v FROM t'), [{ v: 'w' }]);
+  } finally {
+    db.close();
+  }
+  assert.equal(existsSync(`${closedWal}-wal`), false);
+  assert.equal(existsSync(`${closedWal}-shm`), false);
+});
+
+test('the node backend needs URI support for an immutable target', { skip: !backends.includes('node') }, async () => {
+  assert.ok(await loadNodeSqlite());
+  const db = await openReadOnly(closedWal, { backend: 'auto', nodeVersion: '22.15.0' });
+  try {
+    assert.equal(db.backend, 'node');
+  } finally {
+    db.close();
+  }
+  await assert.rejects(
+    openReadOnly(closedWal, { backend: 'node', nodeVersion: '22.14.0' }),
+    error => error instanceof SqliteUnavailableError && /22\.15/.test(error.message),
+  );
 });

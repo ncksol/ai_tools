@@ -12,10 +12,22 @@ export class SqliteUnavailableError extends Error {
 }
 
 let nodeSqlite;
-/** node:sqlite when this runtime has it (Node >= 22.13 without flags), otherwise null. */
+/**
+ * node:sqlite when this runtime has it (Node >= 22.13 without flags), otherwise null. Loading does not mean every
+ * database can be read: immutable reads need file: URI support, from Node 22.15 / 23.10 (see nodeSqliteSupportsUri).
+ */
 export function loadNodeSqlite() {
   nodeSqlite ??= import('node:sqlite').then(module => module, () => null);
   return nodeSqlite;
+}
+
+/** node:sqlite opens `file:` URIs, which immutable reads need, from Node 22.15 and 23.10. */
+export function nodeSqliteSupportsUri(version = process.versions.node) {
+  const match = /^(\d+)\.(\d+)/.exec(String(version));
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  return major > 23 || (major === 23 && minor >= 10) || (major === 22 && minor >= 15);
 }
 
 /** Header check without opening SQLite: null when missing; wal = file format version 2. */
@@ -133,15 +145,27 @@ function cliDatabase(sqlite3Path, target, immutable, execFileImpl) {
   };
 }
 
-/** Open a database read-only. Resolves null when the file is missing or is not SQLite. */
+/**
+ * Open a database read-only. Resolves null when the file is missing or is not SQLite.
+ * options: backend ('auto' | 'node' | 'cli'), sqlite3Path, execFileImpl, and nodeVersion (default process.versions.node;
+ * a test seam for the file: URI check). In 'auto' mode an immutable target uses the node backend only when this Node.js
+ * version supports file: URIs, and the sqlite3 CLI otherwise.
+ */
 export async function openReadOnly(file, options = {}) {
-  const { backend = 'auto', sqlite3Path = 'sqlite3', execFileImpl = execFile } = options;
+  const { backend = 'auto', sqlite3Path = 'sqlite3', execFileImpl = execFile, nodeVersion = process.versions.node } = options;
   const target = openTarget(file);
   if (!target) return null;
   if (backend === 'auto' || backend === 'node') {
     const sqlite = await loadNodeSqlite();
-    if (sqlite) return nodeDatabase(sqlite, target.target, target.immutable);
-    if (backend === 'node') throw new SqliteUnavailableError('node:sqlite is not available in this Node.js runtime');
+    if (!sqlite) {
+      if (backend === 'node') throw new SqliteUnavailableError('node:sqlite is not available in this Node.js runtime');
+    } else if (!target.immutable || nodeSqliteSupportsUri(nodeVersion)) {
+      return nodeDatabase(sqlite, target.target, target.immutable);
+    } else if (backend === 'node') {
+      throw new SqliteUnavailableError(
+        `node:sqlite in Node.js ${nodeVersion} cannot open file: URIs, which this database needs; use Node.js 22.15 or later, or the sqlite3 CLI`,
+      );
+    }
   }
   return cliDatabase(sqlite3Path, target.target, target.immutable, execFileImpl);
 }
