@@ -48,7 +48,7 @@ This repo is also a **Copilot CLI plugin marketplace** (`ai-tools`). Plugins are
 
 | Skill | What it does | When to invoke |
 |---|---|---|
-| [`strict-code-review`](./ghcp/skills/strict-code-review/SKILL.md) | First-pass strict senior-engineer PR review. Inspection only — no comments posted, no code changed. | "Review this PR: `<url>`" |
+| [`strict-code-review`](./ghcp/skills/strict-code-review/SKILL.md) | First-pass strict senior-engineer review of a GitHub or Azure DevOps PR, a local branch, or a pasted diff. Inspection only — no comments posted, no code changed. | `/strict-code-review <url>`, or "Do a strict review of my branch" |
 | [`analyse-pr-feedback`](./ghcp/skills/analyse-pr-feedback/SKILL.md) | Triages reviewer comments into a decision table (agree / disagree / needs clarification) so you can reply intentionally. | "Analyse the feedback on `<url>`" |
 | [`rereview-pr`](./ghcp/skills/rereview-pr/SKILL.md) | Focused **second-pass** review: were the previous findings actually addressed? Is the engineer's pushback valid? | "Re-review `<url>`" |
 | [`storm-research`](./ghcp/skills/storm-research/SKILL.md) | Runs the Stanford **STORM** research method — five expert perspectives, a contradiction map, a synthesised briefing, and a self-critique — grounded in real web sources. Outputs a chat briefing plus an optional self-contained HTML report. Based on [this article](https://github.com/stanford-oval/storm) that turned [official repo](https://github.com/stanford-oval/storm) into a set of prompts. | "Research `<topic>` deeply" / "STORM `<topic>`". |
@@ -80,7 +80,7 @@ Both are markdown files the [GitHub Copilot CLI](https://docs.github.com/en/copi
 ~/.copilot/skills/<skill-name>/SKILL.md
 ```
 
-The CLI auto-routes to a skill when the user's intent matches its `description`. Each `SKILL.md` is markdown with a small YAML frontmatter block:
+The CLI auto-routes to a skill when the user's intent matches its `description`, and you can also invoke a skill by name with `/<skill-name>`. Each `SKILL.md` is markdown with a small YAML frontmatter block:
 
 ```yaml
 ---
@@ -172,10 +172,13 @@ To update, run `git -C ai_tools pull`, then run both `cp` commands again.
 ### Option 3: Cherry-pick a single skill or agent
 
 ```bash
-# A skill
-mkdir -p ~/.copilot/skills/strict-code-review
-curl -fsSL https://raw.githubusercontent.com/ncksol/ai_tools/main/ghcp/skills/strict-code-review/SKILL.md \
-  -o ~/.copilot/skills/strict-code-review/SKILL.md
+# A skill: download SKILL.md and every file it links to.
+# strict-code-review, for example, also needs the files in its references/ directory.
+base=https://raw.githubusercontent.com/ncksol/ai_tools/main/ghcp/skills/strict-code-review
+for f in SKILL.md references/azure-devops.md references/checklist.md \
+         references/github.md references/local.md references/pasted-diff.md; do
+  curl -fsSL --create-dirs "$base/$f" -o ~/.copilot/skills/strict-code-review/"$f"
+done
 
 # An agent
 mkdir -p ~/.copilot/agents
@@ -191,10 +194,13 @@ Restart your Copilot CLI session and you're done.
 
 ## ▶️ Use the skills
 
-Once installed, you don't invoke skills by name — you describe what you want and the CLI routes to the best match:
+Once installed, describe what you want and the CLI routes to the best match, or invoke a skill by name with `/<skill-name>`:
 
 ```text
-> Review this PR: https://github.com/acme/widgets/pull/482
+> /strict-code-review https://github.com/acme/widgets/pull/482
+  → runs strict-code-review on that PR
+
+> Do a strict review of my current branch before I open a PR
   → activates strict-code-review
 
 > The reviewer left a bunch of comments on PR 482 — help me triage them
@@ -205,6 +211,16 @@ Once installed, you don't invoke skills by name — you describe what you want a
 ```
 
 Pasted diffs, local branch names, and Azure DevOps URLs all work too.
+
+For a PR URL, start the prompt with `/strict-code-review`. When many skills are installed, the CLI may describe only some of them to the model, so a prompt such as "Review this PR: `<url>`" can go to another review skill, such as `review-pull-request` from the `pr-review-graph` plugin.
+
+`strict-code-review` reads files from its `references/` directory while it runs. In non-interactive runs (`copilot -p`), the CLI cannot ask for approval, so it refuses those reads unless you give it read access to the skill's resolved directory. Installed skills are often symlinks and the CLI checks the real path, so `--add-dir ~/.copilot/skills` is not enough:
+
+```bash
+copilot -p "<your request>" --add-dir "$(realpath ~/.copilot/skills/strict-code-review)"
+```
+
+Without that access, the skill stops with `Review incomplete` and says how to grant it.
 
 ---
 
@@ -220,7 +236,8 @@ ai_tools/
 └── ghcp/                              ← GitHub Copilot CLI artefacts
     ├── skills/
     │   ├── strict-code-review/
-    │   │   └── SKILL.md
+    │   │   ├── SKILL.md
+    │   │   └── references/            ← provider adapters and the review checklist
     │   ├── analyse-pr-feedback/
     │   │   └── SKILL.md
     │   ├── rereview-pr/
@@ -265,7 +282,7 @@ The PR-related skills here all share the same shape so they feel like a coherent
 - **`description` is written for the router**, not the human reader. State *exactly when this skill should activate*, including the verbs a user is likely to say.
 - **Safety rules up top.** Be explicit about what the skill must NOT do (edit, commit, push, post comments, approve, merge, …). Inspection-only skills are the default here.
 - **Provider-neutral** for any PR/repo workflow: support GitHub *and* Azure DevOps, with adapters for local branches and pasted input.
-- **Shared severity vocabulary**: `Critical | High | Medium | Low | Info`.
+- **Shared severity vocabulary**: `Critical | High | Medium | Low`.
 - **Concrete commands, not vibes.** Show the exact `gh` / `az` invocations to use, including the GraphQL query for GitHub review-thread resolution state (REST doesn't expose it reliably).
 - **Prescribed output format** — usually a markdown table — so results are skimmable and comparable across runs.
 - **Forbid hallucination**: don't invent line numbers, don't claim a command ran when it didn't, don't claim surrounding code was inspected when only the diff was read.
