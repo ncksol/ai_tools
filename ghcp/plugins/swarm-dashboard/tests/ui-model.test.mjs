@@ -23,12 +23,11 @@ test('a unit whose PR closed without merging is marked until it is archived', ()
   assert.equal(closedNotMerged(findByLabel(exampleSnapshot(), 'F2a')), false);
 });
 
-test('a unit ends at endedAt, else at its PR outcome when it has one', () => {
+test('a unit ends at endedAt, which the engine sets from its outcome', () => {
   const snapshot = exampleSnapshot();
   const f2a = findByLabel(snapshot, 'f2a');
   assert.equal(unitEnd(f2a), f2a.endedAt);
-  assert.equal(unitEnd({ ...f2a, endedAt: null }), f2a.pr.mergedAt);
-  assert.equal(unitEnd({ ...f2a, endedAt: null, outcome: null }), null);
+  assert.equal(unitEnd({ ...f2a, endedAt: null }), null);
   assert.equal(unitEnd(findByLabel(snapshot, 'B1')), null);
 });
 

@@ -40,15 +40,8 @@ export const TIMELINE_WORDS = Object.freeze({ stuck: 'stuck {t}', plan: 'waiting
 export const PLAN_WORDS = Object.freeze({ busy: 'busy', idle: 'idle', plan: 'plan waiting', question: 'question', stuck: 'stuck {t}', blocked: 'blocked' });
 export const BOARD_WORDS = Object.freeze({ busy: 'busy', idle: 'idle {t}', plan: 'plan waiting {t}', question: 'question {t}', stuck: 'stuck {t}', blocked: 'blocked', merged: 'merged {a}', archived: 'archived {a}' });
 
-/**
- * When a unit's work ended (null while it runs). The contract's endedAt already uses the outcome time; the PR fallback
- * covers engines built before that rule and goes once PR 1's engine is in (Task 20).
- */
-export function unitEnd(session) {
-  if (session.endedAt != null) return session.endedAt;
-  if (!session.outcome) return null;
-  return session.pr?.mergedAt ?? session.pr?.closedAt ?? null;
-}
+/** When a unit's work ended (null while it runs): the engine sets endedAt from the unit's outcome time. */
+export const unitEnd = session => session.endedAt ?? null;
 
 /** Its PR closed without merging and it is not archived: it stays in its PR stage, with a badge (approved decision 5). */
 export const closedNotMerged = unit => Boolean(unit.closedWithoutMerge && unit.pr && unit.stage !== 'archived' && (unit.pr.state === 'closed' || unit.outcome === 'closed'));

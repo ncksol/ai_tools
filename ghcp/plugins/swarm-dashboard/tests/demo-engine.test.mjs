@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { validateRunListItem, validateRunSummary, validateSnapshot, validateSwarmListItem } from '../engine/schema.mjs';
 import { createDemoEngine, loadFixtures, shiftTimes, simulateStep } from '../server/demo-engine.mjs';
 import { createDefaultEngine } from '../server/engines.mjs';
+import { createSwarmEngine } from '../engine/engine.mjs';
 
 const seeded = seed => () => {
   seed = (seed * 16807) % 2147483647;
@@ -122,6 +123,6 @@ test('every reference in a scenario swarm points inside that swarm', async () =>
   }
 });
 
-test('the default engine is the demo engine until PR 1\'s engine is in', () => {
-  assert.equal(createDefaultEngine({ log: () => {} }).isDemo, true);
+test('the default engine is PR 1\'s engine over Copilot data', () => {
+  assert.equal(createDefaultEngine, createSwarmEngine);
 });
