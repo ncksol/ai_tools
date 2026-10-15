@@ -1,0 +1,4 @@
+[
+  { "id": "ws-1000-root", "name": "Sample story A", "project": { "id": "project-0001", "name": "sample-project" }, "startedAt": 1791450720000, "finishedAt": 1791710520000, "tookMs": 259800000, "busyMs": 181800000, "credits": 49160.0, "usd": 491.6, "children": 4, "merged": 3, "summarized": true },
+  { "id": "ws-2000-root", "name": "Docs sweep", "project": { "id": "project-0001", "name": "sample-project" }, "startedAt": 1790848800000, "finishedAt": 1790880300000, "tookMs": 31500000, "busyMs": null, "credits": 6320.0, "usd": 63.2, "children": 4, "merged": null, "summarized": false }
+]

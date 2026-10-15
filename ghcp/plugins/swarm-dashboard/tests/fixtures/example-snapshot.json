@@ -1,0 +1,306 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": 1792065600000,
+  "revision": 42,
+  "run": {
+    "id": "ws-0000-root",
+    "name": "Sample story B",
+    "project": { "id": "project-0001", "name": "sample-project" },
+    "startedAt": 1791809280000,
+    "firstChildAt": 1791814200000,
+    "lastActivityAt": 1792065540000,
+    "lifecycle": "live",
+    "finishedAt": null,
+    "stalled": null,
+    "contract": { "registry": true, "statusLines": true, "questionTags": true }
+  },
+  "orchestrator": {
+    "id": "ws-0000-root", "kind": "project", "label": "SB", "name": "Sample story B",
+    "cliSessionIds": ["cli-0000-analysis", "cli-0000-root"], "branch": "main", "model": "claude-opus-4.8",
+    "status": "question", "statusDetail": "waiting_question", "bucket": "waiting", "since": 1792064100000, "reason": null,
+    "startedAt": 1791809280000, "endedAt": null, "lastEventAt": 1792065540000,
+    "busyMs": 69840000, "waitingOnUserMs": 27600000, "alive": true,
+    "cost": { "credits": 31532.4, "calls": 1540 },
+    "activity": { "label": "Waiting for an answer", "tool": null, "lastEventAt": 1792065540000 },
+    "report": null,
+    "progress": { "done": 18, "total": 24 },
+    "subagents": [
+      { "id": "call-root-41", "name": "map-import-module", "type": "explore", "model": "gpt-5.4-mini", "mode": "background", "status": "running", "startedAt": 1792065360000, "endedAt": null, "durationMs": null, "credits": 51.0, "task": "Map the import module" },
+      { "id": "call-root-40", "name": "table-research", "type": "research", "model": "claude-sonnet-5", "mode": "background", "status": "running", "startedAt": 1792065060000, "endedAt": null, "durationMs": null, "credits": 102.0, "task": "DataGrid or a new table" }
+    ],
+    "timeline": {
+      "segments": [
+        { "start": 1791809280000, "end": 1791850200000, "state": "busy" },
+        { "start": 1791850200000, "end": 1792062000000, "state": "idle" },
+        { "start": 1792062000000, "end": 1792064100000, "state": "busy" },
+        { "start": 1792064100000, "end": null, "state": "question" }
+      ],
+      "subagents": [
+        { "id": "call-root-40", "start": 1792065060000, "end": null, "type": "research" },
+        { "id": "call-root-41", "start": 1792065360000, "end": null, "type": "explore" }
+      ],
+      "marks": [
+        { "at": 1792064100000, "kind": "question", "text": "Publish PR #421 for review?", "status": null }
+      ]
+    }
+  },
+  "units": [
+    {
+      "id": "ws-0001-b0", "kind": "project", "label": "B0", "name": "schema",
+      "cliSessionIds": ["cli-0001-b0"], "branch": "feature/b0-schema", "model": "claude-sonnet-5",
+      "status": "archived", "statusDetail": "archived", "bucket": "done", "since": 1791964200000, "reason": null,
+      "startedAt": 1791814200000, "endedAt": 1791964200000, "lastEventAt": 1791964200000,
+      "busyMs": 18000000, "waitingOnUserMs": 0, "alive": false,
+      "cost": { "credits": 10912.0, "calls": 820 },
+      "activity": { "label": "Archived", "tool": null, "lastEventAt": 1791964200000 },
+      "report": { "status": "complete", "source": "contract", "at": 1791963600000, "title": "Schema v3 merged in PR #412. The migration was tested on a copy of staging.", "summary": "Schema v3 merged in PR #412. The migration was tested on a copy of staging.", "evidence": ["Migration ran on a staging copy in 4 min", "PR #412 merged after 2 approvals"], "blockers": [], "body": null, "unit": "B0", "commit": "3f9a2c1" },
+      "progress": { "done": 12, "total": 12 },
+      "subagents": [
+        { "id": "call-b0-7", "name": "staging-run", "type": "task", "model": "claude-haiku-5.5", "mode": "background", "status": "completed", "startedAt": 1791927600000, "endedAt": 1791927840000, "durationMs": 240000, "credits": 260.0, "task": "Run the migration on a staging copy" }
+      ],
+      "timeline": {
+        "segments": [
+          { "start": 1791814200000, "end": 1791850200000, "state": "busy" },
+          { "start": 1791850200000, "end": 1791964200000, "state": "idle" }
+        ],
+        "subagents": [{ "id": "call-b0-7", "start": 1791927600000, "end": 1791927840000, "type": "task" }],
+        "marks": [
+          { "at": 1791939600000, "kind": "pr-open", "text": "PR opened", "status": null },
+          { "at": 1791963600000, "kind": "report", "text": "Schema v3 merged in PR #412.", "status": "complete" },
+          { "at": 1791963600000, "kind": "pr-merged", "text": "PR merged", "status": null },
+          { "at": 1791964200000, "kind": "archived", "text": "Archived", "status": null }
+        ]
+      },
+      "parentId": "ws-0000-root", "depth": 1, "stage": "archived", "closedWithoutMerge": false, "outcome": "merged",
+      "pr": { "provider": "github", "id": 412, "repo": "sample-org/sample-repo", "url": "https://github.com/sample-org/sample-repo/pull/412", "title": "Schema v3 migration", "state": "merged", "openedAt": 1791939600000, "mergedAt": 1791963600000, "closedAt": 1791963600000, "reviewNote": "approved", "source": "registry", "checkedAt": 1792065300000 },
+      "monitor": { "state": "ended", "lastCheckAt": 1791963000000, "nextCheckAt": null, "everyMinutes": 10, "since": null },
+      "dependsOn": null, "todoId": "b0-schema"
+    },
+    {
+      "id": "ws-0002-f2a", "kind": "project", "label": "F2a", "name": "tests, part 1",
+      "cliSessionIds": ["cli-0002-f2a"], "branch": "feature/f2a-tests", "model": "claude-haiku-5.5",
+      "status": "merged", "statusDetail": "merged", "bucket": "done", "since": 1791936000000, "reason": null,
+      "startedAt": 1791850200000, "endedAt": null, "lastEventAt": 1791936600000,
+      "busyMs": 10800000, "waitingOnUserMs": 0, "alive": true,
+      "cost": { "credits": 4312.0, "calls": 300 },
+      "activity": { "label": "Done. PR merged", "tool": null, "lastEventAt": 1791936600000 },
+      "report": { "status": "complete", "source": "contract", "at": 1791936000000, "title": "Part 1 of the test harness merged in PR #409.", "summary": "Part 1 of the test harness merged in PR #409.", "evidence": ["PR #409 merged"], "blockers": [], "body": null, "unit": "F2a", "commit": null },
+      "progress": { "done": 6, "total": 6 },
+      "subagents": [],
+      "timeline": {
+        "segments": [
+          { "start": 1791850200000, "end": 1791861000000, "state": "busy" },
+          { "start": 1791861000000, "end": null, "state": "idle" }
+        ],
+        "subagents": [],
+        "marks": [
+          { "at": 1791907200000, "kind": "pr-open", "text": "PR opened", "status": null },
+          { "at": 1791936000000, "kind": "report", "text": "Part 1 of the test harness merged in PR #409.", "status": "complete" },
+          { "at": 1791936000000, "kind": "pr-merged", "text": "PR merged", "status": null }
+        ]
+      },
+      "parentId": "ws-0000-root", "depth": 1, "stage": "merged", "closedWithoutMerge": false, "outcome": "merged",
+      "pr": { "provider": "github", "id": 409, "repo": "sample-org/sample-repo", "url": "https://github.com/sample-org/sample-repo/pull/409", "title": "Test harness, part 1", "state": "merged", "openedAt": 1791907200000, "mergedAt": 1791936000000, "closedAt": 1791936000000, "reviewNote": "approved", "source": "registry", "checkedAt": 1792065300000 },
+      "monitor": { "state": "ended", "lastCheckAt": 1791935400000, "nextCheckAt": null, "everyMinutes": 10, "since": null },
+      "dependsOn": "B0", "todoId": "f2a-tests"
+    },
+    {
+      "id": "ws-0003-b1", "kind": "project", "label": "B1", "name": "API",
+      "cliSessionIds": ["cli-0003-b1"], "branch": "feature/b1-api", "model": "claude-sonnet-5",
+      "status": "busy", "statusDetail": "busy", "bucket": "working", "since": 1792063500000, "reason": null,
+      "startedAt": 1791907020000, "endedAt": null, "lastEventAt": 1792065540000,
+      "busyMs": 21600000, "waitingOnUserMs": 0, "alive": true,
+      "cost": { "credits": 24016.0, "calls": 1210 },
+      "activity": { "label": "Running edit: src/api/orders.ts", "tool": { "id": "call-b1-9", "name": "edit", "summary": "edit: src/api/orders.ts", "startedAt": 1792065540000, "limitMs": 120000 }, "lastEventAt": 1792065540000 },
+      "report": { "status": "complete", "source": "contract", "at": 1792058160000, "title": "Opened PR #418 with 14 endpoints. All API tests pass.", "summary": "Opened PR #418 with 14 endpoints. All API tests pass.", "evidence": ["API tests: 212 passed, 0 failed", "PR #418 opened on top of the B0 branch"], "blockers": [], "body": null, "unit": "B1", "commit": "9b1e4d2" },
+      "progress": { "done": 7, "total": 10 },
+      "subagents": [
+        { "id": "call-b1-8", "name": "review-pr-418", "type": "code-review", "model": "claude-sonnet-5", "mode": "background", "status": "running", "startedAt": 1792065240000, "endedAt": null, "durationMs": null, "credits": 85.0, "task": "Review PR #418" },
+        { "id": "call-b1-7", "name": "api-tests", "type": "task", "model": "claude-haiku-5.5", "mode": "sync", "status": "completed", "startedAt": 1792056600000, "endedAt": 1792057140000, "durationMs": 540000, "credits": 30.0, "task": "Run the API test suite" }
+      ],
+      "timeline": {
+        "segments": [
+          { "start": 1791907020000, "end": 1791921420000, "state": "busy" },
+          { "start": 1791921420000, "end": 1792050000000, "state": "idle" },
+          { "start": 1792050000000, "end": 1792058160000, "state": "busy" },
+          { "start": 1792058160000, "end": 1792063500000, "state": "idle" },
+          { "start": 1792063500000, "end": null, "state": "busy" }
+        ],
+        "subagents": [
+          { "id": "call-b1-7", "start": 1792056600000, "end": 1792057140000, "type": "task" },
+          { "id": "call-b1-8", "start": 1792065240000, "end": null, "type": "code-review" }
+        ],
+        "marks": [
+          { "at": 1792058040000, "kind": "pr-open", "text": "PR opened", "status": null },
+          { "at": 1792058160000, "kind": "report", "text": "Opened PR #418 with 14 endpoints.", "status": "complete" },
+          { "at": 1792063080000, "kind": "monitor", "text": "PR monitor check", "status": null }
+        ]
+      },
+      "parentId": "ws-0000-root", "depth": 1, "stage": "in_review", "closedWithoutMerge": false, "outcome": null,
+      "pr": { "provider": "github", "id": 418, "repo": "sample-org/sample-repo", "url": "https://github.com/sample-org/sample-repo/pull/418", "title": "Orders and invoices API", "state": "open", "openedAt": 1792058040000, "mergedAt": null, "closedAt": null, "reviewNote": "changes requested", "source": "registry", "checkedAt": 1792065300000 },
+      "monitor": { "state": "missing", "lastCheckAt": 1792063080000, "nextCheckAt": 1792063680000, "everyMinutes": 10, "since": 1792063680000 },
+      "dependsOn": "B0", "todoId": "b1-api"
+    },
+    {
+      "id": "ws-0004-b2", "kind": "project", "label": "B2", "name": "import",
+      "cliSessionIds": ["cli-0004-b2"], "branch": "feature/b2-import", "model": "claude-sonnet-5",
+      "status": "plan", "statusDetail": "waiting_plan", "bucket": "waiting", "since": 1792063320000, "reason": null,
+      "startedAt": 1792043880000, "endedAt": null, "lastEventAt": 1792063320000,
+      "busyMs": 5400000, "waitingOnUserMs": 2280000, "alive": true,
+      "cost": { "credits": 5790.0, "calls": 410 },
+      "activity": { "label": "Waiting for plan approval", "tool": null, "lastEventAt": 1792063320000 },
+      "report": { "status": "complete", "source": "contract", "at": 1792063140000, "title": "The parser is done. The plan for step 2 is waiting for approval.", "summary": "The parser is done. The plan for step 2 is waiting for approval.", "evidence": ["Parser handles CSV and TSV", "18 parser tests pass"], "blockers": ["Plan for step 2 needs approval"], "body": null, "unit": "B2", "commit": null },
+      "progress": { "done": 3, "total": 10 },
+      "subagents": [
+        { "id": "call-b2-1", "name": "find-import-code", "type": "explore", "model": "gpt-5.4-mini", "mode": "background", "status": "completed", "startedAt": 1792044600000, "endedAt": 1792044780000, "durationMs": 180000, "credits": 12.0, "task": "Find existing import code" }
+      ],
+      "timeline": {
+        "segments": [
+          { "start": 1792043880000, "end": 1792049400000, "state": "busy" },
+          { "start": 1792049400000, "end": 1792060200000, "state": "idle" },
+          { "start": 1792060200000, "end": 1792063320000, "state": "busy" },
+          { "start": 1792063320000, "end": null, "state": "plan" }
+        ],
+        "subagents": [{ "id": "call-b2-1", "start": 1792044600000, "end": 1792044780000, "type": "explore" }],
+        "marks": [
+          { "at": 1792063140000, "kind": "report", "text": "The parser is done.", "status": "complete" },
+          { "at": 1792063320000, "kind": "plan-req", "text": "Plan sent for approval", "status": null }
+        ]
+      },
+      "parentId": "ws-0000-root", "depth": 1, "stage": "coding", "closedWithoutMerge": false, "outcome": null,
+      "pr": null,
+      "monitor": { "state": "none", "lastCheckAt": null, "nextCheckAt": null, "everyMinutes": null, "since": null },
+      "dependsOn": "B0", "todoId": "b2-import"
+    },
+    {
+      "id": "ws-0005-i1", "kind": "project", "label": "I1", "name": "integration",
+      "cliSessionIds": ["cli-0005-i1"], "branch": "feature/i1-integration", "model": "claude-sonnet-5",
+      "status": "stuck", "statusDetail": "stuck_tool", "bucket": "stuck", "since": 1792062720000,
+      "reason": "bash has run for 48 min with a limit of 15 min (initial_wait 10 min + 5 min).",
+      "startedAt": 1792032900000, "endedAt": null, "lastEventAt": 1792062720000,
+      "busyMs": 14400000, "waitingOnUserMs": 0, "alive": true,
+      "cost": { "credits": 9702.0, "calls": 640 },
+      "activity": { "label": "Running bash: dotnet test --filter E2E", "tool": { "id": "call-i1-4", "name": "bash", "summary": "bash: dotnet test --filter E2E", "startedAt": 1792062720000, "limitMs": 900000 }, "lastEventAt": 1792062720000 },
+      "report": { "status": "complete", "source": "contract", "at": 1792054680000, "title": "Contract tests are wired and pass locally. Starting the end-to-end run next.", "summary": "Contract tests are wired and pass locally. Starting the end-to-end run next.", "evidence": ["12 contract tests pass"], "blockers": [], "body": null, "unit": "I1", "commit": null },
+      "progress": { "done": 5, "total": 9 },
+      "subagents": [],
+      "timeline": {
+        "segments": [
+          { "start": 1792032900000, "end": 1792054680000, "state": "busy" },
+          { "start": 1792054680000, "end": 1792058400000, "state": "idle" },
+          { "start": 1792058400000, "end": 1792062720000, "state": "busy" },
+          { "start": 1792062720000, "end": null, "state": "stuck" }
+        ],
+        "subagents": [],
+        "marks": [
+          { "at": 1792054680000, "kind": "report", "text": "Contract tests are wired and pass locally.", "status": "complete" },
+          { "at": 1792062720000, "kind": "tool", "text": "Tool call started, no events since", "status": null }
+        ]
+      },
+      "parentId": "ws-0000-root", "depth": 1, "stage": "coding", "closedWithoutMerge": false, "outcome": null,
+      "pr": null,
+      "monitor": { "state": "none", "lastCheckAt": null, "nextCheckAt": null, "everyMinutes": null, "since": null },
+      "dependsOn": "B1", "todoId": "i1-integration"
+    },
+    {
+      "id": "ws-0006-f1", "kind": "project", "label": "F1", "name": "UI",
+      "cliSessionIds": ["cli-0006-f1"], "branch": "feature/f1-ui", "model": "claude-sonnet-5",
+      "status": "blocked", "statusDetail": "blocked_on_orchestrator", "bucket": "waiting", "since": 1792064880000,
+      "reason": "It asked the orchestrator for input and has had no reply.",
+      "startedAt": 1792040220000, "endedAt": null, "lastEventAt": 1792064880000,
+      "busyMs": 10800000, "waitingOnUserMs": 0, "alive": true,
+      "cost": { "credits": 8330.0, "calls": 520 },
+      "activity": { "label": "Waiting for the orchestrator", "tool": null, "lastEventAt": 1792064880000 },
+      "report": { "status": "needs_input", "source": "contract", "at": 1792064880000, "title": "The results page needs a table: reuse DataGrid, or build a lighter table.", "summary": "The results page needs a table: reuse DataGrid, or build a lighter table.", "evidence": ["DataGrid already supports virtual scroll and sorting", "A new table would cut the bundle by about 40 KB"], "blockers": ["Needs a decision: reuse DataGrid or build a new table"], "body": null, "unit": "F1", "commit": null },
+      "progress": { "done": 4, "total": 10 },
+      "subagents": [
+        { "id": "call-f1-1", "name": "compare-tables", "type": "explore", "model": "gpt-5.4-mini", "mode": "background", "status": "completed", "startedAt": 1792063800000, "endedAt": 1792064040000, "durationMs": 240000, "credits": 12.0, "task": "Compare table components" }
+      ],
+      "timeline": {
+        "segments": [
+          { "start": 1792040220000, "end": 1792051200000, "state": "busy" },
+          { "start": 1792051200000, "end": 1792062000000, "state": "idle" },
+          { "start": 1792062000000, "end": 1792064880000, "state": "busy" },
+          { "start": 1792064880000, "end": null, "state": "idle" }
+        ],
+        "subagents": [{ "id": "call-f1-1", "start": 1792063800000, "end": 1792064040000, "type": "explore" }],
+        "marks": [
+          { "at": 1792064880000, "kind": "question", "text": "The results page needs a table: reuse DataGrid, or build a lighter table.", "status": "needs_input" }
+        ]
+      },
+      "parentId": "ws-0000-root", "depth": 1, "stage": "coding", "closedWithoutMerge": false, "outcome": null,
+      "pr": null,
+      "monitor": { "state": "none", "lastCheckAt": null, "nextCheckAt": null, "everyMinutes": null, "since": null },
+      "dependsOn": "B1", "todoId": "f1-ui"
+    },
+    {
+      "id": "ws-0007-d5", "kind": "project", "label": "D5", "name": "docs",
+      "cliSessionIds": ["cli-0007-d5"], "branch": "feature/d5-docs", "model": "claude-haiku-5.5",
+      "status": "idle", "statusDetail": "idle", "bucket": "idle", "since": 1792065060000, "reason": null,
+      "startedAt": 1791971400000, "endedAt": null, "lastEventAt": 1792065060000,
+      "busyMs": 7200000, "waitingOnUserMs": 0, "alive": true,
+      "cost": { "credits": 3058.0, "calls": 260 },
+      "activity": { "label": "Idle", "tool": null, "lastEventAt": 1792065060000 },
+      "report": { "status": "complete", "source": "contract", "at": 1792047600000, "title": "Opened PR #421 and started a PR monitor. Waiting for review.", "summary": "Opened PR #421 and started a PR monitor. Waiting for review.", "evidence": ["Docs build passes", "PR #421 opened"], "blockers": [], "body": null, "unit": "D5", "commit": "c41d0e7" },
+      "progress": { "done": 9, "total": 10 },
+      "subagents": [],
+      "timeline": {
+        "segments": [
+          { "start": 1791971400000, "end": 1791985800000, "state": "busy" },
+          { "start": 1791985800000, "end": null, "state": "idle" }
+        ],
+        "subagents": [],
+        "marks": [
+          { "at": 1792047480000, "kind": "pr-open", "text": "PR opened", "status": null },
+          { "at": 1792047600000, "kind": "report", "text": "Opened PR #421 and started a PR monitor.", "status": "complete" },
+          { "at": 1792064460000, "kind": "monitor", "text": "PR monitor check", "status": null },
+          { "at": 1792065060000, "kind": "monitor", "text": "PR monitor check", "status": null }
+        ]
+      },
+      "parentId": "ws-0000-root", "depth": 1, "stage": "pr_open", "closedWithoutMerge": false, "outcome": null,
+      "pr": { "provider": "github", "id": 421, "repo": "sample-org/sample-repo", "url": "https://github.com/sample-org/sample-repo/pull/421", "title": "Docs for the v3 schema", "state": "draft", "openedAt": 1792047480000, "mergedAt": null, "closedAt": null, "reviewNote": "review required", "source": "registry", "checkedAt": 1792065300000 },
+      "monitor": { "state": "alive", "lastCheckAt": 1792065060000, "nextCheckAt": 1792065660000, "everyMinutes": 10, "since": null },
+      "dependsOn": "B0", "todoId": "d5-docs"
+    }
+  ],
+  "planned": [
+    { "label": "B3", "name": "export", "dependsOn": "B1", "canStart": true, "waitsOn": null, "todoId": "b3-export" },
+    { "label": "I2", "name": "load tests", "dependsOn": "I1", "canStart": false, "waitsOn": "I1", "todoId": "i2-load-tests" }
+  ],
+  "needs": [
+    { "kind": "plan", "unitIds": ["ws-0004-b2"], "labels": ["B2"], "fromId": "ws-0004-b2", "text": "Step 2 plan: 4 tasks to add XLSX import.", "since": 1792063320000, "tagged": false },
+    { "kind": "pr", "unitIds": ["ws-0007-d5"], "labels": ["D5"], "fromId": "ws-0000-root", "text": "Publish PR #421 for review?", "since": 1792064100000, "tagged": true }
+  ],
+  "feed": [
+    { "at": 1792065360000, "unitId": "ws-0000-root", "label": "SB", "kind": "subagent-start", "text": "started explore: map-import-module" },
+    { "at": 1792065240000, "unitId": "ws-0003-b1", "label": "B1", "kind": "subagent-start", "text": "started code-review: review-pr-418" },
+    { "at": 1792065060000, "unitId": "ws-0007-d5", "label": "D5", "kind": "monitor-check", "text": "PR monitor check" },
+    { "at": 1792065060000, "unitId": "ws-0000-root", "label": "SB", "kind": "subagent-start", "text": "started research: table-research" },
+    { "at": 1792064880000, "unitId": "ws-0006-f1", "label": "F1", "kind": "report", "text": "reported needs input: The results page needs a table: reuse DataGrid, or build a lighter table." },
+    { "at": 1792064100000, "unitId": "ws-0000-root", "label": "SB", "kind": "question", "text": "asked: Publish PR #421 for review?" },
+    { "at": 1792063320000, "unitId": "ws-0004-b2", "label": "B2", "kind": "plan-req", "text": "sent a plan for approval" },
+    { "at": 1792063140000, "unitId": "ws-0004-b2", "label": "B2", "kind": "report", "text": "reported complete: The parser is done. The plan for step 2 is waiting for approval." },
+    { "at": 1792063080000, "unitId": "ws-0003-b1", "label": "B1", "kind": "monitor-check", "text": "PR monitor check" },
+    { "at": 1792058160000, "unitId": "ws-0003-b1", "label": "B1", "kind": "report", "text": "reported complete: Opened PR #418 with 14 endpoints. All API tests pass." }
+  ],
+  "counts": { "working": 1, "stuck": 1, "waiting": 2, "idle": 1, "done": 2, "failed": 0 },
+  "cost": {
+    "credits": 97652.4, "usd": 976.52, "maxUnitCredits": 24016.0,
+    "byModel": [
+      { "model": "claude-sonnet-5", "credits": 52100.0, "calls": 3000, "apiMs": 30000000 },
+      { "model": "claude-opus-4.8", "credits": 31532.4, "calls": 1540, "apiMs": 22000000 },
+      { "model": "claude-haiku-5.5", "credits": 7370.0, "calls": 560, "apiMs": 4000000 },
+      { "model": "gpt-5.4-mini", "credits": 6650.0, "calls": 140, "apiMs": 900000 }
+    ],
+    "series": [
+      { "at": 1791809100000, "credits": 40.0 },
+      { "at": 1791936000000, "credits": 41000.0 },
+      { "at": 1792022300000, "credits": 78000.0 },
+      { "at": 1792063500000, "credits": 96100.0 },
+      { "at": 1792065300000, "credits": 97652.4 }
+    ]
+  },
+  "diagnostics": [
+    { "level": "info", "source": "sqlite", "message": "Reading SQLite through node:sqlite." }
+  ]
+}
