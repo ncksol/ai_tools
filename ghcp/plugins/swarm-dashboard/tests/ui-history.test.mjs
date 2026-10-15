@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dateRange } from '../ui/format.mjs';
+import { HOUR, dateRange } from '../ui/format.mjs';
 import { historyHtml, runHtml } from '../ui/history.mjs';
 import { fixture } from './helpers/ui.mjs';
 
@@ -36,6 +36,19 @@ test('time by unit draws start-to-finish spans with busy time, and marks units c
   assert.match(html, /<span class="g-span no" style="left:69\.28%;width:22\.17%"><\/span>/);
   assert.match(html, /<span class="g-span" style="left:0\.00%;width:100\.00%"><\/span>/);
   assert.deepEqual([...html.matchAll(/<span style="left:[\d.]+%">(\d+h)<\/span>/g)].map(match => match[1]), ['0h', '12h', '24h', '36h', '48h', '60h', '72h']);
+});
+
+test('bars stay inside the track when a unit starts before the run or ends after it', () => {
+  const summary = fixture('example-run-summary.json');
+  const [orchestrator, first, second] = summary.units;
+  const late = { ...first, endedAt: summary.finishedAt + 3 * HOUR };
+  const early = { ...second, startedAt: summary.startedAt - HOUR };
+  const html = runHtml({ ...summary, units: [orchestrator, late, early] });
+  const bars = [...html.matchAll(/class="g-(span|busy)[^"]*" style="left:([\d.]+)%;width:([\d.]+)%"/g)].map(([, kind, left, width]) => ({ kind, left: Number(left), width: Number(width) }));
+  assert.equal(bars.length, 6);
+  for (const bar of bars) assert.ok(bar.left + bar.width <= 100.005, `${bar.kind} ${bar.left} + ${bar.width}`);
+  assert.deepEqual(bars[4], { kind: 'span', left: 0, width: Number((((early.endedAt - summary.startedAt) / summary.tookMs) * 100).toFixed(2)) });
+  assert.ok(text(html).includes('A1 model busy 6h 06m 74h 52m'));
 });
 
 test('cost breaks down by unit, by model and by sub-agent type', () => {

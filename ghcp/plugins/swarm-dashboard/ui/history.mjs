@@ -37,11 +37,14 @@ export function runHtml(run) {
   const gantt = run.units.map(unit => {
     const start = unit.startedAt - run.startedAt;
     const end = (unit.endedAt ?? run.finishedAt) - run.startedAt;
+    // A unit can end after the run's last activity (a PR merged later), so clip its bars to the track.
+    const from = Math.min(took, Math.max(0, start));
+    const to = Math.min(took, Math.max(from, end));
     const closed = !unit.isOrchestrator && (unit.outcome === 'closed' || unit.outcome === 'failed');
     const note = closed ? (unit.outcome === 'failed' ? ', failed' : ', not merged') : '';
     return `<div class="g-row"><div class="g-lab"><span>${esc(unitName(unit))}</span><span class="small muted">busy ${dur(unit.busyMs, 'hm')}${note}</span></div>`
-      + `<div class="g-track"><span class="g-span${closed ? ' no' : ''}" style="left:${pct(start, took)}%;width:${pct(end - start, took)}%"></span>`
-      + `<span class="g-busy" style="left:${pct(start, took)}%;width:${pct(Math.min(unit.busyMs, took - start), took)}%"></span></div>`
+      + `<div class="g-track"><span class="g-span${closed ? ' no' : ''}" style="left:${pct(from, took)}%;width:${pct(to - from, took)}%"></span>`
+      + `<span class="g-busy" style="left:${pct(from, took)}%;width:${pct(Math.min(unit.busyMs, took - from), took)}%"></span></div>`
       + `<span class="g-num">${dur(end - start, 'hm')}</span></div>`;
   }).join('');
   const axis = `<div class="g-axis"><div></div><div>${ticksFor(took / HOUR).map(hour => `<span style="left:${pct(hour * HOUR, took)}%">${hour}h</span>`).join('')}</div><div></div></div>`;
