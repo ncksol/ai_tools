@@ -463,6 +463,15 @@ export function createSwarmEngine(options = {}) {
       timer = null;
       // An engine dropped without stop() releases its connections when garbage collected (node:sqlite closes a collected database).
       reader.close();
+      // A refresh still in flight can reopen connections after this point. Close them again once it settles, unless
+      // start() ran in the meantime (it bumps the generation).
+      if (running) {
+        const mine = generation;
+        const closeAgain = () => {
+          if (generation === mine) reader.close();
+        };
+        running.then(closeAgain, closeAgain);
+      }
     },
     listSwarms: () => swarms.map(item => ({ ...item })),
     getSnapshot,

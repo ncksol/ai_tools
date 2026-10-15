@@ -286,18 +286,33 @@ test('a repeated start event for one task call counts the sub-agent once', () =>
   assert.equal(state.subagents.get(call).launchedAt, T0);
 });
 
-test('a start event for a task call that left the detail list restores it without counting it again', () => {
+test('a repeated start event for a task call that left the detail list changes nothing', () => {
   const log = new EventLog(T0);
   log.start(); log.turnStart();
   const first = log.subagent({ mode: 'sync', type: 'explore' });
   log.subagentDone(first, { durationMs: 10 });
   for (let i = 0; i < 505; i += 1) log.subagentDone(log.subagent({ mode: 'sync', type: 'explore' }), { durationMs: 10 });
-  assert.equal(fold(log).subagents.has(first), false);
-  log.push('tool.execution_start', { toolCallId: first, toolName: 'task', arguments: { name: 'helper', agent_type: 'explore', mode: 'sync' } });
-  const state = fold(log);
-  assert.equal(state.subagentCount, 506);
-  assert.equal(state.subagentStats.get('explore').runs, 506);
-  assert.equal(state.subagents.size, 500);
+  const before = fold(log);
+  assert.equal(before.subagents.has(first), false);
+  const view = state => JSON.stringify({
+    count: state.subagentCount, stats: [...state.subagentStats], index: state.subagentIndex.get(first), details: [...state.subagents.keys()],
+    feed: state.feed, openTools: [...state.openTools.keys()],
+  });
+  log.push('tool.execution_start', { toolCallId: first, toolName: 'task', arguments: { name: 'helper', agent_type: 'research', mode: 'background' } });
+  const after = fold(log);
+  assert.equal(after.subagents.has(first), false);
+  assert.equal(after.subagentCount, 506);
+  assert.deepEqual([...after.subagentStats], [['explore', { runs: 506, durationMs: 5060 }]]);
+  assert.equal(after.subagentIndex.get(first), 'explore');
+  assert.equal(view(after), view(before));
+});
+
+test('a repeated start for a sub-agent still in the details adds no second feed entry', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const call = log.tool('task', { name: 'helper', agent_type: 'explore', mode: 'background' });
+  log.push('tool.execution_start', { toolCallId: call, toolName: 'task', arguments: { name: 'helper', agent_type: 'explore', mode: 'background' } });
+  assert.equal(fold(log).feed.filter(item => item.kind === 'subagent-start').length, 1);
 });
 
 test('merged states add up the sub-agent totals and keep the task index', () => {

@@ -97,7 +97,8 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
   } finally {
     // Closes the engine's SQLite connections before this process returns.
     engine.stop();
-  }  stdout.write(`${JSON.stringify(result ?? null, null, options.compact ? 0 : 2)}\n`);
+  }
+  stdout.write(`${JSON.stringify(result ?? null, null, options.compact ? 0 : 2)}\n`);
   if (result === null || result === undefined) {
     stderr.write(options.run !== undefined ? `No run ${options.run}\n` : options.swarm !== undefined ? `No swarm ${options.swarm}\n` : 'No swarm found\n');
     return 1;

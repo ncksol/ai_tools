@@ -286,8 +286,8 @@ function evictSubagent(state) {
 }
 
 /**
- * A sub-agent is counted once per task tool-call id. A repeated start for an id that is still in the details updates them;
- * for an id that only the type index remembers (evicted from the details) the details are restored. Neither changes the counts.
+ * A sub-agent is counted once per task tool-call id. A repeated start for an id that is still in the details updates them
+ * and leaves the counts alone (onToolStart ignores a repeated start for an id that has left the details).
  */
 function newSubagent(state, id, at, args) {
   const fields = {
@@ -305,18 +305,12 @@ function newSubagent(state, id, at, args) {
     retypeSubagent(state, known, type);
     return known;
   }
-  const indexed = state.subagentIndex.get(id);
   const sub = { id, ...fields, launchedAt: at, startedAt: null, endedAt: null, durationMs: null, status: 'running', lastEventAt: at, agentId: null };
-  if (indexed === undefined) {
-    sub.bucket = typeBucket(state.subagentStats, sub.type);
-    state.subagentCount += 1;
-    statsEntry(state.subagentStats, sub.bucket).runs += 1;
-    state.subagentIndex.set(id, sub.bucket);
-    while (state.subagentIndex.size > LIMITS.subagentIndex) state.subagentIndex.delete(state.subagentIndex.keys().next().value);
-  } else {
-    sub.bucket = indexed;
-    retypeSubagent(state, sub, sub.type);
-  }
+  sub.bucket = typeBucket(state.subagentStats, sub.type);
+  state.subagentCount += 1;
+  statsEntry(state.subagentStats, sub.bucket).runs += 1;
+  state.subagentIndex.set(id, sub.bucket);
+  while (state.subagentIndex.size > LIMITS.subagentIndex) state.subagentIndex.delete(state.subagentIndex.keys().next().value);
   state.subagents.set(id, sub);
   while (state.subagents.size > LIMITS.subagents) evictSubagent(state);
   return sub;
@@ -326,6 +320,8 @@ function onToolStart(state, data, at) {
   const id = typeof data.toolCallId === 'string' ? data.toolCallId : null;
   if (!id) return;
   const name = typeof data.toolName === 'string' ? data.toolName : 'tool';
+  // A repeated start for a sub-agent that was evicted from the details changes nothing: no details, counts, feed or open tool.
+  if (name === 'task' && !state.subagents.has(id) && state.subagentIndex.has(id)) return;
   const args = argsOf(data.arguments);
   state.openTools.set(id, { id, name, startedAt: at, args: toolArgs(name, args) });
   pushBounded(state.recent.calls, { at, name, key: callKey(name, data.arguments), prompt: state.prompts }, LIMITS.recent);

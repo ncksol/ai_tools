@@ -270,7 +270,7 @@ export function createSqliteReader(options = {}) {
     if (held) {
       if (inodeOf(file) === held.ino) {
         lastPath = 'live';
-        return { handle: held.handle, pooled: true };
+        return { handle: held.handle, pooled: true, entry: held };
       }
       drop(file);
     }
@@ -298,10 +298,11 @@ export function createSqliteReader(options = {}) {
       throw error;
     }
     const handle = nodeHandle(db, false, () => {});
-    connections.set(file, { db, ino, handle });
+    const entry = { db, ino, handle };
+    connections.set(file, entry);
     opened += 1;
     lastPath = 'live';
-    return { handle, pooled: true };
+    return { handle, pooled: true, entry };
   }
 
   return {
@@ -313,7 +314,8 @@ export function createSqliteReader(options = {}) {
       try {
         return await fn(lease.handle);
       } catch (error) {
-        if (lease.pooled) drop(file);
+        // Only the connection that failed is dropped: an overlapping read may have replaced it with a newer one.
+        if (lease.pooled && connections.get(file) === lease.entry) drop(file);
         throw error;
       } finally {
         if (!lease.pooled) lease.handle.close();

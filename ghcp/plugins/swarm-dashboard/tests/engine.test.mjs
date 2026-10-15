@@ -572,8 +572,18 @@ test('stop() closes the reader connections, so a closing writer can remove its s
   writer.close();
   assert.equal(existsSync(`${kept.dataDb}-shm`), true, 'the engine connection keeps the side files while it is open');
   engine.stop();
-  assert.equal(await engine.getSnapshot('ws-root') !== null, true, 'a read after stop() reopens');
+  const reopened = openWriter(kept.dataDb);
+  reopened.exec("UPDATE workspaces SET name = 'Renamed again' WHERE id = 'ws-root';");
+  await engine.refresh();
+  assert.equal(engine.listSwarms().find(swarm => swarm.id === 'ws-root').name, 'Renamed again', 'a read after stop() really reads');
+  reopened.close();
+  assert.equal(existsSync(`${kept.dataDb}-shm`), true, 'the reopened connection keeps the side files');
   engine.stop();
+  const last = openWriter(kept.dataDb);
+  last.exec('SELECT count(*) FROM workspaces');
+  last.close();
+  assert.equal(existsSync(`${kept.dataDb}-shm`), false, 'a second stop() closes it again');
+  assert.equal(existsSync(`${kept.dataDb}-wal`), false);
 
   const stopped = scenario();
   const second = createSwarmEngine({ copilotHome: stopped.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => at(60), processProbe: alwaysAlive, prLookup: 'off' });
@@ -583,4 +593,31 @@ test('stop() closes the reader connections, so a closing writer can remove its s
   writer.close();
   assert.equal(existsSync(`${stopped.dataDb}-shm`), false);
   assert.equal(existsSync(`${stopped.dataDb}-wal`), false);
+});
+
+test('stop() during a refresh in flight closes the connections that refresh opens', { skip: !canWriteWithNode }, async () => {
+  const home = scenario();
+  const engine = createSwarmEngine({ copilotHome: home.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => at(60), processProbe: alwaysAlive, prLookup: 'off' });
+  const writer = holdUncheckpointedRename(home);
+  const settled = engine.refresh();
+  engine.stop();
+  await settled;
+  assert.equal(engine.listSwarms().find(swarm => swarm.id === 'ws-root').name, 'Renamed in the WAL');
+  writer.close();
+  assert.equal(existsSync(`${home.dataDb}-shm`), false, 'no connection was left open');
+  assert.equal(existsSync(`${home.dataDb}-wal`), false);
+});
+
+test('start() after stop() during a refresh keeps the connections', { skip: !canWriteWithNode }, async () => {
+  const home = scenario();
+  const engine = createSwarmEngine({ copilotHome: home.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => at(60), processProbe: alwaysAlive, prLookup: 'off' });
+  const writer = holdUncheckpointedRename(home);
+  const settled = engine.refresh();
+  engine.stop();
+  engine.start({ intervalMs: 3_600_000 });
+  await settled;
+  await sleep(20);
+  writer.close();
+  assert.equal(existsSync(`${home.dataDb}-shm`), true, 'the restarted engine still holds its connection');
+  engine.stop();
 });

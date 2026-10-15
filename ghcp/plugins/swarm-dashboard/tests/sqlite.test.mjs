@@ -386,6 +386,36 @@ test('a failed read closes the connection, and the next read opens a new one', {
   }
 });
 
+test('a late failure of a read does not close a newer connection for the same file', { skip: !canWriteWithNode }, async () => {
+  const folder = tempDir('swarm-late-fail-');
+  const file = path.join(folder, 'live.db');
+  const reader = createSqliteReader({ backend: 'node' });
+  const first = openWriter(file);
+  let second = null;
+  try {
+    first.exec(`${SCHEMA} INSERT INTO t (v) VALUES ('old');`);
+    await assert.rejects(reader.read(file, async () => {
+      // While this read is in flight the file is replaced, and an overlapping read replaces the connection.
+      first.close();
+      for (const suffix of ['-wal', '-shm']) rmSync(`${file}${suffix}`, { force: true });
+      const next = path.join(folder, 'next.db');
+      execSql(next, `${SCHEMA} INSERT INTO t (v) VALUES ('checkpointed');`);
+      renameSync(next, file);
+      second = openWriter(file);
+      second.exec("INSERT INTO t (v) VALUES ('new');");
+      assert.deepEqual((await reader.read(file, values)).map(row => row.v), ['checkpointed', 'new']);
+      throw new Error('the older read fails late');
+    }), /fails late/);
+    assert.equal(reader.openConnections, 1, 'the newer connection survives');
+    assert.equal(reader.opened, 2);
+    assert.deepEqual((await reader.read(file, values)).map(row => row.v), ['checkpointed', 'new']);
+    assert.equal(reader.opened, 2, 'and is reused');
+  } finally {
+    reader.close();
+    second?.close();
+  }
+});
+
 test('the CLI backend applies the table before every query', async () => {
   const folder = tempDir('swarm-cli-table-');
   const file = path.join(folder, 'cli.db');
