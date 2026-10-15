@@ -1118,6 +1118,15 @@ test('the detail panel explains a stuck unit', () => {
   assert.match(words, /Recent activity No recent activity$/);
 });
 
+test('a reason on a unit that is neither stuck nor blocked is a note, not an alarm', () => {
+  const snapshot = exampleSnapshot();
+  const b1 = snapshot.units.find(unit => unit.label === 'B1');
+  Object.assign(b1, { statusDetail: 'slow_model_call', reason: 'Waiting 6m for a model response; it counts as stuck after 10m.' });
+  const html = detailHtml(b1.id, false, context(snapshot));
+  assert.doesNotMatch(html, /dt-why/);
+  assert.match(html, /<span class="k">Note<\/span><span>Waiting 6m for a model response; it counts as stuck after 10m\.<\/span>/);
+});
+
 test('the detail panel shows a PR closed without merging with the badge and when it closed', () => {
   const html = detailHtml('ws-0007-d5', false, context(closedSnapshot()));
   assert.match(html, /<span class="k">State<\/span><span class="pr-state"><span class="badge rp-blocked">closed, not merged<\/span><span>/);
@@ -1171,8 +1180,11 @@ export const activityHtml = ctx => `<section class="rail" aria-label="Activity">
 const SUBAGENT_PILLS = { running: ['busy', 'running'], completed: ['merged', 'finished'], failed: ['blocked', 'failed'], stuck: ['stuck', 'stuck'] };
 const SUBAGENT_LIMIT = 12;
 
+/** The engine also gives reasons to units that are fine (a slow model call, a normal stop); only these get the alarm box. */
+const WHY_STATUSES = new Set(['stuck', 'blocked']);
+
 function whyHtml(unit) {
-  if (!unit.reason) return '';
+  if (!unit.reason || !WHY_STATUSES.has(unit.status)) return '';
   const word = unit.status === 'stuck' ? 'stuck' : unit.statusDetail === 'crashed' ? 'crashed' : unit.statusDetail === 'failed' ? 'failed' : 'blocked';
   return `<div class="dt-why st-${unit.status === 'stuck' ? 'stuck' : 'blocked'}"><h4>Why this counts as ${word}</h4><p>${esc(unit.reason)}</p></div>`;
 }
@@ -1239,6 +1251,7 @@ export function detailHtml(unitId, inMain, ctx) {
     + `<div class="kv"><span class="k">Stage</span><span class="v">${STAGE_NAMES[unit.stage]}</span></div>`
     + `<div class="kv"><span class="k">Model</span><span class="v">${esc(unit.model ?? 'unknown')}</span></div></div>`;
   const current = `<div class="dt-sec"><h4>Current activity</h4><div class="dt-kv"><span class="k">Doing</span><span>${esc(activity.label)}</span>`
+    + (unit.reason && !WHY_STATUSES.has(unit.status) ? `<span class="k">Note</span><span>${esc(unit.reason)}</span>` : '')
     + (activity.tool ? `<span class="k">Tool call</span><span><span class="code">${esc(activity.tool.summary)}</span> · ${elapsed(activity.tool.startedAt, now)}</span>` : '')
     + `<span class="k">Last event</span><span>${activity.lastEventAt ? ago(activity.lastEventAt, now) : 'none yet'}</span></div></div>`;
   return `<section class="detail" aria-label="Details for ${esc(unit.label)}">${top}${facts}${whyHtml(unit)}${current}`
@@ -1252,7 +1265,7 @@ export function detailHtml(unitId, inMain, ctx) {
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-live.test.mjs tests/ui-detail.test.mjs`
-Expected: PASS, 16 tests.
+Expected: PASS, 17 tests.
 
 - [ ] **Step 5: Commit**
 
