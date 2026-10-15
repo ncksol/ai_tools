@@ -73,7 +73,7 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  * @property {EpochMs} since             Start of the current state (for stuck: start of the silence)
  * @property {string|null} reason        Why it is stuck, blocked, stalled or failed: the rule and its numbers
  * @property {EpochMs} startedAt
- * @property {EpochMs|null} endedAt      Archive time, or last event once the process has ended
+ * @property {EpochMs|null} endedAt      When the session's work ended. A unit with an outcome: the outcome time (registry ended_at, else the PR's mergedAt or closedAt). Otherwise, or with no outcome time: the archive time, else the last event once the process is gone (alive === false), else null. Timeline segments end here.
  * @property {EpochMs|null} lastEventAt
  * @property {number} busyMs             Sum of main-agent turns, including waits on the user
  * @property {number} waitingOnUserMs    Time inside open ask_user and exit_plan_mode calls
@@ -84,6 +84,7 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  * @property {{ done: number, total: number }|null} progress  Own todos; null when it keeps none
  * @property {SubagentView[]} subagents  Running first, then latest first
  * @property {Timeline} timeline
+ * @property {FeedItem[]} recent           This session's latest feed items, latest first, at most 6. Taken before the swarm-wide feed is cut to 200, so quiet sessions keep theirs
  *
  * @typedef {SessionView & {
  *   parentId: string, depth: number, stage: string, closedWithoutMerge: boolean, outcome: 'merged'|'closed'|'failed'|null,
@@ -95,9 +96,9 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  * @typedef {{ state: 'none'|'alive'|'missing'|'paused'|'ended', lastCheckAt: EpochMs|null, nextCheckAt: EpochMs|null,
  *   everyMinutes: number|null, since: EpochMs|null }} MonitorView  `since` is set for missing and paused
  * @typedef {{ label: string, name: string, dependsOn: string|null, canStart: boolean, waitsOn: string|null, todoId: string|null }} PlannedUnit
- * @typedef {{ kind: 'question'|'plan'|'pr', unitIds: string[], labels: string[], fromId: string, text: string,
- *   since: EpochMs, tagged: boolean }} NeedItem  unitIds empty = the whole swarm
- * @typedef {{ at: EpochMs, unitId: string, label: string, kind: string, text: string }} FeedItem  kind is one of FEED_KINDS
+ * @typedef {{ id: string, kind: 'question'|'plan'|'pr', unitIds: string[], labels: string[], fromId: string, text: string,
+ *   since: EpochMs, tagged: boolean }} NeedItem  unitIds empty = the whole swarm. id is unique within a snapshot and stable across refreshes
+ * @typedef {{ id: string, at: EpochMs, unitId: string, label: string, kind: string, text: string }} FeedItem  kind is one of FEED_KINDS. id is unique within a snapshot and stable across refreshes
  * @typedef {{ level: 'info'|'warn', source: string, message: string }} Diagnostic
  *
  * @typedef {object} Snapshot
@@ -155,16 +156,17 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  * @property {'auto'|'off'|object} [prLookup]  Read-only gh/az PR lookups. Default 'auto'
  * @property {(entry: Diagnostic) => void} [log]  Never writes to stdout
  *
- * SnapshotChange: `revision` is an engine-wide change counter. It increases by one for each refresh (or fake push)
- * that changed at least one snapshot. It is not `Snapshot.revision`, which counts per swarm.
- * `swarmIds` lists the swarms whose snapshots changed.
  * @typedef {{ revision: number, swarmIds: string[] }} SnapshotChange
+ *   `revision` is an engine-wide change counter. It increases by one for each refresh (or fake push)
+ *   that changed at least one snapshot. It is not `Snapshot.revision`, which counts per swarm.
+ *   `swarmIds` lists the swarms whose snapshots changed.
  * @typedef {object} SwarmEngine
  * @property {() => Promise<void>} refresh                 Read new data once and rebuild tracked swarms
  * @property {(options?: { intervalMs?: number }) => void} start  Poll every intervalMs (default 3000); no timers before this
  * @property {() => void} stop
  * @property {() => SwarmListItem[]} listSwarms             Live first, then by last activity
  * @property {(swarmId?: string) => Promise<Snapshot|null>} getSnapshot  Default: the most recently active live swarm, else the most recently active swarm; null when there is none
+ * @property {(sessionId: string) => Promise<string|null>} findSwarm  Root id of the swarm that contains this session: a CLI session id or a workspace id of the root or any descendant. null when the session is in no swarm
  * @property {(listener: (change: SnapshotChange) => void) => () => void} subscribe  Returns unsubscribe
  * @property {() => Promise<RunListItem[]>} listHistory
  * @property {(runId: string) => Promise<RunSummary|null>} getRunSummary
@@ -246,6 +248,7 @@ const TIMELINE = {
   subagents: arrayOf({ id: is.id, start: TIME, end: OPT_TIME, type: is.text }),
   marks: arrayOf({ at: TIME, kind: oneOf(MARK_KINDS), text: is.text, status: nullable(oneOf(REPORT_STATUSES)) }),
 };
+const FEED_ITEM = { id: is.id, at: TIME, unitId: is.id, label: is.id, kind: oneOf(FEED_KINDS), text: is.text };
 const SESSION = {
   id: is.id, kind: oneOf(SESSION_KINDS), label: is.id, name: is.text, cliSessionIds: arrayOf(is.id),
   branch: OPT_TEXT, model: OPT_TEXT,
@@ -257,6 +260,7 @@ const SESSION = {
   progress: nullable({ done: is.count, total: is.count }),
   subagents: arrayOf(SUBAGENT),
   timeline: TIMELINE,
+  recent: arrayOf(FEED_ITEM),
 };
 const PR = {
   provider: oneOf(PR_PROVIDERS), id: is.count, repo: OPT_TEXT, url: OPT_TEXT, title: OPT_TEXT, state: oneOf(PR_STATES),
@@ -281,8 +285,8 @@ export const SNAPSHOT_SPEC = Object.freeze({
   orchestrator: SESSION,
   units: arrayOf(UNIT),
   planned: arrayOf({ label: is.id, name: is.text, dependsOn: OPT_TEXT, canStart: is.bool, waitsOn: OPT_TEXT, todoId: OPT_TEXT }),
-  needs: arrayOf({ kind: oneOf(NEED_KINDS), unitIds: arrayOf(is.id), labels: arrayOf(is.id), fromId: is.id, text: is.text, since: TIME, tagged: is.bool }),
-  feed: arrayOf({ at: TIME, unitId: is.id, label: is.id, kind: oneOf(FEED_KINDS), text: is.text }),
+  needs: arrayOf({ id: is.id, kind: oneOf(NEED_KINDS), unitIds: arrayOf(is.id), labels: arrayOf(is.id), fromId: is.id, text: is.text, since: TIME, tagged: is.bool }),
+  feed: arrayOf(FEED_ITEM),
   counts: Object.fromEntries(COUNT_BUCKETS.map(bucket => [bucket, is.count])),
   cost: { credits: is.number, usd: is.number, maxUnitCredits: is.number, byModel: arrayOf(MODEL_COST), series: arrayOf({ at: TIME, credits: is.number }) },
   diagnostics: arrayOf({ level: oneOf(DIAGNOSTIC_LEVELS), source: is.id, message: is.text }),

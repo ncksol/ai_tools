@@ -57,6 +57,23 @@ test('the example snapshot is internally consistent', () => {
   assert.equal(series[series.length - 1].credits, snapshot.cost.credits);
 });
 
+test('the example snapshot has unique feed and need ids, matching recent items and consistent end times', () => {
+  const snapshot = fixture('example-snapshot.json');
+  const feedIds = snapshot.feed.map(item => item.id);
+  assert.equal(new Set(feedIds).size, feedIds.length, 'feed ids are unique');
+  const needIds = snapshot.needs.map(need => need.id);
+  assert.equal(new Set(needIds).size, needIds.length, 'need ids are unique');
+  const sessions = [snapshot.orchestrator, ...snapshot.units];
+  for (const session of sessions) {
+    const expected = snapshot.feed.filter(item => item.unitId === session.id).slice(0, 6);
+    assert.deepEqual(session.recent, expected, `${session.id} recent matches its feed items`);
+    const { segments } = session.timeline;
+    assert.equal(segments[segments.length - 1].end, session.endedAt, `${session.id} last segment ends at endedAt`);
+  }
+  const f2a = snapshot.units.find(unit => unit.id === 'ws-0002-f2a');
+  assert.equal(f2a.endedAt, f2a.pr.mergedAt);
+});
+
 test('the validator reports missing, unexpected and invalid fields with their paths', () => {
   const snapshot = fixture('example-snapshot.json');
   delete snapshot.units[0].stage;
@@ -70,6 +87,17 @@ test('the validator reports missing, unexpected and invalid fields with their pa
   assert.ok(errors.some(error => error.startsWith('snapshot.units[2].status: expected one of busy')), errors.join('\n'));
   assert.ok(errors.some(error => error.startsWith('snapshot.cost.series[0].at: invalid value')), errors.join('\n'));
   assert.ok(errors.some(error => error.startsWith('snapshot.needs[0].since: invalid value')), errors.join('\n'));
+});
+
+test('the validator requires feed ids, need ids and recent items', () => {
+  const snapshot = fixture('example-snapshot.json');
+  delete snapshot.feed[0].id;
+  delete snapshot.needs[0].id;
+  delete snapshot.units[0].recent;
+  const errors = validateSnapshot(snapshot);
+  assert.ok(errors.includes('snapshot.feed[0].id: missing'), errors.join('\n'));
+  assert.ok(errors.includes('snapshot.needs[0].id: missing'), errors.join('\n'));
+  assert.ok(errors.includes('snapshot.units[0].recent: missing'), errors.join('\n'));
 });
 
 test('the fake engine serves fixtures through the engine API', async () => {
@@ -91,6 +119,17 @@ test('the fake engine serves fixtures through the engine API', async () => {
   assert.equal((await engine.getRunSummary(summary.id)).id, summary.id);
   assert.equal(await engine.getRunSummary('missing'), null);
   assert.deepEqual(engine.diagnostics(), []);
+});
+
+test('the fake engine finds the swarm of a session', async () => {
+  const snapshot = fixture('example-snapshot.json');
+  const engine = createFakeEngine({ snapshots: [snapshot] });
+  const root = snapshot.run.id;
+  assert.equal(await engine.findSwarm(root), root);
+  assert.equal(await engine.findSwarm(snapshot.orchestrator.cliSessionIds[0]), root);
+  assert.equal(await engine.findSwarm('ws-0003-b1'), root);
+  assert.equal(await engine.findSwarm('cli-0003-b1'), root);
+  assert.equal(await engine.findSwarm('unknown-session'), null);
 });
 
 test('the fake engine keeps its swarm list in step with pushed snapshots', async () => {

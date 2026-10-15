@@ -26,6 +26,15 @@ export function createFakeEngine({ snapshots = [], swarms = null, history = [], 
       const id = swarmId ?? list[0]?.id;
       return byId.has(id) ? structuredClone(byId.get(id)) : null;
     },
+    async findSwarm(sessionId) {
+      for (const snapshot of byId.values()) {
+        const sessions = [snapshot.orchestrator, ...snapshot.units];
+        if (snapshot.run.id === sessionId || sessions.some(session => session.id === sessionId || session.cliSessionIds.includes(sessionId))) {
+          return snapshot.run.id;
+        }
+      }
+      return null;
+    },
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);

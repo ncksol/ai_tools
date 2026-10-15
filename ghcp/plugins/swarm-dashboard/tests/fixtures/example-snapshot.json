@@ -28,6 +28,11 @@
       { "id": "call-root-41", "name": "map-import-module", "type": "explore", "model": "gpt-5.4-mini", "mode": "background", "status": "running", "startedAt": 1792065360000, "endedAt": null, "durationMs": null, "credits": 51.0, "task": "Map the import module" },
       { "id": "call-root-40", "name": "table-research", "type": "research", "model": "claude-sonnet-5", "mode": "background", "status": "running", "startedAt": 1792065060000, "endedAt": null, "durationMs": null, "credits": 102.0, "task": "DataGrid or a new table" }
     ],
+    "recent": [
+      { "id": "ws-0000-root:subagent-start:call-root-41", "at": 1792065360000, "unitId": "ws-0000-root", "label": "SB", "kind": "subagent-start", "text": "started explore: map-import-module" },
+      { "id": "ws-0000-root:subagent-start:call-root-40", "at": 1792065060000, "unitId": "ws-0000-root", "label": "SB", "kind": "subagent-start", "text": "started research: table-research" },
+      { "id": "ws-0000-root:question:call-root-35", "at": 1792064100000, "unitId": "ws-0000-root", "label": "SB", "kind": "question", "text": "asked: Publish PR #421 for review?" }
+    ],
     "timeline": {
       "segments": [
         { "start": 1791809280000, "end": 1791850200000, "state": "busy" },
@@ -58,6 +63,7 @@
       "subagents": [
         { "id": "call-b0-7", "name": "staging-run", "type": "task", "model": "claude-haiku-5.5", "mode": "background", "status": "completed", "startedAt": 1791927600000, "endedAt": 1791927840000, "durationMs": 240000, "credits": 260.0, "task": "Run the migration on a staging copy" }
       ],
+      "recent": [],
       "timeline": {
         "segments": [
           { "start": 1791814200000, "end": 1791850200000, "state": "busy" },
@@ -80,17 +86,18 @@
       "id": "ws-0002-f2a", "kind": "project", "label": "F2a", "name": "tests, part 1",
       "cliSessionIds": ["cli-0002-f2a"], "branch": "feature/f2a-tests", "model": "claude-haiku-5.5",
       "status": "merged", "statusDetail": "merged", "bucket": "done", "since": 1791936000000, "reason": null,
-      "startedAt": 1791850200000, "endedAt": null, "lastEventAt": 1791936600000,
+      "startedAt": 1791850200000, "endedAt": 1791936000000, "lastEventAt": 1791936600000,
       "busyMs": 10800000, "waitingOnUserMs": 0, "alive": true,
       "cost": { "credits": 4312.0, "calls": 300 },
       "activity": { "label": "Done. PR merged", "tool": null, "lastEventAt": 1791936600000 },
       "report": { "status": "complete", "source": "contract", "at": 1791936000000, "title": "Part 1 of the test harness merged in PR #409.", "summary": "Part 1 of the test harness merged in PR #409.", "evidence": ["PR #409 merged"], "blockers": [], "body": null, "unit": "F2a", "commit": null },
       "progress": { "done": 6, "total": 6 },
       "subagents": [],
+      "recent": [],
       "timeline": {
         "segments": [
           { "start": 1791850200000, "end": 1791861000000, "state": "busy" },
-          { "start": 1791861000000, "end": null, "state": "idle" }
+          { "start": 1791861000000, "end": 1791936000000, "state": "idle" }
         ],
         "subagents": [],
         "marks": [
@@ -117,6 +124,11 @@
       "subagents": [
         { "id": "call-b1-8", "name": "review-pr-418", "type": "code-review", "model": "claude-sonnet-5", "mode": "background", "status": "running", "startedAt": 1792065240000, "endedAt": null, "durationMs": null, "credits": 85.0, "task": "Review PR #418" },
         { "id": "call-b1-7", "name": "api-tests", "type": "task", "model": "claude-haiku-5.5", "mode": "sync", "status": "completed", "startedAt": 1792056600000, "endedAt": 1792057140000, "durationMs": 540000, "credits": 30.0, "task": "Run the API test suite" }
+      ],
+      "recent": [
+        { "id": "ws-0003-b1:subagent-start:call-b1-8", "at": 1792065240000, "unitId": "ws-0003-b1", "label": "B1", "kind": "subagent-start", "text": "started code-review: review-pr-418" },
+        { "id": "ws-0003-b1:monitor-check:evt-b1-0301", "at": 1792063080000, "unitId": "ws-0003-b1", "label": "B1", "kind": "monitor-check", "text": "PR monitor check" },
+        { "id": "ws-0003-b1:report:call-b1-4", "at": 1792058160000, "unitId": "ws-0003-b1", "label": "B1", "kind": "report", "text": "reported complete: Opened PR #418 with 14 endpoints. All API tests pass." }
       ],
       "timeline": {
         "segments": [
@@ -152,6 +164,9 @@
       "report": { "status": "complete", "source": "contract", "at": 1792047600000, "title": "Opened PR #421 and started a PR monitor. Waiting for review.", "summary": "Opened PR #421 and started a PR monitor. Waiting for review.", "evidence": ["Docs build passes", "PR #421 opened"], "blockers": [], "body": null, "unit": "D5", "commit": "c41d0e7" },
       "progress": { "done": 9, "total": 10 },
       "subagents": [],
+      "recent": [
+        { "id": "ws-0007-d5:monitor-check:evt-d5-0102", "at": 1792065060000, "unitId": "ws-0007-d5", "label": "D5", "kind": "monitor-check", "text": "PR monitor check" }
+      ],
       "timeline": {
         "segments": [
           { "start": 1791971400000, "end": 1791985800000, "state": "busy" },
@@ -182,6 +197,7 @@
       "report": { "status": "complete", "source": "contract", "at": 1792054680000, "title": "Contract tests are wired and pass locally. Starting the end-to-end run next.", "summary": "Contract tests are wired and pass locally. Starting the end-to-end run next.", "evidence": ["12 contract tests pass"], "blockers": [], "body": null, "unit": "I1", "commit": null },
       "progress": { "done": 5, "total": 9 },
       "subagents": [],
+      "recent": [],
       "timeline": {
         "segments": [
           { "start": 1792032900000, "end": 1792054680000, "state": "busy" },
@@ -214,6 +230,9 @@
       "subagents": [
         { "id": "call-f1-1", "name": "compare-tables", "type": "explore", "model": "gpt-5.4-mini", "mode": "background", "status": "completed", "startedAt": 1792063800000, "endedAt": 1792064040000, "durationMs": 240000, "credits": 12.0, "task": "Compare table components" }
       ],
+      "recent": [
+        { "id": "ws-0006-f1:report:call-f1-6", "at": 1792064880000, "unitId": "ws-0006-f1", "label": "F1", "kind": "report", "text": "reported needs input: The results page needs a table: reuse DataGrid, or build a lighter table." }
+      ],
       "timeline": {
         "segments": [
           { "start": 1792040220000, "end": 1792051200000, "state": "busy" },
@@ -244,6 +263,10 @@
       "subagents": [
         { "id": "call-b2-1", "name": "find-import-code", "type": "explore", "model": "gpt-5.4-mini", "mode": "background", "status": "completed", "startedAt": 1792044600000, "endedAt": 1792044780000, "durationMs": 180000, "credits": 12.0, "task": "Find existing import code" }
       ],
+      "recent": [
+        { "id": "ws-0004-b2:plan-req:call-b2-31", "at": 1792063320000, "unitId": "ws-0004-b2", "label": "B2", "kind": "plan-req", "text": "sent a plan for approval" },
+        { "id": "ws-0004-b2:report:call-b2-5", "at": 1792063140000, "unitId": "ws-0004-b2", "label": "B2", "kind": "report", "text": "reported complete: The parser is done. The plan for step 2 is waiting for approval." }
+      ],
       "timeline": {
         "segments": [
           { "start": 1792043880000, "end": 1792049400000, "state": "busy" },
@@ -268,20 +291,20 @@
     { "label": "I2", "name": "load tests", "dependsOn": "I1", "canStart": false, "waitsOn": "I1", "todoId": "i2-load-tests" }
   ],
   "needs": [
-    { "kind": "plan", "unitIds": ["ws-0004-b2"], "labels": ["B2"], "fromId": "ws-0004-b2", "text": "Step 2 plan: 4 tasks to add XLSX import.", "since": 1792063320000, "tagged": false },
-    { "kind": "pr", "unitIds": ["ws-0007-d5"], "labels": ["D5"], "fromId": "ws-0000-root", "text": "Publish PR #421 for review?", "since": 1792064100000, "tagged": true }
+    { "id": "ws-0004-b2:plan:call-b2-31", "kind": "plan", "unitIds": ["ws-0004-b2"], "labels": ["B2"], "fromId": "ws-0004-b2", "text": "Step 2 plan: 4 tasks to add XLSX import.", "since": 1792063320000, "tagged": false },
+    { "id": "ws-0000-root:pr:call-root-35", "kind": "pr", "unitIds": ["ws-0007-d5"], "labels": ["D5"], "fromId": "ws-0000-root", "text": "Publish PR #421 for review?", "since": 1792064100000, "tagged": true }
   ],
   "feed": [
-    { "at": 1792065360000, "unitId": "ws-0000-root", "label": "SB", "kind": "subagent-start", "text": "started explore: map-import-module" },
-    { "at": 1792065240000, "unitId": "ws-0003-b1", "label": "B1", "kind": "subagent-start", "text": "started code-review: review-pr-418" },
-    { "at": 1792065060000, "unitId": "ws-0007-d5", "label": "D5", "kind": "monitor-check", "text": "PR monitor check" },
-    { "at": 1792065060000, "unitId": "ws-0000-root", "label": "SB", "kind": "subagent-start", "text": "started research: table-research" },
-    { "at": 1792064880000, "unitId": "ws-0006-f1", "label": "F1", "kind": "report", "text": "reported needs input: The results page needs a table: reuse DataGrid, or build a lighter table." },
-    { "at": 1792064100000, "unitId": "ws-0000-root", "label": "SB", "kind": "question", "text": "asked: Publish PR #421 for review?" },
-    { "at": 1792063320000, "unitId": "ws-0004-b2", "label": "B2", "kind": "plan-req", "text": "sent a plan for approval" },
-    { "at": 1792063140000, "unitId": "ws-0004-b2", "label": "B2", "kind": "report", "text": "reported complete: The parser is done. The plan for step 2 is waiting for approval." },
-    { "at": 1792063080000, "unitId": "ws-0003-b1", "label": "B1", "kind": "monitor-check", "text": "PR monitor check" },
-    { "at": 1792058160000, "unitId": "ws-0003-b1", "label": "B1", "kind": "report", "text": "reported complete: Opened PR #418 with 14 endpoints. All API tests pass." }
+    { "id": "ws-0000-root:subagent-start:call-root-41", "at": 1792065360000, "unitId": "ws-0000-root", "label": "SB", "kind": "subagent-start", "text": "started explore: map-import-module" },
+    { "id": "ws-0003-b1:subagent-start:call-b1-8", "at": 1792065240000, "unitId": "ws-0003-b1", "label": "B1", "kind": "subagent-start", "text": "started code-review: review-pr-418" },
+    { "id": "ws-0007-d5:monitor-check:evt-d5-0102", "at": 1792065060000, "unitId": "ws-0007-d5", "label": "D5", "kind": "monitor-check", "text": "PR monitor check" },
+    { "id": "ws-0000-root:subagent-start:call-root-40", "at": 1792065060000, "unitId": "ws-0000-root", "label": "SB", "kind": "subagent-start", "text": "started research: table-research" },
+    { "id": "ws-0006-f1:report:call-f1-6", "at": 1792064880000, "unitId": "ws-0006-f1", "label": "F1", "kind": "report", "text": "reported needs input: The results page needs a table: reuse DataGrid, or build a lighter table." },
+    { "id": "ws-0000-root:question:call-root-35", "at": 1792064100000, "unitId": "ws-0000-root", "label": "SB", "kind": "question", "text": "asked: Publish PR #421 for review?" },
+    { "id": "ws-0004-b2:plan-req:call-b2-31", "at": 1792063320000, "unitId": "ws-0004-b2", "label": "B2", "kind": "plan-req", "text": "sent a plan for approval" },
+    { "id": "ws-0004-b2:report:call-b2-5", "at": 1792063140000, "unitId": "ws-0004-b2", "label": "B2", "kind": "report", "text": "reported complete: The parser is done. The plan for step 2 is waiting for approval." },
+    { "id": "ws-0003-b1:monitor-check:evt-b1-0301", "at": 1792063080000, "unitId": "ws-0003-b1", "label": "B1", "kind": "monitor-check", "text": "PR monitor check" },
+    { "id": "ws-0003-b1:report:call-b1-4", "at": 1792058160000, "unitId": "ws-0003-b1", "label": "B1", "kind": "report", "text": "reported complete: Opened PR #418 with 14 endpoints. All API tests pass." }
   ],
   "counts": { "working": 1, "stuck": 1, "waiting": 2, "idle": 1, "done": 2, "failed": 0 },
   "cost": {
