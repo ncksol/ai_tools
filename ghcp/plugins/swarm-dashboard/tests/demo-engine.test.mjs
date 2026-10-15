@@ -105,6 +105,23 @@ test('the stress scenario is valid and covers every status, a stalled run, a war
   assert.throws(() => createDemoEngine({ scenario: 'nope' }), /scenario/);
 });
 
+test('every reference in a scenario swarm points inside that swarm', async () => {
+  for (const scenario of ['example', 'stress']) {
+    const engine = createDemoEngine({ scenario, now: () => T, simulate: false });
+    for (const { id } of engine.listSwarms()) {
+      const snapshot = await engine.getSnapshot(id);
+      if (!snapshot) continue;
+      const ids = new Set([snapshot.orchestrator.id, ...snapshot.units.map(unit => unit.id)]);
+      const refs = [
+        ...snapshot.feed.map(item => item.unitId),
+        ...snapshot.needs.flatMap(need => [need.fromId, ...need.unitIds]),
+        ...snapshot.units.flatMap(unit => [unit.parentId, ...unit.recent.map(item => item.unitId)]),
+      ];
+      for (const ref of refs) assert.ok(ids.has(ref), `${scenario}, ${id}: ${ref}`);
+    }
+  }
+});
+
 test('the default engine is the demo engine until PR 1\'s engine is in', () => {
   assert.equal(createDefaultEngine({ log: () => {} }).isDemo, true);
 });

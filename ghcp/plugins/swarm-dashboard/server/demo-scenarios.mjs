@@ -107,9 +107,9 @@ export function stressScenario(fixtures) {
   const last = snapshot.cost.series[snapshot.cost.series.length - 1];
   snapshot.cost.series.push({ at: last.at + 5 * MIN, credits: snapshot.cost.credits });
 
-  const other = structuredClone(example);
-  other.run = { ...other.run, id: 'ws-8000-root', name: 'Sample story C', lastActivityAt: t - 40 * MIN };
-  other.orchestrator = { ...other.orchestrator, id: 'ws-8000-root', label: 'SC', name: 'Sample story C', cliSessionIds: ['cli-8000-root'] };
-  other.units = other.units.map(unit => ({ ...unit, id: unit.id.replace(/^ws-0/, 'ws-8'), parentId: 'ws-8000-root', cliSessionIds: unit.cliSessionIds.map(id => id.replace(/^cli-0/, 'cli-8')) }));
+  // A second live swarm for the picker: the example under new ids everywhere, so every reference stays inside it.
+  const other = JSON.parse(JSON.stringify(example).replace(/\b(ws|cli)-0(\d{3})-/g, '$1-8$2-'));
+  other.run = { ...other.run, name: 'Sample story C', lastActivityAt: t - 40 * MIN };
+  other.orchestrator = { ...other.orchestrator, label: 'SC', name: 'Sample story C' };
   return { snapshots: [snapshot, other], swarms: null, history: fixtures.history, summaries: fixtures.summaries };
 }
