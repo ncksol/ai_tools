@@ -1,0 +1,174 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createFakeEngine } from '../engine/fake-engine.mjs';
+import { validateSnapshot } from '../engine/schema.mjs';
+import { loadAssets } from '../server/assets.mjs';
+import { createDashboardServer } from '../server/http.mjs';
+import { get, openEvents } from './helpers/http.mjs';
+import { deepFreeze, exampleSnapshot, fixture } from './helpers/ui.mjs';
+
+function spyEngine() {
+  const fake = createFakeEngine({ snapshots: [exampleSnapshot()], swarms: fixture('example-swarms.json'), history: fixture('example-history.json'), summaries: [fixture('example-run-summary.json')] });
+  const calls = { created: 0, refresh: 0, start: 0, stop: 0 };
+  const engine = { ...fake, async refresh() { calls.refresh += 1; }, start() { calls.start += 1; }, stop() { calls.stop += 1; } };
+  return { calls, fake, createEngine: () => { calls.created += 1; return engine; } };
+}
+
+async function started(createEngine, options = {}) {
+  const server = createDashboardServer({ createEngine, version: 'test', hub: { engineIdleMs: 60, heartbeatMs: 1000 }, ...options });
+  await server.listen();
+  return server;
+}
+
+test('only the files in ui/ are served', () => {
+  const assets = loadAssets();
+  assert.ok(assets.has('/index.html'));
+  assert.equal(assets.get('/ui/styles.css').type, 'text/css; charset=utf-8');
+  assert.equal(assets.get('/ui/app.mjs').type, 'text/javascript; charset=utf-8');
+  for (const path of assets.keys()) assert.match(path, /^\/(index\.html|ui\/[\w.-]+\.(css|mjs|html))$/);
+});
+
+test('the page, its assets and health answer only to the dashboard\'s own host', async () => {
+  const { createEngine, calls } = spyEngine();
+  const server = await started(createEngine);
+  try {
+    const page = await get(server.port, '/');
+    assert.equal(page.status, 200);
+    assert.match(page.body, /id="dash"/);
+    assert.match(page.headers['content-security-policy'], /default-src 'none'; script-src 'self'/);
+    assert.equal(page.headers['x-content-type-options'], 'nosniff');
+    assert.equal((await get(server.port, '/ui/styles.css')).status, 200);
+    assert.equal((await get(server.port, '/ui/../engine/schema.mjs')).status, 404);
+    assert.equal((await get(server.port, '/engine/schema.mjs')).status, 404);
+    const health = JSON.parse((await get(server.port, '/api/health')).body);
+    assert.deepEqual({ app: health.app, version: health.version }, { app: 'swarm-dashboard', version: 'test' });
+    assert.equal((await get(server.port, '/', { Host: 'evil.example' })).status, 403);
+    assert.equal((await get(server.port, '/', { Host: `attacker.example:${server.port}` })).status, 403);
+    assert.equal((await get(server.port, '/', { Host: `localhost:${server.port}` })).status, 200);
+    assert.equal(calls.created, 0, 'serving the page creates no engine');
+  } finally {
+    await server.close();
+  }
+});
+
+test('other methods are refused', async () => {
+  const { createEngine } = spyEngine();
+  const server = await started(createEngine);
+  try {
+    const response = await fetch(`${server.url}api/health`, { method: 'POST' });
+    assert.equal(response.status, 405);
+    assert.equal(response.headers.get('allow'), 'GET, HEAD');
+  } finally {
+    await server.close();
+  }
+});
+
+test('API calls create the engine on demand and drop it when idle', async () => {
+  const { createEngine, calls } = spyEngine();
+  let idle = 0;
+  const server = await started(createEngine, { onIdle: () => { idle += 1; } });
+  try {
+    const history = JSON.parse((await get(server.port, '/api/history')).body);
+    assert.equal(history.length, 2);
+    assert.equal(calls.created, 1);
+    assert.equal(calls.refresh, 1);
+    assert.equal(calls.start, 0, 'no polling without a connected page');
+    assert.equal(JSON.parse((await get(server.port, '/api/runs/ws-1000-root')).body).id, 'ws-1000-root');
+    assert.equal((await get(server.port, '/api/runs/nope')).status, 404);
+    const { snapshot } = JSON.parse((await get(server.port, '/api/snapshot')).body);
+    assert.equal(snapshot.run.id, 'ws-0000-root');
+    await new Promise(resolve => setTimeout(resolve, 150));
+    assert.equal(idle, 1);
+    await get(server.port, '/api/swarms');
+    assert.equal(calls.created, 2, 'a new engine after the old one was dropped');
+  } finally {
+    await server.close();
+  }
+});
+
+test('a page gets hello, swarms and its snapshot, then pushes only for its swarm', async () => {
+  const { createEngine, calls, fake } = spyEngine();
+  const server = await started(createEngine);
+  const page = openEvents(server.port, '/api/events');
+  try {
+    const hello = await page.waitFor(entry => entry.event === 'hello');
+    assert.equal(hello.data.demo, false);
+    assert.equal((await page.waitFor(entry => entry.event === 'swarms')).data.length, 2);
+    const first = await page.waitFor(entry => entry.event === 'snapshot');
+    assert.deepEqual(validateSnapshot(first.data.snapshot), []);
+    assert.equal(calls.start, 1);
+    const changed = exampleSnapshot();
+    changed.revision += 1;
+    changed.run.name = 'Renamed';
+    fake.push(changed);
+    const second = await page.waitFor(entry => entry.event === 'snapshot' && entry.data.snapshot.revision === changed.revision);
+    assert.equal(second.data.snapshot.run.name, 'Renamed');
+    const other = exampleSnapshot();
+    other.run.id = 'ws-other';
+    fake.push(other);
+    await page.waitFor(entry => entry.event === 'swarms' && entry.data.some(swarm => swarm.id === 'ws-other'));
+    assert.equal(page.events.filter(entry => entry.event === 'snapshot').length, 2);
+  } finally {
+    page.close();
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(calls.stop >= 1, true, 'polling stops when the last page leaves');
+    await server.close();
+  }
+});
+
+test('a page can ask for a swarm by id or by one of its sessions', async () => {
+  const { createEngine } = spyEngine();
+  const server = await started(createEngine);
+  const byId = openEvents(server.port, '/api/events?swarm=missing');
+  const bySession = openEvents(server.port, '/api/events?session=cli-0003-b1');
+  try {
+    assert.equal((await byId.waitFor(entry => entry.event === 'snapshot')).data.snapshot, null);
+    assert.equal((await bySession.waitFor(entry => entry.event === 'snapshot')).data.snapshot.run.id, 'ws-0000-root');
+  } finally {
+    byId.close();
+    bySession.close();
+    await server.close();
+  }
+});
+
+test('the server never changes the snapshot objects the engine hands out', async () => {
+  const fake = createFakeEngine({ snapshots: [exampleSnapshot()], swarms: fixture('example-swarms.json') });
+  const frozen = deepFreeze(exampleSnapshot());
+  const engine = { ...fake, getSnapshot: async () => frozen, findSwarm: async () => frozen.run.id };
+  const server = await started(() => engine);
+  const page = openEvents(server.port, '/api/events?session=cli-0003-b1');
+  try {
+    assert.deepEqual((await page.waitFor(entry => entry.event === 'snapshot')).data.snapshot, exampleSnapshot());
+    assert.deepEqual(JSON.parse((await get(server.port, '/api/snapshot')).body).snapshot, exampleSnapshot());
+  } finally {
+    page.close();
+    await server.close();
+  }
+});
+
+test('a page opened from a session outside any swarm follows that session once it joins one', async () => {
+  const { createEngine, fake } = spyEngine();
+  const server = await started(createEngine);
+  const page = openEvents(server.port, '/api/events?session=cli-new');
+  try {
+    assert.equal((await page.waitFor(entry => entry.event === 'snapshot')).data.snapshot.run.id, 'ws-0000-root');
+    const joined = exampleSnapshot();
+    joined.run.id = 'ws-new';
+    joined.orchestrator.cliSessionIds = ['cli-new'];
+    fake.push(joined);
+    await page.waitFor(entry => entry.event === 'snapshot' && entry.data.snapshot.run.id === 'ws-new');
+  } finally {
+    page.close();
+    await server.close();
+  }
+});
+
+test('close ends live connections and frees the port', async () => {
+  const { createEngine } = spyEngine();
+  const server = await started(createEngine);
+  const port = server.port;
+  const page = openEvents(port, '/api/events');
+  await page.waitFor(entry => entry.event === 'snapshot');
+  await server.close();
+  await assert.rejects(get(port, '/api/health'));
+});
