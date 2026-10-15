@@ -77,6 +77,8 @@ This protects the user’s checkout and your environment variables, but it is no
 
 By default, install nothing (no packages, tools or browsers), and use the network only for the provider and Git reads that this skill prescribes: no downloads, documentation sites or web searches. Run only what works with the tools already installed and needs no network. If a test needs a missing dependency or the network, do not run it.
 
+Azure CLI can install or upgrade an extension on its own when a command needs one, and it does not ask first when there is no terminal. That would be a global install, so start every `az` command with `AZURE_EXTENSION_USE_DYNAMIC_INSTALL=no`, as the adapters do. If `az` then reports that an extension is not installed, or that an `az repos` command “is misspelled or not recognized by the system”, do not install anything: the review is incomplete, and `Needed to finish` must name the missing extension.
+
 Each exception needs permission in the user’s request, and a permission covers only what it names:
 
 - Installing dependencies: only if the user allows installs or says that the code is trusted. The install may download what it installs. Install only into your scratch directory (for example, a virtual environment there, or the exported copy’s `node_modules`), never globally.
@@ -346,6 +348,7 @@ Then include:
 PR summary:
 - Provider:
 - PR:
+- Title:
 - Base:
 - Source:
 - Apparent intent:
@@ -355,12 +358,15 @@ PR summary:
 - Code run:
 - Failed commands:
 - Not verified:
+- Needed to finish:
 ```
 
 - `PR`: the PR URL. For a local branch, the URL of the open PR that you used to choose the base, otherwise `None`. For a pasted diff, `None`.
+- `Title`: the PR title. For a local branch or a pasted diff, the title that the user gave you, otherwise `unavailable`. Also `unavailable` if you could not read the PR.
 - `Code run`: each command that ran code from the change, where it ran, and its result. `None` if you ran nothing.
 - `Failed commands`: each command you needed that failed, its error, and what you did instead. `None` if nothing failed. A test that fails because of a defect you report, a search with no match, or a file that does not exist is a result, not a failure.
 - `Not verified`: what you could not check, and why: changed files you did not review, code you could not read, and tests you did not run. `Nothing` if you checked everything.
+- `Needed to finish`: if the review is incomplete (see “Verdict logic”), what you need to finish it, for example access to the PR, a local clone with the needed remotes, the base and head branch names, a missing Azure CLI extension, or the full diff. `None` if the review is complete.
 
 Then list findings grouped by severity.
 
@@ -427,6 +433,8 @@ Set the verdict from the findings that you report and from whether the review is
 The review is complete when you established which change to review, read its full diff, and read the code that the change depends on, at the head commit or in the pasted diff itself. It is incomplete when you could not do one of these things, including when a command you needed failed and nothing else gave you the same information, or when you needed an answer from the user and could not get one.
 
 Because `Do not merge yet` and `Needs important fixes` come before `Review incomplete`, an incomplete review can block a merge but can never clear one. Whenever the review is incomplete, list the gaps under `Not verified`. With `Review incomplete`, still report any findings.
+
+If you give `Do not merge yet` or `Needs important fixes` on an incomplete review, say under `Needed to finish` that the review must be repeated after the fix: fixing the findings does not complete the review.
 
 ## If commands fail
 

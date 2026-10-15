@@ -28,14 +28,22 @@ https://dev.azure.com/<org>/<project>/_git/<repo>/pullrequest/<id>
 
 the organisation URL, `<ORG_URL>`, is `https://dev.azure.com/<org>`. For `https://<org>.visualstudio.com/[DefaultCollection/]<project>/_git/<repo>/pullrequest/<id>` URLs, it is also `https://dev.azure.com/<org>`. URL-decode `<project>` and `<repo>` (for example, `%20` becomes a space).
 
+Start every `az` command with `AZURE_EXTENSION_USE_DYNAMIC_INSTALL=no` (see “Running code, network and credentials”), and first check that the Azure DevOps extension is installed:
+
+```bash
+AZURE_EXTENSION_USE_DYNAMIC_INSTALL=no az extension show --name azure-devops --output none
+```
+
+If this fails, do not install the extension. Report `Review incomplete`, list the command and its error under `Failed commands`, and say under `Needed to finish` that the review needs the Azure DevOps extension for Azure CLI (`az extension add --name azure-devops`).
+
 Pass `--org <ORG_URL> --detect false` to every `az repos pr` command. The three commands below do not accept `--project`; do not pass it.
 
 Gather PR metadata, linked work items and policy status:
 
 ```bash
-az repos pr show --id <PR_ID> --org <ORG_URL> --detect false --output json
-az repos pr work-item list --id <PR_ID> --org <ORG_URL> --detect false --output json
-az repos pr policy list --id <PR_ID> --org <ORG_URL> --detect false --output json
+AZURE_EXTENSION_USE_DYNAMIC_INSTALL=no az repos pr show --id <PR_ID> --org <ORG_URL> --detect false --output json
+AZURE_EXTENSION_USE_DYNAMIC_INSTALL=no az repos pr work-item list --id <PR_ID> --org <ORG_URL> --detect false --output json
+AZURE_EXTENSION_USE_DYNAMIC_INSTALL=no az repos pr policy list --id <PR_ID> --org <ORG_URL> --detect false --output json
 ```
 
 Check that `repository.name` and `repository.project.name` in the `show` result match `<repo>` and `<project>` from the URL, ignoring case. If they do not, stop, report the mismatch and use `Review incomplete`: this is not the PR the user asked for.
@@ -70,7 +78,7 @@ git rev-parse FETCH_HEAD
 The first `git rev-parse FETCH_HEAD` prints `<BASE_SHA>` and the second prints `<HEAD_SHA>`. Then follow "Base and head commits". To check the commits again before you report, run:
 
 ```bash
-az repos pr show --id <PR_ID> --org <ORG_URL> --detect false --query "[targetRefName, sourceRefName]" --output json
+AZURE_EXTENSION_USE_DYNAMIC_INSTALL=no az repos pr show --id <PR_ID> --org <ORG_URL> --detect false --query "[targetRefName, sourceRefName]" --output json
 git ls-remote <BASE_REMOTE> <targetRefName>
 git ls-remote <HEAD_REMOTE> <sourceRefName>
 ```
