@@ -95,6 +95,15 @@ These change what the user sees, so they are listed in the plan summary for appr
 13. **Unit labels:** registry `unit`; otherwise the first word of the session name that contains a digit, starts with a letter and is unique among siblings (for example `b1`), else the initials of its unique words, else `U<n>`. The orchestrator's label is the initials of its name.
 14. **`activity_items` is not read.** Open `ask_user` and `exit_plan_mode` calls give exact, timestamped waits; activity items cannot tell when a question was answered.
 
+### Amendments during execution
+
+Recorded so the plan matches what was built; each amendment was reviewed like a task. The code blocks of Tasks 2–4 below show the original plan, and the repository holds the amended code.
+
+- Task 2: the example snapshot was made internally consistent (unit order, a 5-minute series point, byModel calls). After review, the fake engine keeps its swarm list in step with `push()`, and the schema documents `SnapshotChange.revision`, the `getSnapshot()` default and the rounding of credits (0.1) and dollars (0.01).
+- Contract additions for PR 2, approved by the coordinator after Task 2: `FeedItem.id` and `NeedItem.id` (unique within each list, the same item keeps the same id in every list); `SessionView.recent` (a session's latest 6 feed items, taken before the 200-item cut); unit `endedAt` is the outcome time once a unit has an outcome (registry `ended_at`, else the PR's `mergedAt` or `closedAt`), else the archive time, else the last event once the process is gone; and `findSwarm(sessionId)` on the engine API. Tasks 9, 10, 13 and 15 below produce them.
+- Task 3: `node:sqlite` opens `file:` URIs only from Node 22.15 and 23.10, so on older runtimes immutable reads use the sqlite3 CLI (`nodeSqliteSupportsUri`, `openReadOnly` option `nodeVersion`).
+- Task 4: the app reader selects only the allowlisted columns that exist (`APP_TABLES`, `SCHEMA_SQL`) and degrades to diagnostics when tables or columns are missing; the session tree ignores aliases whose workspace is gone.
+
 ## File Structure
 
 All paths are under `ghcp/plugins/swarm-dashboard/` unless they start with `.github/` or `docs/`.
@@ -3317,7 +3326,7 @@ git commit -m "feat(swarm-dashboard): parse the orchestrator data contract"
 - Produces:
   - `state-utils.mjs`: `LIMITS` (`feed` 120, `marks` 400, `sent` 40, `inbound` 80, `taskCompletes` 20, `recent` 200, `spans` 5000, `saves` 50, `wakes` 500); `pushBounded(list, item, max)`; `addFeed(state, at, kind, text)`; `addMark(state, at, kind, text, status = null)`.
   - `tests/helpers/fold.mjs`: `fold(log, id = 'cli-1'): SessionState`.
-  - `session-state.mjs`: `SKIP_TYPES`; `createSessionState(cliId): SessionState`; `applyLine(state, line)`; `applyEvent(state, event)`. `SessionState` fields: `id, lines, parseErrors, firstEventAt, lastEventAt, lastEventType, lastMainAt, copilotVersion, model, mode, turn: {startedAt, progressAt}|null, busySince, lastTurnEndAt, busySpans: [start, end][], busyMs, openTools: Map<callId, {id, name, startedAt, args: {summary, mode, initialWait, delay, timeout, wait}}>, waits: Map<callId, {id, kind: 'question'|'plan', text, startedAt}>, waitSpans: [start, end, kind][], waitingMs, subagents: Map<callId, {id, name, type, mode, model, effort, task, launchedAt, startedAt, endedAt, durationMs, status, lastEventAt, agentId}>, agentToTask: Map<agentId, callId>, sent: [], inbound: [], lastInboundAt, lastHumanAt, taskCompletes: [], automation: {saves: [], wakes: []}, shutdownAt, abortAt, lastErrorAt, recent: {failures: number[], calls: {at, name, key, prompt}[], compactions: number[], denials: number[]}, prompts` (main-session user messages so far), `feed: {at, kind, text}[], marks: {at, kind, text, status}[], prMentions: Map`. Task 10 fills `sent`, `inbound`, `taskCompletes`, `automation` and `prMentions`.
+  - `session-state.mjs`: `SKIP_TYPES`; `createSessionState(cliId): SessionState`; `applyLine(state, line)`; `applyEvent(state, event)`. `SessionState` fields: `id, lines, parseErrors, firstEventAt, lastEventAt, lastEventType, lastMainAt, copilotVersion, model, mode, turn: {startedAt, progressAt}|null, busySince, lastTurnEndAt, busySpans: [start, end][], busyMs, openTools: Map<callId, {id, name, startedAt, args: {summary, mode, initialWait, delay, timeout, wait}}>, waits: Map<callId, {id, kind: 'question'|'plan', text, startedAt}>, waitSpans: [start, end, kind][], waitingMs, subagents: Map<callId, {id, name, type, mode, model, effort, task, launchedAt, startedAt, endedAt, durationMs, status, lastEventAt, agentId}>, agentToTask: Map<agentId, callId>, sent: [], inbound: [], lastInboundAt, lastHumanAt, taskCompletes: [], automation: {saves: [], wakes: []}, shutdownAt, abortAt, lastErrorAt, recent: {failures: number[], calls: {at, name, key, prompt}[], compactions: number[], denials: number[]}, prompts` (main-session user messages so far), `feed: {at, kind, text, source}[], marks: {at, kind, text, status}[], prMentions: Map, source`. `source` is the stable id of the event being applied: `<cliId>/<toolCallId>`, else `<cliId>/<eventId>`, else `<cliId>#<line>`; each feed entry keeps the `source` it was added under, and Task 13 builds feed ids from it. Task 10 fills `sent`, `inbound`, `taskCompletes`, `automation` and `prMentions`.
 
 Rules: an event with `data.parentToolCallId` or a top-level `agentId` belongs to a sub-agent and only refreshes that sub-agent's `lastEventAt`; a `user.message` whose `source` is `agent-<own id>` is the session's own sub-agent prompt and is ignored. `session.start` and `session.resume` end the previous process's open turn, waits, tools and sub-agents at the last main-agent event; `session.shutdown` does the same at its own time; `abort` ends the turn and sync sub-agents but keeps background ones. Turns less than 5 s apart form one busy period (`busySince`).
 
@@ -3448,13 +3457,14 @@ test('an abort ends the turn and sync sub-agents but keeps background ones', () 
   log.start(); log.turnStart();
   const sync = log.subagent({ mode: 'sync' });
   const background = log.subagent({ mode: 'background' });
-  log.wait(900_000); log.abort();
+  log.wait(900_000);
+  const abortId = log.abort();
   const state = fold(log);
   assert.equal(state.turn, null);
   assert.equal(state.abortAt, T0 + 900_000);
   assert.equal(state.subagents.get(sync).status, 'failed');
   assert.equal(state.subagents.get(background).status, 'running');
-  assert.deepEqual(state.feed.at(-1), { at: T0 + 900_000, kind: 'abort', text: 'turn aborted' });
+  assert.deepEqual(state.feed.at(-1), { at: T0 + 900_000, kind: 'abort', text: 'turn aborted', source: `cli-1/${abortId}` });
 });
 
 test('a shutdown is the last event and ends open work', () => {
@@ -3493,6 +3503,19 @@ test('tool calls remember which prompt they answer', () => {
   assert.deepEqual(state.recent.calls.map(call => call.prompt), [0, 1, 2]);
 });
 
+test('feed entries carry a stable source: the tool call, else the event id, else the line', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const call = log.ask('Ship it?');
+  log.done(call, { result: 'yes' });
+  const compaction = log.push('session.compaction_complete', { success: true });
+  const state = fold(log, 'cli-x');
+  assert.deepEqual(state.feed.map(item => [item.kind, item.source]), [['question', `cli-x/${call}`], ['answer', `cli-x/${call}`], ['compaction', `cli-x/${compaction}`]]);
+  const bare = createSessionState('cli-y');
+  applyLine(bare, JSON.stringify({ type: 'session.compaction_complete', data: {}, timestamp: new Date(T0).toISOString() }));
+  assert.equal(bare.feed[0].source, 'cli-y#1');
+});
+
 test('large irrelevant lines only move the clock, and malformed lines are counted', () => {
   const state = createSessionState('cli-1');
   applyLine(state, JSON.stringify({ type: 'session.usage_checkpoint', data: { huge: 'x'.repeat(1000) }, id: 'a', timestamp: new Date(T0).toISOString(), parentId: null }));
@@ -3522,8 +3545,9 @@ export function pushBounded(list, item, max) {
   if (list.length > max) list.splice(0, list.length - max);
 }
 
+/** A feed entry. `source` is the stable id of the event being applied (see eventSource in session-state.mjs). */
 export function addFeed(state, at, kind, text) {
-  pushBounded(state.feed, { at, kind, text: oneLine(text, 200) }, LIMITS.feed);
+  pushBounded(state.feed, { at, kind, text: oneLine(text, 200), source: state.source ?? `${state.id}#${state.lines}` }, LIMITS.feed);
 }
 
 export function addMark(state, at, kind, text, status = null) {
@@ -3562,7 +3586,7 @@ export function createSessionState(id) {
     automation: { saves: [], wakes: [] },
     shutdownAt: null, abortAt: null, lastErrorAt: null,
     recent: { failures: [], calls: [], compactions: [], denials: [] }, prompts: 0,
-    feed: [], marks: [], prMentions: new Map(),
+    feed: [], marks: [], prMentions: new Map(), source: null,
   };
 }
 
@@ -3602,11 +3626,19 @@ function touch(state, at, type) {
   }
 }
 
+/** Stable id of the event being applied, for feed ids: its tool call, else its event id, else its line number. */
+function eventSource(state, event, data) {
+  if (typeof data.toolCallId === 'string' && data.toolCallId) return `${state.id}/${data.toolCallId}`;
+  if (typeof event.id === 'string' && event.id) return `${state.id}/${event.id}`;
+  return `${state.id}#${state.lines}`;
+}
+
 export function applyEvent(state, event) {
   const at = parseTime(event.timestamp);
   if (at === null) return;
   touch(state, at, event.type);
   const data = event.data && typeof event.data === 'object' ? event.data : {};
+  state.source = eventSource(state, event, data);
   if (event.type.startsWith('subagent.')) {
     onSubagentLifecycle(state, event, data, at);
     return;
@@ -3876,7 +3908,7 @@ git commit -m "feat(swarm-dashboard): fold session events into activity state"
 **Interfaces:**
 - Consumes: Task 9's reducer and `state-utils.mjs`; `fold` (Task 9 helper); `EventLog` (Task 4).
 - Produces:
-  - `messages.mjs`: `countPrMentions(state, text, at)` (keys `${provider ?? 'any'}::${id}` with provider `ado` or null for a bare `PR #12`, values `{provider, repo: null, id, count, firstAt, lastAt}`); `parseEnvelope(transformed): {fromSessionId, fromProjectSessionId, fromName, sourceToolCallId}|null`; `recordUserMessage(state, data, at)`; `recordToolStart(state, name, args, callId, at)`; `recordToolComplete(state, callId, data)`; `recordTaskComplete(state, data, at)`.
+  - `messages.mjs`: `countPrMentions(state, text, at)` (keys `${provider ?? 'any'}::${id}` with provider `ado` or null for a bare `PR #12`, values `{provider, repo: null, id, count, firstAt, lastAt}`); `parseEnvelope(transformed): {fromSessionId, fromProjectSessionId, fromName, sourceToolCallId}|null`; `recordUserMessage(state, data, at)`; `recordToolStart(state, name, args, callId, at)` (a `send_session_message` call adds `{at, toolCallId, source, target, purpose, message, failed}` to `sent`); `recordToolComplete(state, callId, data)`; `recordTaskComplete(state, data, at)`.
   - Reducer state now fills `sent: {at, toolCallId, target, purpose, message, failed}[]`, `inbound: {at, fromSessionId, fromProjectSessionId, fromName, sourceToolCallId, content}[]`, `taskCompletes: {at, success, summary}[]`, `automation.saves: {at, clear, everyMinutes, target}[]`, `automation.wakes: number[]`, `prMentions`.
   - `session-state.mjs`: `mergeStates(states: SessionState[]): SessionState` — an aggregate of one project session's CLI sessions (sums, concatenated and time-sorted lists, merged mentions, latest `lastEventAt`/`lastEventType`). Its live fields (`turn`, `openTools`, `waits`, `recent`) stay empty; status uses the current CLI session's own state.
 
@@ -3904,6 +3936,7 @@ test('reports sent to other sessions keep their purpose, failure and PR mentions
   const state = fold(log);
   assert.deepEqual(state.sent.map(item => [item.target, item.purpose, item.failed]), [['ws-root', 'handoff', false], ['ws-root', null, true]]);
   assert.ok(state.sent[0].message.startsWith('Opened PR !4711'));
+  assert.equal(state.sent[0].source, 'cli-1/call-1');
   assert.deepEqual(state.prMentions.get('ado::4711'), { provider: 'ado', repo: null, id: 4711, count: 2, firstAt: T0, lastAt: T0 });
   assert.equal(state.prMentions.get('any::12').count, 1);
 });
@@ -4041,7 +4074,7 @@ export function recordToolStart(state, name, args, callId, at) {
   if (name === 'send_session_message') {
     const message = clip(typeof args.message === 'string' ? args.message : '', 8000) ?? '';
     pushBounded(state.sent, {
-      at, toolCallId: callId, target: typeof args.session_id === 'string' ? args.session_id : null,
+      at, toolCallId: callId, source: state.source, target: typeof args.session_id === 'string' ? args.session_id : null,
       purpose: typeof args.purpose === 'string' ? args.purpose : null, message, failed: false,
     }, LIMITS.sent);
     countPrMentions(state, message, at);
@@ -5071,11 +5104,13 @@ git commit -m "feat(swarm-dashboard): derive PR identity, stages and monitors"
 
 **Interfaces:**
 - Consumes: everything from Tasks 2–12.
-- Produces: `buildSnapshot(input): Snapshot` with `input = { forest, rootId, app, states: Map<cliId, SessionState>, alive: Map<cliId, boolean|null>, workspaceFiles: Map<cliId, {cwd, branch, hostType, repository}|null>, ledger, sessionDbs: Map<cliId, {todos, deps, children}|null>, prInfo: (pr, {cwd}) => Info|null, now, thresholds, revision, diagnostics }`; `runLifecycle({lastActivityAt, anyActive, now, thresholds}): {lifecycle, finishedAt}`; `deriveLabels(names: string[]): string[]`; `initials(name): string`; `buildSegments({start, end, now, busy, waits, stuckFrom}): Segment[]`; `reportFromMessage(message, purpose, at): ReportView`.
+- Produces: `buildSnapshot(input): Snapshot` with `input = { forest, rootId, app, states: Map<cliId, SessionState>, alive: Map<cliId, boolean|null>, workspaceFiles: Map<cliId, {cwd, branch, hostType, repository}|null>, ledger, sessionDbs: Map<cliId, {todos, deps, children}|null>, prInfo: (pr, {cwd}) => Info|null, now, thresholds, revision, diagnostics }`; `runLifecycle({lastActivityAt, anyActive, now, thresholds}): {lifecycle, finishedAt}`; `deriveLabels(names: string[]): string[]`; `initials(name): string`; `buildSegments({start, end, now, busy, waits, stuckFrom}): Segment[]`; `reportFromMessage(message, purpose, at): ReportView`; `splitFeed(items, {limit?, recent?}): { feed: FeedItem[], recent: Map<sessionId, FeedItem[]> }`.
 
 Assembly rules (spec sections 7, 10 and 11, plus builder decisions):
 - The latest report is the latest message a unit sent to its parent (sender side, with `purpose`), else the parent's received copy; a later `session.task_complete` replaces it only when more than 5 minutes newer.
 - Registry rows resolve to units through `resolveNodeId` (project session id or CLI session id). Unit `name` is the registry title, else the session name.
+- Unit `endedAt`: once a unit has an outcome, the outcome time (registry `ended_at`, else the PR's `mergedAt` or `closedAt`); otherwise the archive time, else the last event once the process is gone (`alive === false`), else null. Timeline segments end there, so a merged unit whose process still runs stops its clock at the merge.
+- Feed ids are `<sessionId>:<kind>:<source>`, with `source` from the reducer (`<cliSessionId>/<toolCallId or eventId>`); report items use their `send_session_message` call's `source`. Need ids are `<fromId>:<kind>:<cliSessionId>/<toolCallId>` of the open question or plan. Each session's `recent` holds its latest 6 feed items, taken before the feed is cut to 200.
 - `dependsOn`: the registry `base_branch`, else the worktree's base branch, matched to another unit's branch; else the unit's todo dependency mapped to a unit or planned entry.
 - Timeline busy spans closer than 2 minutes merge; waits on the user override busy; a live stuck state paints from `since` to now.
 - Feed items come from every session's reducer feed plus one item per report sent to the parent; question text drops its tag; latest first, at most 200.
@@ -5092,7 +5127,7 @@ import { DEFAULT_THRESHOLDS } from '../engine/config.mjs';
 import { validateSnapshot } from '../engine/schema.mjs';
 import { createLedger } from '../engine/readers/ledger.mjs';
 import { buildForest } from '../engine/model/forest.mjs';
-import { buildSegments, buildSnapshot, deriveLabels, runLifecycle } from '../engine/model/swarm.mjs';
+import { buildSegments, buildSnapshot, deriveLabels, runLifecycle, splitFeed } from '../engine/model/swarm.mjs';
 import { HOUR, MINUTE } from '../engine/time.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { fold } from './helpers/fold.mjs';
@@ -5245,9 +5280,9 @@ test('a contract-following swarm becomes a valid snapshot', () => {
   assert.equal(ui.activity.tool.summary, 'bash: npm run e2e');
   assert.equal(ui.timeline.segments.at(-1).state, 'stuck');
   assert.deepEqual({ status: docs.status, stage: docs.stage, outcome: docs.outcome, monitor: docs.monitor.state, pr: docs.pr.id, alive: docs.alive, endedAt: docs.endedAt },
-    { status: 'archived', stage: 'archived', outcome: 'merged', monitor: 'ended', pr: 4712, alive: false, endedAt: at(100) });
+    { status: 'archived', stage: 'archived', outcome: 'merged', monitor: 'ended', pr: 4712, alive: false, endedAt: at(95) });
   assert.deepEqual(snapshot.planned, [{ label: 'export', name: 'Export', dependsOn: 'api', canStart: true, waitsOn: null, todoId: 'export' }]);
-  assert.deepEqual(snapshot.needs, [{ kind: 'pr', unitIds: ['ws-api'], labels: ['api'], fromId: 'ws-root', text: 'Publish PR !4711?', since: at(100), tagged: true }]);
+  assert.deepEqual(snapshot.needs, [{ id: 'ws-root:pr:cli-root/call-1', kind: 'pr', unitIds: ['ws-api'], labels: ['api'], fromId: 'ws-root', text: 'Publish PR !4711?', since: at(100), tagged: true }]);
   assert.deepEqual(snapshot.counts, { working: 0, stuck: 1, waiting: 0, idle: 1, done: 1, failed: 0 });
   assert.equal(snapshot.cost.credits, 35);
   assert.equal(snapshot.cost.usd, 0.35);
@@ -5256,7 +5291,36 @@ test('a contract-following swarm becomes a valid snapshot', () => {
   assert.ok(snapshot.feed.some(item => item.unitId === 'ws-api' && item.kind === 'report' && item.text === 'reported complete: API done.'));
   assert.ok(snapshot.feed.some(item => item.unitId === 'ws-root' && item.text === 'asked: Publish PR !4711?'));
   assert.ok(snapshot.feed.every((item, index, list) => index === 0 || list[index - 1].at >= item.at));
+  const feedIds = snapshot.feed.map(item => item.id);
+  assert.equal(new Set(feedIds).size, feedIds.length);
+  assert.ok(snapshot.feed.every(item => item.id.startsWith(`${item.unitId}:${item.kind}:`)));
+  for (const session of [snapshot.orchestrator, ...snapshot.units]) {
+    assert.deepEqual(session.recent, snapshot.feed.filter(item => item.unitId === session.id).slice(0, 6));
+  }
   assert.ok(data.requests.some(request => request.id === 4711));
+});
+
+test('a unit with an outcome stops its clock at the outcome time, even while its process runs', () => {
+  const data = input(true);
+  const lookup = data.prInfo;
+  data.prInfo = (pr, options) => (pr.provider === 'ado' && pr.id === 4711
+    ? { state: 'merged', title: 'API', openedAt: at(29), mergedAt: at(110), closedAt: at(110), reviewNote: null, url: null, checkedAt: at(115), error: null }
+    : lookup(pr, options));
+  const api = buildSnapshot(data).units.find(unit => unit.id === 'ws-api');
+  assert.equal(api.outcome, 'merged');
+  assert.equal(api.alive, true);
+  assert.equal(api.endedAt, at(110));
+  assert.equal(api.timeline.segments.at(-1).end, at(110));
+});
+
+test('the feed keeps its latest 200 items, and each session keeps its latest 6 from before the cut', () => {
+  const item = (unitId, minute) => ({ id: `${unitId}:report:${minute}`, at: at(minute), unitId, label: unitId, kind: 'report', text: 'x' });
+  const { feed, recent } = splitFeed([item('quiet', 0), ...Array.from({ length: 250 }, (_, index) => item('busy', 10 + index))]);
+  assert.equal(feed.length, 200);
+  assert.equal(feed[0].at, at(259));
+  assert.ok(feed.every(entry => entry.unitId === 'busy'));
+  assert.deepEqual(recent.get('quiet').map(entry => entry.at), [at(0)]);
+  assert.deepEqual(recent.get('busy').map(entry => entry.at), [259, 258, 257, 256, 255, 254].map(minute => at(minute)));
 });
 
 test('without the contract, heuristics fill in labels, reports, PRs and plan entries', () => {
@@ -5322,6 +5386,7 @@ import { ACTIVE_DETAILS, displayOf, evaluateStatus, swarmStalled, toolLimitMs, t
 const SEGMENT_GAP_MS = 2 * MINUTE;
 const TASK_OVERRIDE_MS = 5 * MINUTE;
 const FEED_LIMIT = 200;
+const RECENT_LIMIT = 6;
 const CODE_WORD = /^[A-Za-z]{1,4}\d[A-Za-z0-9.-]{0,8}$/;
 const STARTABLE = new Set(['pr_open', 'in_review', 'merged', 'archived']);
 const STATUS_WORDS = { complete: 'complete', progress: 'progress', needs_input: 'needs input', blocked: 'blocked' };
@@ -5496,11 +5561,11 @@ function assignLabels(root, nodes, registry) {
   return labels;
 }
 
-function sessionView(input, c, label, evaluation, report, title, extraMarks) {
+function sessionView(input, c, label, evaluation, report, title, extraMarks, outcomeAt = null) {
   const { node, current, all } = c;
   const { now, thresholds } = input;
   const { status, bucket } = displayOf(evaluation.detail);
-  const endedAt = node.archivedAt ?? (c.alive === false ? all.lastEventAt : null);
+  const endedAt = outcomeAt ?? node.archivedAt ?? (c.alive === false ? all.lastEventAt : null);
   const startedAt = node.createdAt ?? all.firstEventAt ?? now;
   const openTool = current && current.openTools.size ? [...current.openTools.values()].sort((a, b) => a.startedAt - b.startedAt)[0] : null;
   const tool = evaluation.tool ?? (openTool ? toolView(openTool, toolLimitMs(openTool, thresholds)) : null);
@@ -5541,7 +5606,7 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
       flags.statusLines = true;
       statusLines.unshift({ at: item.at, pr: line.pr });
     }
-    extraFeed.push({ at: item.at, unitId: node.id, label, kind: 'report', text: oneLine(`reported ${STATUS_WORDS[view.status]}: ${view.title}`, 200) });
+    extraFeed.push({ id: `${node.id}:report:${item.source}`, at: item.at, unitId: node.id, label, kind: 'report', text: oneLine(`reported ${STATUS_WORDS[view.status]}: ${view.title}`, 200) });
   }
   let report = sent.length ? sent[sent.length - 1].view : null;
   if (!report) {
@@ -5583,8 +5648,9 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
   if (evaluation.detail === 'stuck_tool' && evaluation.tool) marks.push({ at: evaluation.tool.startedAt, kind: 'tool', text: 'Tool call started, no events since', status: null });
 
   const outcome = row?.outcome ?? (merged ? 'merged' : closedWithoutMerge ? 'closed' : evaluation.detail === 'failed' ? 'failed' : null);
+  const outcomeAt = outcome ? row?.endedAt ?? pr?.mergedAt ?? pr?.closedAt ?? null : null;
   return {
-    ...sessionView(input, c, label, evaluation, report, row?.title ?? null, marks),
+    ...sessionView(input, c, label, evaluation, report, row?.title ?? null, marks, outcomeAt),
     parentId: node.parentId, depth: node.depth, stage, closedWithoutMerge, outcome, pr, monitor, dependsOn: null, todoId: row?.todoId ?? null,
   };
 }
@@ -5669,8 +5735,9 @@ function buildNeeds(contexts, rootId, labels, flags) {
       if (tag && id === rootId && !tag.units.includes('*')) {
         unitIds = [...new Set(tag.units.map(label => labelIndex.get(label.toLowerCase())).filter(Boolean))];
       }
+      const kind = wait.kind === 'plan' ? 'plan' : tag?.need ?? 'question';
       needs.push({
-        kind: wait.kind === 'plan' ? 'plan' : tag?.need ?? 'question', unitIds, labels: unitIds.map(unitId => labels.get(unitId)),
+        id: `${id}:${kind}:${c.current.id}/${wait.id}`, kind, unitIds, labels: unitIds.map(unitId => labels.get(unitId)),
         fromId: id, text: oneLine(tag ? tag.text : wait.text, 300), since: wait.startedAt, tagged: Boolean(tag),
       });
     }
@@ -5684,10 +5751,22 @@ function buildFeed(contexts, labels, extraFeed) {
     for (const item of c.all.feed) {
       let text = item.text;
       if (item.kind === 'question' && text.startsWith('asked: ')) text = `asked: ${parseQuestionTag(text.slice(7))?.text ?? text.slice(7)}`;
-      items.push({ at: item.at, unitId: id, label: labels.get(id), kind: item.kind, text });
+      items.push({ id: `${id}:${item.kind}:${item.source}`, at: item.at, unitId: id, label: labels.get(id), kind: item.kind, text });
     }
   }
-  return items.sort((a, b) => b.at - a.at).slice(0, FEED_LIMIT);
+  return splitFeed(items);
+}
+
+/** The swarm feed, latest first and cut to FEED_LIMIT, plus each session's latest RECENT_LIMIT items taken before the cut. */
+export function splitFeed(items, { limit = FEED_LIMIT, recent = RECENT_LIMIT } = {}) {
+  const sorted = [...items].sort((a, b) => b.at - a.at);
+  const bySession = new Map();
+  for (const item of sorted) {
+    const list = bySession.get(item.unitId) ?? [];
+    if (list.length < recent) list.push(item);
+    bySession.set(item.unitId, list);
+  }
+  return { feed: sorted.slice(0, limit), recent: bySession };
 }
 
 function costSummary(ledger, cliIds, units) {
@@ -5745,6 +5824,8 @@ export function buildSnapshot(input) {
   const stalled = lifecycle === 'live'
     ? swarmStalled({ orchestratorDetail: orchestrator.statusDetail, unitDetails: units.map(unit => unit.statusDetail), monitorDue, lastActivityAt })
     : null;
+  const { feed, recent } = buildFeed(contexts, labels, extraFeed);
+  for (const view of [orchestrator, ...units]) view.recent = recent.get(view.id) ?? [];
 
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -5760,7 +5841,7 @@ export function buildSnapshot(input) {
     units,
     planned: plannedEntries(plan),
     needs,
-    feed: buildFeed(contexts, labels, extraFeed),
+    feed,
     counts,
     cost,
     diagnostics: input.diagnostics ?? [],
@@ -6036,7 +6117,7 @@ git commit -m "feat(swarm-dashboard): summarise finished runs into a history sto
 
 **Interfaces:**
 - Consumes: every engine module (Tasks 3–14).
-- Produces: `createSwarmEngine(options: EngineOptions & { processProbe?: (locks) => Promise<Map<pid, boolean>> }): SwarmEngine`, exactly the `SwarmEngine` typedef in `engine/schema.mjs` (`refresh`, `start`, `stop`, `listSwarms`, `getSnapshot`, `subscribe`, `listHistory`, `getRunSummary`, `diagnostics`). `processProbe` is a test seam.
+- Produces: `createSwarmEngine(options: EngineOptions & { processProbe?: (locks) => Promise<Map<pid, boolean>> }): SwarmEngine`, exactly the `SwarmEngine` typedef in `engine/schema.mjs` (`refresh`, `start`, `stop`, `listSwarms`, `getSnapshot`, `findSwarm`, `subscribe`, `listHistory`, `getRunSummary`, `diagnostics`). `processProbe` is a test seam.
 
 Behaviour:
 - Creating the engine reads nothing and starts no timers. `refresh()` is single-flight: concurrent calls share one run. `stop()` stops scheduling; a refresh already running still completes.
@@ -6045,6 +6126,7 @@ Behaviour:
 - A swarm whose content changed gets a new revision; subscribers receive one `{ revision, swarmIds }` per refresh that changed something. A listener that throws does not stop the others.
 - A tracked swarm that becomes finished is summarised and written to the history store (unless `persistHistory` is false), once per finish time; it stays finished until its logs change again.
 - Errors become diagnostics (`engine.diagnostics()` and the snapshot's `diagnostics`), never exceptions from `refresh()`, and nothing is written to stdout.
+- `findSwarm(sessionId)` resolves a CLI session id or workspace id to its node, walks up to the top of its tree and returns that node's id when it is a swarm root, else null. It refreshes first when the engine has no data yet.
 
 - [ ] **Step 1: Write the scenario helper and the failing test**
 
@@ -6193,6 +6275,17 @@ test('the engine follows a swarm from live to history without writing Copilot da
   for (const [file, hash] of before) if (!file.endsWith('events.jsonl')) assert.equal(after.get(file), hash, file);
 });
 
+test('findSwarm maps any session of a swarm to its root', async () => {
+  const home = scenario();
+  const engine = createSwarmEngine({ copilotHome: home.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => at(60), processProbe: alwaysAlive, prLookup: 'off' });
+  assert.equal(await engine.findSwarm('ws-root'), 'ws-root');
+  assert.equal(await engine.findSwarm('cli-root'), 'ws-root');
+  assert.equal(await engine.findSwarm('cli-api'), 'ws-root');
+  assert.equal(await engine.findSwarm('ws-ui'), 'ws-root');
+  assert.equal(await engine.findSwarm('cli-old-child'), 'ws-old');
+  assert.equal(await engine.findSwarm('nope'), null);
+});
+
 test('with persistHistory false the engine writes nothing', async () => {
   const home = scenario();
   const historyDir = path.join(tempDir('swarm-engine-'), 'history');
@@ -6251,7 +6344,7 @@ import { createTail, readNewLines } from './readers/events.mjs';
 import { createLedger, pullLedger } from './readers/ledger.mjs';
 import { createProcessProbe } from './readers/process-probe.mjs';
 import { createSessionDbCache, listLocks, readWorkspaceYaml } from './readers/session-files.mjs';
-import { buildForest, treeNodes } from './model/forest.mjs';
+import { buildForest, resolveNodeId, treeNodes } from './model/forest.mjs';
 import { createHistoryStore, listItemOf, summarizeRun } from './model/history.mjs';
 import { createPrLookup } from './model/pr-lookup.mjs';
 import { applyLine, createSessionState } from './model/session-state.mjs';
@@ -6271,7 +6364,7 @@ function sqliteProblem(source, error) {
     level: 'warn',
     source,
     message: error instanceof SqliteUnavailableError
-      ? 'No SQLite reader: use Node.js 22.13 or later, or install the sqlite3 command-line tool.'
+      ? 'No SQLite reader: use Node.js 22.15 or later, or install the sqlite3 command-line tool.'
       : error.message,
   };
 }
@@ -6541,6 +6634,14 @@ export function createSwarmEngine(options = {}) {
     return snapshots.get(id)?.snapshot ?? null;
   }
 
+  async function findSwarm(sessionId) {
+    if (!forest) await refresh();
+    let id = resolveNodeId(forest, sessionId);
+    if (!id) return null;
+    for (let node = forest.nodes.get(id); node?.parentId; node = forest.nodes.get(node.parentId)) id = node.parentId;
+    return forest.roots.some(root => root.id === id) ? id : null;
+  }
+
   async function listHistory() {
     if (!forest) await refresh();
     const items = new Map();
@@ -6597,6 +6698,7 @@ export function createSwarmEngine(options = {}) {
     },
     listSwarms: () => swarms.map(item => ({ ...item })),
     getSnapshot,
+    findSwarm,
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);

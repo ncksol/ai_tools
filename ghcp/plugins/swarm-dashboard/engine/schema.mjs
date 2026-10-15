@@ -97,8 +97,8 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  *   everyMinutes: number|null, since: EpochMs|null }} MonitorView  `since` is set for missing and paused
  * @typedef {{ label: string, name: string, dependsOn: string|null, canStart: boolean, waitsOn: string|null, todoId: string|null }} PlannedUnit
  * @typedef {{ id: string, kind: 'question'|'plan'|'pr', unitIds: string[], labels: string[], fromId: string, text: string,
- *   since: EpochMs, tagged: boolean }} NeedItem  unitIds empty = the whole swarm. id is unique within a snapshot and stable across refreshes
- * @typedef {{ id: string, at: EpochMs, unitId: string, label: string, kind: string, text: string }} FeedItem  kind is one of FEED_KINDS. id is unique within a snapshot and stable across refreshes
+ *   since: EpochMs, tagged: boolean }} NeedItem  unitIds empty = the whole swarm. id is unique within needs and stable across refreshes
+ * @typedef {{ id: string, at: EpochMs, unitId: string, label: string, kind: string, text: string }} FeedItem  kind is one of FEED_KINDS. id is unique within each list (feed, and each session's recent) and stable across refreshes; the same item keeps the same id in every list it appears in
  * @typedef {{ level: 'info'|'warn', source: string, message: string }} Diagnostic
  *
  * @typedef {object} Snapshot
