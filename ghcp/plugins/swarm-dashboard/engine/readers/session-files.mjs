@@ -1,0 +1,89 @@
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import path from 'node:path';
+import { withReadOnly } from '../sqlite.mjs';
+
+export function readWorkspaceYaml(dir) {
+  let text;
+  try {
+    text = readFileSync(path.join(dir, 'workspace.yaml'), 'utf8');
+  } catch {
+    return null;
+  }
+  const fields = { cwd: 'cwd', branch: 'branch', host_type: 'hostType', repository: 'repository' };
+  const out = { cwd: null, branch: null, hostType: null, repository: null };
+  for (const line of text.split(/\r?\n/)) {
+    const match = /^(cwd|branch|host_type|repository):[ \t]*(.*)$/.exec(line);
+    if (match) out[fields[match[1]]] = match[2].trim().replace(/^(['"])(.*)\1$/, '$2') || null;
+  }
+  return out;
+}
+
+export function listLocks(dir) {
+  let names;
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return null;
+  }
+  const locks = [];
+  for (const name of names) {
+    const match = /^inuse\.(\d+)\.lock$/.exec(name);
+    if (!match) continue;
+    try {
+      locks.push({ pid: Number(match[1]), mtimeMs: Math.round(statSync(path.join(dir, name)).mtimeMs) });
+    } catch {
+      // removed between readdir and stat
+    }
+  }
+  return locks;
+}
+
+export const SESSION_DB_QUERIES = Object.freeze({
+  todos: 'SELECT id, title, description, status FROM todos',
+  deps: 'SELECT todo_id, depends_on FROM todo_deps',
+  hasChildren: "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'children'",
+  children: `SELECT unit, session_id, title, todo_id, branch, base_branch, pr_provider, pr_repo, pr_id, pr_url, outcome,
+    created_at, updated_at, ended_at FROM children`,
+});
+
+export async function readSessionDb(file, sqliteOptions = {}) {
+  return withReadOnly(file, sqliteOptions, async db => {
+    const safe = async sql => {
+      try {
+        return await db.all(sql);
+      } catch {
+        return null;
+      }
+    };
+    const todos = (await safe(SESSION_DB_QUERIES.todos)) ?? [];
+    const deps = (await safe(SESSION_DB_QUERIES.deps)) ?? [];
+    const hasChildren = ((await safe(SESSION_DB_QUERIES.hasChildren)) ?? []).length > 0;
+    return {
+      todos: todos.map(todo => ({
+        id: String(todo.id), title: String(todo.title ?? ''), description: typeof todo.description === 'string' ? todo.description : '',
+        status: String(todo.status ?? 'pending'),
+      })),
+      deps: deps.map(dep => ({ todoId: String(dep.todo_id), dependsOn: String(dep.depends_on) })),
+      children: hasChildren ? await safe(SESSION_DB_QUERIES.children) : null,
+    };
+  });
+}
+
+export function createSessionDbCache(read = readSessionDb) {
+  const cache = new Map();
+  return async function get(file, sqliteOptions) {
+    let stat;
+    try {
+      stat = statSync(file);
+    } catch {
+      cache.delete(file);
+      return null;
+    }
+    const key = `${stat.mtimeMs}:${stat.size}`;
+    const hit = cache.get(file);
+    if (hit && hit.key === key) return hit.value;
+    const value = await read(file, sqliteOptions);
+    cache.set(file, { key, value });
+    return value;
+  };
+}
