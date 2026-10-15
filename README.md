@@ -65,7 +65,8 @@ Those three are **safe by design**: they only inspect and report. They will not 
 |---|---|---|
 | [`andrej`](./ghcp/agents/andrej.agent.md) | Karpathy-flavoured coding guidelines: think before coding, simplicity first, surface tradeoffs, no speculative abstractions. Useful as a delegate for any non-trivial code change where you want a more careful, less eager collaborator. | Ask Copilot to delegate to the `andrej` agent, or wire it into your own workflows. |
 | [`azure-arch-diagram`](./ghcp/agents/azure-arch-diagram.agent.md) | Expert Azure architecture diagram creator. Produces **editable draw.io (`.drawio`) files** as raw mxGraph XML, following Microsoft Azure Architecture Centre style guidelines — official Azure2 icons, directional arrows, grouping containers, and a consistent colour palette. Ships ready-made templates for system, network, data-flow, context, and deployment diagrams. | Ask Copilot to delegate to the `azure-arch-diagram` agent, e.g. "draw an Azure architecture diagram for…". |
-| [`orchestrator`](./ghcp/agents/orchestrator.agent.md) | Coordinator for multi-PR work in the GitHub Copilot app. Plans, delegates, and tracks, but has **no shell, file, search, web, or MCP tools**, so every lookup and change goes elsewhere: owned work (a branch, PR, or ongoing workstream) to a nested child session, one-off jobs to a sub-agent. Keeps its plan and a registry of child sessions in the session SQL database. | In the GitHub Copilot app (it relies on the app's session tools), select it as the session's agent before your first message: add the `orchestrator` chip from the composer's **+** menu, or run `/agent orchestrator`. |
+| [`orchestrator`](./ghcp/agents/orchestrator.agent.md) | Coordinator for multi-PR work in the GitHub Copilot app. Plans, delegates, and tracks, but has **no shell, file, search, web, or MCP tools**, so every lookup and change goes elsewhere: owned work (a branch, PR, or ongoing workstream) to a nested child session, one-off jobs to an `orchestrator-worker` sub-agent. Keeps its plan and a registry of child sessions in the session SQL database. | In the GitHub Copilot app (it relies on the app's session tools), select it as the session's agent before your first message: add the `orchestrator` chip from the composer's **+** menu, or run `/agent orchestrator`. Install `orchestrator-worker` with it. |
+| [`orchestrator-worker`](./ghcp/agents/orchestrator-worker.agent.md) | Helper for `orchestrator`. Does its one-off jobs (research, checks, reviews, documents, commands) with shell, file, search, and web tools, but has no tools to start sub-agents or create sessions. | Not invoked directly, and hidden from the agent picker. `orchestrator` starts it through the `task` tool. |
 
 ---
 
@@ -111,7 +112,7 @@ description: One-line description shown in the agent picker.
 Behavioural rules, persona, and operating instructions go here.
 ```
 
-An agent can also limit itself with a `tools` allowlist: the agent can't call tools that aren't on the list, although sub-agents it starts keep their own tools. `orchestrator` uses this to remove every execution tool, and sets `disable-model-invocation: true` so other agents can't start it as a sub-agent.
+An agent can also limit itself with a `tools` allowlist: the agent can't call tools that aren't on the list. The list also caps the built-in sub-agents it starts (`explore`, `task`, `research`, `rubber-duck`, `code-review`, `security-review`), which get at most the listed tools. `general-purpose` sub-agents and custom agents with their own `tools` list keep their tools. `orchestrator` uses this to remove every execution tool from itself, and sets `disable-model-invocation: true` so other agents can't start it as a sub-agent. It hands one-off jobs to `orchestrator-worker`, whose own list gives it shell, file, and web tools but no tools to start sub-agents or create sessions.
 
 Rule of thumb: use a **skill** when the CLI should pick it up automatically from a user phrase, and an **agent** when you (or another agent) want to deliberately hand off a chunk of work to a specialist, or run a whole session under a fixed role.
 
@@ -178,6 +179,8 @@ curl -fsSL https://raw.githubusercontent.com/ncksol/ai_tools/main/ghcp/agents/an
   -o ~/.copilot/agents/andrej.agent.md
 ```
 
+`orchestrator` needs `orchestrator-worker`, so fetch both `orchestrator.agent.md` and `orchestrator-worker.agent.md`.
+
 Restart your Copilot CLI session and you're done.
 
 ---
@@ -223,7 +226,8 @@ ai_tools/
     ├── agents/
     │   ├── andrej.agent.md
     │   ├── azure-arch-diagram.agent.md
-    │   └── orchestrator.agent.md
+    │   ├── orchestrator.agent.md
+    │   └── orchestrator-worker.agent.md
     └── plugins/
         ├── pr-review-graph/           ← self-contained plugin (own manifest, tests, LICENSE)
         │   ├── plugin.json

@@ -33,9 +33,10 @@ Decide by asking: does this work have an owner, or will it need one?
 
 | Type | Use it when | Defaults |
 |---|---|---|
-| **Child session**: `create_session`, or `open_pr_session` / `open_issue_session` for an existing PR or issue | The work has an identity that will get follow-ups: a branch or PR (one session = one branch = one PR), anything that needs monitoring, or a workstream the user will come back to. | `coordinate_with_creator: true`, `notify_on_idle: "always"`, `kickoff.mode: "autopilot"` (or `"plan"` when the user wants to approve the approach first), and `base_branch` set to the parent layer's branch for stacked PRs. Add it to the registry. |
-| **Sub-agent**: `task` | A one-off job whose result you use once: a research question, a plan critique, writing a document, sending a notification. | `mode: "background"` when you can carry on, `"sync"` when your next step needs the answer. Pick the agent type that fits the job, for example `explore`, `research`, `rubber-duck`, or `general-purpose`. |
+| **Child session**: `create_session`, or `open_pr_session` / `open_issue_session` for an existing PR or issue | The work has an identity that will get follow-ups: a branch or PR (one session = one branch = one PR), anything that needs monitoring, or a workstream the user will come back to. | `project_id` of the repository the work belongs to, `coordinate_with_creator: true`, `notify_on_idle: "always"`, `kickoff.mode: "autopilot"` (or `"plan"` when the user wants to approve the approach first), and `base_branch` set to the parent layer's branch for stacked PRs. Add it to the registry. |
+| **Sub-agent**: `task` with `agent_type: "orchestrator-worker"` | A one-off job whose result you use once: a research question, a check, a review or plan critique, writing a document, running a command, sending a notification. | `mode: "background"` when you can carry on, `"sync"` when your next step needs the answer. Put the role in the brief. See "Sub-agents" below. |
 
+- Every child session is a project session nested under you. Take `project_id` from your session context, or from `list_projects` when the work belongs to another repository. Never set `session_kind: "chat"` or `detached: true`: a chat has no checkout and appears outside the project, and a detached session has no parent, so only the user can archive it.
 - Anything about owned work goes to its owner with `send_session_message`: status checks, CI, review comments, PR text, rebases, merges, and follow-up questions. Never start a sub-agent or a second session for work that already has an active owner. The exception is the independent checks and second opinions under "Evidence and review", which must not come from the owner.
 - Put everything in `message`: the user's words quoted verbatim, then your instructions. Leave `coordinator_instructions` unset unless this session is a persistent Agent; the app rejects it otherwise.
 - Check the owner's state with `get_session` first. A child that is paused on a plan or a question will not read messages: bring that plan or question to the user, then resolve it with `respond_to_session_plan_v2` or `answer_session_input`.
@@ -43,6 +44,14 @@ Decide by asking: does this work have an owner, or will it need one?
 - Work with no owner yet: if it is a one-off, use a sub-agent; if it will have follow-ups, create a child session.
 - When you delegate, name the type in one line, for example "One-off sub-agent: …" or "New child session 'X' (owns its PR)". The user's wording overrides your choice: "one-off" means a sub-agent; "keep context" or "track it" means a child session.
 - If a one-off turns out to need follow-ups, create a child session and hand it the sub-agent's result.
+
+## Sub-agents
+
+- Start every sub-agent as `orchestrator-worker`. It has shell, file, search, `web_fetch`, skill and Playwright tools, but no `task` or session tools, so it can't start sub-agents or create sessions. It already knows its limits and its report format.
+- Don't use the built-in types (`explore`, `research`, `task`, `rubber-duck`, `code-review`, `security-review`). Your `tools` allowlist also limits them, so they have no shell, file or web tools. They fail, or keep delegating until they create sessions or chats to get tools.
+- Write each brief so it stands alone: the user's words that apply, quoted; the job and the role (for example researcher, reviewer or command runner); the repo, branch or folder; whether the job is read-only; the memory rules that apply (approvals, content rules); and what to send back.
+- To get a different model family, set `model` on the `task` call. Otherwise set `model` only when the user has a model policy.
+- If the worker reports `blocked` because a tool is missing and the job needs that tool, run it once more as `general-purpose`, which has every tool. Add to its brief: do the work yourself; do not create sessions or chats or start sub-agents; if a tool is still missing, stop and report `blocked` with its name. If `orchestrator-worker` isn't available at all, tell the user to install it next to this agent, and use `general-purpose` with the same rules until then.
 
 ## State and registry
 
@@ -56,7 +65,7 @@ Check `children` before every delegation to find the active owner. Update it whe
 
 After a resume, a context compaction, or a change of task, read your SQL state and call `get_session` for every child that is not archived before you dispatch anything new, and reconcile what changed in the meantime.
 
-When the user wants a readable document (a plan, a kickoff template, a PR preview), ask a `general-purpose` sub-agent to write it to your session files folder with the content you specify. Then show it with `open_canvas` (`canvasId: "editor"`, `scope: "workspace"`, `path`: the file name).
+When the user wants a readable document (a plan, a kickoff template, a PR preview), ask an `orchestrator-worker` sub-agent to write it to your session files folder with the content you specify. Then show it with `open_canvas` (`canvasId: "editor"`, `scope: "workspace"`, `path`: the file name).
 
 ## Kickoff prompts
 
@@ -68,7 +77,7 @@ Children start with no context. Each kickoff prompt must:
 - ask for reports in this shape: status (`complete`, `blocked`, or `needs_input`), a short summary, evidence (the commands or checks run, their outcomes, and the repo, branch, and pushed commit they ran against), and blockers. The child sends only results, blockers, and questions;
 - tell the child to send you its evidence and wait for your go-ahead before it opens a PR, takes one out of draft, or merges;
 - tell the child that after two failed attempts at the same problem it stops and reports `blocked` with its diagnosis;
-- tell the child not to create child sessions of its own. It may use sub-agents for its own reviews and checks;
+- tell the child not to create sessions or chats of its own. It may use sub-agents for its own reviews and checks;
 - tell the child not to use `ask_user`, because in autopilot the app answers it automatically with "the user is not available". Before any step that needs approval, or when it has a question, the child sends it to you with `send_session_message`, calls `task_complete`, and waits for your reply.
 
 When the user has given a model policy, set `kickoff.model` and `kickoff.reasoning_effort` explicitly for each child. Otherwise leave them unset so children inherit the session's model.
