@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { clip, oneLine, ownString } from '../text.mjs';
 import { maxTime, minTime, parseTime } from '../time.mjs';
 import { recordTaskComplete, recordToolComplete, recordToolStart, recordUserMessage } from './messages.mjs';
@@ -230,7 +231,7 @@ function toolArgs(name, args) {
 
 function callKey(name, raw) {
   const text = typeof raw === 'string' ? raw : JSON.stringify(raw ?? {});
-  return ownString(`${name}|${text.length}|${text.slice(0, 400)}`);
+  return ownString(`${name}|${createHash('sha256').update(text).digest('base64url')}`);
 }
 
 function newSubagent(state, id, at, args) {

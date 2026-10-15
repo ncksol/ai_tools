@@ -191,6 +191,18 @@ test('a repeat streak ends at the next prompt, automation wake or cross-session 
   assert.equal(evaluate(fold(same), T0 + MINUTE).detail, 'spinning');
 });
 
+test('long calls are compared by their full arguments, not a prefix', () => {
+  const prefix = 'x'.repeat(500);
+  const different = busyLog();
+  for (const end of ['a', 'b', 'c']) different.done(different.tool('bash', { command: `${prefix}${end}` }));
+  assert.equal(evaluate(fold(different), T0 + MINUTE).detail, 'busy');
+  const identical = busyLog();
+  for (let i = 0; i < 3; i += 1) identical.done(identical.tool('bash', { command: `${prefix}a` }));
+  assert.equal(evaluate(fold(identical), T0 + MINUTE).detail, 'spinning');
+  const keys = fold(identical).recent.calls.map(call => call.key);
+  assert.ok(keys.every(key => key.length < 64), 'the key stays short');
+});
+
 test('idle units with unanswered reports are blocked or stalled', () => {
   const log = busyLog();
   log.wait(MINUTE);
