@@ -6467,7 +6467,7 @@ copilot plugin marketplace add ncksol/ai_tools
 copilot plugin install swarm-dashboard@ai-tools
 ```
 
-Then restart your Copilot sessions, or ask Copilot to reload extensions, so the canvas loads. Nothing else is needed: the plugin has no npm dependencies and runs on the Node.js that ships with Copilot.
+Then restart your Copilot sessions, or ask Copilot to reload extensions, so the canvas loads. The plugin has no npm dependencies, and the canvas runs on the Node.js that ships with Copilot. The browser launcher and the commands below need Node.js 18 or later.
 
 ## Open the dashboard
 
