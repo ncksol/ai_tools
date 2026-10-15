@@ -12,7 +12,7 @@ import { createSessionDbCache, listLocks, readWorkspaceYaml } from './readers/se
 import { buildForest, resolveNodeId, treeNodes } from './model/forest.mjs';
 import { createHistoryStore, listItemOf, summarizeRun } from './model/history.mjs';
 import { createPrLookup } from './model/pr-lookup.mjs';
-import { applyLine, createSessionState } from './model/session-state.mjs';
+import { applyLine, applyRecovered, createSessionState } from './model/session-state.mjs';
 import { buildSnapshot } from './model/swarm.mjs';
 
 const LIVENESS_TTL_MS = 15_000;
@@ -180,7 +180,7 @@ export function createSwarmEngine(options = {}) {
   async function tailSession(cliId, diag) {
     let entry = sessions.get(cliId);
     if (!entry) {
-      entry = { tail: createTail(path.join(paths.stateDir, cliId, 'events.jsonl')), state: createSessionState(cliId), missing: true, skipped: 0 };
+      entry = { tail: createTail(path.join(paths.stateDir, cliId, 'events.jsonl')), state: createSessionState(cliId), missing: true, skipped: 0, applied: 0 };
       sessions.set(cliId, entry);
     }
     try {
@@ -188,6 +188,12 @@ export function createSwarmEngine(options = {}) {
         onReset: () => {
           entry.state = createSessionState(cliId);
           entry.skipped = 0;
+          entry.applied = 0;
+        },
+        // A line over the size limit is not read in full, but its type, ids and time are applied when they can be recovered.
+        onOversized: event => {
+          if (event) entry.applied += 1;
+          applyRecovered(entry.state, event);
         },
       });
       entry.missing = result.missing;
@@ -196,7 +202,12 @@ export function createSwarmEngine(options = {}) {
       diag.push({ level: 'warn', source: 'events', message: `${shortId(cliId)}: ${error.message}` });
     }
     if (entry.skipped) {
-      diag.push({ level: 'warn', source: 'events', message: `${shortId(cliId)}: skipped ${entry.skipped} log line${entry.skipped === 1 ? '' : 's'} over the size limit.` });
+      const { skipped, applied } = entry;
+      diag.push({
+        level: 'warn', source: 'events',
+        message: `${shortId(cliId)}: ${skipped} log line${skipped === 1 ? '' : 's'} over the size limit ${skipped === 1 ? 'was' : 'were'} not read in full; `
+          + `${applied} ${applied === 1 ? 'was' : 'were'} applied from its type and ids.`,
+      });
     }
     return entry.missing ? null : entry.state;
   }

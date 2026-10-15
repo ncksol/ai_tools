@@ -1,4 +1,5 @@
 import { open, stat } from 'node:fs/promises';
+import { createJsonScanner } from './json-scan.mjs';
 
 export const MAX_LINE_BYTES = 16 * 1024 * 1024;
 
@@ -7,13 +8,14 @@ const CARRIAGE_RETURN = 13;
 
 /**
  * pending: Buffer copies of the unfinished last line, with their byte count. skipping: the current line was over the
- * size limit, so its bytes are dropped (and counted in skipBytes) until the next newline.
+ * size limit, so its bytes are not kept (they are counted in skipBytes and fed to a JSON scanner) until the next newline.
  */
 function freshPartial(tail) {
   tail.pending = [];
   tail.pendingBytes = 0;
   tail.skipping = false;
   tail.skipBytes = 0;
+  tail.scanner = null;
 }
 
 export function createTail(file) {
@@ -30,8 +32,11 @@ export function createTail(file) {
  * An unfinished last line is kept as Buffer copies and decoded once, when its newline arrives (a newline byte never
  * occurs inside a UTF-8 sequence). A line longer than maxLineBytes is never delivered: its bytes are dropped until the
  * next newline, and the result reports it as skipped and skippedBytes (both present only when something was skipped).
+ * Each skipped line is scanned as it streams past (json-scan.mjs), and onOversized(event | null, bytes) is called once at its
+ * end in place of onLine: event holds the line's type, timestamp and other depth-1 keys and its data's primitive keys, or
+ * is null when none could be recovered.
  */
-export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onReset = null, maxLineBytes = MAX_LINE_BYTES } = {}) {
+export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onReset = null, onOversized = null, maxLineBytes = MAX_LINE_BYTES } = {}) {
   let info;
   try {
     info = await stat(tail.file);
@@ -77,15 +82,22 @@ export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onRes
         if (!tail.skipping && tail.pendingBytes + (end - start) > maxLineBytes) {
           tail.skipping = true;
           tail.skipBytes = tail.pendingBytes;
+          // Scan the whole oversized line as it streams past, starting with the bytes already held. No line bytes are kept.
+          tail.scanner = createJsonScanner();
+          for (const part of tail.pending) tail.scanner.write(part, 0, part.length);
           tail.pending = [];
           tail.pendingBytes = 0;
         }
         if (tail.skipping) {
           tail.skipBytes += end - start;
+          tail.scanner.write(chunk, start, end);
           if (newline !== -1) {
             skipped += 1;
             skippedBytes += tail.skipBytes + 1;
+            const recovered = tail.scanner.finish();
+            const lineBytes = tail.skipBytes + 1;
             freshPartial(tail);
+            if (onOversized) onOversized(recovered, lineBytes);
           }
         } else if (newline === -1) {
           tail.pending.push(Buffer.from(chunk.subarray(start, end)));

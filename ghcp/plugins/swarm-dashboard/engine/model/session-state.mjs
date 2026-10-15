@@ -65,6 +65,20 @@ export function applyLine(state, line) {
   if (event && typeof event === 'object' && typeof event.type === 'string') applyEvent(state, event);
 }
 
+/** Applies an event recovered from an oversized line (see readers/json-scan.mjs): it counts the line like applyLine, and the
+ * event carries only its type, time, ids and primitive data keys, so text-derived effects see empty text. */
+export function applyRecovered(state, event) {
+  state.lines += 1;
+  if (!event) return;
+  const skipped = SKIP_NAMES.get(event.type);
+  if (skipped) {
+    const at = parseTime(event.timestamp);
+    if (at !== null) touch(state, at, skipped);
+    return;
+  }
+  applyEvent(state, event);
+}
+
 function sniffTimestamp(line) {
   const key = '"timestamp":"';
   const index = line.lastIndexOf(key);
