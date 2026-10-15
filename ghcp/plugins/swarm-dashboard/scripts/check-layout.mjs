@@ -127,6 +127,16 @@ export function describeTimes(durations) {
   return `${sorted.length} update${sorted.length === 1 ? '' : 's'}; ${median.toFixed(1)} ms median, ${sorted[sorted.length - 1].toFixed(1)} ms max`;
 }
 
+const KEPT = [['cards', 'cards kept'], ['activity highlights', 'no repeated highlights'], ['scroll', 'scroll kept'], ['busy-ring phase', 'busy rings in phase']];
+
+/** "cards kept, no repeated highlights, not measured: scroll" for the live-update checks, naming those that had nothing to measure. */
+export function describeKept(unmeasured) {
+  const parts = KEPT.filter(([name]) => !unmeasured.includes(name)).map(([, text]) => text);
+  const missing = KEPT.filter(([name]) => unmeasured.includes(name)).map(([name]) => name);
+  if (missing.length) parts.push(`not measured: ${missing.join(', ')}`);
+  return parts.join(', ');
+}
+
 /** Runs in the page: ui/morph.mjs keeps nodes, moves keyed ones, updates attributes and text, and keeps animation delays. */
 async function morphSelfTest() {
   // The page's own module, imported by URL (a variable, so PR 1's import guard does not read it as one of ours).
@@ -183,7 +193,7 @@ async function morphSelfTest() {
   return failures;
 }
 
-/** Runs in the page before updates arrive: remembers the cards and activity items on screen, and scrolls a little. */
+/** Runs in the page before updates arrive: remembers the cards and activity items on screen, and scrolls a little if it can. */
 function markPage() {
   window.scrollTo(0, Math.max(0, Math.min(160, document.documentElement.scrollHeight - window.innerHeight)));
   window.swarmCheck = {
@@ -194,25 +204,38 @@ function markPage() {
   };
 }
 
-/** Runs in the page after updates: what they re-created, highlighted again, scrolled or put out of phase, and their times. */
+/**
+ * Runs in the page after updates: what they re-created, highlighted again, scrolled or put out of phase, their times,
+ * and which checks had nothing to measure.
+ */
 function inspectPage() {
   const state = window.swarmCheck;
   const issues = [];
+  const unmeasured = [];
   const recreated = state.cards.filter(el => !el.isConnected).length;
   if (recreated) issues.push(`${recreated} of ${state.cards.length} cards were re-created`);
+  const keys = new Set([...document.querySelectorAll('.fi')].map(el => el.dataset.key));
+  const remade = state.feed.filter(el => !el.isConnected && keys.has(el.dataset.key)).length;
+  if (remade) issues.push(`${remade} of ${state.feed.length} activity items were re-created`);
   const flashed = state.feed.filter(el => el.isConnected && el.classList.contains('is-new')).length;
   if (flashed) issues.push(`${flashed} activity items that did not change were highlighted again`);
   if (Math.abs(window.scrollY - state.scrollY) > 1) issues.push(`the page scrolled from ${state.scrollY} to ${window.scrollY} px`);
   const now = document.timeline.currentTime;
+  let rings = 0;
   for (const arc of document.querySelectorAll('.ring .arc.spin')) {
     const animation = arc.getAnimations()[0];
     if (!animation) continue;
+    rings += 1;
     const off = Math.abs(animation.effect.getComputedTiming().progress - ((now / 1000) % 4) / 4);
     const ms = Math.min(off, 1 - off) * 4000;
     if (ms > 80) issues.push(`a busy ring is ${Math.round(ms)} ms out of phase`);
   }
+  if (!state.cards.length) unmeasured.push('cards');
+  if (!state.feed.length) unmeasured.push('activity highlights');
+  if (state.scrollY === 0) unmeasured.push('scroll');
+  if (!rings) unmeasured.push('busy-ring phase');
   const durations = performance.getEntriesByName('swarm-update').slice(state.baseline).map(entry => entry.duration);
-  return { issues, durations };
+  return { issues, durations, unmeasured };
 }
 
 /** Open the page with motion on, wait for live updates and inspect what they did; null when none arrived. */
@@ -220,7 +243,8 @@ async function watchUpdates(page, url, { updates = 3, timeoutMs = 15000 } = {}) 
   await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
   try {
     page.errors.length = 0;
-    await page.goto(url, 1440);
+    // 600 px tall, so the example page can scroll.
+    await page.goto(url, 1440, 600);
     await page.waitFor(`location.href === ${JSON.stringify(url)} && document.documentElement.dataset.ready === '1'`);
     await page.evaluate(`(${markPage})()`);
     const deadline = Date.now() + timeoutMs;
@@ -345,15 +369,17 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
       const watched = await watchUpdates(page, `${options.live}?host=browser`, { timeoutMs: 25000 });
       if (watched) updateIssues = watched.issues;
       stdout.write(watched
-        ? `Live updates (live): ${describeTimes(watched.durations)}${watched.issues.length ? '' : '; cards kept, no repeated highlights, scroll kept, busy rings in phase'}.\n`
+        ? `Live updates (live): ${describeTimes(watched.durations)}${watched.issues.length ? '' : `; ${describeKept(watched.unmeasured)}`}.\n`
         : 'Live updates (live): none arrived within 25 s, so the update time was not measured.\n');
     } else {
       const server = createDashboardServer({ createEngine: () => createDemoEngine({ scenario: 'example', simulate: true, stepMs: 1000 }), port: 0, version: 'layout-check' });
       await server.listen();
       servers.push(server);
       const watched = await watchUpdates(page, `${server.url}?host=browser`);
-      updateIssues = watched ? watched.issues : ['no simulated update arrived within 15 s'];
-      if (watched) stdout.write(`Live updates (example, simulated): ${describeTimes(watched.durations)}${watched.issues.length ? '' : '; cards kept, no repeated highlights, scroll kept, busy rings in phase'}.\n`);
+      updateIssues = watched
+        ? [...watched.issues, ...watched.unmeasured.map(name => `${name} could not be measured on the example page`)]
+        : ['no simulated update arrived within 15 s'];
+      if (watched) stdout.write(`Live updates (example, simulated): ${describeTimes(watched.durations)}${watched.issues.length ? '' : `; ${describeKept(watched.unmeasured)}`}.\n`);
     }
     for (const issue of updateIssues) stderr.write(`update: ${issue}\n`);
     return failures.length || updateIssues.length ? 1 : 0;

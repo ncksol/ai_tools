@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CANVAS_WIDTHS, VIEWS, WIDTHS, buildStates, describeTimes, parseArguments } from '../scripts/check-layout.mjs';
+import { CANVAS_WIDTHS, VIEWS, WIDTHS, buildStates, describeKept, describeTimes, parseArguments } from '../scripts/check-layout.mjs';
 import { findBrowser } from '../scripts/lib/cdp.mjs';
 
 test('every view is checked at the nine widths in the browser layout and three in the canvas layout', () => {
@@ -52,4 +52,9 @@ test('update times are reported as a count, a median and a maximum', () => {
 test('the browser comes from CHROME_PATH when it is set', () => {
   assert.equal(findBrowser({ CHROME_PATH: process.execPath }), process.execPath);
   assert.equal(findBrowser({ CHROME_PATH: '/no/such/browser' }), null);
+});
+
+test('the live-update line names the checks it measured and those it could not', () => {
+  assert.equal(describeKept([]), 'cards kept, no repeated highlights, scroll kept, busy rings in phase');
+  assert.equal(describeKept(['scroll', 'busy-ring phase']), 'cards kept, no repeated highlights, not measured: scroll, busy-ring phase');
 });
