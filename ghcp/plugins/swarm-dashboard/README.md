@@ -2,7 +2,7 @@
 
 A watch-only dashboard for agentic swarms in the GitHub Copilot app. A swarm is a session that has started child sessions, such as an orchestrator that hands each unit of work to its own session. The dashboard shows what every session and sub-agent is doing, how far it has got, what it costs and what needs you, so you can follow the work at a glance instead of reading transcripts.
 
-It opens as a canvas in the app's side panel, or in any browser through a small local launcher. It reads Copilot's local data read-only and sends nothing off your machine.
+It opens as a canvas in the app's side panel, or in any browser through a small local launcher. It reads Copilot's local data read-only. Its only network requests are read-only `gh` and `az` queries about the swarm's pull requests.
 
 ## What it shows
 
@@ -35,11 +35,11 @@ cd ~/.copilot/installed-plugins/ai-tools/swarm-dashboard   # or ghcp/plugins/swa
 npm start
 ```
 
-`npm start -- --demo` serves a synthetic swarm with simulated activity instead of your data, `--demo stress` a crowded one, and `--still` stops the simulation.
+`npm start -- --demo` serves a synthetic swarm with simulated activity instead of your data, `--demo stress` a crowded one, and `--still` stops the simulation. The launcher reuses a dashboard that already runs on the port, but never one with other data: to run the sample data beside your own dashboard, give it another port, for example `npm start -- --demo --port 7928`.
 
 ## The port
 
-The dashboard always uses `http://127.0.0.1:7927/`. One dashboard server runs on the machine, shared by every canvas and browser: the first canvas you open, or the launcher, starts it, and everything else reuses it. If the session that hosts it ends, another open canvas takes the port over within a few seconds and the pages reconnect by themselves. A server started by a canvas stops a few minutes after the last canvas closes and no page is connected; the launcher runs until you press Ctrl+C.
+The dashboard uses `http://127.0.0.1:7927/` by default. One dashboard server runs on the machine, shared by every canvas and browser: the first canvas you open, or the launcher, starts it, and everything else reuses it. If the session that hosts it ends, another open canvas takes the port over within a few seconds and the pages reconnect by themselves. A server started by a canvas stops a few minutes after the last canvas closes and no page is connected; the launcher runs until you press Ctrl+C.
 
 If another program already uses port 7927, the launcher says so and exits, and the canvas shows the same error. Use another port with `npm start -- --port <n>`, or set `SWARM_DASHBOARD_PORT` for both the launcher and the environment the Copilot app starts with.
 
@@ -53,7 +53,7 @@ Read-only access. The dashboard reads `~/.copilot/data.db`, `~/.copilot/session-
 
 ## How it decides what is stuck
 
-A session counts as stuck when a model call, tool call or sub-agent has gone quiet for longer than a set limit, when it is busy but has written nothing for 10 minutes, or when it keeps failing or repeating itself; a session waiting for your answer is never stuck. The detail panel names the rule that fired and its numbers. The rules and their limits are in the [design](../../../docs/superpowers/specs/2026-10-15-swarm-dashboard-design.md) (section 9) and the defaults in `engine/config.mjs`. Orchestrators can report status in a fixed format that the dashboard reads exactly (design section 10).
+A session counts as stuck when a model call, tool call or sub-agent has gone quiet for longer than a set limit, when it is busy but has written nothing for 10 minutes, when it keeps failing or repeating itself, or when it has been idle for 30 minutes after a progress report with no task finished and no monitor due; a session waiting for your answer is never stuck. The detail panel names the rule that fired and its numbers. The rules and their limits are in the [design](../../../docs/superpowers/specs/2026-10-15-swarm-dashboard-design.md) (section 9) and the defaults in `engine/config.mjs`. Orchestrators can report status in a fixed format that the dashboard reads exactly (design section 10).
 
 ## Commands
 
@@ -69,7 +69,8 @@ Run these from the plugin folder.
 
 ## Troubleshooting
 
-- "Port 7927 is used by another program": see [The port](#the-port).
+- "Port 7927 is used by another program" or "… is in use and not answering": see [The port](#the-port).
+- "Port 7927 serves the dashboard with sample data": a launcher started with `--demo` holds the port. Stop it with Ctrl+C in its terminal, or start it with `--port <n>`.
 - "Disconnected · retrying" in a browser: no dashboard server is running. Start the launcher or open the canvas. In the canvas the page recovers by itself within a few seconds; if it does not, close and reopen the canvas.
 - Old behaviour after an update: restart the app, or reload extensions in every session, so that no session still serves the previous version. A canvas that finds an older dashboard on the port says so in the extension log.
 - Pages that never load: browsers allow about six open connections per site, and each open dashboard page holds one. With more than about six dashboard tabs or canvases open at once, the extra pages wait; close the ones you do not need.
