@@ -34,6 +34,11 @@ function sqliteProblem(source, error) {
   };
 }
 
+/** Digest of a run summary without its computedAt, so a rewrite happens only when something else changed. */
+function summaryDigest(summary) {
+  return createHash('sha1').update(JSON.stringify({ ...summary, computedAt: 0 })).digest('hex');
+}
+
 function digest(snapshot) {
   return createHash('sha1').update(JSON.stringify({ ...snapshot, generatedAt: 0, revision: 0 })).digest('hex');
 }
@@ -78,6 +83,8 @@ export function createSwarmEngine(options = {}) {
   const revisions = new Map();
   const cheapLast = new Map();
   const knownFinished = new Map();
+  const summaryDigests = new Map();
+  const pendingRoots = new Set();
   const requested = [];
   const listeners = new Set();
   let app = null;
@@ -204,22 +211,41 @@ export function createSwarmEngine(options = {}) {
         diag.push({ level: 'warn', source: 'session.db', message: `${shortId(cliId)}: ${error.message}` });
       }
     }
-    return buildSnapshot({
+    let sawPending = false;
+    const snapshot = buildSnapshot({
       forest, rootId, app, states, alive, workspaceFiles, ledger, sessionDbs, now: at, thresholds, revision: 0, diagnostics: [...diag],
       prInfo: (pr, { cwd }) => {
         if (!lookup) return null;
         lookup.request(pr, { cwd });
+        if (lookup.pending?.(pr)) sawPending = true;
         return lookup.get(pr);
       },
     });
+    if (sawPending) pendingRoots.add(rootId);
+    else pendingRoots.delete(rootId);
+    return snapshot;
+  }
+
+  /** Writes the run's summary when it differs from the last one stored or read, apart from computedAt. */
+  async function writeSummary(snapshot) {
+    const id = snapshot.run.id;
+    const fresh = summarizeRun(snapshot, { computedAt: 0 });
+    const key = summaryDigest(fresh);
+    let known = summaryDigests.get(id);
+    if (known === undefined) {
+      const stored = await history.get(id);
+      known = stored ? summaryDigest(stored) : null;
+      if (known !== null) summaryDigests.set(id, known);
+    }
+    if (known === key) return;
+    await history.put({ ...fresh, computedAt: now() });
+    summaryDigests.set(id, key);
   }
 
   async function persistFinished(snapshot, diag) {
     if (!persist) return;
     try {
-      const stored = await history.get(snapshot.run.id);
-      if (stored && stored.finishedAt === snapshot.run.finishedAt && stored.children.total === snapshot.units.length) return;
-      await history.put(summarizeRun(snapshot, { computedAt: now() }));
+      await writeSummary(snapshot);
     } catch (error) {
       diag.push({ level: 'warn', source: 'history', message: error.message });
     }
@@ -260,7 +286,11 @@ export function createSwarmEngine(options = {}) {
 
     swarms = await listRoots(at, diag);
     const rootIds = new Set(forest.roots.map(root => root.id));
-    const tracked = new Set([...swarms.filter(swarm => swarm.lifecycle === 'live').map(swarm => swarm.id), ...requested.filter(id => rootIds.has(id))]);
+    const tracked = new Set([
+      ...swarms.filter(swarm => swarm.lifecycle === 'live').map(swarm => swarm.id),
+      ...requested.filter(id => rootIds.has(id)),
+      ...[...pendingRoots].filter(id => rootIds.has(id)),
+    ]);
     const changed = [];
     const failed = new Set();
     const dbFiles = new Set();
@@ -298,6 +328,8 @@ export function createSwarmEngine(options = {}) {
     for (const rootId of [...revisions.keys()]) if (!current.has(rootId)) revisions.delete(rootId);
     for (const rootId of [...cheapLast.keys()]) if (!current.has(rootId)) cheapLast.delete(rootId);
     for (const rootId of [...knownFinished.keys()]) if (!current.has(rootId)) knownFinished.delete(rootId);
+    for (const rootId of [...summaryDigests.keys()]) if (!current.has(rootId)) summaryDigests.delete(rootId);
+    for (const rootId of [...pendingRoots]) if (!current.has(rootId)) pendingRoots.delete(rootId);
     for (const [cliId, entry] of [...liveness]) if (at - entry.checkedAt > 4 * LIVENESS_TTL_MS) liveness.delete(cliId);
     readDb.retain(dbFiles);
     swarms = swarms.map(item => {
@@ -374,15 +406,21 @@ export function createSwarmEngine(options = {}) {
       if (current?.run.lifecycle === 'live') return summarizeRun(current, { computedAt: now() });
     }
     const stored = await history.get(runId);
-    if (stored) return stored;
+    if (stored) {
+      summaryDigests.set(runId, summaryDigest(stored));
+      return stored;
+    }
     const snapshot = await getSnapshot(runId);
     if (!snapshot) return null;
     const persisted = await history.get(runId);
-    if (persisted) return persisted;
+    if (persisted) {
+      summaryDigests.set(runId, summaryDigest(persisted));
+      return persisted;
+    }
     const summary = summarizeRun(snapshot, { computedAt: now() });
     if (persist && snapshot.run.lifecycle === 'finished') {
       try {
-        await history.put(summary);
+        await writeSummary(snapshot);
       } catch (error) {
         log({ level: 'warn', source: 'history', message: error.message });
       }
