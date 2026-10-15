@@ -1,0 +1,375 @@
+import { createHash } from 'node:crypto';
+import { stat } from 'node:fs/promises';
+import path from 'node:path';
+import { copilotPaths, resolveThresholds } from './config.mjs';
+import { CREDIT_USD, NANO_AIU_PER_CREDIT } from './schema.mjs';
+import { SqliteUnavailableError, loadNodeSqlite, withReadOnly } from './sqlite.mjs';
+import { readAppDb } from './readers/app-db.mjs';
+import { createTail, readNewLines } from './readers/events.mjs';
+import { createLedger, pullLedger } from './readers/ledger.mjs';
+import { createProcessProbe } from './readers/process-probe.mjs';
+import { createSessionDbCache, listLocks, readWorkspaceYaml } from './readers/session-files.mjs';
+import { buildForest, resolveNodeId, treeNodes } from './model/forest.mjs';
+import { createHistoryStore, listItemOf, summarizeRun } from './model/history.mjs';
+import { createPrLookup } from './model/pr-lookup.mjs';
+import { applyLine, createSessionState } from './model/session-state.mjs';
+import { buildSnapshot } from './model/swarm.mjs';
+
+const LIVENESS_TTL_MS = 15_000;
+const EXTRA_TRACKED = 3;
+const round1 = value => Math.round(value * 10) / 10;
+const shortId = id => String(id).slice(0, 8);
+
+function emptyApp() {
+  return { projects: new Map(), worktrees: new Map(), workspaces: new Map(), parentLinks: [], aliases: [], chatLinks: [], sessions: new Map(), automations: [], diagnostics: [] };
+}
+
+function sqliteProblem(source, error) {
+  return {
+    level: 'warn',
+    source,
+    message: error instanceof SqliteUnavailableError
+      ? 'No SQLite reader: use Node.js 22.15 or later, or install the sqlite3 command-line tool.'
+      : error.message,
+  };
+}
+
+function digest(snapshot) {
+  return createHash('sha1').update(JSON.stringify({ ...snapshot, generatedAt: 0, revision: 0 })).digest('hex');
+}
+
+async function mtimeOf(file) {
+  try {
+    return Math.round((await stat(file)).mtimeMs);
+  } catch {
+    return null;
+  }
+}
+
+const byLifecycleThenActivity = (a, b) => (a.lifecycle === b.lifecycle ? b.lastActivityAt - a.lastActivityAt : a.lifecycle === 'live' ? -1 : 1);
+
+/**
+ * The swarm data engine. Strictly read-only towards Copilot data; its only write target is the history folder.
+ * @param {import('./schema.mjs').EngineOptions & { processProbe?: (locks: {pid: number, mtimeMs: number}[]) => Promise<Map<number, boolean>> }} options
+ * @returns {import('./schema.mjs').SwarmEngine}
+ */
+export function createSwarmEngine(options = {}) {
+  const paths = copilotPaths(options.copilotHome);
+  const persist = options.persistHistory ?? true;
+  const now = options.now ?? Date.now;
+  const thresholds = resolveThresholds(options.thresholds);
+  const sqlite = { backend: options.sqlite ?? 'auto' };
+  const log = typeof options.log === 'function' ? options.log : () => {};
+  const probe = options.processProbe ?? createProcessProbe();
+  const lookup = options.prLookup === 'off' ? null
+    : options.prLookup && typeof options.prLookup === 'object' ? options.prLookup : createPrLookup({ now });
+  const history = createHistoryStore(options.historyDir ?? paths.historyDir);
+  const ledger = createLedger();
+  const readDb = createSessionDbCache();
+  const sessions = new Map();
+  const liveness = new Map();
+  const snapshots = new Map();
+  const cheapLast = new Map();
+  const knownFinished = new Map();
+  const requested = [];
+  const listeners = new Set();
+  let app = null;
+  let forest = null;
+  let swarms = [];
+  let diagnostics = [];
+  let revision = 0;
+  let timer = null;
+  let running = null;
+
+  const projectOf = node => {
+    const project = node.projectId ? app.projects.get(node.projectId) : null;
+    return project ? { id: project.id, name: project.name } : null;
+  };
+
+  function notify(change) {
+    for (const listener of [...listeners]) {
+      try {
+        listener(change);
+      } catch (error) {
+        log({ level: 'warn', source: 'subscriber', message: error.message });
+      }
+    }
+  }
+
+  async function livenessOf(cliId, at) {
+    const cached = liveness.get(cliId);
+    if (cached && at - cached.checkedAt < LIVENESS_TTL_MS) return cached.value;
+    const locks = listLocks(path.join(paths.stateDir, cliId));
+    let value = null;
+    if (locks && !locks.length) value = false;
+    if (locks && locks.length) {
+      try {
+        value = [...(await probe(locks)).values()].some(Boolean);
+      } catch {
+        value = null;
+      }
+    }
+    liveness.set(cliId, { value, checkedAt: at });
+    return value;
+  }
+
+  async function listRoots(at) {
+    const items = [];
+    for (const root of forest.roots) {
+      const nodes = treeNodes(forest, root.id);
+      const cliIds = [...new Set(nodes.flatMap(node => node.cliSessionIds))];
+      let last = root.createdAt ?? 0;
+      for (const cliId of cliIds) last = Math.max(last, (await mtimeOf(path.join(paths.stateDir, cliId, 'events.jsonl'))) ?? 0);
+      const totals = ledger.sumFor(cliIds);
+      last = Math.max(last, totals.lastAt ?? 0);
+      cheapLast.set(root.id, last);
+      const runningFlag = cliIds.some(id => app.sessions.get(id)?.isRunning);
+      const recent = at - last < thresholds.runFinishedAfterMs;
+      let alive = false;
+      if (recent || runningFlag) {
+        for (const cliId of cliIds) {
+          if ((await livenessOf(cliId, at)) === true) {
+            alive = true;
+            break;
+          }
+        }
+      }
+      const tracked = snapshots.get(root.id)?.snapshot ?? null;
+      const lifecycle = tracked ? tracked.run.lifecycle
+        : knownFinished.get(root.id) === last ? 'finished'
+          : recent || (runningFlag && alive) ? 'live' : 'finished';
+      const lastActivityAt = tracked?.run.lastActivityAt ?? (last || at);
+      items.push({
+        id: root.id, name: root.name ?? '', project: projectOf(root), startedAt: root.createdAt || lastActivityAt, lastActivityAt,
+        lifecycle, units: nodes.length - 1, credits: round1(totals.nanoAiu / NANO_AIU_PER_CREDIT), alive,
+      });
+    }
+    return items.sort(byLifecycleThenActivity);
+  }
+
+  async function tailSession(cliId, diag) {
+    let entry = sessions.get(cliId);
+    if (!entry) {
+      entry = { tail: createTail(path.join(paths.stateDir, cliId, 'events.jsonl')), state: createSessionState(cliId), missing: true };
+      sessions.set(cliId, entry);
+    }
+    try {
+      const result = await readNewLines(entry.tail, line => applyLine(entry.state, line), {
+        onReset: () => {
+          entry.state = createSessionState(cliId);
+        },
+      });
+      entry.missing = result.missing;
+    } catch (error) {
+      diag.push({ level: 'warn', source: 'events', message: `${shortId(cliId)}: ${error.message}` });
+    }
+    return entry.missing ? null : entry.state;
+  }
+
+  async function buildTracked(rootId, at, diag) {
+    const nodes = treeNodes(forest, rootId);
+    const states = new Map();
+    const alive = new Map();
+    const workspaceFiles = new Map();
+    for (const cliId of new Set(nodes.flatMap(node => node.cliSessionIds))) {
+      const state = await tailSession(cliId, diag);
+      if (state) states.set(cliId, state);
+      alive.set(cliId, await livenessOf(cliId, at));
+      workspaceFiles.set(cliId, readWorkspaceYaml(path.join(paths.stateDir, cliId)));
+    }
+    const sessionDbs = new Map();
+    for (const cliId of new Set([...nodes[0].cliSessionIds, ...nodes.map(node => node.currentCliSessionId).filter(Boolean)])) {
+      try {
+        sessionDbs.set(cliId, await readDb(path.join(paths.stateDir, cliId, 'session.db'), sqlite));
+      } catch (error) {
+        diag.push({ level: 'warn', source: 'session.db', message: `${shortId(cliId)}: ${error.message}` });
+      }
+    }
+    return buildSnapshot({
+      forest, rootId, app, states, alive, workspaceFiles, ledger, sessionDbs, now: at, thresholds, revision: 0, diagnostics: [...diag],
+      prInfo: (pr, { cwd }) => {
+        if (!lookup) return null;
+        lookup.request(pr, { cwd });
+        return lookup.get(pr);
+      },
+    });
+  }
+
+  async function persistFinished(snapshot, diag) {
+    if (!persist) return;
+    try {
+      const stored = await history.get(snapshot.run.id);
+      if (stored && stored.finishedAt === snapshot.run.finishedAt && stored.children.total === snapshot.units.length) return;
+      await history.put(summarizeRun(snapshot, { computedAt: now() }));
+    } catch (error) {
+      diag.push({ level: 'warn', source: 'history', message: error.message });
+    }
+  }
+
+  async function doRefresh() {
+    const at = now();
+    const diag = [];
+    if (sqlite.backend === 'auto') {
+      diag.push({ level: 'info', source: 'sqlite', message: (await loadNodeSqlite()) ? 'Reading SQLite through node:sqlite.' : 'Reading SQLite through the sqlite3 command-line tool.' });
+    }
+    try {
+      const data = await withReadOnly(paths.dataDb, sqlite, readAppDb);
+      if (data) {
+        app = data;
+        diag.push(...data.diagnostics);
+      } else {
+        app = emptyApp();
+        diag.push({ level: 'warn', source: 'data.db', message: 'The Copilot app database was not found.' });
+      }
+    } catch (error) {
+      app = app ?? emptyApp();
+      diag.push(sqliteProblem('data.db', error));
+    }
+    forest = buildForest(app);
+    try {
+      const pulled = await withReadOnly(paths.storeDb, sqlite, db => pullLedger(db, ledger));
+      if (pulled === null) diag.push({ level: 'warn', source: 'session-store.db', message: 'The Copilot session store was not found, so costs are unknown.' });
+    } catch (error) {
+      diag.push(sqliteProblem('session-store.db', error));
+    }
+    for (const failure of lookup?.errors() ?? []) diag.push({ level: 'info', source: 'pr-lookup', message: `${failure.key}: ${failure.error}` });
+
+    swarms = await listRoots(at);
+    const rootIds = new Set(forest.roots.map(root => root.id));
+    const tracked = new Set([...swarms.filter(swarm => swarm.lifecycle === 'live').map(swarm => swarm.id), ...requested.filter(id => rootIds.has(id))]);
+    const changed = [];
+    for (const rootId of tracked) {
+      const snapshot = await buildTracked(rootId, at, diag);
+      const hash = digest(snapshot);
+      const entry = snapshots.get(rootId);
+      if (entry && entry.hash === hash) {
+        snapshot.revision = entry.revision;
+        entry.snapshot = snapshot;
+      } else {
+        snapshot.revision = (entry?.revision ?? 0) + 1;
+        snapshots.set(rootId, { snapshot, hash, revision: snapshot.revision });
+        changed.push(rootId);
+      }
+      if (snapshot.run.lifecycle === 'finished') {
+        knownFinished.set(rootId, cheapLast.get(rootId));
+        await persistFinished(snapshot, diag);
+      } else {
+        knownFinished.delete(rootId);
+      }
+    }
+    const keep = new Set();
+    for (const rootId of tracked) for (const node of treeNodes(forest, rootId)) for (const cliId of node.cliSessionIds) keep.add(cliId);
+    for (const cliId of [...sessions.keys()]) if (!keep.has(cliId)) sessions.delete(cliId);
+    for (const rootId of [...snapshots.keys()]) if (!tracked.has(rootId)) snapshots.delete(rootId);
+    swarms = swarms.map(item => {
+      const entry = snapshots.get(item.id);
+      return entry ? { ...item, lifecycle: entry.snapshot.run.lifecycle, lastActivityAt: entry.snapshot.run.lastActivityAt } : item;
+    }).sort(byLifecycleThenActivity);
+
+    const previous = new Set(diagnostics.map(item => `${item.source}|${item.message}`));
+    for (const item of diag) if (item.level === 'warn' && !previous.has(`${item.source}|${item.message}`)) log(item);
+    diagnostics = diag;
+    if (changed.length) {
+      revision += 1;
+      notify({ revision, swarmIds: changed });
+    }
+  }
+
+  function refresh() {
+    if (!running) running = doRefresh().finally(() => { running = null; });
+    return running;
+  }
+
+  function track(id) {
+    const index = requested.indexOf(id);
+    if (index >= 0) requested.splice(index, 1);
+    requested.unshift(id);
+    if (requested.length > EXTRA_TRACKED) requested.length = EXTRA_TRACKED;
+  }
+
+  async function getSnapshot(swarmId) {
+    if (!forest) await refresh();
+    const id = swarmId ?? swarms[0]?.id ?? null;
+    if (!id || !forest.roots.some(root => root.id === id)) return null;
+    if (!snapshots.has(id)) {
+      track(id);
+      await refresh();
+      if (!snapshots.has(id)) await refresh();
+    }
+    return snapshots.get(id)?.snapshot ?? null;
+  }
+
+  async function findSwarm(sessionId) {
+    if (!forest) await refresh();
+    let id = resolveNodeId(forest, sessionId);
+    if (!id) return null;
+    for (let node = forest.nodes.get(id); node?.parentId; node = forest.nodes.get(node.parentId)) id = node.parentId;
+    return forest.roots.some(root => root.id === id) ? id : null;
+  }
+
+  async function listHistory() {
+    if (!forest) await refresh();
+    const items = new Map();
+    for (const summary of await history.list()) items.set(summary.id, listItemOf(summary));
+    for (const { snapshot } of snapshots.values()) {
+      if (snapshot.run.lifecycle === 'finished' && !items.has(snapshot.run.id)) {
+        items.set(snapshot.run.id, listItemOf(summarizeRun(snapshot, { computedAt: now() })));
+      }
+    }
+    for (const swarm of swarms) {
+      if (swarm.lifecycle !== 'finished' || items.has(swarm.id)) continue;
+      items.set(swarm.id, {
+        id: swarm.id, name: swarm.name, project: swarm.project, startedAt: swarm.startedAt, finishedAt: swarm.lastActivityAt,
+        tookMs: Math.max(0, swarm.lastActivityAt - swarm.startedAt), busyMs: null, credits: swarm.credits,
+        usd: Math.round(swarm.credits * CREDIT_USD * 100) / 100, children: swarm.units, merged: null, summarized: false,
+      });
+    }
+    return [...items.values()].sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0));
+  }
+
+  async function getRunSummary(runId) {
+    const stored = await history.get(runId);
+    if (stored) return stored;
+    const snapshot = await getSnapshot(runId);
+    if (!snapshot) return null;
+    const summary = summarizeRun(snapshot, { computedAt: now() });
+    if (persist && snapshot.run.lifecycle === 'finished') {
+      try {
+        await history.put(summary);
+      } catch (error) {
+        log({ level: 'warn', source: 'history', message: error.message });
+      }
+    }
+    return summary;
+  }
+
+  return {
+    refresh,
+    start({ intervalMs = 3000 } = {}) {
+      if (timer) return;
+      const tick = async () => {
+        try {
+          await refresh();
+        } catch (error) {
+          log({ level: 'warn', source: 'engine', message: error.message });
+        }
+        if (timer) timer = setTimeout(tick, intervalMs);
+      };
+      timer = setTimeout(tick, 0);
+    },
+    stop() {
+      if (timer) clearTimeout(timer);
+      timer = null;
+    },
+    listSwarms: () => swarms.map(item => ({ ...item })),
+    getSnapshot,
+    findSwarm,
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    listHistory,
+    getRunSummary,
+    diagnostics: () => diagnostics.map(item => ({ ...item })),
+  };
+}
