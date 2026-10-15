@@ -33,6 +33,7 @@ test('a running dashboard is checked with the swarm, unit and run it shows', () 
   assert.deepEqual(options.scenarios, ['live']);
   assert.throws(() => parseArguments(['--live', 'https://example.com/']), /--live/);
   assert.throws(() => parseArguments(['--live', 'http://127.0.0.1:7927/', '--scenario', 'stress']), /--live/);
+  assert.throws(() => parseArguments(['--live', 'http://127.0.0.1:7927/', '--screenshots', '/tmp/shots']), /--screenshots/);
   const targets = { live: { swarm: 'ws-a', detail: 'ws-b', run: null } };
   const states = buildStates({ scenarios: ['live'], widths: [1280], canvasWidths: [], targets });
   assert.deepEqual(states.map(state => state.view), ['cards', 'detail', 'activity', 'timeline', 'timeline-run', 'plan', 'board']);

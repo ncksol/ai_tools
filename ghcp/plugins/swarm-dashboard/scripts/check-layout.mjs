@@ -24,7 +24,7 @@ export const VIEWS = [
   { name: 'history', params: { page: 'history' }, history: true },
   { name: 'run', params: { page: 'run', run: 'RUN' }, history: true },
 ];
-export const SELF_TEST_RULES = ['overlap', 'font-size', 'font-style', 'text-transform', 'font-weight', 'letter-spacing', 'line-height', 'contrast', 'grid', 'height', 'spill', 'clipped', 'hidden-lines', 'cut', 'outside', 'hscroll'];
+export const SELF_TEST_RULES = ['overlap', 'font-family', 'font-size', 'font-style', 'text-transform', 'font-weight', 'letter-spacing', 'line-height', 'contrast', 'colour', 'grid', 'padding', 'height', 'spill', 'clipped', 'hidden-lines', 'cut', 'outside', 'hscroll'];
 export const USAGE = `Usage: check-layout [--scenario example|stress | --live <url>] [--width <px>] [--screenshots <dir>]
 
 Checks every dashboard view for overlap, clipped text, type, spacing, sizes, contrast and console errors in a
@@ -32,7 +32,8 @@ local headless Chrome, Chromium or Edge (set CHROME_PATH to pick one). It proves
 tests the page's in-place updates, and then watches live updates arrive and reports how long each one takes.
 By default it serves the synthetic example and stress swarms itself; --live checks a running dashboard instead
 (for example http://127.0.0.1:7927/), whose report quotes your own data: keep it local.
-Screenshots, when asked for, are written to <dir> for review; do not commit them.
+Screenshots of the synthetic swarms, when asked for, are written to <dir> for review; do not commit them.
+--live never writes screenshots, because its pages show your own data.
 `;
 
 export function parseArguments(argv) {
@@ -69,6 +70,7 @@ export function parseArguments(argv) {
     }
   }
   if (options.live && scenarioChosen) throw new Error('--live checks a running dashboard, so it cannot be combined with --scenario');
+  if (options.live && options.screenshots) throw new Error('--live pages show your own data, so it cannot be combined with --screenshots');
   if (options.live) options.scenarios = ['live'];
   return options;
 }
