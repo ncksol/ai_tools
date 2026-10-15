@@ -38,12 +38,19 @@ test('type uses only the approved sizes, line heights and weights, with no itali
 });
 
 test('spacing stays on the 4 px grid', () => {
-  const allowed = new Set(['margin-bottom: -1px', 'margin-top: 6px']);
+  const allowed = new Set(['margin-top: 6px']);
   for (const [prop, value] of declarations) {
     if (!/^(gap|row-gap|column-gap|padding(-top|-right|-bottom|-left)?|margin(-top|-right|-bottom|-left)?)$/.test(prop)) continue;
     if (allowed.has(`${prop}: ${value}`)) continue;
     for (const [, number] of value.matchAll(/(-?\d+(?:\.\d+)?)px/g)) assert.equal(Number(number) % 4, 0, `${prop}: ${value}`);
   }
+});
+
+test('buttons take their colour, type and margin from the page, as the approved mockup renders them', () => {
+  const rules = [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(([, selector, body]) => [selector.trim(), body]);
+  const buttons = rules.filter(([selector]) => selector !== 'button, select' && (/\bbutton\b/.test(selector) || /(^|[\s,])\.(link|x)(?![\w-])/.test(selector)));
+  assert.ok(buttons.length >= 6, `${buttons.length} button rules`);
+  for (const [selector, body] of buttons) assert.doesNotMatch(body, /(^|;)\s*(color|font(-[a-z]+)?|line-height|margin(-[a-z]+)?)\s*:/, selector);
 });
 
 test('the font comes from the host with the approved fallback, motion stops on request, and nothing loads from outside', () => {

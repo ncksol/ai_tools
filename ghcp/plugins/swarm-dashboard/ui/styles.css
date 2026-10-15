@@ -52,6 +52,7 @@ h2, h3, h4, p, ol, ul { margin: 0; padding: 0; }
 ol, ul { list-style: none; }
 h2 { font-size: 18px; line-height: 24px; font-weight: 500; }
 h3, h4 { font-size: 14px; line-height: 20px; font-weight: 500; }
+/* Buttons take colour, type and margin from the page, as the approved mockup renders them. */
 button, select { font: inherit; color: inherit; margin: 0; }
 a { color: var(--busy-ink); }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
@@ -78,9 +79,8 @@ a { color: var(--busy-ink); }
 .usd { font-size: 12px; font-weight: 400; color: var(--ink-2); }
 .tx { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .seg { display: inline-flex; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
-.seg button { height: 28px; padding: 0 12px; border: 0; border-radius: 4px; background: none; color: var(--ink-2); cursor: pointer; white-space: nowrap; }
-.seg button:hover { color: var(--ink); }
-.seg button[aria-pressed="true"] { background: var(--sunk); color: var(--ink); }
+.seg button { height: 28px; padding: 0 12px; border: 0; border-radius: 4px; background: none; cursor: pointer; white-space: nowrap; }
+.seg button[aria-pressed="true"] { background: var(--sunk); }
 .kv { display: flex; flex-direction: column; min-width: 0; }
 .kv .k { font-size: 12px; line-height: 16px; color: var(--ink-2); }
 .kv .v { font-size: 14px; line-height: 20px; font-weight: 500; white-space: nowrap; }
@@ -127,9 +127,8 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 .d-main { container: main / inline-size; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .d-side { min-width: 0; }
 .tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--line); }
-.tabs button { padding: 4px 12px 8px; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; background: none; color: var(--ink-2); cursor: pointer; }
-.tabs button:hover { color: var(--ink); }
-.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+.tabs button { padding: 4px 12px 8px; border: 0; border-bottom: 2px solid transparent; background: none; cursor: pointer; }
+.tabs button[aria-selected="true"] { border-bottom-color: var(--ink); }
 @container dash (max-width: 720px) {
   .d-counts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .needs-list { grid-template-columns: minmax(0, 1fr); }
@@ -194,8 +193,8 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 /* detail panel */
 .detail { display: flex; flex-direction: column; gap: 16px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
 .dt-top { display: flex; flex-direction: column; gap: 12px; }
-.x { flex: none; width: 28px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); cursor: pointer; line-height: 24px; }
-.link { align-self: flex-start; padding: 0; border: 0; background: none; color: var(--busy-ink); cursor: pointer; font-size: 12px; line-height: 16px; }
+.x { flex: none; width: 28px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); cursor: pointer; }
+.link { align-self: flex-start; padding: 0; border: 0; background: none; cursor: pointer; }
 .dt-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px 16px; }
 .dt-facts .v { white-space: normal; }
 .dt-sec { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line-2); }
@@ -262,7 +261,7 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 /* timeline */
 .c { display: flex; flex-direction: column; gap: 12px; }
 .c-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
-.c-bar .seg button { height: 24px; padding: 0 8px; font-size: 12px; line-height: 24px; }
+.c-bar .seg button { height: 24px; padding: 0 8px; }
 .c-keys { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 12px; line-height: 16px; color: var(--ink-2); }
 .c-keys span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .c-keys svg { overflow: visible; }
