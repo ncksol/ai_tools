@@ -131,6 +131,36 @@ test('a page can ask for a swarm by id or by one of its sessions', async () => {
   }
 });
 
+test('a page that asked for no swarm follows the default once its swarm has ended', async () => {
+  const { createEngine, fake } = spyEngine();
+  const server = await started(createEngine);
+  const page = openEvents(server.port, '/api/events');
+  const bySession = openEvents(server.port, '/api/events?session=cli-0003-b1');
+  try {
+    assert.equal((await page.waitFor(entry => entry.event === 'snapshot')).data.snapshot.run.id, 'ws-0000-root');
+    assert.equal((await bySession.waitFor(entry => entry.event === 'snapshot')).data.snapshot.run.id, 'ws-0000-root');
+    const next = exampleSnapshot();
+    next.run.id = 'ws-next';
+    next.run.lastActivityAt += 60000;
+    fake.push(next);
+    await page.waitFor(entry => entry.event === 'swarms' && entry.data.some(swarm => swarm.id === 'ws-next'));
+    assert.equal(page.events.filter(entry => entry.event === 'snapshot').length, 1, 'a live swarm does not take the page over');
+    const ended = exampleSnapshot();
+    ended.revision += 1;
+    ended.run.lifecycle = 'finished';
+    ended.run.finishedAt = ended.run.lastActivityAt;
+    fake.push(ended);
+    await page.waitFor(entry => entry.event === 'snapshot' && entry.data.snapshot.run.id === 'ws-next');
+    const kept = await bySession.waitFor(entry => entry.event === 'snapshot' && entry.data.snapshot.revision === ended.revision);
+    assert.equal(kept.data.snapshot.run.id, 'ws-0000-root');
+    assert.equal(bySession.events.some(entry => entry.event === 'snapshot' && entry.data.snapshot.run.id === 'ws-next'), false);
+  } finally {
+    page.close();
+    bySession.close();
+    await server.close();
+  }
+});
+
 test('the server never changes the snapshot objects the engine hands out', async () => {
   const fake = createFakeEngine({ snapshots: [exampleSnapshot()], swarms: fixture('example-swarms.json') });
   const frozen = deepFreeze(exampleSnapshot());

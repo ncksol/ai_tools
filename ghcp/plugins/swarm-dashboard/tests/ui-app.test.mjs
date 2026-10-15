@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { isNarrow, renderApp } from '../ui/app.mjs';
+import { isNarrow, renderApp, staleChoice } from '../ui/app.mjs';
 import { NOW, deepFreeze, exampleSnapshot, fixture } from './helpers/ui.mjs';
 
 const view = (overrides = {}) => ({
@@ -64,7 +64,7 @@ test('loading, empty and finished states', () => {
   assert.match(renderApp(view({ snapshot: null })), /No swarm yet/);
   const finished = exampleSnapshot();
   Object.assign(finished.run, { lifecycle: 'finished', finishedAt: NOW - 3 * 3600000 });
-  const html = renderApp(view({ snapshot: finished }));
+  const html = renderApp(view({ snapshot: finished, swarms: fixture('example-swarms.json').map(swarm => ({ ...swarm, lifecycle: 'finished' })) }));
   assert.match(html, /No live swarm/);
   assert.match(html, /Sample story B finished <span[^>]*>3h ago<\/span>\. Finished runs are in History\./);
   assert.match(html, /data-run="ws-0000-root"/);
@@ -81,6 +81,35 @@ test('the top bar shows a swarm picker, connection trouble, data warnings and sa
   warned.diagnostics.push({ level: 'warn', source: 'pr-lookup', message: 'gh is not signed in.' });
   assert.match(renderApp(view({ snapshot: warned })), /<span class="small muted" title="pr-lookup: gh is not signed in\.">1 data warning<\/span>/);
   assert.match(renderApp(view({ demo: true })), /Sample data · watch-only/);
+});
+
+test('a picked or remembered swarm applies only while it is live; one in the address always applies', () => {
+  const swarms = fixture('example-swarms.json');
+  assert.equal(staleChoice(null, false, swarms), false);
+  assert.equal(staleChoice('ws-0000-root', false, swarms), false);
+  assert.equal(staleChoice('ws-1000-root', false, swarms), true, 'finished');
+  assert.equal(staleChoice('ws-gone', false, swarms), true, 'gone');
+  assert.equal(staleChoice('ws-1000-root', true, swarms), false, 'named in the address');
+});
+
+test('the picker appears with two live swarms, or when the page shows an ended swarm while another is live', () => {
+  const swarms = fixture('example-swarms.json');
+  assert.doesNotMatch(renderApp(view({ swarms })), /data-swarm/, 'one live swarm, shown');
+  const both = swarms.map(swarm => ({ ...swarm, lifecycle: 'live' }));
+  assert.match(renderApp(view({ swarms: both })), /<option value="ws-0000-root" selected>Sample story B<\/option><option value="ws-1000-root">Sample story A<\/option>/);
+  const ended = exampleSnapshot();
+  Object.assign(ended.run, { id: 'ws-1000-root', name: 'Sample story A', lifecycle: 'finished', finishedAt: NOW - 3600000 });
+  assert.match(renderApp(view({ snapshot: ended, swarm: 'ws-1000-root', swarms })), /<select data-swarm aria-label="Swarm"><option value="ws-1000-root" selected>Sample story A<\/option><option value="ws-0000-root">Sample story B<\/option><\/select>/);
+});
+
+test('a finished run says "Swarm finished" while another swarm is live', () => {
+  const finished = exampleSnapshot();
+  Object.assign(finished.run, { lifecycle: 'finished', finishedAt: NOW - 3600000 });
+  const swarms = fixture('example-swarms.json');
+  const other = [{ ...swarms[0], id: 'ws-other', name: 'Other' }, { ...swarms[0], lifecycle: 'finished' }];
+  assert.match(renderApp(view({ snapshot: finished, swarms: other })), /<h3>Swarm finished<\/h3>/);
+  const none = other.map(swarm => ({ ...swarm, lifecycle: 'finished' }));
+  assert.match(renderApp(view({ snapshot: finished, swarms: none })), /<h3>No live swarm<\/h3>/);
 });
 
 test('history pages keep the History button pressed', () => {

@@ -8,6 +8,8 @@ export const TABS = Object.freeze({ cards: 'Cards', activity: 'Activity', timeli
 export const NARROW_BELOW = 900;
 /** Narrow (side-panel) mode: the dashboard's inner width, its clientWidth minus 2 × 16 px padding, is under 900 px. */
 export const isNarrow = dashWidth => dashWidth - 32 < NARROW_BELOW;
+/** A swarm picked in the picker or remembered from an earlier visit applies only while it is live; one named in the address always applies. */
+export const staleChoice = (swarm, fromUrl, swarms) => Boolean(swarm) && !fromUrl && !swarms.some(item => item.id === swarm && item.lifecycle === 'live');
 
 /** The whole dashboard for one PageView (see the Task 7 interface). */
 export function renderApp(view) {
@@ -24,10 +26,15 @@ function topHtml(view) {
 }
 
 function pickerHtml(view) {
+  if (view.page !== 'live') return '';
   const live = view.swarms.filter(swarm => swarm.lifecycle === 'live');
-  if (view.page !== 'live' || live.length < 2) return '';
-  const current = view.snapshot?.run.id ?? view.swarm;
-  const options = live.map(swarm => `<option value="${esc(swarm.id)}"${swarm.id === current ? ' selected' : ''}>${esc(swarm.name)}</option>`).join('');
+  const shown = view.snapshot?.run ?? null;
+  const shownLive = shown !== null && live.some(swarm => swarm.id === shown.id);
+  // There is a choice when two swarms are live, or when the page shows a swarm that has ended while another is live.
+  if (live.length < 2 && !(live.length && shown && !shownLive)) return '';
+  const current = shown?.id ?? view.swarm;
+  const choices = shown && !shownLive ? [shown, ...live] : live;
+  const options = choices.map(swarm => `<option value="${esc(swarm.id)}"${swarm.id === current ? ' selected' : ''}>${esc(swarm.name)}</option>`).join('');
   return `<label class="pick"><span class="small muted">Swarm</span><select data-swarm aria-label="Swarm">${options}</select></label>`;
 }
 
@@ -46,7 +53,8 @@ function liveHtml(view) {
   if (!snapshot) return '<div class="empty"><h3>No swarm yet</h3><p class="small muted">A session that starts child sessions shows up here as a swarm.</p></div>';
   if (snapshot.run.lifecycle === 'finished' && !view.swarm) {
     const at = snapshot.run.finishedAt ?? snapshot.run.lastActivityAt;
-    return `<div class="empty"><h3>No live swarm</h3><p class="small muted">${esc(snapshot.run.name)} finished ${ago(at, view.now)}. Finished runs are in History.</p>`
+    const heading = view.swarms.some(swarm => swarm.lifecycle === 'live') ? 'Swarm finished' : 'No live swarm';
+    return `<div class="empty"><h3>${heading}</h3><p class="small muted">${esc(snapshot.run.name)} finished ${ago(at, view.now)}. Finished runs are in History.</p>`
       + `<button type="button" class="link" data-run="${esc(snapshot.run.id)}">Open its summary</button></div>`;
   }
   const ctx = { snapshot, now: view.now, phaseMs: view.phaseMs, detail: view.detail, fresh: view.fresh };

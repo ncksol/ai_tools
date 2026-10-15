@@ -81,14 +81,16 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
     try {
       do {
         client.again = false;
+        const pinned = client.pinned;
         const current = engine;
         if (!current || client.closed) return;
-        const fromSession = !client.swarm && !client.pinned && client.session ? await current.findSwarm(client.session) : null;
-        const snapshot = await current.getSnapshot(client.swarm ?? client.pinned ?? fromSession ?? undefined);
+        const fromSession = !client.swarm && !pinned && client.session ? await current.findSwarm(client.session) : null;
+        const snapshot = await current.getSnapshot(client.swarm ?? pinned ?? fromSession ?? undefined);
         if (client.closed) return;
-        // Pin a page to the swarm it was first shown, so the default does not jump between swarms. A page opened from a
-        // session that is in no swarm yet stays unpinned, and follows that session once it joins one.
-        if (snapshot && !client.swarm && (fromSession || !client.session)) client.pinned = snapshot.run.id;
+        // Pin a page to the swarm it was first shown, so the default does not jump between swarms; changed() unpins a
+        // default page whose swarm is no longer live while another is. A page opened from a session that is in no swarm
+        // yet stays unpinned, and follows that session once it joins one.
+        if (snapshot && !client.swarm && !pinned && !client.pinned && (fromSession || !client.session)) client.pinned = snapshot.run.id;
         const key = snapshot ? `${snapshot.run.id}#${snapshot.revision}` : 'none';
         if (key !== client.lastKey) {
           client.lastKey = key;
@@ -104,7 +106,10 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
 
   async function changed(change) {
     sendSwarms(false);
+    const live = new Set(engine ? engine.listSwarms().filter(swarm => swarm.lifecycle === 'live').map(swarm => swarm.id) : []);
     for (const client of clients) {
+      // A page that asked for no swarm follows the default again once its swarm is no longer live while another is.
+      if (!client.swarm && !client.session && client.pinned && live.size && !live.has(client.pinned)) client.pinned = null;
       const shown = client.swarm ?? client.pinned;
       if (!shown || change.swarmIds.includes(shown)) push(client);
     }

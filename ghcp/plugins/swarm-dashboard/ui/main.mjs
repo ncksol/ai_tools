@@ -1,4 +1,4 @@
-import { isNarrow, renderApp } from './app.mjs';
+import { isNarrow, renderApp, staleChoice } from './app.mjs';
 import { tickText } from './format.mjs';
 import { morph } from './morph.mjs';
 import { shortLabel } from './parts.mjs';
@@ -24,6 +24,7 @@ function readSaved() {
   }
 }
 const saved = readSaved();
+const urlSwarm = params.get('swarm');
 document.documentElement.dataset.host = params.get('host') === 'canvas' ? 'canvas' : 'browser';
 
 const view = {
@@ -32,7 +33,7 @@ const view = {
   span: choose(params.get('span') ?? saved.span, SPANS, '12h'),
   detail: params.get('detail'),
   runId: params.get('run'),
-  swarm: params.get('swarm') ?? (params.get('session') ? null : saved.swarm ?? null),
+  swarm: urlSwarm ?? (params.get('session') ? null : saved.swarm ?? null),
   session: params.get('session'),
   narrow: false,
   loaded: false,
@@ -46,6 +47,8 @@ const view = {
 };
 if (view.page === 'run' && !view.runId) view.page = 'history';
 
+// A swarm named in the address always applies; a picked or remembered one only while it is live.
+let swarmFromUrl = Boolean(urlSwarm);
 let offset = 0;
 let source = null;
 let reconnectTimer = null;
@@ -91,6 +94,14 @@ function connect() {
   });
   source.addEventListener('swarms', event => {
     view.swarms = JSON.parse(event.data);
+    if (staleChoice(view.swarm, swarmFromUrl, view.swarms)) {
+      view.swarm = null;
+      view.snapshot = null;
+      view.loaded = false;
+      view.detail = null;
+      save();
+      connect();
+    }
     scheduleRender();
   });
   source.addEventListener('snapshot', event => {
@@ -295,6 +306,7 @@ dash.addEventListener('keydown', event => {
 dash.addEventListener('change', event => {
   if (!event.target.matches('select[data-swarm]')) return;
   view.swarm = event.target.value;
+  swarmFromUrl = false;
   view.snapshot = null;
   view.loaded = false;
   view.detail = null;
