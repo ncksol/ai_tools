@@ -1,9 +1,14 @@
 import { parseTime } from '../time.mjs';
 
-/** Strings longer than this (in raw bytes, escapes included) are not captured at all, never in part. */
-export const MAX_VALUE_BYTES = 4096;
+/** String values longer than this (in raw bytes, escapes included) are not captured at all, never in part. */
+export const MAX_VALUE_BYTES = 512;
+/** Keys longer than this cannot be on the allowlist, so they are ignored. */
+const MAX_KEY_BYTES = 32;
 const MAX_LITERAL_BYTES = 64;
 const MAX_DEPTH = 256;
+/** The only keys captured: the event's own metadata, and the metadata keys directly under its `data`. */
+const TOP_KEYS = new Set(['type', 'id', 'timestamp', 'parentId', 'agentId']);
+const DATA_KEYS = new Set(['toolCallId', 'success', 'parentToolCallId', 'agentId', 'durationMs']);
 
 const QUOTE = 0x22;
 const BACKSLASH = 0x5c;
@@ -28,10 +33,12 @@ function decodeString(raw) {
 /**
  * An incremental JSON scanner for one log line that is too big to hold. Feed it the line's bytes in any number of pieces;
  * it keeps no line bytes, only a stack of containers (bounded by MAX_DEPTH), the string it is inside, and the values it
- * captures. It captures primitive values (strings of at most MAX_VALUE_BYTES, numbers, true, false, null) of keys at depth 1
- * (the event's own keys) and at depth 2 directly under the top-level key `data`. Keys at any other depth are ignored, so a
- * nested "type":"text" never counts. Structural characters are ASCII and never occur inside a UTF-8 sequence, so it works
- * on bytes; a captured string is decoded once, when it ends.
+ * captures. What it captures is fixed by an allowlist, so its memory does not grow with the width of the line: primitive
+ * values (strings of at most MAX_VALUE_BYTES, numbers, true, false, null) of the keys type, id, timestamp, parentId and
+ * agentId at depth 1, and toolCallId, success, parentToolCallId, agentId and durationMs directly under the top-level key
+ * `data`. A repeated key overwrites. Other keys, and keys at any other depth, are read only far enough to know which object
+ * is `data` and are then dropped, so a nested "type":"text" never counts. Structural characters are ASCII and never occur
+ * inside a UTF-8 sequence, so it works on bytes; a captured string is decoded once, when it ends.
  *
  * finish() returns { ...depth-1 values, data: { ...data values } } when that has a string `type` and a parseable
  * `timestamp`, and null otherwise.
@@ -47,15 +54,25 @@ export function createJsonScanner() {
   let role = 'value';
   let collect = false;
   let overflow = false;
+  let limit = MAX_VALUE_BYTES;
   let raw = [];
   let literal = null;
 
   /** Where a primitive value at the current position is stored, or null when this position is not captured. */
   function target() {
     const frame = stack[stack.length - 1];
+    // currentKey is only ever set for allowlisted keys (and `data` itself, whose primitive value is not wanted).
     if (!frame || frame.kind !== 'object' || frame.currentKey === null) return null;
-    if (stack.length === 1) return event;
+    if (stack.length === 1) return frame.currentKey === 'data' ? null : event;
     if (stack.length === 2 && frame.key === 'data') return data;
+    return null;
+  }
+
+  /** The key to remember for a key string just read, or null when it is not worth keeping. */
+  function keyToRemember(text) {
+    if (text === undefined) return null;
+    if (stack.length === 1) return TOP_KEYS.has(text) || text === 'data' ? text : null;
+    if (stack.length === 2 && stack[1].key === 'data') return DATA_KEYS.has(text) ? text : null;
     return null;
   }
 
@@ -82,23 +99,30 @@ export function createJsonScanner() {
     raw = [];
     if (frame && frame.kind === 'object' && frame.expectKey) {
       role = 'key';
-      collect = true;
+      // Only keys at depth 1 and 2 can be on the allowlist; deeper keys are skipped without keeping their bytes.
+      collect = stack.length <= 2;
+      limit = MAX_KEY_BYTES;
     } else {
       role = 'value';
       collect = target() !== null;
+      limit = MAX_VALUE_BYTES;
     }
   }
 
   function endString() {
     inString = false;
     const frame = stack[stack.length - 1];
+    if (role === 'key') {
+      // The key's bytes are dropped here: only an allowlisted name (or `data`) is remembered.
+      frame.currentKey = collect && !overflow ? keyToRemember(decodeString(raw)) : null;
+      frame.expectKey = false;
+      raw = [];
+      return;
+    }
     if (!collect) return;
     const text = overflow ? undefined : decodeString(raw);
     raw = [];
-    if (role === 'key') {
-      frame.currentKey = text === undefined ? null : text;
-      frame.expectKey = false;
-    } else if (text !== undefined) {
+    if (text !== undefined) {
       const map = target();
       if (map) map.set(frame.currentKey, text);
     }
@@ -121,7 +145,7 @@ export function createJsonScanner() {
         if (inString) {
           const closing = byte === QUOTE && !escaped;
           if (collect && !overflow && !closing) {
-            if (raw.length >= MAX_VALUE_BYTES) {
+            if (raw.length >= limit) {
               overflow = true;
               raw = [];
             } else {

@@ -82,24 +82,71 @@ test('the same results come from tiny chunks that split strings, escapes, keys, 
   }
 });
 
-test('strings over 4 KB are never captured, not even in part', () => {
+test('strings over 512 bytes are never captured, not even in part', () => {
   const scanner = createJsonScanner();
   const line = JSON.stringify({
-    type: 'assistant.message', timestamp: new Date(T0).toISOString(), title: 'z'.repeat(5000), data: { toolCallId: 'c', note: 'n'.repeat(4097), ok: 'n'.repeat(4096) },
+    type: 'assistant.message', timestamp: new Date(T0).toISOString(), id: 'z'.repeat(513), parentId: 'p'.repeat(512),
+    data: { toolCallId: 'n'.repeat(513), parentToolCallId: 'n'.repeat(512) },
   });
   scanner.write(Buffer.from(line));
   const event = scanner.finish();
-  assert.equal(event.title, undefined);
-  assert.equal(event.data.note, undefined);
-  assert.equal(event.data.ok.length, 4096);
+  assert.equal(event.id, undefined);
+  assert.equal(event.parentId.length, 512);
+  assert.equal(event.data.toolCallId, undefined);
+  assert.equal(event.data.parentToolCallId.length, 512);
 });
 
-test('escapes, numbers and literals are decoded when captured', () => {
+test('escapes, numbers and literals of allowlisted keys are decoded, and other keys are not captured', () => {
   const scanner = createJsonScanner();
-  scanner.write(Buffer.from('{"data":{"a":"x\\"y\\u00e9\\n","n":-12.5e1,"t":true,"f":false,"z":null,"arr":[1,{"type":"no"}]},"type":"k","timestamp":"2026-10-15T08:00:00Z","agentId":"agent-1"}'));
+  scanner.write(Buffer.from('{"data":{"toolCallId":"x\\"y\\u00e9\\n","durationMs":-12.5e1,"success":true,"other":"no","arr":[1,{"type":"no"}]},"type":"k","timestamp":"2026-10-15T08:00:00Z","agentId":"agent-1","title":"no","n":5}'));
   assert.deepEqual(scanner.finish(), {
-    type: 'k', timestamp: '2026-10-15T08:00:00Z', agentId: 'agent-1', data: { a: 'x"yé\n', n: -125, t: true, f: false, z: null },
+    type: 'k', timestamp: '2026-10-15T08:00:00Z', agentId: 'agent-1', data: { toolCallId: 'x"yé\n', durationMs: -125, success: true },
   });
+  const nulls = createJsonScanner();
+  nulls.write(Buffer.from('{"type":"k","timestamp":"2026-10-15T08:00:00Z","parentId":null,"data":{"success":false,"agentId":null}}'));
+  assert.deepEqual(nulls.finish(), { type: 'k', timestamp: '2026-10-15T08:00:00Z', parentId: null, data: { success: false, agentId: null } });
+});
+
+const TOP_KEYS = ['type', 'id', 'timestamp', 'parentId', 'agentId', 'data'];
+const DATA_KEYS = ['toolCallId', 'success', 'parentToolCallId', 'agentId', 'durationMs'];
+
+test('a very wide line captures only the allowlisted metadata, however many fields it has', () => {
+  const scanner = createJsonScanner();
+  scanner.write(Buffer.from(`{"type":"tool.execution_complete","id":"ev-1","timestamp":"${new Date(T0).toISOString()}"`));
+  // 20,000 short top-level fields, streamed in small batches (the line is never built whole)
+  for (let batch = 0; batch < 200; batch += 1) {
+    let text = '';
+    for (let i = 0; i < 100; i += 1) text += `,"field${batch * 100 + i}":"value"`;
+    scanner.write(Buffer.from(text));
+  }
+  scanner.write(Buffer.from(',"data":{"toolCallId":"call-1"'));
+  for (let batch = 0; batch < 200; batch += 1) {
+    let text = '';
+    for (let i = 0; i < 100; i += 1) text += `,"item${batch * 100 + i}":${i}`;
+    scanner.write(Buffer.from(text));
+  }
+  scanner.write(Buffer.from(',"success":false}}'));
+  const event = scanner.finish();
+  assert.deepEqual(event, { type: 'tool.execution_complete', id: 'ev-1', timestamp: new Date(T0).toISOString(), data: { toolCallId: 'call-1', success: false } });
+  assert.ok(Object.keys(event).every(key => TOP_KEYS.includes(key)));
+  assert.ok(Object.keys(event.data).every(key => DATA_KEYS.includes(key)));
+});
+
+test('a repeated allowlisted key keeps its last value', () => {
+  const scanner = createJsonScanner();
+  scanner.write(Buffer.from(`{"type":"first","type":"tool.execution_complete","timestamp":"${new Date(T0).toISOString()}","data":{"toolCallId":"a","toolCallId":"b"}}`));
+  const event = scanner.finish();
+  assert.equal(event.type, 'tool.execution_complete');
+  assert.equal(event.data.toolCallId, 'b');
+});
+
+test('a key over 4 KB is ignored and later metadata is still recovered', async () => {
+  const longKey = 'k'.repeat(5000);
+  const line = `{"${longKey}":"ignored","data":{"${longKey}":1,"toolCallId":"call-2"},"type":"tool.execution_complete","timestamp":"${new Date(T0).toISOString()}"}`;
+  for (const chunkSize of [4096, 7]) {
+    const { oversized } = await readFile([line, '{"n":5}'], { chunkSize });
+    assert.deepEqual(oversized[0].event, { type: 'tool.execution_complete', timestamp: new Date(T0).toISOString(), data: { toolCallId: 'call-2' } });
+  }
 });
 
 test('a line with no recoverable type or time gives null, and later lines still arrive', async () => {
