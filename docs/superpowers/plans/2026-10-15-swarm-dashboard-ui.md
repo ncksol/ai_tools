@@ -1331,12 +1331,19 @@ test('type uses only the approved sizes, line heights and weights, with no itali
 });
 
 test('spacing stays on the 4 px grid', () => {
-  const allowed = new Set(['margin-bottom: -1px', 'margin-top: 6px']);
+  const allowed = new Set(['margin-top: 6px']);
   for (const [prop, value] of declarations) {
     if (!/^(gap|row-gap|column-gap|padding(-top|-right|-bottom|-left)?|margin(-top|-right|-bottom|-left)?)$/.test(prop)) continue;
     if (allowed.has(`${prop}: ${value}`)) continue;
     for (const [, number] of value.matchAll(/(-?\d+(?:\.\d+)?)px/g)) assert.equal(Number(number) % 4, 0, `${prop}: ${value}`);
   }
+});
+
+test('buttons take their colour, type and margin from the page, as the approved mockup renders them', () => {
+  const rules = [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(([, selector, body]) => [selector.trim(), body]);
+  const buttons = rules.filter(([selector]) => selector !== 'button, select' && (/\bbutton\b/.test(selector) || /(^|[\s,])\.(link|x)(?![\w-])/.test(selector)));
+  assert.ok(buttons.length >= 6, `${buttons.length} button rules`);
+  for (const [selector, body] of buttons) assert.doesNotMatch(body, /(^|;)\s*(color|font(-[a-z]+)?|line-height|margin(-[a-z]+)?)\s*:/, selector);
 });
 
 test('the font comes from the host with the approved fallback, motion stops on request, and nothing loads from outside', () => {
@@ -1409,6 +1416,7 @@ h2, h3, h4, p, ol, ul { margin: 0; padding: 0; }
 ol, ul { list-style: none; }
 h2 { font-size: 18px; line-height: 24px; font-weight: 500; }
 h3, h4 { font-size: 14px; line-height: 20px; font-weight: 500; }
+/* Buttons take colour, type and margin from the page, as the approved mockup renders them. */
 button, select { font: inherit; color: inherit; margin: 0; }
 a { color: var(--busy-ink); }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
@@ -1435,9 +1443,8 @@ a { color: var(--busy-ink); }
 .usd { font-size: 12px; font-weight: 400; color: var(--ink-2); }
 .tx { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .seg { display: inline-flex; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
-.seg button { height: 28px; padding: 0 12px; border: 0; border-radius: 4px; background: none; color: var(--ink-2); cursor: pointer; white-space: nowrap; }
-.seg button:hover { color: var(--ink); }
-.seg button[aria-pressed="true"] { background: var(--sunk); color: var(--ink); }
+.seg button { height: 28px; padding: 0 12px; border: 0; border-radius: 4px; background: none; cursor: pointer; white-space: nowrap; }
+.seg button[aria-pressed="true"] { background: var(--sunk); }
 .kv { display: flex; flex-direction: column; min-width: 0; }
 .kv .k { font-size: 12px; line-height: 16px; color: var(--ink-2); }
 .kv .v { font-size: 14px; line-height: 20px; font-weight: 500; white-space: nowrap; }
@@ -1484,9 +1491,8 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 .d-main { container: main / inline-size; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .d-side { min-width: 0; }
 .tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--line); }
-.tabs button { padding: 4px 12px 8px; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; background: none; color: var(--ink-2); cursor: pointer; }
-.tabs button:hover { color: var(--ink); }
-.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+.tabs button { padding: 4px 12px 8px; border: 0; border-bottom: 2px solid transparent; background: none; cursor: pointer; }
+.tabs button[aria-selected="true"] { border-bottom-color: var(--ink); }
 @container dash (max-width: 720px) {
   .d-counts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .needs-list { grid-template-columns: minmax(0, 1fr); }
@@ -1551,8 +1557,8 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 /* detail panel */
 .detail { display: flex; flex-direction: column; gap: 16px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
 .dt-top { display: flex; flex-direction: column; gap: 12px; }
-.x { flex: none; width: 28px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); cursor: pointer; line-height: 24px; }
-.link { align-self: flex-start; padding: 0; border: 0; background: none; color: var(--busy-ink); cursor: pointer; font-size: 12px; line-height: 16px; }
+.x { flex: none; width: 28px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); cursor: pointer; }
+.link { align-self: flex-start; padding: 0; border: 0; background: none; cursor: pointer; }
 .dt-facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px 16px; }
 .dt-facts .v { white-space: normal; }
 .dt-sec { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line-2); }
@@ -1619,7 +1625,7 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 /* timeline */
 .c { display: flex; flex-direction: column; gap: 12px; }
 .c-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
-.c-bar .seg button { height: 24px; padding: 0 8px; font-size: 12px; line-height: 24px; }
+.c-bar .seg button { height: 24px; padding: 0 8px; }
 .c-keys { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 12px; line-height: 16px; color: var(--ink-2); }
 .c-keys span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .c-keys svg { overflow: visible; }
@@ -1725,7 +1731,7 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-styles.test.mjs`
-Expected: PASS, 4 tests.
+Expected: PASS, 5 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -4418,7 +4424,7 @@ git commit -m "feat(swarm-dashboard): add the plan graph and the stage board"
 ```js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dateRange } from '../ui/format.mjs';
+import { HOUR, dateRange } from '../ui/format.mjs';
 import { historyHtml, runHtml } from '../ui/history.mjs';
 import { fixture } from './helpers/ui.mjs';
 
@@ -4454,6 +4460,19 @@ test('time by unit draws start-to-finish spans with busy time, and marks units c
   assert.match(html, /<span class="g-span no" style="left:69\.28%;width:22\.17%"><\/span>/);
   assert.match(html, /<span class="g-span" style="left:0\.00%;width:100\.00%"><\/span>/);
   assert.deepEqual([...html.matchAll(/<span style="left:[\d.]+%">(\d+h)<\/span>/g)].map(match => match[1]), ['0h', '12h', '24h', '36h', '48h', '60h', '72h']);
+});
+
+test('bars stay inside the track when a unit starts before the run or ends after it', () => {
+  const summary = fixture('example-run-summary.json');
+  const [orchestrator, first, second] = summary.units;
+  const late = { ...first, endedAt: summary.finishedAt + 3 * HOUR };
+  const early = { ...second, startedAt: summary.startedAt - HOUR };
+  const html = runHtml({ ...summary, units: [orchestrator, late, early] });
+  const bars = [...html.matchAll(/class="g-(span|busy)[^"]*" style="left:([\d.]+)%;width:([\d.]+)%"/g)].map(([, kind, left, width]) => ({ kind, left: Number(left), width: Number(width) }));
+  assert.equal(bars.length, 6);
+  for (const bar of bars) assert.ok(bar.left + bar.width <= 100.005, `${bar.kind} ${bar.left} + ${bar.width}`);
+  assert.deepEqual(bars[4], { kind: 'span', left: 0, width: Number((((early.endedAt - summary.startedAt) / summary.tookMs) * 100).toFixed(2)) });
+  assert.ok(text(html).includes('A1 model busy 6h 06m 74h 52m'));
 });
 
 test('cost breaks down by unit, by model and by sub-agent type', () => {
@@ -4523,11 +4542,14 @@ export function runHtml(run) {
   const gantt = run.units.map(unit => {
     const start = unit.startedAt - run.startedAt;
     const end = (unit.endedAt ?? run.finishedAt) - run.startedAt;
+    // A unit can end after the run's last activity (a PR merged later), so clip its bars to the track.
+    const from = Math.min(took, Math.max(0, start));
+    const to = Math.min(took, Math.max(from, end));
     const closed = !unit.isOrchestrator && (unit.outcome === 'closed' || unit.outcome === 'failed');
     const note = closed ? (unit.outcome === 'failed' ? ', failed' : ', not merged') : '';
     return `<div class="g-row"><div class="g-lab"><span>${esc(unitName(unit))}</span><span class="small muted">busy ${dur(unit.busyMs, 'hm')}${note}</span></div>`
-      + `<div class="g-track"><span class="g-span${closed ? ' no' : ''}" style="left:${pct(start, took)}%;width:${pct(end - start, took)}%"></span>`
-      + `<span class="g-busy" style="left:${pct(start, took)}%;width:${pct(Math.min(unit.busyMs, took - start), took)}%"></span></div>`
+      + `<div class="g-track"><span class="g-span${closed ? ' no' : ''}" style="left:${pct(from, took)}%;width:${pct(to - from, took)}%"></span>`
+      + `<span class="g-busy" style="left:${pct(from, took)}%;width:${pct(Math.min(unit.busyMs, took - from), took)}%"></span></div>`
       + `<span class="g-num">${dur(end - start, 'hm')}</span></div>`;
   }).join('');
   const axis = `<div class="g-axis"><div></div><div>${ticksFor(took / HOUR).map(hour => `<span style="left:${pct(hour * HOUR, took)}%">${hour}h</span>`).join('')}</div><div></div></div>`;
@@ -4559,7 +4581,7 @@ export function runHtml(run) {
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-history.test.mjs tests/ui-app.test.mjs`
-Expected: PASS (5 + 10 tests).
+Expected: PASS (6 + 10 tests).
 
 - [ ] **Step 5: Look at it in a browser and commit**
 
