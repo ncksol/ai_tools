@@ -8,6 +8,7 @@ import {
   withReadOnly,
 } from '../engine/sqlite.mjs';
 import { TEST_BACKENDS, canWriteWithNode, execSql, openWriter } from './helpers/sqlite-writer.mjs';
+import { readSessionDb } from '../engine/readers/session-files.mjs';
 import { tempDir } from './helpers/temp.mjs';
 
 const dir = tempDir('swarm-sqlite-');
@@ -380,6 +381,55 @@ test('a failed read closes the connection, and the next read opens a new one', {
     assert.equal(reader.openConnections, 0);
     assert.deepEqual((await reader.read(file, values)).map(row => row.v), ['x']);
     assert.equal(reader.opened, 2);
+  } finally {
+    reader.close();
+    writer.close();
+  }
+});
+
+test('a statement that fails inside a callback that catches it still discards the connection', { skip: !canWriteWithNode }, async () => {
+  const folder = tempDir('swarm-caught-');
+  const file = path.join(folder, 'live.db');
+  const writer = openWriter(file);
+  const reader = createSqliteReader({ backend: 'node' });
+  try {
+    writer.exec(`${SCHEMA} INSERT INTO t (v) VALUES ('x');`);
+    const first = await reader.read(file, async db => {
+      try {
+        await db.all('SELECT * FROM no_such_table');
+      } catch {
+        // the callback handles the failure itself, as readSessionDb's safe() does
+      }
+      return values(db);
+    });
+    assert.deepEqual(first.map(row => row.v), ['x']);
+    assert.equal(reader.opened, 1);
+    assert.equal(reader.openConnections, 0, 'the failed connection is not kept');
+    assert.deepEqual((await reader.read(file, values)).map(row => row.v), ['x']);
+    assert.equal(reader.opened, 2);
+    assert.deepEqual((await reader.read(file, values)).map(row => row.v), ['x']);
+    assert.equal(reader.opened, 2, 'a connection with no failure is reused');
+  } finally {
+    reader.close();
+    writer.close();
+  }
+});
+
+test('a live session.db without todo_deps or children is read twice on one connection', { skip: !canWriteWithNode }, async () => {
+  const folder = tempDir('swarm-session-db-');
+  const file = path.join(folder, 'session.db');
+  const writer = openWriter(file);
+  const reader = createSqliteReader({ backend: 'node' });
+  try {
+    writer.exec("PRAGMA journal_mode = WAL; CREATE TABLE todos (id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT, status TEXT); INSERT INTO todos (id, title, status) VALUES ('a', 'First', 'done');");
+    for (let i = 0; i < 2; i += 1) {
+      const result = await readSessionDb(file, reader);
+      assert.deepEqual(result.todos.map(todo => [todo.id, todo.status]), [['a', 'done']]);
+      assert.deepEqual(result.deps, []);
+      assert.equal(result.children, null);
+      assert.equal(reader.opened, 1);
+      assert.equal(reader.openConnections, 1);
+    }
   } finally {
     reader.close();
     writer.close();

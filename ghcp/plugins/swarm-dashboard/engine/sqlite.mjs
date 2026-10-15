@@ -127,13 +127,18 @@ function openNodeConnection(sqlite, target) {
   return db;
 }
 
-/** Every statement runs to completion inside all(), so an idle connection holds no read transaction. */
-function nodeHandle(db, immutable, close) {
+/** Every statement runs to completion inside all(), so an idle connection holds no read transaction. onError runs before a failure is rethrown. */
+function nodeHandle(db, immutable, close, onError = null) {
   return {
     backend: 'node',
     immutable,
     async all(sql, params = []) {
-      return db.prepare(sql).all(...params).map(row => ({ ...row }));
+      try {
+        return db.prepare(sql).all(...params).map(row => ({ ...row }));
+      } catch (error) {
+        if (onError) onError();
+        throw error;
+      }
     },
     close,
   };
@@ -268,7 +273,7 @@ export function createSqliteReader(options = {}) {
   function acquire(file, sqlite) {
     const held = connections.get(file);
     if (held) {
-      if (inodeOf(file) === held.ino) {
+      if (!held.failed && inodeOf(file) === held.ino) {
         lastPath = 'live';
         return { handle: held.handle, pooled: true, entry: held };
       }
@@ -297,12 +302,12 @@ export function createSqliteReader(options = {}) {
       db.close();
       throw error;
     }
-    const handle = nodeHandle(db, false, () => {});
-    const entry = { db, ino, handle };
+    const entry = { db, ino, handle: null, failed: false };
+    entry.handle = nodeHandle(db, false, () => {}, () => { entry.failed = true; });
     connections.set(file, entry);
     opened += 1;
     lastPath = 'live';
-    return { handle, pooled: true, entry };
+    return { handle: entry.handle, pooled: true, entry };
   }
 
   return {
@@ -319,6 +324,8 @@ export function createSqliteReader(options = {}) {
         throw error;
       } finally {
         if (!lease.pooled) lease.handle.close();
+        // A callback may catch a failed statement and return normally; the connection is still discarded, so the next read reopens.
+        else if (lease.entry.failed && connections.get(file) === lease.entry) drop(file);
       }
     },
     /** Close the connections of every file not in the set. */

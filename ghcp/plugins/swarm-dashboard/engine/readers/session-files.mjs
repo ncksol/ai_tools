@@ -43,7 +43,7 @@ export function listLocks(dir) {
 export const SESSION_DB_QUERIES = Object.freeze({
   todos: 'SELECT id, title, description, status FROM todos',
   deps: 'SELECT todo_id, depends_on FROM todo_deps',
-  hasChildren: "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'children'",
+  tables: "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('todos', 'todo_deps', 'children')",
   children: `SELECT unit, session_id, title, todo_id, branch, base_branch, pr_provider, pr_repo, pr_id, pr_url, outcome,
     created_at, updated_at, ended_at FROM children`,
 });
@@ -59,9 +59,11 @@ export async function readSessionDb(file, source = {}) {
         return null;
       }
     };
-    const todos = (await safe(SESSION_DB_QUERIES.todos)) ?? [];
-    const deps = (await safe(SESSION_DB_QUERIES.deps)) ?? [];
-    const hasChildren = ((await safe(SESSION_DB_QUERIES.hasChildren)) ?? []).length > 0;
+    // Ask which tables exist first, so a normal read never runs a statement that fails (a failed statement discards a pooled connection).
+    const present = new Set(((await safe(SESSION_DB_QUERIES.tables)) ?? []).map(row => row.name));
+    const todos = present.has('todos') ? (await safe(SESSION_DB_QUERIES.todos)) ?? [] : [];
+    const deps = present.has('todo_deps') ? (await safe(SESSION_DB_QUERIES.deps)) ?? [] : [];
+    const hasChildren = present.has('children');
     return {
       todos: todos.map(todo => ({
         id: String(todo.id), title: String(todo.title ?? ''), description: typeof todo.description === 'string' ? todo.description : '',
