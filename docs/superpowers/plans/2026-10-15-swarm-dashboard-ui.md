@@ -4,7 +4,7 @@
 
 **Goal:** Build the swarm dashboard's local server with live updates, the approved UI (header, Needs you, Cards, activity feed, Timeline, Plan, Board, detail panel, History, run summary and the side-panel layout), the standalone launcher, the canvas extension, an automated layout check, and the plugin and repository docs, on top of the data engine's snapshot contract.
 
-**Architecture:** One plain Node HTTP server (`server/`) serves a no-build ES-module UI (`ui/`) and pushes snapshots over Server-Sent Events. Exactly one server runs per machine, on the fixed loopback port 7927: the first canvas to open hosts it inside its own extension process, the launcher can host it for browsers, and every other canvas reuses it after an identity check and takes it over if its host goes away. The engine inside that server exists only while pages are connected (plus a 5-minute grace period). UI rendering is pure functions from snapshot to HTML string, tested in Node; one thin browser module does the DOM work. A zero-dependency script drives a locally installed Chrome over the DevTools protocol to check every view for overlap, tokens and contrast.
+**Architecture:** One plain Node HTTP server (`server/`) serves a no-build ES-module UI (`ui/`) and pushes snapshots over Server-Sent Events. Exactly one server runs per machine, on the fixed loopback port 7927: the first canvas to open hosts it inside its own extension process, the launcher can host it for browsers, and every other canvas reuses it after an identity check and takes it over if its host goes away. The engine inside that server exists only while pages are connected (plus a 5-minute grace period). UI rendering is pure functions from snapshot to HTML string, tested in Node; one thin browser module does the DOM work, patching the page in place on every update. A zero-dependency script drives a locally installed Chrome over the DevTools protocol to check every view for overlap, tokens and contrast.
 
 **Tech Stack:** Node.js >= 18 built-ins only (`node:http`, `node:test`, `node:child_process`, `node:fs`); browser ES modules, CSS container queries and OKLCH colours; the Copilot SDK canvas API (`@github/copilot-sdk/extension`, provided by the host) in the canvas wrapper only; a local Chrome, Chromium or Edge for the layout check only.
 
@@ -81,6 +81,22 @@ Limit: the app renders canvases in WKWebView (the app is built on Tauri: its bin
 
 Builder choices within the design, listed for review: card state lines by `statusDetail` (Task 2, `STATE_LINES`; for example "Stuck · no events 48m", "Stuck · no model reply 12m", "Spinning · 9m", "Blocked on orchestrator · 5m", "Crashed · 2h ago"); the timeline, plan and board state words copied from the mockup; ring labels show the first three characters with the full label as a tooltip; the detail panel lists at most 12 sub-agents and says how many more there are; the run summary adds "First child" (time from the run's start to its first child session), which spec call 12 asks for.
 
+### 5. Decisions at the go-ahead
+
+The coordinator's go-ahead (after PR 1 finished at `bf255ab`) added these; the tasks below already include them.
+
+- The branch is rebased onto PR 1's finished branch, and Task 20 (the real engine) runs straight after Task 11, so the early preview shows real data (see Execution order).
+- A unit whose PR closed without merging, and that is not archived, stays in the PR open stage and Board column with a "closed, not merged" badge in the blocked colour; its monitor shows "ended" (Tasks 2, 4, 5, 8, 13). PR 1's engine already keeps such a unit in `pr_open` and ends its monitor.
+- Ring labels: a 4-character label (such as `C6-1`) shows whole when it fits inside the ring at 12 px, otherwise it is cut to 3 characters without a trailing separator; longer labels are cut the same way. The label is an HTML span over the ring so the layout check sees it, and the stress scenario has `C6-1` (fits) and `MM-1` (does not) (Tasks 3, 6, 8, 10).
+- `getSnapshot()` of the real engine returns its cached object: nothing may change a snapshot, and the tests prove it with deep-frozen snapshots (Tasks 2, 7, 9, 12, 13). While a swarm is live, updates arrive about every 3 s with snapshots of about 437 KB, so the page patches the DOM in place (`ui/morph.mjs`): updates do not restart animations, reset clocks or the scroll position, or flash items that did not change. The page measures every update, and the layout check fails when updates re-create cards, re-highlight items, move the scroll position or put busy rings out of phase, and reports the update times on the demo and, with `--live`, on real data (Tasks 10, 16, 21).
+- The in-app check uses a session-scoped extension in the controller's own session; nothing is installed in `~/.copilot/extensions`. If a session-scoped extension cannot provide the canvas, stop and ask the coordinator: a user-level install needs the owner's approval (Task 17).
+- The early preview runs detached on 127.0.0.1:7927 and stays up until the coordinator says to stop it (Task 20).
+- Sub-agents run as the orchestrator-worker agent, which has no task or session tools, and every prompt carries the safety clause.
+
+## Execution order
+
+Run the tasks in this order: 1–11, 20, 12–19, 21. Task 20 switches the server to PR 1's engine as soon as the launcher exists (Task 11) and ends with the early preview on real data; Task 21 does the real-data smoke check with `--live` once the layout check exists. Force-pushing this feature branch with `--force-with-lease` is approved until its pull request opens; after that, ask the coordinator.
+
 ## File Structure
 
 All paths are under `ghcp/plugins/swarm-dashboard/` unless they start with `docs/`, `.github/` or `README.md`.
@@ -95,7 +111,8 @@ All paths are under `ghcp/plugins/swarm-dashboard/` unless they start with `docs
 | `ui/plan.mjs` | Plan graph and indented list, Board |
 | `ui/history.mjs` | Finished runs list and run summary |
 | `ui/app.mjs` | Page composition: top bar, Live body (wide and narrow), History pages, empty and loading states |
-| `ui/main.mjs` | Browser glue: SSE, state, events, resizing, ticking clocks, animations, chip fitting |
+| `ui/morph.mjs` | Patch the DOM in place from new HTML, keeping the nodes that stay |
+| `ui/main.mjs` | Browser glue: SSE, state, events, resizing, ticking clocks, animations, chip and ring-label fitting, update timing |
 | `ui/styles.css` | Tokens and component styles from the mockup |
 | `ui/index.html` | Page shell |
 | `server/assets.mjs` | The fixed set of UI files the server may serve |
@@ -119,7 +136,7 @@ All paths are under `ghcp/plugins/swarm-dashboard/` unless they start with `docs
 | `tests/ui-*.test.mjs`, `tests/demo-engine.test.mjs`, `tests/server.test.mjs`, `tests/shared.test.mjs`, `tests/launcher.test.mjs`, `tests/canvas.test.mjs`, `tests/page-audit.test.mjs`, `tests/packaging.test.mjs` | Tests for this PR |
 | `tests/fixtures/layout-good.html`, `tests/fixtures/layout-bad.html` | Synthetic pages for the layout check's self-test |
 
-Task order puts an early preview after Task 11 (Cards with fixture data, served by the launcher).
+The early preview comes at the end of Task 20, right after Task 11 (see Execution order).
 
 ---
 
@@ -297,8 +314,8 @@ git commit -m "feat(swarm-dashboard): add UI formatting helpers"
 
 **Interfaces:**
 - Consumes: nothing at runtime (pure data); tests read `tests/fixtures/example-snapshot.json`.
-- Produces (`ui/model.mjs`): constants `STATUS_ORDER`, `UNIT_STAGES` (`['coding','pr_open','in_review','merged','archived']`), `BOARD_STAGES` (`['planned', ...UNIT_STAGES]`), `STAGE_NAMES`, `STAGE_CLASS` (`pr_open → 'pr'`, `in_review → 'review'`), `REPORT_LABELS`, `REPORT_CLASS` (`needs_input → 'needs'`), `NEED_LABELS`, `NEED_CLASS`, `COUNT_TILES`, `STATE_LINES`, `TIMELINE_WORDS`, `PLAN_WORDS`, `BOARD_WORDS` (word templates: `{t}` = time in state, `{a}` = age); functions `unitEnd(session): number|null`, `stateLine(session): string`, `cardUnits(snapshot): UnitView[]`, `archivedUnits(snapshot)`, `findUnit(snapshot, id)`, `findByLabel(snapshot, label)`, `findPlanned(snapshot, label)`, `progressPercent(session): number|null`, `sharePercent(value, max): number`, `needItems(snapshot): {id, kind, text, since, from, verb}[]`, `planForest(snapshot): PlanNode[]`, `planLayout(roots): {pos: Map<PlanNode,{depth,row}>, rows, maxDepth}`, `flattenPlan(roots): {node, depth}[]`, `boardColumns(snapshot): {stage, nodes}[]`. A `PlanNode` is `{ key, label, name, stage, status, dependsOn, unit, planned, children }` (`unit` or `planned` is set; `status` is `'planned'` for planned entries). A board node is `{ stage, status, unit, planned }`.
-- Produces (`tests/helpers/ui.mjs`): `fixture(name)`, `exampleSnapshot()` (a fresh copy each call), `NOW` (the example's `generatedAt`), `context(snapshot, overrides = {}): RenderContext` with `{ snapshot, now: NOW, phaseMs: 0, detail: null, fresh: { feed: Set, reports: Set, chips: Set } }`.
+- Produces (`ui/model.mjs`): constants `STATUS_ORDER`, `UNIT_STAGES` (`['coding','pr_open','in_review','merged','archived']`), `BOARD_STAGES` (`['planned', ...UNIT_STAGES]`), `STAGE_NAMES`, `STAGE_CLASS` (`pr_open → 'pr'`, `in_review → 'review'`), `REPORT_LABELS`, `REPORT_CLASS` (`needs_input → 'needs'`), `NEED_LABELS`, `NEED_CLASS`, `COUNT_TILES`, `STATE_LINES`, `TIMELINE_WORDS`, `PLAN_WORDS`, `BOARD_WORDS` (word templates: `{t}` = time in state, `{a}` = age); functions `unitEnd(session): number|null`, `closedNotMerged(unit): boolean` (its PR closed without merging and it is not archived; it stays in its PR stage and Board column with a "closed, not merged" badge in the blocked colour), `stateLine(session): string`, `cardUnits(snapshot): UnitView[]`, `archivedUnits(snapshot)`, `findUnit(snapshot, id)`, `findByLabel(snapshot, label)`, `findPlanned(snapshot, label)`, `progressPercent(session): number|null`, `sharePercent(value, max): number`, `needItems(snapshot): {id, kind, text, since, from, verb}[]`, `planForest(snapshot): PlanNode[]`, `planLayout(roots): {pos: Map<PlanNode,{depth,row}>, rows, maxDepth}`, `flattenPlan(roots): {node, depth}[]`, `boardColumns(snapshot): {stage, nodes}[]`. A `PlanNode` is `{ key, label, name, stage, status, dependsOn, unit, planned, children }` (`unit` or `planned` is set; `status` is `'planned'` for planned entries). A board node is `{ stage, status, unit, planned }`.
+- Produces (`tests/helpers/ui.mjs`): `fixture(name)`, `exampleSnapshot()` (a fresh copy each call), `NOW` (the example's `generatedAt`), `context(snapshot, overrides = {}): RenderContext` with `{ snapshot, now: NOW, phaseMs: 0, detail: null, fresh: { feed: Set, reports: Set, chips: Set } }`; `deepFreeze(value)` (the real engine's `getSnapshot()` returns its cached object, so tests freeze snapshots to prove nothing changes them); `closedSnapshot()` (the example with D5's PR closed without merging, as the engine reports it: stage `pr_open`, `closedWithoutMerge`, outcome `closed`, monitor `ended`).
 
 - [ ] **Step 1: Write the test helper**
 
@@ -314,6 +331,26 @@ export const exampleSnapshot = () => structuredClone(EXAMPLE);
 export function context(snapshot, overrides = {}) {
   return { snapshot, now: NOW, phaseMs: 0, detail: null, fresh: { feed: new Set(), reports: new Set(), chips: new Set() }, ...overrides };
 }
+
+/** Freeze a value and everything in it, so any code that changes it throws (ES modules run in strict mode). */
+export function deepFreeze(value) {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const child of Object.values(value)) deepFreeze(child);
+  }
+  return value;
+}
+
+/** The example with D5's PR closed without merging and D5 not archived, as the engine reports it. */
+export function closedSnapshot() {
+  const snapshot = exampleSnapshot();
+  const unit = snapshot.units.find(item => item.label === 'D5');
+  const closedAt = NOW - 20 * 60000;
+  Object.assign(unit, { stage: 'pr_open', closedWithoutMerge: true, outcome: 'closed', endedAt: closedAt });
+  unit.pr = { ...unit.pr, state: 'closed', closedAt };
+  unit.monitor = { ...unit.monitor, state: 'ended', nextCheckAt: null, since: null };
+  return snapshot;
+}
 ```
 
 - [ ] **Step 2: Write the failing test**
@@ -324,10 +361,10 @@ export function context(snapshot, overrides = {}) {
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  BOARD_STAGES, STATE_LINES, archivedUnits, boardColumns, cardUnits, findByLabel, findPlanned, flattenPlan, needItems,
+  BOARD_STAGES, STATE_LINES, archivedUnits, boardColumns, cardUnits, closedNotMerged, findByLabel, findPlanned, flattenPlan, needItems,
   planForest, planLayout, progressPercent, sharePercent, stateLine, unitEnd,
 } from '../ui/model.mjs';
-import { exampleSnapshot } from './helpers/ui.mjs';
+import { closedSnapshot, exampleSnapshot } from './helpers/ui.mjs';
 
 const labels = units => units.map(unit => unit.label);
 
@@ -335,6 +372,15 @@ test('cards sort stuck, question, plan, blocked, busy, idle, merged and hide arc
   const snapshot = exampleSnapshot();
   assert.deepEqual(labels(cardUnits(snapshot)), ['I1', 'B2', 'F1', 'B1', 'D5', 'F2a']);
   assert.deepEqual(labels(archivedUnits(snapshot)), ['B0']);
+});
+
+test('a unit whose PR closed without merging is marked until it is archived', () => {
+  const d5 = findByLabel(closedSnapshot(), 'D5');
+  assert.equal(closedNotMerged(d5), true);
+  assert.equal(d5.stage, 'pr_open');
+  assert.equal(closedNotMerged({ ...d5, stage: 'archived' }), false);
+  assert.equal(closedNotMerged({ ...d5, outcome: 'failed', pr: { ...d5.pr, state: 'open' } }), false);
+  assert.equal(closedNotMerged(findByLabel(exampleSnapshot(), 'F2a')), false);
 });
 
 test('a unit ends at endedAt, else at its PR outcome when it has one', () => {
@@ -482,6 +528,9 @@ export function unitEnd(session) {
   return session.pr?.mergedAt ?? session.pr?.closedAt ?? null;
 }
 
+/** Its PR closed without merging and it is not archived: it stays in its PR stage, with a badge (approved decision 5). */
+export const closedNotMerged = unit => Boolean(unit.closedWithoutMerge && unit.pr && unit.stage !== 'archived' && (unit.pr.state === 'closed' || unit.outcome === 'closed'));
+
 export const stateLine = session => STATE_LINES[session.statusDetail] ?? STATE_LINES[session.status] ?? '{t}';
 
 /** Units shown as cards: attention first, then creation order; archived units leave the Cards tab. */
@@ -597,7 +646,7 @@ export function boardColumns(snapshot) {
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-model.test.mjs`
-Expected: PASS, 9 tests.
+Expected: PASS, 10 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -614,7 +663,8 @@ git commit -m "feat(swarm-dashboard): derive card order, needs, plan and board f
 
 **Interfaces:**
 - Consumes: `esc`, `elapsed`, `ago`, `countdown` (Task 1); `STAGE_NAMES`, `UNIT_STAGES`, `REPORT_CLASS`, `REPORT_LABELS`, `stateLine` (Task 2).
-- Produces: `phase(seconds, phaseMs): string` (an `animation-delay` that keeps re-rendered animations in phase; `ui/main.mjs` passes `performance.now()`); `fill(template, at, now): string`; `ring(status, label, phaseMs = 0)`; `stateLineHtml(session, now)`; `stageTrack(stage)`; `badge(reportStatus)`; `reportClass(reportStatus)`; `meter(pct)`; `bar(pct)`; `monitorHtml(unit, now, long = false)`; `chipsHtml(session, now, freshChips = new Set())`; `feedList(items, limit, now, freshFeed = new Set(), empty = 'No activity yet')`.
+- List items carry `data-key` (chips: the sub-agent id, or `tool` for the open tool; feed items: the FeedItem id) so `morph()` matches them across updates.
+- Produces: `phase(seconds, phaseMs): string` (the attributes `data-phase style="animation-delay:…"`, a negative delay that keeps re-rendered animations in phase; `ui/main.mjs` passes `performance.now()`, and `morph()` (Task 10) keeps the delay of an element that is already running); `fill(template, at, now): string`; `ring(status, label, phaseMs = 0)` (the label is an HTML `.ring-l` span over the SVG, so the layout check sees it: labels of up to 4 characters whole, a 4-character one marked `data-fit` so `ui/main.mjs` cuts it when it does not fit, longer ones cut by `shortLabel`); `shortLabel(label): string` (the first 3 characters without a trailing `.`, `_` or `-`); `stateLineHtml(session, now)`; `stageTrack(stage)`; `badge(reportStatus)`; `closedBadge` (the "closed, not merged" badge in the blocked colour); `reportClass(reportStatus)`; `meter(pct)`; `bar(pct)`; `monitorHtml(unit, now, long = false)`; `chipsHtml(session, now, freshChips = new Set())`; `feedList(items, limit, now, freshFeed = new Set(), empty = 'No activity yet')`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -624,7 +674,7 @@ git commit -m "feat(swarm-dashboard): derive card order, needs, plan and board f
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { findByLabel } from '../ui/model.mjs';
-import { bar, chipsHtml, feedList, fill, meter, monitorHtml, phase, ring, stageTrack, stateLineHtml } from '../ui/parts.mjs';
+import { bar, chipsHtml, feedList, fill, meter, monitorHtml, phase, ring, shortLabel, stageTrack, stateLineHtml } from '../ui/parts.mjs';
 import { NOW, exampleSnapshot } from './helpers/ui.mjs';
 
 const text = html => html.replace(/<[^>]+>/g, '');
@@ -633,9 +683,18 @@ test('rings spin when busy, blink dashed when stuck and lose their arc when arch
   assert.match(ring('busy', 'B1', 1000), /class="arc spin"[^>]*stroke-dasharray="29\.9 106\.8"[^>]*animation-delay:-1\.00s/);
   assert.match(ring('stuck', 'I1'), /class="arc stuck"/);
   assert.doesNotMatch(ring('archived', 'B0'), /class="arc/);
-  assert.match(ring('idle', 'LONGLABEL'), /title="LONGLABEL".*>LON<\/text>/);
   assert.match(ring('idle', '<x>'), /&lt;x&gt;/);
-  assert.equal(phase(2.4, 3000), 'animation-delay:-0.60s');
+  assert.equal(phase(2.4, 3000), 'data-phase style="animation-delay:-0.60s"');
+});
+
+test('ring labels show up to four characters; a four-character label may still be cut, longer ones are', () => {
+  assert.match(ring('idle', 'B1'), /<span class="ring-l">B1<\/span>/);
+  assert.match(ring('idle', 'C6-1'), /title="C6-1".*<span class="ring-l" data-fit>C6-1<\/span>/);
+  assert.match(ring('idle', 'LONGLABEL'), /title="LONGLABEL".*<span class="ring-l">LON<\/span>/);
+  assert.match(ring('idle', 'B2-x1'), /<span class="ring-l">B2<\/span>/);
+  assert.equal(shortLabel('C6-1'), 'C6');
+  assert.equal(shortLabel('F2a'), 'F2a');
+  assert.equal(shortLabel('A_._b'), 'A');
 });
 
 test('state lines and word templates insert live times', () => {
@@ -671,7 +730,7 @@ test('chips show running sub-agents and the open call of a stuck session', () =>
   const snapshot = exampleSnapshot();
   const b1 = chipsHtml(findByLabel(snapshot, 'B1'), NOW, new Set(['call-b1-8']));
   assert.equal(text(b1), 'code-review 6m');
-  assert.match(b1, /class="chip st-busy is-new" title="Review PR #418"/);
+  assert.match(b1, /class="chip st-busy is-new" data-key="call-b1-8" title="Review PR #418"/);
   assert.equal(text(chipsHtml(findByLabel(snapshot, 'I1'), NOW)), 'bash: dotnet test --filter E2E · 48m');
   assert.match(chipsHtml(findByLabel(snapshot, 'I1'), NOW), /class="chip st-stuck"/);
   assert.equal(text(chipsHtml(findByLabel(snapshot, 'D5'), NOW)), 'No active sub-agents');
@@ -681,8 +740,8 @@ test('feed lists escape text, cap their length and mark new items', () => {
   const snapshot = exampleSnapshot();
   const html = feedList(snapshot.feed, 3, NOW, new Set([snapshot.feed[1].id]));
   assert.equal((html.match(/<li /g) ?? []).length, 3);
-  assert.match(html, /<li class="fi"><span class="fi-t"><span data-t="\d+" data-f="age">4m ago<\/span><\/span><span><span class="fi-u">SB<\/span> started explore: map-import-module<\/span><\/li>/);
-  assert.match(html, /<li class="fi is-new">/);
+  assert.match(html, /<li class="fi" data-key="[^"]+"><span class="fi-t"><span data-t="\d+" data-f="age">4m ago<\/span><\/span><span><span class="fi-u">SB<\/span> started explore: map-import-module<\/span><\/li>/);
+  assert.match(html, /<li class="fi is-new" data-key="[^"]+">/);
   assert.match(feedList([{ ...snapshot.feed[0], text: '<img onerror=x>' }], 1, NOW), /&lt;img onerror=x&gt;/);
   assert.equal(feedList([], 6, NOW, new Set(), 'No recent activity'), '<p class="none">No recent activity</p>');
 });
@@ -701,21 +760,32 @@ import { REPORT_CLASS, REPORT_LABELS, STAGE_NAMES, UNIT_STAGES, stateLine } from
 
 const RING = 2 * Math.PI * 17;
 
-/** Negative animation delay that keeps a re-rendered animation in phase; phaseMs is performance.now() at render. */
-export const phase = (seconds, phaseMs) => `animation-delay:-${((phaseMs / 1000) % seconds).toFixed(2)}s`;
+/**
+ * Attributes for an endless animation that stays in phase across renders: a negative delay from performance.now() at
+ * render (phaseMs), and data-phase, which tells morph() to keep the delay of an element whose animation already runs.
+ */
+export const phase = (seconds, phaseMs) => `data-phase style="animation-delay:-${((phaseMs / 1000) % seconds).toFixed(2)}s"`;
+
+/** The first three characters of a label, without a trailing separator. */
+export const shortLabel = label => String(label).slice(0, 3).replace(/[._-]+$/, '');
 
 /** Escape a word template and fill {t} (time in state) and {a} (age) with live times. */
 export function fill(template, at, now) {
   return esc(template).replace('{t}', elapsed(at, now)).replace('{a}', ago(at, now));
 }
 
-/** 40 px status ring with the first three characters of the label; the full label is the tooltip. */
+/**
+ * 40 px status ring around the label; the full label is the tooltip. Labels of up to four characters show whole, and
+ * main.mjs cuts a four-character one (data-fit) to shortLabel() when it does not fit inside the ring.
+ */
 export function ring(status, label, phaseMs = 0) {
+  const text = String(label);
   let arc = '';
-  if (status === 'busy') arc = `<circle class="arc spin" cx="20" cy="20" r="17" stroke-dasharray="${(RING * 0.28).toFixed(1)} ${RING.toFixed(1)}" style="${phase(4, phaseMs)}"/>`;
-  else if (status === 'stuck') arc = `<circle class="arc stuck" cx="20" cy="20" r="17" style="${phase(2.4, phaseMs)}"/>`;
+  if (status === 'busy') arc = `<circle class="arc spin" cx="20" cy="20" r="17" stroke-dasharray="${(RING * 0.28).toFixed(1)} ${RING.toFixed(1)}" ${phase(4, phaseMs)}/>`;
+  else if (status === 'stuck') arc = `<circle class="arc stuck" cx="20" cy="20" r="17" ${phase(2.4, phaseMs)}/>`;
   else if (status !== 'archived') arc = '<circle class="arc" cx="20" cy="20" r="17"/>';
-  return `<span class="ring st-${status}" title="${esc(label)}"><svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true"><circle class="trk" cx="20" cy="20" r="17"/>${arc}<text x="20" y="20.5">${esc(String(label).slice(0, 3))}</text></svg></span>`;
+  return `<span class="ring st-${status}" title="${esc(text)}"><svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true"><circle class="trk" cx="20" cy="20" r="17"/>${arc}</svg>`
+    + `<span class="ring-l"${text.length === 4 ? ' data-fit' : ''}>${esc(text.length <= 4 ? text : shortLabel(text))}</span></span>`;
 }
 
 export const stateLineHtml = (session, now) => fill(stateLine(session), session.since, now);
@@ -726,6 +796,7 @@ export function stageTrack(stage) {
 }
 
 export const badge = status => `<span class="badge">${REPORT_LABELS[status]}</span>`;
+export const closedBadge = '<span class="badge rp-blocked">closed, not merged</span>';
 export const reportClass = status => `rp-${REPORT_CLASS[status]}`;
 export const meter = pct => `<span class="meter"><i style="width:${pct}%"></i></span>`;
 export const bar = pct => `<span class="bar"><i style="width:${pct}%"></i></span>`;
@@ -753,10 +824,10 @@ export function monitorHtml(unit, now, long = false) {
 export function chipsHtml(session, now, freshChips = new Set()) {
   const chips = session.subagents
     .filter(sub => sub.status === 'running' || sub.status === 'stuck')
-    .map(sub => `<span class="chip st-${sub.status === 'stuck' ? 'stuck' : 'busy'}${freshChips.has(sub.id) ? ' is-new' : ''}" title="${esc(sub.task ?? sub.name)}"><span class="dot"></span><span class="chip-t">${esc(sub.type)} ${elapsed(sub.startedAt, now)}</span></span>`);
+    .map(sub => `<span class="chip st-${sub.status === 'stuck' ? 'stuck' : 'busy'}${freshChips.has(sub.id) ? ' is-new' : ''}" data-key="${esc(sub.id)}" title="${esc(sub.task ?? sub.name)}"><span class="dot"></span><span class="chip-t">${esc(sub.type)} ${elapsed(sub.startedAt, now)}</span></span>`);
   const tool = session.activity.tool;
   if (session.status === 'stuck' && tool) {
-    chips.push(`<span class="chip st-stuck" title="${esc(tool.summary)}"><span class="dot"></span><span class="chip-t">${esc(tool.summary)} · ${elapsed(tool.startedAt, now)}</span></span>`);
+    chips.push(`<span class="chip st-stuck" data-key="tool" title="${esc(tool.summary)}"><span class="dot"></span><span class="chip-t">${esc(tool.summary)} · ${elapsed(tool.startedAt, now)}</span></span>`);
   }
   return chips.length ? chips.join('') : '<span class="none">No active sub-agents</span>';
 }
@@ -764,7 +835,7 @@ export function chipsHtml(session, now, freshChips = new Set()) {
 /** Activity list, latest first. */
 export function feedList(items, limit, now, freshFeed = new Set(), empty = 'No activity yet') {
   if (!items.length) return `<p class="none">${esc(empty)}</p>`;
-  const rows = items.slice(0, limit).map(item => `<li class="fi${freshFeed.has(item.id) ? ' is-new' : ''}"><span class="fi-t">${ago(item.at, now)}</span><span><span class="fi-u">${esc(item.label)}</span> ${esc(item.text)}</span></li>`);
+  const rows = items.slice(0, limit).map(item => `<li class="fi${freshFeed.has(item.id) ? ' is-new' : ''}" data-key="${esc(item.id)}"><span class="fi-t">${ago(item.at, now)}</span><span><span class="fi-u">${esc(item.label)}</span> ${esc(item.text)}</span></li>`);
   return `<ol class="feed2">${rows.join('')}</ol>`;
 }
 ```
@@ -772,7 +843,7 @@ export function feedList(items, limit, now, freshFeed = new Set(), empty = 'No a
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-parts.test.mjs`
-Expected: PASS, 6 tests. (F2a's `since` is 36 hours before `NOW`, which formats as `1d 12h ago`.)
+Expected: PASS, 7 tests. (F2a's `since` is 36 hours before `NOW`, which formats as `1d 12h ago`.)
 
 - [ ] **Step 5: Commit**
 
@@ -801,11 +872,18 @@ import assert from 'node:assert/strict';
 import { esc } from '../ui/format.mjs';
 import { cardsHtml, headerHtml, needsHtml } from '../ui/live.mjs';
 import { findByLabel } from '../ui/model.mjs';
-import { NOW, context, exampleSnapshot } from './helpers/ui.mjs';
+import { NOW, closedSnapshot, context, exampleSnapshot } from './helpers/ui.mjs';
 
 const text = html => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 const card = (html, id) => html.split('<article').find(part => part.includes(`data-open="${id}"`));
 const cardIds = html => [...html.matchAll(/<article class="b-card[^"]*" data-open="([^"]+)"/g)].map(match => match[1]);
+
+test('a unit whose PR closed without merging stays in PR open with a badge, and its monitor has ended', () => {
+  const d5 = card(cardsHtml(context(closedSnapshot())), 'ws-0007-d5');
+  assert.match(d5, /<span class="r">PR open<\/span>/);
+  assert.match(d5, /<span class="mon mon-ended"><span class="dot"><\/span>ended<span class="badge rp-blocked">closed, not merged<\/span><\/span>/);
+  assert.doesNotMatch(card(cardsHtml(context(exampleSnapshot())), 'ws-0007-d5'), /closed, not merged/);
+});
 
 test('the header shows the run, its running time, swarm cost and counts by bucket', () => {
   const html = headerHtml(context(exampleSnapshot()));
@@ -828,7 +906,7 @@ test('Needs you lists each item with its unit and wait time, or says nothing is 
   const snapshot = exampleSnapshot();
   const html = needsHtml(context(snapshot));
   assert.match(text(html), /Needs you 2 waiting, longest first/);
-  assert.deepEqual([...html.matchAll(/<div class="need st-(\w+)">/g)].map(match => match[1]), ['plan', 'pr']);
+  assert.deepEqual([...html.matchAll(/<div class="need st-(\w+)" data-key="[^"]+">/g)].map(match => match[1]), ['plan', 'pr']);
   assert.ok(html.includes(esc(snapshot.needs[0].text)));
   assert.match(text(html), /Plan to approve .* B2 import · waiting 38m/);
   assert.match(text(html), /PR to approve .* D5 docs · waiting 25m/);
@@ -842,7 +920,7 @@ test('a stalled swarm is the first Needs you item, in stuck colours', () => {
   const snapshot = exampleSnapshot();
   snapshot.run.stalled = { since: NOW - 600000, reason: 'Swarm rule: the orchestrator and every open child are idle, and no monitor is due.' };
   const html = needsHtml(context(snapshot));
-  assert.deepEqual([...html.matchAll(/<div class="need st-(\w+)">/g)].map(match => match[1]), ['stuck', 'plan', 'pr']);
+  assert.deepEqual([...html.matchAll(/<div class="need st-(\w+)" data-key="[^"]+">/g)].map(match => match[1]), ['stuck', 'plan', 'pr']);
   assert.match(text(html), /Swarm stalled Swarm rule: the orchestrator .* Sample story B · stalled 10m/);
 });
 
@@ -868,7 +946,7 @@ test('ended, stuck, report-less and task-list-less cards say so', () => {
   const f2a = card(html, 'ws-0002-f2a');
   assert.match(text(f2a), /Ran 23h 50m 00s/);
   assert.doesNotMatch(f2a, /data-f="clock"/);
-  assert.match(card(html, 'ws-0005-i1'), /class="chip st-stuck" title="bash: dotnet test --filter E2E"/);
+  assert.match(card(html, 'ws-0005-i1'), /class="chip st-stuck" data-key="tool" title="bash: dotnet test --filter E2E"/);
   const d5 = card(html, 'ws-0007-d5');
   assert.match(text(d5), /No report yet .*Progress No task list/);
   assert.doesNotMatch(d5, /class="bar"/);
@@ -903,9 +981,9 @@ Expected: FAIL with `Cannot find module '.../ui/live.mjs'`.
 ```js
 import { ago, costHtml, costText, dur, elapsed, esc, liveTime } from './format.mjs';
 import {
-  COUNT_TILES, NEED_CLASS, NEED_LABELS, STAGE_NAMES, archivedUnits, cardUnits, needItems, progressPercent, sharePercent, unitEnd,
+  COUNT_TILES, NEED_CLASS, NEED_LABELS, STAGE_NAMES, archivedUnits, cardUnits, closedNotMerged, needItems, progressPercent, sharePercent, unitEnd,
 } from './model.mjs';
-import { badge, bar, chipsHtml, feedList, meter, monitorHtml, reportClass, ring, stageTrack, stateLineHtml } from './parts.mjs';
+import { badge, bar, chipsHtml, closedBadge, feedList, meter, monitorHtml, reportClass, ring, stageTrack, stateLineHtml } from './parts.mjs';
 
 /**
  * @typedef {{ snapshot: object, now: number, phaseMs: number, detail: string|null,
@@ -928,7 +1006,7 @@ export function needsHtml({ snapshot, now }) {
   const items = needItems(snapshot);
   const head = `<div class="sec-h"><h3>Needs you</h3><span class="small muted">${items.length ? `${items.length} waiting, longest first` : 'Nothing waiting'}</span></div>`;
   if (!items.length) return `<section class="needs" aria-label="Needs you">${head}</section>`;
-  const list = items.map(item => `<div class="need st-${NEED_CLASS[item.kind]}"><span class="small need-k"><span class="dot"></span>${NEED_LABELS[item.kind]}</span>`
+  const list = items.map(item => `<div class="need st-${NEED_CLASS[item.kind]}" data-key="${esc(item.id)}"><span class="small need-k"><span class="dot"></span>${NEED_LABELS[item.kind]}</span>`
     + `<span class="need-t" title="${esc(item.text)}">${esc(item.text)}</span>`
     + `<span class="small muted">${esc(item.from)} · ${item.verb} ${elapsed(item.since, now)}</span></div>`).join('');
   return `<section class="needs" aria-label="Needs you">${head}<div class="needs-list">${list}</div></section>`;
@@ -954,7 +1032,7 @@ export function cardHtml(unit, ctx) {
     + `<span class="k">Cost</span><span class="v">${costHtml(unit.cost.credits)}</span><span></span>${meter(sharePercent(unit.cost.credits, snapshot.cost.maxUnitCredits))}</div>`
     + reportRow(unit, now, fresh)
     + `<div class="b-rows st-${unit.status}">${progressRow}<span class="k">Stage</span>${stageTrack(unit.stage)}<span class="r">${STAGE_NAMES[unit.stage]}</span>`
-    + `<span class="k">Monitor</span><span class="mon mon-${unit.monitor.state}">${monitorHtml(unit, now)}</span></div>`
+    + `<span class="k">Monitor</span><span class="mon mon-${unit.monitor.state}">${monitorHtml(unit, now)}${closedNotMerged(unit) ? closedBadge : ''}</span></div>`
     + `<div class="chips">${chipsHtml(unit, now, fresh.chips)}</div></article>`;
 }
 
@@ -972,7 +1050,7 @@ The `costText`, `feedList` and `elapsed` imports are used by Task 5's additions 
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-live.test.mjs`
-Expected: PASS, 9 tests.
+Expected: PASS, 10 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -999,7 +1077,7 @@ git commit -m "feat(swarm-dashboard): render the header, Needs you and unit card
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { activityHtml, detailHtml, railHtml } from '../ui/live.mjs';
-import { context, exampleSnapshot } from './helpers/ui.mjs';
+import { closedSnapshot, context, exampleSnapshot } from './helpers/ui.mjs';
 
 const text = html => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 const items = html => (html.match(/<li class="fi/g) ?? []).length;
@@ -1028,6 +1106,12 @@ test('the detail panel explains a stuck unit', () => {
   assert.match(words, /Sub-agents None in this session/);
   assert.match(words, /PR and monitor No PR yet\. A PR monitor starts when the PR opens\./);
   assert.match(words, /Recent activity No recent activity$/);
+});
+
+test('the detail panel shows a PR closed without merging with the badge and when it closed', () => {
+  const html = detailHtml('ws-0007-d5', false, context(closedSnapshot()));
+  assert.match(html, /<span class="k">State<\/span><span class="pr-state"><span class="badge rp-blocked">closed, not merged<\/span><span>/);
+  assert.match(text(html), /State closed, not merged 20m ago Reviews review required Monitor ended/);
 });
 
 test('the detail panel lists sub-agents, the PR, the monitor and recent activity', () => {
@@ -1117,7 +1201,10 @@ function prState(pr, now) {
 function prHtml(unit, now) {
   const { pr, monitor } = unit;
   if (!pr) return '<p class="small muted">No PR yet. A PR monitor starts when the PR opens.</p>';
-  return `<div class="dt-kv"><span class="k">PR</span><span>#${pr.id}${pr.title ? ` ${esc(pr.title)}` : ''}</span><span class="k">State</span><span>${prState(pr, now)}</span>`
+  const state = closedNotMerged(unit)
+    ? `<span class="pr-state">${closedBadge}${pr.closedAt ? `<span>${ago(pr.closedAt, now)}</span>` : ''}</span>`
+    : `<span>${prState(pr, now)}</span>`;
+  return `<div class="dt-kv"><span class="k">PR</span><span>#${pr.id}${pr.title ? ` ${esc(pr.title)}` : ''}</span><span class="k">State</span>${state}`
     + (pr.reviewNote ? `<span class="k">Reviews</span><span>${esc(pr.reviewNote)}</span>` : '')
     + `<span class="k">Monitor</span><span class="mon mon-${monitor.state}">${monitorHtml(unit, now, true)}</span>`
     + (monitor.everyMinutes && monitor.state === 'alive' ? `<span class="k">Schedule</span><span>every ${monitor.everyMinutes} min</span>` : '')
@@ -1155,7 +1242,7 @@ export function detailHtml(unitId, inMain, ctx) {
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-live.test.mjs tests/ui-detail.test.mjs`
-Expected: PASS, 14 tests.
+Expected: PASS, 16 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1393,13 +1480,13 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 .b-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .b-state { font-size: 12px; line-height: 16px; color: var(--c-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .b-pr { font-size: 12px; line-height: 16px; color: var(--ink-2); white-space: nowrap; }
-.ring { flex: none; }
+.ring { position: relative; flex: none; }
 .ring svg { display: block; }
 .ring .trk { fill: none; stroke: var(--line); stroke-width: 4; }
 .ring .arc { fill: none; stroke: var(--c); stroke-width: 4; stroke-linecap: round; }
 .ring .arc.spin { transform-origin: 20px 20px; animation: spin 4s linear infinite; }
 .ring .arc.stuck { stroke-dasharray: 4 4; stroke-linecap: butt; animation: blink 2.4s ease-in-out infinite; }
-.ring text { font-size: 12px; font-weight: 500; fill: var(--ink); text-anchor: middle; dominant-baseline: central; }
+.ring-l { position: absolute; left: 5px; top: 12px; width: 30px; font-size: 12px; line-height: 16px; font-weight: 500; color: var(--ink); text-align: center; white-space: nowrap; overflow: hidden; }
 .b-metrics { display: grid; grid-template-columns: 56px minmax(0, 1fr); row-gap: 4px; column-gap: 8px; align-items: baseline; }
 .b-metrics .k, .b-rows .k { font-size: 12px; line-height: 16px; color: var(--ink-2); }
 .b-metrics .v { font-size: 18px; line-height: 24px; font-weight: 500; white-space: nowrap; }
@@ -1409,7 +1496,7 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 .meter i { background: var(--meter); }
 .bar i { background: var(--c); }
 .b-rep { display: flex; align-items: center; gap: 8px; height: 20px; min-width: 0; }
-.badge { flex: none; height: 20px; padding: 0 8px; border-radius: 4px; font-size: 12px; line-height: 20px; color: var(--r); background: color-mix(in oklch, var(--r) 12%, var(--surface)); }
+.badge { display: inline-flex; flex: none; height: 20px; padding: 0 8px; border-radius: 4px; font-size: 12px; line-height: 20px; color: var(--r); background: color-mix(in oklch, var(--r) 12%, var(--surface)); }
 .b-rep-t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .b-age { flex: none; font-size: 12px; line-height: 16px; color: var(--ink-2); }
 .b-rep.is-new { animation: flash 1.6s cubic-bezier(.25, 1, .5, 1); }
@@ -1421,6 +1508,7 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 .stage i { flex: 1; border-radius: 2px; background: var(--line-2); }
 .stage i.on { background: var(--stg-ink); }
 .mon { display: flex; align-items: center; gap: 4px; font-size: 12px; line-height: 16px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.mon .badge { margin-left: 4px; }
 .mon .dot { width: 6px; height: 6px; }
 .mon-alive .dot { background: var(--merged-ink); }
 .mon-missing, .mon-paused { color: var(--blocked-ink); }
@@ -1450,6 +1538,7 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 .dt-kv { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 4px 8px; font-size: 12px; line-height: 16px; }
 .dt-kv .k { color: var(--ink-2); }
 .dt-kv > span { min-width: 0; overflow-wrap: anywhere; }
+.pr-state { display: flex; align-items: center; gap: 8px; }
 .code { padding: 0 4px; border-radius: 4px; background: var(--sunk); }
 .dt-rep-h { display: flex; align-items: center; gap: 8px; }
 .dt-p { font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
@@ -1643,7 +1732,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { isNarrow, renderApp } from '../ui/app.mjs';
-import { NOW, exampleSnapshot, fixture } from './helpers/ui.mjs';
+import { NOW, deepFreeze, exampleSnapshot, fixture } from './helpers/ui.mjs';
 
 const view = (overrides = {}) => ({
   page: 'live', tab: 'cards', detail: null, span: '12h', narrow: false, loaded: true, snapshot: exampleSnapshot(),
@@ -1685,9 +1774,17 @@ test('in wide mode the detail panel takes the rail\'s place', () => {
   assert.match(html, /class="b-card st-stuck is-sel"/);
 });
 
+test('rendering never changes the snapshot, because the live engine hands out its cached object', () => {
+  const snapshot = deepFreeze(exampleSnapshot());
+  for (const tab of ['cards', 'activity', 'timeline', 'plan', 'board']) {
+    for (const narrow of [false, true]) assert.doesNotThrow(() => renderApp(view({ snapshot, tab, narrow })), `${tab}${narrow ? ', narrow' : ''}`);
+  }
+  assert.doesNotThrow(() => renderApp(view({ snapshot, detail: 'ws-0005-i1' })));
+});
+
 test('each tab renders its view container, and Activity falls back to Cards when wide', () => {
   assert.match(renderApp(view({ tab: 'timeline' })), /data-timeline/);
-  assert.match(renderApp(view({ tab: 'plan' })), /<div data-plan><\/div>/);
+  assert.match(renderApp(view({ tab: 'plan' })), /<div data-plan data-drawn><\/div>/);
   assert.match(renderApp(view({ tab: 'board' })), /class="board"/);
   assert.deepEqual(tabs(renderApp(view({ tab: 'activity' }))), ['cards*', 'timeline', 'plan', 'board']);
 });
@@ -1838,7 +1935,7 @@ function bodyHtml(view, ctx) {
 function tabBody(tab, view, ctx) {
   if (tab === 'activity') return activityHtml(ctx);
   if (tab === 'timeline') return timelineHtml(ctx, view.span);
-  if (tab === 'plan') return '<div data-plan></div>';
+  if (tab === 'plan') return '<div data-plan data-drawn></div>';
   if (tab === 'board') return boardHtml(ctx);
   return cardsHtml(ctx);
 }
@@ -1866,7 +1963,7 @@ function tabBody(tab, view, ctx) {
 - [ ] **Step 6: Run the test to verify it passes**
 
 Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-app.test.mjs`
-Expected: PASS, 9 tests.
+Expected: PASS, 10 tests.
 
 - [ ] **Step 7: Commit**
 
@@ -1990,7 +2087,10 @@ test('the stress scenario is valid and covers every status, a stalled run, a war
   for (const status of ['busy', 'idle', 'plan', 'question', 'stuck', 'blocked', 'merged', 'archived']) assert.ok(statuses.has(status), status);
   assert.ok(snapshot.run.stalled);
   assert.ok(snapshot.diagnostics.some(entry => entry.level === 'warn'));
-  assert.ok(snapshot.units.some(unit => unit.label.length > 3));
+  assert.ok(snapshot.units.some(unit => unit.label.length > 4));
+  assert.deepEqual(snapshot.units.filter(unit => unit.label.length === 4).map(unit => unit.label), ['C6-1', 'MM-1']);
+  const closed = snapshot.units.find(unit => unit.label === 'C6-1');
+  assert.deepEqual([closed.stage, closed.closedWithoutMerge, closed.pr.state, closed.monitor.state], ['pr_open', true, 'closed', 'ended']);
   assert.ok(snapshot.units.some(unit => unit.subagents.filter(sub => sub.status === 'running').length >= 6));
   assert.equal(engine.listSwarms().filter(swarm => swarm.lifecycle === 'live').length, 2);
   assert.throws(() => createDemoEngine({ scenario: 'nope' }), /scenario/);
@@ -2176,7 +2276,10 @@ const round1 = value => Math.round(value * 10) / 10;
 const BUCKETS = ['working', 'stuck', 'waiting', 'idle', 'done', 'failed'];
 const SEGMENT = { busy: 'busy', idle: 'idle', plan: 'plan', question: 'question', stuck: 'stuck' };
 const TYPES = ['explore', 'task', 'code-review', 'rubber-duck', 'research', 'general-purpose'];
-/** Extra units for the stress scenario: every status detail, long names and labels, crowded chips and a deep plan. */
+/**
+ * Extra units for the stress scenario: every status detail, long names and labels (C6-1 fits its ring whole, MM-1 does
+ * not), crowded chips, a PR closed without merging and a deep plan.
+ */
 const EXTRA = [
   { label: 'Q1', name: 'Export format questions for the reporting service, with a name long enough to need an ellipsis', status: 'question', statusDetail: 'waiting_question', bucket: 'waiting', stage: 'pr_open', dependsOn: 'B1' },
   { label: 'S2', name: 'retry loop', status: 'stuck', statusDetail: 'spinning', bucket: 'stuck', reason: 'Spinning rule: 6 failed tool calls within 30 busy minutes.', dependsOn: 'Q1' },
@@ -2187,11 +2290,13 @@ const EXTRA = [
   { label: 'REPORTING-SERVICE', name: 'a label longer than the ring', status: 'stuck', statusDetail: 'stuck_subagent', bucket: 'stuck', reason: 'Sub-agent rule: code-review has had no events for 14 min (limit 10 min).', stuckSubagent: true },
   { label: 'R8', name: 'blocked report', status: 'blocked', statusDetail: 'blocked', bucket: 'waiting', reportStatus: 'blocked' },
   { label: 'M9', name: 'merged after review', status: 'merged', statusDetail: 'merged', bucket: 'done', stage: 'merged', outcome: 'merged' },
+  { label: 'C6-1', name: 'closed without merging', status: 'idle', statusDetail: 'idle', bucket: 'idle', stage: 'pr_open', outcome: 'closed' },
+  { label: 'MM-1', name: 'a four-character label too wide for its ring', status: 'idle', statusDetail: 'idle', bucket: 'idle' },
 ];
 
 function monitorFor(spec, stage, t) {
   if (spec.monitor === 'paused') return { state: 'paused', lastCheckAt: t - 70 * MIN, nextCheckAt: null, everyMinutes: 10, since: t - 50 * MIN };
-  if (stage === 'merged') return { state: 'ended', lastCheckAt: t - 25 * MIN, nextCheckAt: null, everyMinutes: 10, since: null };
+  if (stage === 'merged' || spec.outcome === 'closed') return { state: 'ended', lastCheckAt: t - 25 * MIN, nextCheckAt: null, everyMinutes: 10, since: null };
   if (stage === 'coding') return { state: 'none', lastCheckAt: null, nextCheckAt: null, everyMinutes: null, since: null };
   return { state: 'alive', lastCheckAt: t - 4 * MIN, nextCheckAt: t + 6 * MIN, everyMinutes: 10, since: null };
 }
@@ -2217,12 +2322,12 @@ function stressUnit(template, spec, index, t, parentId) {
     id: `ws-90${n}-stress`, label: spec.label, name: spec.name, cliSessionIds: [`cli-90${n}-stress`], branch: `feature/stress-${n}`,
     status: spec.status, statusDetail: spec.statusDetail, bucket: spec.bucket, since: t - (5 + index * 7) * MIN, reason: spec.reason ?? null,
     startedAt, endedAt, lastEventAt, alive: spec.alive ?? true, cost: { credits: round1(1500 + index * 2333.3), calls: 100 + index * 10 },
-    parentId, depth: 1, stage, closedWithoutMerge: false, outcome: spec.outcome ?? null, dependsOn: spec.dependsOn ?? null, todoId: null,
+    parentId, depth: 1, stage, closedWithoutMerge: spec.outcome === 'closed', outcome: spec.outcome ?? null, dependsOn: spec.dependsOn ?? null, todoId: null,
   });
   unit.pr = stage === 'coding' ? null : {
     ...template.pr, id: 500 + index, title: `${spec.name} PR`, url: `https://github.com/sample-org/sample-repo/pull/${500 + index}`,
-    state: stage === 'merged' ? 'merged' : stage === 'pr_open' ? 'draft' : 'open', openedAt: t - 90 * MIN,
-    mergedAt: stage === 'merged' ? endedAt : null, closedAt: stage === 'merged' ? endedAt : null,
+    state: spec.outcome === 'closed' ? 'closed' : stage === 'merged' ? 'merged' : stage === 'pr_open' ? 'draft' : 'open', openedAt: t - 90 * MIN,
+    mergedAt: stage === 'merged' ? endedAt : null, closedAt: stage === 'merged' || spec.outcome === 'closed' ? endedAt : null,
   };
   unit.monitor = monitorFor(spec, stage, t);
   unit.report = 'report' in spec ? spec.report : {
@@ -2388,7 +2493,7 @@ import { validateSnapshot } from '../engine/schema.mjs';
 import { loadAssets } from '../server/assets.mjs';
 import { createDashboardServer } from '../server/http.mjs';
 import { get, openEvents } from './helpers/http.mjs';
-import { exampleSnapshot, fixture } from './helpers/ui.mjs';
+import { deepFreeze, exampleSnapshot, fixture } from './helpers/ui.mjs';
 
 function spyEngine() {
   const fake = createFakeEngine({ snapshots: [exampleSnapshot()], swarms: fixture('example-swarms.json'), history: fixture('example-history.json'), summaries: [fixture('example-run-summary.json')] });
@@ -2510,6 +2615,21 @@ test('a page can ask for a swarm by id or by one of its sessions', async () => {
   } finally {
     byId.close();
     bySession.close();
+    await server.close();
+  }
+});
+
+test('the server never changes the snapshot objects the engine hands out', async () => {
+  const fake = createFakeEngine({ snapshots: [exampleSnapshot()], swarms: fixture('example-swarms.json') });
+  const frozen = deepFreeze(exampleSnapshot());
+  const engine = { ...fake, getSnapshot: async () => frozen, findSwarm: async () => frozen.run.id };
+  const server = await started(() => engine);
+  const page = openEvents(server.port, '/api/events?session=cli-0003-b1');
+  try {
+    assert.deepEqual((await page.waitFor(entry => entry.event === 'snapshot')).data.snapshot, exampleSnapshot());
+    assert.deepEqual(JSON.parse((await get(server.port, '/api/snapshot')).body).snapshot, exampleSnapshot());
+  } finally {
+    page.close();
     await server.close();
   }
 });
@@ -2839,7 +2959,7 @@ export function createDashboardServer({ createEngine, host = '127.0.0.1', port =
 - [ ] **Step 7: Run the test to verify it passes**
 
 Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/server.test.mjs`
-Expected: PASS, 8 tests.
+Expected: PASS, 9 tests.
 
 - [ ] **Step 8: Run the whole suite and commit**
 
@@ -2854,12 +2974,15 @@ git commit -m "feat(swarm-dashboard): serve the dashboard with live snapshot upd
 ### Task 10: Browser glue
 
 **Files:**
+- Create: `ghcp/plugins/swarm-dashboard/ui/morph.mjs`
 - Create: `ghcp/plugins/swarm-dashboard/ui/main.mjs`
 - Test: `ghcp/plugins/swarm-dashboard/tests/ui-main.test.mjs`
 
 **Interfaces:**
-- Consumes: `isNarrow`, `renderApp` (Task 7); `tickText` (Task 1); `timelineWindow`, `laneSvg`, `axisSvg`, `costSvg` (`ui/timeline.mjs`); `planFits`, `planGraphHtml`, `planListHtml` (`ui/plan.mjs`); the server's `/api/events`, `/api/history` and `/api/runs/<id>`.
+- Consumes: `isNarrow`, `renderApp` (Task 7); `tickText` (Task 1); `shortLabel` (Task 3); `timelineWindow`, `laneSvg`, `axisSvg`, `costSvg` (`ui/timeline.mjs`); `planFits`, `planGraphHtml`, `planListHtml` (`ui/plan.mjs`); the server's `/api/events`, `/api/history` and `/api/runs/<id>`.
 - Produces: browser behaviour only. URL parameters: `host=canvas|browser`, `swarm`, `session`, `page=live|history|run`, `tab`, `detail` (unit id), `span=3h|12h|run`, `run` (run id). `localStorage['swarm-dashboard:ui']` keeps `{ tab, span, swarm }`. After every render the page sets `<html data-host data-narrow="0|1" data-ready="0|1">`; `data-ready="1"` means the current page has its data (the layout check waits for it).
+- Produces (`ui/morph.mjs`): `morph(target, html)`. Every render, and every timeline and plan drawing, patches the existing DOM instead of replacing it, so updates (about every 3 s while a swarm is live) do not restart animations, reset ticking clocks or the scroll position, or flash items that did not change, and hover, focus, selection and tooltips survive. Siblings match by `data-key`, else `data-id`, `data-open` or `data-run`, else by position and tag; `data-drawn` containers keep their children (main.mjs draws them); `data-phase` elements keep their animation delay unless their class changes or they move. The layout check (Task 16) tests morph in a real browser.
+- Produces (behaviour): each snapshot update adds a `performance.measure('swarm-update')` entry covering parsing, rendering and layout (the layout check reports these); a new item's highlight class stays for 1.7 s so a render during its animation does not cut it; a four-character ring label (`.ring-l[data-fit]`) that is wider than its 30 px box is cut with `shortLabel`.
 
 This module touches the DOM, so Node tests only check that it parses and keeps its contract with the server and the layout check; Task 11's preview and Task 16's layout check exercise it in a browser.
 
@@ -2874,21 +2997,31 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const file = fileURLToPath(new URL('../ui/main.mjs', import.meta.url));
+const file = name => fileURLToPath(new URL(`../ui/${name}`, import.meta.url));
 
-test('the browser module parses and imports only sibling modules', () => {
-  const check = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' });
-  assert.equal(check.status, 0, check.stderr);
-  const source = readFileSync(file, 'utf8');
-  for (const [, specifier] of source.matchAll(/\bfrom\s+'([^']+)'/g)) assert.match(specifier, /^\.\/[\w-]+\.mjs$/);
-  assert.doesNotMatch(source, /https?:\/\//);
+test('the browser modules parse and import only sibling modules', () => {
+  for (const name of ['main.mjs', 'morph.mjs']) {
+    const check = spawnSync(process.execPath, ['--check', file(name)], { encoding: 'utf8' });
+    assert.equal(check.status, 0, check.stderr);
+    const source = readFileSync(file(name), 'utf8');
+    for (const [, specifier] of source.matchAll(/\bfrom\s+'([^']+)'/g)) assert.match(specifier, /^\.\/[\w-]+\.mjs$/);
+    assert.doesNotMatch(source, /https?:\/\//);
+  }
 });
 
 test('the browser module keeps the names the server and the layout check rely on', () => {
-  const source = readFileSync(file, 'utf8');
-  for (const needle of ["getElementById('dash')", 'new EventSource(', "'hello'", "'swarms'", "'snapshot'", 'dataset.ready', 'dataset.narrow', 'dataset.host', "'/api/history'", '/api/runs/', "'swarm-dashboard:ui'", "'pagehide'"]) {
+  const source = readFileSync(file('main.mjs'), 'utf8');
+  for (const needle of ["getElementById('dash')", 'new EventSource(', "'hello'", "'swarms'", "'snapshot'", 'dataset.ready', 'dataset.narrow', 'dataset.host', "'/api/history'", '/api/runs/', "'swarm-dashboard:ui'", "'pagehide'", "'swarm-update'"]) {
     assert.ok(source.includes(needle), needle);
   }
+});
+
+test('updates patch the page in place instead of replacing it', () => {
+  const main = readFileSync(file('main.mjs'), 'utf8');
+  assert.ok(main.includes('morph(dash, renderApp('));
+  assert.doesNotMatch(main, /\.innerHTML\s*=/);
+  const morph = readFileSync(file('morph.mjs'), 'utf8');
+  for (const needle of ["'data-key'", "'data-drawn'", "'data-phase'"]) assert.ok(morph.includes(needle), needle);
 });
 ```
 
@@ -2897,11 +3030,103 @@ test('the browser module keeps the names the server and the layout check rely on
 Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-main.test.mjs`
 Expected: FAIL; `node --check` reports that `ui/main.mjs` does not exist.
 
-- [ ] **Step 3: Write `ui/main.mjs`**
+- [ ] **Step 3: Write `ui/morph.mjs`**
+
+```js
+/**
+ * Make a container's content match new HTML while keeping the nodes that stay, so running animations, hover, focus,
+ * text selection and tooltips survive an update and only what changed is touched. Siblings are matched by key
+ * (data-key, else data-id, data-open or data-run) and otherwise by position when the tag is the same. Two attributes
+ * change the rules: data-drawn marks a container whose content main.mjs draws after rendering, so its children are left
+ * alone; data-phase marks an endless animation whose inline delay is kept while the element stays put with the same
+ * class, because changing the delay of a running animation makes it jump.
+ */
+export function morph(target, html) {
+  const template = document.createElement('template');
+  template.innerHTML = html;
+  syncChildren(target, template.content, false);
+}
+
+function keyOf(node) {
+  if (node.nodeType !== Node.ELEMENT_NODE) return null;
+  const key = node.getAttribute('data-key') ?? node.getAttribute('data-id') ?? node.getAttribute('data-open') ?? node.getAttribute('data-run');
+  return key === null ? null : `${node.nodeName}\n${key}`;
+}
+
+function syncChildren(parent, source, moved) {
+  const incoming = [...source.childNodes];
+  const wanted = new Set(incoming.map(keyOf).filter(key => key !== null));
+  const keyed = new Map();
+  for (const child of parent.childNodes) {
+    const key = keyOf(child);
+    if (key !== null && wanted.has(key) && !keyed.has(key)) keyed.set(key, child);
+  }
+  let cursor = parent.firstChild;
+  for (const next of incoming) {
+    // Drop keyed nodes that are no longer wanted, so the nodes after them keep their place instead of being moved.
+    while (cursor && keyOf(cursor) !== null && keyed.get(keyOf(cursor)) !== cursor) {
+      const after = cursor.nextSibling;
+      cursor.remove();
+      cursor = after;
+    }
+    const key = keyOf(next);
+    let match = null;
+    if (key !== null) match = keyed.get(key) ?? null;
+    else if (cursor && keyOf(cursor) === null && cursor.nodeName === next.nodeName) match = cursor;
+    if (!match) {
+      parent.insertBefore(next, cursor);
+      continue;
+    }
+    if (key !== null) keyed.delete(key);
+    if (match === cursor) {
+      cursor = cursor.nextSibling;
+      syncNode(match, next, moved);
+    } else {
+      // Moving a node restarts its animations, so it takes the new delays.
+      parent.insertBefore(match, cursor);
+      syncNode(match, next, true);
+    }
+  }
+  while (cursor) {
+    const after = cursor.nextSibling;
+    cursor.remove();
+    cursor = after;
+  }
+}
+
+function syncNode(from, to, moved) {
+  if (from.nodeType !== Node.ELEMENT_NODE) {
+    if (from.nodeValue !== to.nodeValue) from.nodeValue = to.nodeValue;
+    return;
+  }
+  syncAttributes(from, to, moved);
+  if (from.hasAttribute('data-drawn') && to.hasAttribute('data-drawn')) return;
+  syncChildren(from, to, moved);
+  if (from.nodeName === 'SELECT') {
+    const chosen = to.querySelector('option[selected]') ?? to.querySelector('option');
+    if (chosen) from.value = chosen.getAttribute('value') ?? chosen.textContent;
+  }
+}
+
+function syncAttributes(from, to, moved) {
+  const keepStyle = !moved && from.hasAttribute('data-phase') && to.hasAttribute('data-phase') && from.getAttribute('class') === to.getAttribute('class');
+  for (const { name, value } of [...to.attributes]) {
+    if (name === 'style' && keepStyle) continue;
+    if (from.getAttribute(name) !== value) from.setAttribute(name, value);
+  }
+  for (const { name } of [...from.attributes]) {
+    if (!to.hasAttribute(name) && !(name === 'style' && keepStyle)) from.removeAttribute(name);
+  }
+}
+```
+
+- [ ] **Step 4: Write `ui/main.mjs`**
 
 ```js
 import { isNarrow, renderApp } from './app.mjs';
 import { tickText } from './format.mjs';
+import { morph } from './morph.mjs';
+import { shortLabel } from './parts.mjs';
 import { planFits, planGraphHtml, planListHtml } from './plan.mjs';
 import { axisSvg, costSvg, laneSvg, timelineWindow } from './timeline.mjs';
 
@@ -2913,6 +3138,8 @@ const dash = document.getElementById('dash');
 const params = new URLSearchParams(location.search);
 const choose = (value, allowed, fallback) => (allowed.includes(value) ? value : fallback);
 const emptyFresh = () => ({ feed: new Set(), reports: new Set(), chips: new Set() });
+/** How long a new item keeps its highlight class, so a render during its animation does not cut it short. */
+const FRESH_MS = 1700;
 
 function readSaved() {
   try {
@@ -2952,6 +3179,9 @@ let renderQueued = false;
 let renderDeferred = false;
 let lastWidth = 0;
 let ticks = 0;
+let freshUntil = 0;
+let parseMs = null;
+let measured = 0;
 const now = () => Date.now() + offset;
 
 function save() {
@@ -2990,7 +3220,9 @@ function connect() {
     scheduleRender();
   });
   source.addEventListener('snapshot', event => {
+    const started = performance.now();
     const data = JSON.parse(event.data);
+    parseMs = (parseMs ?? 0) + performance.now() - started;
     offset = data.serverNow - Date.now();
     applySnapshot(data.snapshot);
   });
@@ -3009,7 +3241,15 @@ function freshKeys(prev, next) {
 
 function applySnapshot(next) {
   const prev = view.snapshot;
-  view.fresh = prev && next && prev.run.id === next.run.id && !justConnected ? freshKeys(prev, next) : emptyFresh();
+  const found = prev && next && prev.run.id === next.run.id && !justConnected ? freshKeys(prev, next) : emptyFresh();
+  const t = performance.now();
+  const carried = t < freshUntil && !justConnected ? view.fresh : emptyFresh();
+  view.fresh = {
+    feed: new Set([...carried.feed, ...found.feed]),
+    reports: new Set([...carried.reports, ...found.reports]),
+    chips: new Set([...carried.chips, ...found.chips]),
+  };
+  if (found.feed.size || found.reports.size || found.chips.size) freshUntil = t + FRESH_MS;
   justConnected = false;
   view.snapshot = next;
   view.loaded = true;
@@ -3043,19 +3283,26 @@ function render() {
     return;
   }
   renderDeferred = false;
+  const started = performance.now();
   const width = dash.clientWidth;
   view.narrow = isNarrow(width);
   if (!view.narrow && view.tab === 'activity') view.tab = 'cards';
   const focused = document.activeElement && dash.contains(document.activeElement) ? focusSelector(document.activeElement) : null;
   const { scrollX, scrollY } = window;
-  dash.innerHTML = renderApp({ ...view, now: now(), phaseMs: performance.now() });
+  morph(dash, renderApp({ ...view, now: now(), phaseMs: performance.now() }));
   lastWidth = width;
   afterRender();
-  if (focused) dash.querySelector(focused)?.focus({ preventScroll: true });
+  if (focused && !dash.contains(document.activeElement)) dash.querySelector(focused)?.focus({ preventScroll: true });
   window.scrollTo(scrollX, scrollY);
-  view.fresh = emptyFresh();
   document.documentElement.dataset.narrow = view.narrow ? '1' : '0';
   document.documentElement.dataset.ready = isReady() ? '1' : '0';
+  if (parseMs !== null) {
+    // One update's cost, from reading the snapshot to a laid-out page; the layout check reads these entries.
+    dash.getBoundingClientRect();
+    if (++measured % 200 === 0) performance.clearMeasures('swarm-update');
+    performance.measure('swarm-update', { start: started, duration: parseMs + performance.now() - started });
+    parseMs = null;
+  }
 }
 
 function afterRender() {
@@ -3065,6 +3312,7 @@ function afterRender() {
   const plan = dash.querySelector('[data-plan]');
   if (plan) drawPlan(plan);
   for (const box of dash.querySelectorAll('.b-card .chips')) fitChips(box);
+  fitRingLabels();
 }
 
 function drawTimeline(root) {
@@ -3076,17 +3324,24 @@ function drawTimeline(root) {
   const { t0, t1 } = timelineWindow(view.snapshot, view.span, t);
   const phaseMs = performance.now();
   const sessions = new Map([view.snapshot.orchestrator, ...view.snapshot.units].map(session => [session.id, session]));
-  root.querySelector('.c-axis .c-trk').innerHTML = axisSvg(width, t0, t1);
+  morph(root.querySelector('.c-axis .c-trk'), axisSvg(width, t0, t1));
   for (const row of root.querySelectorAll('.c-row[data-id]')) {
     const session = sessions.get(row.dataset.id);
-    if (session) row.querySelector('.c-trk').innerHTML = laneSvg(session, width, t0, t1, t, phaseMs);
+    if (session) morph(row.querySelector('.c-trk'), laneSvg(session, width, t0, t1, t, phaseMs));
   }
-  root.querySelector('.c-cost .c-trk').innerHTML = costSvg(view.snapshot.cost, width, t0, t1, t);
+  morph(root.querySelector('.c-cost .c-trk'), costSvg(view.snapshot.cost, width, t0, t1, t));
 }
 
 function drawPlan(el) {
   const width = Math.floor(el.getBoundingClientRect().width);
-  el.innerHTML = planFits(view.snapshot, width) ? planGraphHtml(view.snapshot, now()) : planListHtml(view.snapshot, now());
+  morph(el, planFits(view.snapshot, width) ? planGraphHtml(view.snapshot, now()) : planListHtml(view.snapshot, now()));
+}
+
+/** A four-character ring label shows whole only when it fits inside the ring; otherwise it is cut like longer labels. */
+function fitRingLabels() {
+  for (const label of dash.querySelectorAll('.ring-l[data-fit]')) {
+    if (label.scrollWidth > label.clientWidth + 1) label.textContent = shortLabel(label.textContent);
+  }
 }
 
 /** Hide sub-agent chips that do not fit on the card's single chip row and say how many are hidden. */
@@ -3213,15 +3468,15 @@ connect();
 render();
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [ ] **Step 5: Run the test to verify it passes**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-main.test.mjs`
-Expected: PASS, 2 tests.
+Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-main.test.mjs && npm test`
+Expected: PASS, 3 tests; the whole suite passes. `morph()` needs a DOM, so its behaviour is tested in a real browser by the layout check (Task 16).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui/main.mjs ghcp/plugins/swarm-dashboard/tests/ui-main.test.mjs
+git add ghcp/plugins/swarm-dashboard/ui/morph.mjs ghcp/plugins/swarm-dashboard/ui/main.mjs ghcp/plugins/swarm-dashboard/tests/ui-main.test.mjs
 git commit -m "feat(swarm-dashboard): wire the page to live updates, clocks and controls"
 ```
 
@@ -3563,9 +3818,9 @@ git add ghcp/plugins/swarm-dashboard/server/shared.mjs ghcp/plugins/swarm-dashbo
 git commit -m "feat(swarm-dashboard): add the standalone launcher on the fixed port"
 ```
 
-- [ ] **Step 8: Early preview checkpoint**
+- [ ] **Step 8: Next: Task 20**
 
-Run `cd ghcp/plugins/swarm-dashboard && npm start -- --demo` and open `http://127.0.0.1:7927/` in a browser at full width and at about 560 px. Compare the Cards view, header, Needs you, activity rail and detail panel with the mockup; fix any visible difference in `ui/styles.css` or the views before moving on (tests must still pass). Then send the coordinator the command and the URL so the owner can look, and continue with Task 12.
+Run Task 20 next (see Execution order): it switches the server to PR 1's engine and ends with the early preview on real data.
 
 ### Task 12: Timeline
 
@@ -3587,7 +3842,7 @@ import assert from 'node:assert/strict';
 import { HOUR, MIN } from '../ui/format.mjs';
 import { findByLabel } from '../ui/model.mjs';
 import { axisSvg, costSvg, laneSvg, markSvg, timelineHtml, timelineWindow } from '../ui/timeline.mjs';
-import { NOW, context, exampleSnapshot } from './helpers/ui.mjs';
+import { NOW, context, deepFreeze, exampleSnapshot } from './helpers/ui.mjs';
 
 const text = html => html.replace(/<title>[^<]*<\/title>/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 const row = (html, id) => html.split('<div class="c-row').find(part => part.includes(`data-id="${id}"`));
@@ -3656,6 +3911,19 @@ test('marks follow the mockup shapes and colour reports by status', () => {
   assert.match(markSvg({ kind: 'report', status: 'complete', text: 'x' }, 10, 10), /fill="var\(--merged-ink\)"/);
   assert.match(markSvg({ kind: 'question', status: null, text: '<q>' }, 10, 10), /^<path d="M10 5L15 10L10 15L5 10Z" fill="var\(--question-ink\)".*<title>&lt;q&gt;<\/title>/);
   assert.equal(markSvg({ kind: 'unknown', status: null, text: '' }, 0, 0), '');
+});
+
+test('drawing the timeline never changes the snapshot', () => {
+  const snapshot = deepFreeze(exampleSnapshot());
+  assert.doesNotThrow(() => {
+    for (const span of ['3h', '12h', 'run']) {
+      const { t0, t1 } = timelineWindow(snapshot, span, NOW);
+      timelineHtml(context(snapshot), span);
+      axisSvg(600, t0, t1);
+      for (const session of [snapshot.orchestrator, ...snapshot.units]) laneSvg(session, 600, t0, t1, NOW);
+      costSvg(snapshot.cost, 600, t0, t1, NOW);
+    }
+  });
 });
 
 test('the axis labels "now" and spaced ticks; the cost line runs up to the swarm total', () => {
@@ -3731,8 +3999,8 @@ export function laneSvg(session, width, t0, t1, now, phaseMs = 0) {
     const wide = Math.max(1, X(Math.min(end, t1)) - x1);
     const live = segment.end === null;
     if (segment.state === 'idle') spans += `<line class="t-idle" x1="${x1.toFixed(1)}" y1="10" x2="${(x1 + wide).toFixed(1)}" y2="10"/>`;
-    else spans += `<rect class="t-${segment.state}${live && segment.state === 'stuck' ? ' live' : ''}" x="${x1.toFixed(1)}" y="5" width="${wide.toFixed(1)}" height="10" rx="2"${live && segment.state === 'stuck' ? ` style="${phase(2.4, phaseMs)}"` : ''}/>`;
-    if (live && segment.state === 'busy') spans += `<rect class="t-edge" x="${(x1 + wide - 2).toFixed(1)}" y="5" width="2" height="10" style="${phase(2, phaseMs)}"/>`;
+    else spans += `<rect class="t-${segment.state}${live && segment.state === 'stuck' ? ' live' : ''}" x="${x1.toFixed(1)}" y="5" width="${wide.toFixed(1)}" height="10" rx="2"${live && segment.state === 'stuck' ? ` ${phase(2.4, phaseMs)}` : ''}/>`;
+    if (live && segment.state === 'busy') spans += `<rect class="t-edge" x="${(x1 + wide - 2).toFixed(1)}" y="5" width="2" height="10" ${phase(2, phaseMs)}/>`;
   }
   const tracks = [];
   let bars = '';
@@ -3838,9 +4106,9 @@ export function timelineHtml(ctx, span) {
   const sessions = [snapshot.orchestrator, ...snapshot.units];
   const buttons = Object.keys(SPANS).map(key => `<button type="button" data-span="${key}" aria-pressed="${key === span}">${SPAN_LABELS[key]}</button>`).join('');
   const keys = KEYS.map(([kind, label]) => `<span><svg width="10" height="10" viewBox="-5 -5 10 10" aria-hidden="true">${markSvg({ kind, status: 'complete', text: label }, 0, 0)}</svg>${label}</span>`).join('');
-  const axis = '<div class="c-row c-axis"><div class="c-who"><span class="c-head">Session</span></div><div class="c-trk"></div><div class="c-sum"><span class="c-head">Latest report</span></div></div>';
-  const rows = sessions.map(session => `<div class="c-row st-${session.status}" data-id="${esc(session.id)}"><div class="c-who">${whoHtml(session, snapshot, now)}</div><div class="c-trk"></div><div class="c-sum">${sumHtml(session, snapshot, now)}</div></div>`).join('');
-  const cost = `<div class="c-row c-cost"><div class="c-who"><div class="c-name">Swarm cost</div><div class="c-meta">all sessions</div></div><div class="c-trk"></div><div class="c-sum"><span class="c-total">${costHtml(snapshot.cost.credits, true)}</span></div></div>`;
+  const axis = '<div class="c-row c-axis"><div class="c-who"><span class="c-head">Session</span></div><div class="c-trk" data-drawn></div><div class="c-sum"><span class="c-head">Latest report</span></div></div>';
+  const rows = sessions.map(session => `<div class="c-row st-${session.status}" data-id="${esc(session.id)}"><div class="c-who">${whoHtml(session, snapshot, now)}</div><div class="c-trk" data-drawn></div><div class="c-sum">${sumHtml(session, snapshot, now)}</div></div>`).join('');
+  const cost = `<div class="c-row c-cost"><div class="c-who"><div class="c-name">Swarm cost</div><div class="c-meta">all sessions</div></div><div class="c-trk" data-drawn></div><div class="c-sum"><span class="c-total">${costHtml(snapshot.cost.credits, true)}</span></div></div>`;
   return `<div class="c" data-timeline><div class="c-bar"><div class="seg" role="group" aria-label="Time window">${buttons}</div><div class="c-keys">${keys}</div></div>${HATCH}<div class="c-rows">${axis}${rows}${cost}</div></div>`;
 }
 ```
@@ -3848,7 +4116,7 @@ export function timelineHtml(ctx, span) {
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-timeline.test.mjs tests/ui-app.test.mjs`
-Expected: PASS (8 + 9 tests).
+Expected: PASS (9 + 10 tests).
 
 - [ ] **Step 5: Look at it in a browser and commit**
 
@@ -3877,7 +4145,7 @@ git commit -m "feat(swarm-dashboard): add the timeline view"
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { boardHtml, planFits, planGraphHtml, planListHtml, planSize } from '../ui/plan.mjs';
-import { NOW, context, exampleSnapshot } from './helpers/ui.mjs';
+import { NOW, closedSnapshot, context, deepFreeze, exampleSnapshot } from './helpers/ui.mjs';
 
 const text = html => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 const node = (html, label) => html.split(/<(?:div|li) class="(?:pn|pl-row) /).find(part => part.includes(`<span class="tx">${label} `));
@@ -3929,6 +4197,22 @@ test('an empty plan says so', () => {
   assert.match(planListHtml(snapshot, NOW), /No plan yet\./);
 });
 
+test('the plan and the board never change the snapshot', () => {
+  const snapshot = deepFreeze(exampleSnapshot());
+  assert.doesNotThrow(() => {
+    planFits(snapshot, 1200);
+    planGraphHtml(snapshot, NOW);
+    planListHtml(snapshot, NOW);
+    boardHtml(context(snapshot));
+  });
+});
+
+test('a unit whose PR closed without merging stays in the PR open column with the badge', () => {
+  const columns = boardHtml(context(closedSnapshot())).split('<section class="bcol"');
+  const prOpen = columns.find(part => part.startsWith(' aria-label="PR open"'));
+  assert.match(prOpen, /D5 [^<]*<\/span><\/div><div class="mc-2"><span class="badge rp-blocked">closed, not merged<\/span><\/div>/);
+});
+
 test('the board has one column per stage with counts, attention first', () => {
   const snapshot = exampleSnapshot();
   const html = boardHtml(context(snapshot));
@@ -3954,9 +4238,9 @@ Expected: FAIL (`does not provide an export named 'planSize'`).
 ```js
 import { costText, esc } from './format.mjs';
 import {
-  BOARD_WORDS, PLAN_WORDS, STAGE_CLASS, STAGE_NAMES, boardColumns, findByLabel, findPlanned, flattenPlan, planForest, planLayout,
+  BOARD_WORDS, PLAN_WORDS, STAGE_CLASS, STAGE_NAMES, boardColumns, closedNotMerged, findByLabel, findPlanned, flattenPlan, planForest, planLayout,
 } from './model.mjs';
-import { fill } from './parts.mjs';
+import { closedBadge, fill } from './parts.mjs';
 
 /** Plan graph geometry from the mockup: node size, column step and row step in px. */
 export const NODE = Object.freeze({ width: 176, height: 62, column: 216, row: 78 });
@@ -4035,7 +4319,7 @@ function miniCard(node, now) {
   const unit = node.unit;
   return `<div class="mc st-${unit.status}" data-open="${esc(unit.id)}" tabindex="0" role="button" aria-label="Open details for ${esc(unit.label)}">`
     + `<div class="mc-1"><span class="dot"></span><span class="tx">${esc(unit.label)} ${esc(unit.name)}</span></div>`
-    + `<div class="mc-2">${fill(BOARD_WORDS[unit.status] ?? unit.status, unit.since, now)}</div><div class="mc-3">${costText(unit.cost.credits)}</div></div>`;
+    + `<div class="mc-2">${closedNotMerged(unit) ? closedBadge : fill(BOARD_WORDS[unit.status] ?? unit.status, unit.since, now)}</div><div class="mc-3">${costText(unit.cost.credits)}</div></div>`;
 }
 
 /** One column per stage, including planned units. */
@@ -4049,7 +4333,7 @@ export function boardHtml({ snapshot, now }) {
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-plan.test.mjs tests/ui-app.test.mjs`
-Expected: PASS (5 + 9 tests).
+Expected: PASS (7 + 10 tests).
 
 - [ ] **Step 5: Look at it in a browser and commit**
 
@@ -4218,7 +4502,7 @@ export function runHtml(run) {
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-history.test.mjs tests/ui-app.test.mjs`
-Expected: PASS (5 + 9 tests).
+Expected: PASS (5 + 10 tests).
 
 - [ ] **Step 5: Look at it in a browser and commit**
 
@@ -4552,7 +4836,8 @@ git commit -m "test(swarm-dashboard): add the layout audit rules and colour cont
 
 **Interfaces:**
 - Consumes: `createDashboardServer` (Task 9), `createDemoEngine` (Task 8), `AUDIT_DEFAULTS`, `auditScript` (Task 15).
-- Produces: `findBrowser(env = process.env): string|null` (`CHROME_PATH`, standard Chrome, Chromium and Edge locations on macOS and Linux, then Playwright's cached Chromium); `launchBrowser(executable): Promise<{ product, send, onEvent, close }>` (headless, DevTools protocol over `--remote-debugging-pipe`, temporary profile removed on close); `openPage(browser): Promise<{ send, errors, goto(url, width, height = 900), evaluate(expression), waitFor(expression, timeoutMs = 8000), screenshot() }>` (reduced motion on; `errors` collects exceptions, console errors and error log entries); `WIDTHS`, `CANVAS_WIDTHS`, `VIEWS`, `SELF_TEST_RULES`, `buildStates({ scenarios, widths, canvasWidths, targets })` (targets: per scenario, an optional swarm to pin, the unit for the detail view and a finished run, either of which may be null to skip those views), `parseArguments(argv)` → `{ scenarios, widths, canvasWidths, screenshots, live, help }`, `main(argv, { stdout, stderr, env })`; `npm run check:layout [-- --scenario <name> | --live <url>] [-- --width <px>] [-- --screenshots <dir>]`. `--live http://127.0.0.1:<port>/` checks a running dashboard (real data) with the swarm, first unit and latest finished run it shows, and prints only counts before the issue list.
+- Produces: `findBrowser(env = process.env): string|null` (`CHROME_PATH`, standard Chrome, Chromium and Edge locations on macOS and Linux, then Playwright's cached Chromium); `launchBrowser(executable): Promise<{ product, send, onEvent, close }>` (headless, DevTools protocol over `--remote-debugging-pipe`, temporary profile removed on close); `openPage(browser): Promise<{ send, errors, goto(url, width, height = 900), evaluate(expression), waitFor(expression, timeoutMs = 8000), screenshot() }>` (reduced motion on; `errors` collects exceptions, console errors and error log entries); `WIDTHS`, `CANVAS_WIDTHS`, `VIEWS`, `SELF_TEST_RULES`, `buildStates({ scenarios, widths, canvasWidths, targets })` (targets: per scenario, an optional swarm to pin, the unit for the detail view and a finished run, either of which may be null to skip those views), `parseArguments(argv)` → `{ scenarios, widths, canvasWidths, screenshots, live, help }`, `describeTimes(durations): string` (`"3 updates; 4.2 ms median, 7.9 ms max"`), `main(argv, { stdout, stderr, env })`; `npm run check:layout [-- --scenario <name> | --live <url>] [-- --width <px>] [-- --screenshots <dir>]`. `--live http://127.0.0.1:<port>/` checks a running dashboard (real data) with the swarm, first unit and latest finished run it shows, and prints only counts before the issue list.
+- Update checks (approved decision 7): after the layout self-test, an update self-test runs `ui/morph.mjs` inside a dashboard page (nodes kept when an item is added at the top, keyed items reused in a new order, text and attributes patched, a running animation's delay kept, a changed or moved one's replaced, drawn containers kept, a select following the rendered choice). After the views, the runner opens the cards view at 1440 px with motion on, waits for 3 live updates (a simulating demo server, or the `--live` dashboard for up to 25 s), and fails if cards were re-created, unchanged activity items were highlighted again, the scroll position moved or a busy ring fell more than 80 ms out of phase. It prints the update times from the page's `swarm-update` measures.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -4561,7 +4846,7 @@ git commit -m "test(swarm-dashboard): add the layout audit rules and colour cont
 ```js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CANVAS_WIDTHS, VIEWS, WIDTHS, buildStates, parseArguments } from '../scripts/check-layout.mjs';
+import { CANVAS_WIDTHS, VIEWS, WIDTHS, buildStates, describeTimes, parseArguments } from '../scripts/check-layout.mjs';
 import { findBrowser } from '../scripts/lib/cdp.mjs';
 
 test('every view is checked at the nine widths in the browser layout and three in the canvas layout', () => {
@@ -4601,6 +4886,12 @@ test('a running dashboard is checked with the swarm, unit and run it shows', () 
   const empty = buildStates({ scenarios: ['live'], widths: [1280], canvasWidths: [], targets: { live: { swarm: null, detail: null, run: 'ws-r' } } });
   assert.deepEqual(empty.map(state => state.view), ['cards', 'activity', 'timeline', 'timeline-run', 'plan', 'board', 'history', 'run']);
   assert.deepEqual(empty.find(state => state.view === 'run').params, { host: 'browser', page: 'run', run: 'ws-r' });
+});
+
+test('update times are reported as a count, a median and a maximum', () => {
+  assert.equal(describeTimes([4, 2, 9.25]), '3 updates; 4.0 ms median, 9.3 ms max');
+  assert.equal(describeTimes([2, 4]), '2 updates; 3.0 ms median, 4.0 ms max');
+  assert.equal(describeTimes([5]), '1 update; 5.0 ms median, 5.0 ms max');
 });
 
 test('the browser comes from CHROME_PATH when it is set', () => {
@@ -4866,7 +5157,8 @@ export const SELF_TEST_RULES = ['overlap', 'font-size', 'font-style', 'text-tran
 export const USAGE = `Usage: check-layout [--scenario example|stress | --live <url>] [--width <px>] [--screenshots <dir>]
 
 Checks every dashboard view for overlap, clipped text, type, spacing, sizes, contrast and console errors in a
-local headless Chrome, Chromium or Edge (set CHROME_PATH to pick one). It proves its rules on a broken page first.
+local headless Chrome, Chromium or Edge (set CHROME_PATH to pick one). It proves its rules on a broken page first,
+tests the page's in-place updates, and then watches live updates arrive and reports how long each one takes.
 By default it serves the synthetic example and stress swarms itself; --live checks a running dashboard instead
 (for example http://127.0.0.1:7927/), whose report quotes your own data: keep it local.
 Screenshots, when asked for, are written to <dir> for review; do not commit them.
@@ -4954,6 +5246,120 @@ async function describeLive(base) {
   }
 }
 
+/** "3 updates; 4.2 ms median, 7.9 ms max" for a list of update durations in ms. */
+export function describeTimes(durations) {
+  const sorted = [...durations].sort((a, b) => a - b);
+  const middle = sorted.length / 2;
+  const median = sorted.length % 2 ? sorted[Math.floor(middle)] : (sorted[middle - 1] + sorted[middle]) / 2;
+  return `${sorted.length} update${sorted.length === 1 ? '' : 's'}; ${median.toFixed(1)} ms median, ${sorted[sorted.length - 1].toFixed(1)} ms max`;
+}
+
+/** Runs in the page: ui/morph.mjs keeps nodes, moves keyed ones, updates attributes and text, and keeps animation delays. */
+async function morphSelfTest() {
+  // The page's own module, imported by URL (a variable, so PR 1's import guard does not read it as one of ours).
+  const moduleUrl = new URL('/ui/morph.mjs', location.href).href;
+  const { morph } = await import(moduleUrl);
+  const failures = [];
+  const expect = (ok, what) => { if (!ok) failures.push(what); };
+  const box = document.createElement('div');
+  document.body.append(box);
+  try {
+    morph(box, '<ul><li data-key="a">A</li><li data-key="b">B</li><li data-key="c">C</li></ul><p class="x" title="t">one</p>');
+    const [a, b, c] = box.querySelectorAll('li');
+    const p = box.querySelector('p');
+    const observer = new MutationObserver(() => {});
+    observer.observe(box, { childList: true, subtree: true });
+    morph(box, '<ul><li data-key="n">N</li><li data-key="a">A</li><li data-key="b">B2</li><li data-key="c">C</li></ul><p class="y">two</p>');
+    const removed = observer.takeRecords().flatMap(record => [...record.removedNodes]).filter(node => node.nodeType === 1);
+    observer.disconnect();
+    const items = [...box.querySelectorAll('li')];
+    expect(items[1] === a && items[2] === b && items[3] === c, 'an item added at the top re-created the items below it');
+    expect(removed.length === 0, `adding an item at the top removed ${removed.length} elements`);
+    expect(b.textContent === 'B2' && box.querySelector('p') === p && p.className === 'y' && !p.hasAttribute('title') && p.textContent === 'two', 'text and attributes were not updated in place');
+    morph(box, '<ul><li data-key="c">C</li><li data-key="a">A</li></ul><p class="y">two</p>');
+    const kept = [...box.querySelectorAll('li')];
+    expect(kept.length === 2 && kept[0] === c && kept[1] === a, 'reordered items were not reused in their new order');
+    morph(box, '<i class="spin" data-phase style="animation-delay:-1s"></i>');
+    const spin = box.firstChild;
+    morph(box, '<i class="spin" data-phase style="animation-delay:-3s"></i>');
+    expect(box.firstChild === spin && spin.getAttribute('style') === 'animation-delay:-1s', 'a running animation was given a new delay');
+    morph(box, '<i class="stuck" data-phase style="animation-delay:-2s"></i>');
+    expect(spin.getAttribute('style') === 'animation-delay:-2s', 'a changed animation kept its old delay');
+    morph(box, '<b data-key="1"></b><b data-key="2"><i class="spin" data-phase style="animation-delay:-1s"></i></b>');
+    const moving = box.querySelector('i');
+    morph(box, '<b data-key="2"><i class="spin" data-phase style="animation-delay:-3s"></i></b><b data-key="1"></b>');
+    expect(box.querySelector('i') === moving && moving.getAttribute('style') === 'animation-delay:-3s', 'a moved animation kept its delay from before the move');
+    morph(box, '<div data-drawn></div>');
+    box.firstChild.append(document.createElementNS('http://www.w3.org/2000/svg', 'svg'));
+    morph(box, '<div data-drawn class="z"></div>');
+    expect(box.firstChild.className === 'z' && box.firstChild.querySelector('svg') !== null, 'a drawn container lost what was drawn in it');
+    morph(box, '<select><option value="a">a</option><option value="b">b</option></select>');
+    const select = box.firstChild;
+    select.value = 'a';
+    morph(box, '<select><option value="a">a</option><option value="b" selected>b</option></select>');
+    expect(box.firstChild === select && select.value === 'b', 'a select did not follow the rendered choice');
+  } finally {
+    box.remove();
+  }
+  return failures;
+}
+
+/** Runs in the page before updates arrive: remembers the cards and activity items on screen, and scrolls a little. */
+function markPage() {
+  window.scrollTo(0, Math.max(0, Math.min(160, document.documentElement.scrollHeight - window.innerHeight)));
+  window.swarmCheck = {
+    baseline: performance.getEntriesByName('swarm-update').length,
+    cards: [...document.querySelectorAll('.b-card')],
+    feed: [...document.querySelectorAll('.fi')],
+    scrollY: window.scrollY,
+  };
+}
+
+/** Runs in the page after updates: what they re-created, highlighted again, scrolled or put out of phase, and their times. */
+function inspectPage() {
+  const state = window.swarmCheck;
+  const issues = [];
+  const recreated = state.cards.filter(el => !el.isConnected).length;
+  if (recreated) issues.push(`${recreated} of ${state.cards.length} cards were re-created`);
+  const flashed = state.feed.filter(el => el.isConnected && el.classList.contains('is-new')).length;
+  if (flashed) issues.push(`${flashed} activity items that did not change were highlighted again`);
+  if (Math.abs(window.scrollY - state.scrollY) > 1) issues.push(`the page scrolled from ${state.scrollY} to ${window.scrollY} px`);
+  const now = document.timeline.currentTime;
+  for (const arc of document.querySelectorAll('.ring .arc.spin')) {
+    const animation = arc.getAnimations()[0];
+    if (!animation) continue;
+    const off = Math.abs(animation.effect.getComputedTiming().progress - ((now / 1000) % 4) / 4);
+    const ms = Math.min(off, 1 - off) * 4000;
+    if (ms > 80) issues.push(`a busy ring is ${Math.round(ms)} ms out of phase`);
+  }
+  const durations = performance.getEntriesByName('swarm-update').slice(state.baseline).map(entry => entry.duration);
+  return { issues, durations };
+}
+
+/** Open the page with motion on, wait for live updates and inspect what they did; null when none arrived. */
+async function watchUpdates(page, url, { updates = 3, timeoutMs = 15000 } = {}) {
+  await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+  try {
+    page.errors.length = 0;
+    await page.goto(url, 1440);
+    await page.waitFor(`location.href === ${JSON.stringify(url)} && document.documentElement.dataset.ready === '1'`);
+    await page.evaluate(`(${markPage})()`);
+    const deadline = Date.now() + timeoutMs;
+    let seen = 0;
+    while (Date.now() < deadline) {
+      seen = await page.evaluate("performance.getEntriesByName('swarm-update').length - window.swarmCheck.baseline");
+      if (seen >= updates) break;
+      await new Promise(resolve => setTimeout(resolve, 200));
+    }
+    if (!seen) return null;
+    const result = await page.evaluate(`(${inspectPage})()`);
+    result.issues.push(...page.errors);
+    return result;
+  } finally {
+    await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+  }
+}
+
 async function selfTest(page) {
   const problems = [];
   for (const [name, broken] of [['layout-bad.html', true], ['layout-good.html', false]]) {
@@ -5020,6 +5426,16 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
       servers.push(server);
       urls[scenario] = server.url;
     }
+    const first = Object.values(urls)[0];
+    const home = `${first}?host=browser`;
+    await page.goto(home, 1280);
+    await page.waitFor(`location.href === ${JSON.stringify(home)} && document.documentElement.dataset.ready === '1'`);
+    const morphFailures = await page.evaluate(`(${morphSelfTest})()`);
+    if (morphFailures.length) {
+      for (const failure of morphFailures) stderr.write(`update self-test: ${failure}\n`);
+      return 1;
+    }
+    stdout.write('Update self-test passed: in-place rendering keeps nodes, order, animation delays and drawn content.\n');
     if (options.screenshots) mkdirSync(options.screenshots, { recursive: true });
     let views = 0;
     let checks = 0;
@@ -5045,7 +5461,23 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
       for (const issue of issues.slice(0, 20)) stderr.write(`  ${issue.rule}: ${issue.target} (${issue.detail})\n`);
       if (issues.length > 20) stderr.write(`  and ${issues.length - 20} more\n`);
     }
-    return failures.length ? 1 : 0;
+    let updateIssues = [];
+    if (options.live) {
+      const watched = await watchUpdates(page, `${options.live}?host=browser`, { timeoutMs: 25000 });
+      if (watched) updateIssues = watched.issues;
+      stdout.write(watched
+        ? `Live updates (live): ${describeTimes(watched.durations)}${watched.issues.length ? '' : '; cards kept, no repeated highlights, scroll kept, busy rings in phase'}.\n`
+        : 'Live updates (live): none arrived within 25 s, so the update time was not measured.\n');
+    } else {
+      const server = createDashboardServer({ createEngine: () => createDemoEngine({ scenario: 'example', simulate: true, stepMs: 1000 }), port: 0, version: 'layout-check' });
+      await server.listen();
+      servers.push(server);
+      const watched = await watchUpdates(page, `${server.url}?host=browser`);
+      updateIssues = watched ? watched.issues : ['no simulated update arrived within 15 s'];
+      if (watched) stdout.write(`Live updates (example, simulated): ${describeTimes(watched.durations)}${watched.issues.length ? '' : '; cards kept, no repeated highlights, scroll kept, busy rings in phase'}.\n`);
+    }
+    for (const issue of updateIssues) stderr.write(`update: ${issue}\n`);
+    return failures.length || updateIssues.length ? 1 : 0;
   } finally {
     process.off('SIGINT', interrupt);
     process.off('SIGTERM', interrupt);
@@ -5070,10 +5502,10 @@ In `package.json`, add one line after the `start` script:
 - [ ] **Step 7: Run the unit test, then the check**
 
 Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/check-layout.test.mjs`
-Expected: PASS, 4 tests.
+Expected: PASS, 5 tests.
 
 Run: `cd ghcp/plugins/swarm-dashboard && npm run check:layout`
-Expected: `Self-test passed …`, then `Checked 182 views … 0 issues.` and exit code 0, in about 20 s (the narrow-only Activity view is skipped where the layout is wide).
+Expected: `Self-test passed …`, `Update self-test passed …`, `Checked 182 views … 0 issues.` (the narrow-only Activity view is skipped where the layout is wide), then `Live updates (example, simulated): 3 updates; … ms median, … ms max; cards kept, no repeated highlights, scroll kept, busy rings in phase.` and exit code 0, in about 25 s. When this plan was written, updates took 2.4 ms median and 7.1 ms max. Reverting `render()` to `dash.innerHTML = …` makes the check fail with `6 of 6 cards were re-created`, and dropping morph's delay rule fails the update self-test.
 
 - [ ] **Step 8: Fix what the check finds**
 
@@ -5585,23 +6017,18 @@ git add ghcp/plugins/swarm-dashboard/server/canvas-host.mjs ghcp/plugins/swarm-d
 git commit -m "feat(swarm-dashboard): add the canvas extension on the shared server"
 ```
 
-- [ ] **Step 8: Prepare the in-app check (needs the coordinator's OK)**
+- [ ] **Step 8: In-app check in a session-scoped extension (controller)**
 
-Loading the canvas in the app changes the owner's Copilot setup, so this session does not do it. Send the coordinator these steps and wait for its answer; the coordinator or the owner runs them. The method installs nothing from a marketplace and is undone by one command. The CLI loads `~/.copilot/extensions/<name>/extension.mjs` in every session, so a one-line file there that imports this checkout's extension makes the canvas available while the extension's own `../../../server/` imports still resolve inside the checkout. From the plugin folder:
+The controller runs this in its own session, because it needs that session's extensions and canvases; a sub-agent cannot. Nothing is installed in `~/.copilot/extensions` or from a marketplace. If a session-scoped extension cannot provide the canvas, stop and ask the coordinator: a user-level install needs the owner's approval.
 
-```bash
-mkdir ~/.copilot/extensions/swarm-dashboard
-printf "import '%s';\n" "$PWD/com.github.copilot/extensions/swarm-dashboard/extension.mjs" > ~/.copilot/extensions/swarm-dashboard/extension.mjs
-```
+1. Read the `extensions_manage` guide, then scaffold a canvas extension with location `session` and the name `swarm-dashboard-check`. Replace the scaffolded `extension.mjs` with one line that imports this checkout's extension by absolute path, so its `../../../server/` imports resolve inside the checkout: `import '<absolute path of the plugin folder>/com.github.copilot/extensions/swarm-dashboard/extension.mjs';`
+2. Reload extensions, check with `extensions_manage` `list` that it is loaded, and open the canvas with `open_canvas` (canvas id `swarm-dashboard`).
+3. Check: it opens in the side panel and shows this session's swarm, updates live, and matches the mockup's side-panel layout at the panel's real width. The panel is WebKit, not Chrome: compare the font, the type scale, chips, bars and the SVGs with the mockup. If the preview server from Task 20 holds port 7927, the canvas reuses it (decision 1); restart that server first if UI files changed since it started.
+4. Take screenshots of the app window with the canvas open (Cards, Timeline, Plan, Board, a detail panel), keep them in the session's files folder, never in the repository, and note the panel's width in px.
+5. Check `lsof -nP -iTCP:7927 -sTCP:LISTEN` shows one listener, and close the canvas.
+6. Remove the session extension's folder and reload extensions.
 
-Then, in one session, ask the agent to reload extensions, and check:
-
-1. Ask the agent to open the Swarm dashboard canvas. It opens in the side panel, shows the session's swarm (or the default), updates live, and matches the mockup's side-panel layout at the panel's width. The panel is WebKit, not Chrome: compare the font, the type scale, chips, bars and the SVGs with the mockup.
-2. Whether the app's canvas menu lists it without an agent (spec section 12, item 3). If it does, say so in the plugin README's "Open the dashboard" (Task 19).
-3. Open it in a second session: `lsof -nP -iTCP:7927 -sTCP:LISTEN` shows one listener. End the first session: the second session's canvas takes over within about 3 s and its page reconnects.
-4. Close every canvas: the port closes about 5 minutes later.
-
-Undo with `rm -r ~/.copilot/extensions/swarm-dashboard`, then reload extensions. Fix any WebKit-only difference in `ui/styles.css`, rerun `npm run check:layout`, and commit the fix with a test where markup changed.
+Fix any WebKit-only difference in `ui/styles.css`, rerun `npm run check:layout`, and commit the fix with a test where markup changed. Report the findings, the panel width and the screenshot paths to the coordinator.
 
 ### Task 18: Canvas packaging and validation
 
@@ -5738,7 +6165,7 @@ export const DASHBOARD_FILES = [
   'server/assets.mjs', 'server/canvas-host.mjs', 'server/demo-engine.mjs', 'server/demo-scenarios.mjs', 'server/engines.mjs',
   'server/http.mjs', 'server/hub.mjs', 'server/shared.mjs',
   'ui/index.html', 'ui/styles.css', 'ui/app.mjs', 'ui/format.mjs', 'ui/history.mjs', 'ui/live.mjs', 'ui/main.mjs', 'ui/model.mjs',
-  'ui/parts.mjs', 'ui/plan.mjs', 'ui/timeline.mjs',
+  'ui/morph.mjs', 'ui/parts.mjs', 'ui/plan.mjs', 'ui/timeline.mjs',
   'scripts/swarm-dashboard.mjs', 'scripts/check-layout.mjs', 'scripts/lib/cdp.mjs', 'scripts/lib/page-audit.mjs',
 ];
 const SCRIPTS = { start: 'node scripts/swarm-dashboard.mjs', 'check:layout': 'node scripts/check-layout.mjs' };
@@ -5767,7 +6194,8 @@ export async function validateDashboard(root, manifest, pkg) {
   }
   try {
     const source = await readFile(path.join(root, EXTENSION_DIR, 'extension.mjs'), 'utf8');
-    if (!source.includes("from '@github/copilot-sdk/extension'") || !/\bjoinSession\(/.test(source) || !source.includes("id: 'swarm-dashboard'")) {
+    // Match the specifier alone: PR 1's import guard scans scripts/ for import statements and would count a quoted one.
+    if (!source.includes("'@github/copilot-sdk/extension'") || !/\bjoinSession\(/.test(source) || !source.includes("id: 'swarm-dashboard'")) {
       errors.push(`${EXTENSION_DIR}/extension.mjs must join the session with the swarm-dashboard canvas`);
     }
     if (/console\.(log|info|debug|dir|table)\(|process\.stdout/.test(source)) errors.push(`${EXTENSION_DIR}/extension.mjs must not write to stdout`);
@@ -5923,7 +6351,7 @@ Run these from the plugin folder.
 | `npm run snapshot -- --list` | Print the swarms as JSON; `--swarm <id>`, `--history` and `--run <id>` print the rest |
 | `npm test` | Run the unit tests |
 | `npm run validate` | Check the plugin's manifests, files and marketplace entry |
-| `npm run check:layout` | Check every view for overlap, clipped text, type, spacing and contrast at every width, in a local headless Chrome, Chromium or Edge (set `CHROME_PATH` to choose one) |
+| `npm run check:layout` | Check every view for overlap, clipped text, type, spacing and contrast at every width, and that live updates leave the page steady, in a local headless Chrome, Chromium or Edge (set `CHROME_PATH` to choose one); `-- --live <url>` checks a running dashboard |
 
 ## Troubleshooting
 
@@ -6005,7 +6433,7 @@ git add ghcp/plugins/swarm-dashboard/README.md README.md .github/copilot-instruc
 git commit -m "docs(swarm-dashboard): document the dashboard, canvas and launcher"
 ```
 
-### Task 20: Switch to PR 1's engine and smoke-test on real data
+### Task 20: Switch to PR 1's engine and send the early preview
 
 **Files:**
 - Modify: `ghcp/plugins/swarm-dashboard/server/engines.mjs`
@@ -6016,16 +6444,12 @@ git commit -m "docs(swarm-dashboard): document the dashboard, canvas and launche
 - Consumes: PR 1's `createSwarmEngine(options): SwarmEngine` from `engine/engine.mjs` (`options.log` receives diagnostics; finished runs are summarised into `~/.copilot/swarm-dashboard/history`, the engine's one write).
 - Produces: `createDefaultEngine === createSwarmEngine`; `unitEnd(session) = session.endedAt ?? null`.
 
-Precondition: PR 1's branch has `engine/engine.mjs`. Until it does, skip this task and run Task 21 without its real-data step.
+Runs right after Task 11 (see Execution order); the real-data smoke check with `--live` is in Task 21, after the layout check exists.
 
-- [ ] **Step 1: Bring in PR 1's engine**
+- [ ] **Step 1: Check that PR 1's engine is on the branch**
 
-```bash
-git fetch origin
-git rebase origin/nicksologoub-microsoft-swarm-data-engine
-```
-
-Resolve conflicts in the shared files by keeping both sides: PR 1's required files and `snapshot` script, this PR's `start` and `check:layout` scripts and its two validator lines. Then run `cd ghcp/plugins/swarm-dashboard && npm test && npm run validate`; both pass. The rebase rewrites commits that are already pushed, so ask the coordinator before pushing with `git push --force-with-lease`.
+Run: `test -f ghcp/plugins/swarm-dashboard/engine/engine.mjs && git log --oneline -1 -- ghcp/plugins/swarm-dashboard/engine/engine.mjs`
+Expected: a commit from PR 1. The branch was rebased onto PR 1's finished branch before Task 1. If PR 1 changes again, the coordinator says when to rebase: `git fetch origin && git rebase origin/nicksologoub-microsoft-swarm-data-engine`, keeping both sides of any conflict in the shared files (PR 1's required files and `snapshot` script; this PR's `start` and `check:layout` scripts and its two validator lines), then `npm test && npm run validate` and `git push --force-with-lease` (approved until the pull request opens).
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -6072,33 +6496,26 @@ export const unitEnd = session => session.endedAt ?? null;
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && npm test && npm run validate && npm run check:layout`
-Expected: all tests pass, validation passes, `Checked 182 views … 0 issues.` The suite still reads no Copilot data: the launcher tests use `--demo`, and the canvas test asks only for `/api/health` and the page, which never create an engine.
+Run: `cd ghcp/plugins/swarm-dashboard && npm test && npm run validate`
+Expected: all tests pass and validation passes. The suite still reads no Copilot data: the launcher tests use `--demo`, and the reuse and taken-port tests never create an engine (nor will the canvas test of Task 17, which asks only for `/api/health` and the page).
 
-- [ ] **Step 6: Smoke-test on real data (local only)**
-
-This reads the owner's Copilot data. Nothing from it is committed or sent anywhere: no screenshots, names or ids; only counts go to the coordinator. In a second terminal, start the launcher on a spare port, so it cannot meet a canvas on 7927:
-
-```bash
-cd ghcp/plugins/swarm-dashboard && npm start -- --port 7932
-```
-
-Then, in the first terminal:
-
-```bash
-cd ghcp/plugins/swarm-dashboard
-npm run check:layout -- --live http://127.0.0.1:7932/
-ps -o rss= -p "$(lsof -nP -tiTCP:7932 -sTCP:LISTEN)"
-```
-
-Expected: `Live dashboard: a live swarm with N units, M finished runs` (or `a finished swarm` / `no swarm`), then `Checked … views … 0 issues.`; the second command prints the launcher's resident memory in KB with the engine loaded (PR 1 measured 180–275 MB for one engine). Open `http://127.0.0.1:7932/` in a browser and go through Cards, a detail panel, Timeline (12h and whole run), Plan, Board, History and a run summary, at full width and at about 560 px. For anything wrong, rebuild the case with synthetic data in `server/demo-scenarios.mjs` (never copy real names or text), fix it with a test, and rerun `npm test` and `npm run check:layout`. Stop the launcher with Ctrl+C.
-
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add ghcp/plugins/swarm-dashboard/server/engines.mjs ghcp/plugins/swarm-dashboard/ui/model.mjs ghcp/plugins/swarm-dashboard/tests/demo-engine.test.mjs ghcp/plugins/swarm-dashboard/tests/ui-model.test.mjs
 git commit -m "feat(swarm-dashboard): serve Copilot data through the swarm engine"
 ```
+
+- [ ] **Step 7: Early preview on real data (controller)**
+
+This reads the owner's Copilot data on this machine only; nothing from it is committed or sent anywhere. Start the launcher from the plugin folder as a detached process, so it outlives the command that starts it: `node scripts/swarm-dashboard.mjs` (port 7927). Then check that it answers:
+
+```bash
+curl -s http://127.0.0.1:7927/api/health
+curl -s http://127.0.0.1:7927/api/swarms | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const l=JSON.parse(s);console.log(l.length+' swarms, '+l.filter(x=>x.lifecycle==='live').length+' live')})"
+```
+
+Expected: `{"app":"swarm-dashboard",…}`, then counts only. Open `http://127.0.0.1:7927/` at full width and at about 560 px and compare Cards, the header, Needs you, the activity rail and the detail panel with the mockup; fix visible differences in `ui/styles.css` or the views (with tests) before going on. Send the coordinator the URL and leave the server running until it says to stop it. The server keeps the UI files it loaded at start, so after later UI tasks restart it with the same command (pages reconnect by themselves) and say so in the next report.
 
 ### Task 21: Final verification and handoff
 
@@ -6116,13 +6533,25 @@ npm test && npm run validate
 npm run check:layout
 ```
 
-Expected: all tests pass; `Plugin validation passed …`; `Self-test passed …` and `Checked 182 views … 0 issues.` This PR does not change `.github/plugin/marketplace.json`; if a rebase brought a change to it, also run `npm test && npm run validate` in every other plugin folder under `ghcp/plugins/`.
+Expected: all tests pass; `Plugin validation passed …`; `Self-test passed …`, `Update self-test passed …`, `Checked 182 views … 0 issues.` (the example and stress scenarios, browser layout at 480–1920 px and canvas layout at 480, 560 and 640 px) and the simulated update times. This PR does not change `.github/plugin/marketplace.json`; if a rebase brought a change to it, also run `npm test && npm run validate` in every other plugin folder under `ghcp/plugins/`.
 
-- [ ] **Step 2: Check the README's commands**
+- [ ] **Step 2: Smoke-test on real data (local only)**
+
+This reads the owner's Copilot data. Nothing from it is committed or sent anywhere: no screenshots, names or ids; only counts go to the coordinator. Use the preview server on 7927 when it is running (restart it first if UI files changed since it started); otherwise start the launcher on a spare port with `npm start -- --port 7932` in a second terminal and use that port below.
+
+```bash
+cd ghcp/plugins/swarm-dashboard
+npm run check:layout -- --live http://127.0.0.1:7927/
+ps -o rss= -p "$(lsof -nP -tiTCP:7927 -sTCP:LISTEN)"
+```
+
+Expected: `Live dashboard: a live swarm with N units, M finished runs` (or `a finished swarm` / `no swarm`), `Checked … views … 0 issues.`, then `Live updates (live): 3 updates; … ms median, … ms max; …` while a swarm is live (if none arrives within 25 s, the times are not measured: repeat while a swarm is working). The second command prints the server's resident memory in KB with the engine loaded (PR 1 measured 180–275 MB for one engine). Open the page in a browser and go through Cards, a detail panel, Timeline (12h and whole run), Plan, Board, History and a run summary at full width and at about 560 px. For anything wrong, rebuild the case with synthetic data in `server/demo-scenarios.mjs` (never copy real names or text), fix it with a test, and rerun `npm test` and `npm run check:layout`.
+
+- [ ] **Step 3: Check the README's commands**
 
 Run each command in the plugin README's table once: `npm start -- --demo` (open the page, then Ctrl+C), `npm run snapshot -- --list > /dev/null` (real data; the output is not kept), `npm test`, `npm run validate`, `npm run check:layout -- --width 560`. Each exits 0. If a command is not on the branch yet (PR 1's `snapshot`), say so in the handoff.
 
-- [ ] **Step 3: Check that nothing private is committed**
+- [ ] **Step 4: Check that nothing private is committed**
 
 ```bash
 BASE=origin/nicksologoub-microsoft-swarm-data-engine
@@ -6132,9 +6561,9 @@ git diff "$BASE"...HEAD -- ghcp README.md .github | grep -n -E '/Users/|/home/[a
 
 Expected: both print nothing (the plan under `docs/` is left out because it quotes these patterns). Every name, id and text in fixtures and scenarios is synthetic.
 
-- [ ] **Step 4: Hand off**
+- [ ] **Step 5: Hand off**
 
-Push the branch under the coordinator's push rules (as the owner's account, with a token for the push command only, and `--force-with-lease` only with the coordinator's OK). Send the coordinator: the commands above and their results, the layout check's summary line (views, widths, checks, 0 issues), the real-data smoke counts from Task 20 (swarms, units, views, issues, memory), the in-app check's status from Task 17, the repository, branch and pushed SHA. Do not open a pull request until the coordinator says so.
+Push the branch under the coordinator's push rules (as the owner's account, with a token for the push command only; `--force-with-lease` is approved until the pull request opens). Send the coordinator: the commands above and their results; `npm run check:layout` on the example and stress scenarios at every width (its summary lines); the `--live` run against the real engine (counts, issues and update times only); the update time per render on the demo and on real data; the in-app screenshots from Task 17 (paths on this machine, not committed); the public-repo scan from Step 4; and the repository, branch and pushed SHA. Do not open a pull request until the coordinator says so.
 
 ## Self-review
 
@@ -6158,13 +6587,16 @@ Spec coverage, by the spec section that sets each requirement:
 | §9 call 12 | "Took" from the root's creation, busy time beside it, first child | 14 |
 | §9 call 13 | Header counts: failed and blocked | 2, 4 |
 | §9 call 14 | Synthetic fixtures only | 8, 16, 21 |
+| Go-ahead 5 | PR closed without merging: PR open stage and column, badge, monitor ended | 2, 4, 5, 8, 13 |
+| Go-ahead 6 | 4-character ring labels whole when they fit, else cut without a trailing separator; stress labels | 3, 6, 8, 10 |
+| Go-ahead 7 | Snapshots never changed; in-place updates; update times on demo and real data | 2, 7, 9, 10, 12, 13, 16, 21 |
 | §12 items 3, 5, 6, 7, 8, 9, 14, 16, 19 | Optional input; `$schema`; light palette; name and port; 3 s poll and 1 s redraw; test strategy; progress badge; server reuse and taken port; several live swarms | 17; 18; 6; decision 2; 9, 10; 15, 16; 3; 11, 17; 7, 10 |
 
 Items 1, 2, 4, 10–13, 15, 17 and 18 of spec section 12 belong to PR 1's engine. No requirement is without a task.
 
 Placeholder scan: no "TBD", "TODO", "fill in", "similar to Task N" or step without its code. Every code step shows the whole file or the exact lines to change.
 
-Type consistency, checked across tasks: `createDashboardServer({ createEngine, host, port, version, now, log, hub, onIdle })` and its `listen`, `close`, `url`, `port`, `clientCount` (Tasks 9, 11, 16, 17); `createHub` options and `onIdle` (Tasks 9, 17); `listenShared` statuses `started`, `running`, `taken`, `unresponsive` and `probePort` states `ours`, `free`, `other`, `unresponsive` (Tasks 11, 17); `createDefaultEngine` (Tasks 8, 11, 17, 20); `unitEnd` (Tasks 2, 4, 5, 12, 20); `auditScript` and `AUDIT_DEFAULTS` (Tasks 15, 16); `buildStates` targets (Task 16); `validateDashboard` (Task 18).
+Type consistency, checked across tasks: `createDashboardServer({ createEngine, host, port, version, now, log, hub, onIdle })` and its `listen`, `close`, `url`, `port`, `clientCount` (Tasks 9, 11, 16, 17); `createHub` options and `onIdle` (Tasks 9, 17); `listenShared` statuses `started`, `running`, `taken`, `unresponsive` and `probePort` states `ours`, `free`, `other`, `unresponsive` (Tasks 11, 17); `createDefaultEngine` (Tasks 8, 11, 17, 20); `unitEnd` (Tasks 2, 4, 5, 12, 20); `auditScript` and `AUDIT_DEFAULTS` (Tasks 15, 16); `buildStates` targets and `describeTimes` (Task 16); `validateDashboard` (Task 18); `closedNotMerged` (Tasks 2, 4, 5, 13); `closedBadge`, `shortLabel` and `phase` (Tasks 3, 10, 12); `morph` and the `data-key`, `data-drawn` and `data-phase` attributes (Tasks 3, 4, 7, 10, 12, 16); `deepFreeze` and `closedSnapshot` (Tasks 2, 4, 5, 7, 9, 12, 13).
 
 Known limits, also reported to the coordinator:
 - The layout check runs in Chrome; the app's panel is WebKit. Task 17's in-app check covers the difference.
@@ -6172,4 +6604,4 @@ Known limits, also reported to the coordinator:
 - The extension imports `../../../server/`, which assumes the CLI runs plugin extensions from the installed plugin folder (its changelog and runtime messages point that way). The first install from the marketplace confirms it.
 - After an update, a session that still runs the old extension can keep hosting the old server until it ends; a canvas that finds another version on the port logs a warning.
 
-Execution: superpowers:subagent-driven-development, one fresh sub-agent per task and a review between tasks. After Task 11, send the coordinator the early preview: `cd ghcp/plugins/swarm-dashboard && npm start -- --demo`, then `http://127.0.0.1:7927/`.
+Execution: superpowers:subagent-driven-development, one fresh sub-agent per task and a review between tasks, in the Execution order above. The early preview is the last step of Task 20: the launcher, detached, on `http://127.0.0.1:7927/` with real data.
