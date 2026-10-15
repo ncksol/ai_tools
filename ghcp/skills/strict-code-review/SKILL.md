@@ -95,7 +95,7 @@ Do not review only the raw diff if you can read the repository at the head commi
 
 ## Base and head commits
 
-The adapters below give you a base commit, `<BASE_SHA>`, and a head commit, `<HEAD_SHA>`, except for a pasted diff and a GitHub PR without a local clone. Review the change between them from Git objects. No checkout is needed, so this works even when the working tree has uncommitted changes or another branch is checked out. Run Git commands in the repository under review; if the user gave its path, use `git -C <path> …`.
+The adapters below give you a base commit, `<BASE_SHA>`, and a head commit, `<HEAD_SHA>`, except for a pasted diff and a GitHub PR without a local clone. In those two cases, report every commit you cannot know as `unavailable`. Review the change between the two commits from Git objects. No checkout is needed, so this works even when the working tree has uncommitted changes or another branch is checked out. Run Git commands in the repository under review; if the user gave its path, use `git -C <path> …`. A pipeline returns the exit status of its last command, so also check that the first command succeeded (for example, start the command with `set -o pipefail;`).
 
 ```bash
 git merge-base <BASE_SHA> <HEAD_SHA>
@@ -149,20 +149,17 @@ git ls-remote <REMOTE> refs/heads/<baseRefName> refs/pull/<NUMBER>/head
 If no remote matches, the current directory is not a clone of this repository, so do not fetch into it. Review GitHub’s net diff instead. Do not use `--patch`: it prints one patch per commit, not the net change of the PR.
 
 ```bash
-gh pr diff <PR_URL> | git hash-object --stdin
-gh pr diff <PR_URL>
-gh pr diff <PR_URL> --name-only
-gh pr diff <PR_URL> | git hash-object --stdin
+DIFF=$(gh pr diff <PR_URL>) && printf '%s\n' "$DIFF" | git hash-object --stdin && printf '%s\n' "$DIFF"
 gh pr view <PR_URL> --json baseRefName,headRefOid
 ```
 
-The two hashes must match; the hash then identifies the diff you reviewed. If they differ, or the last command does not print the `baseRefName` and `<HEAD_SHA>` from your first `gh pr view`, the PR changed while you fetched the diff: start again. The old side of this diff is the merge base. Read other files at the head commit:
+Run the first line as one command. It stops if `gh pr diff` fails; otherwise it prints the hash of the diff and then the diff itself, so the hash identifies exactly what you review. Do not treat a failed retrieval as an empty PR. If the second command does not print the `baseRefName` and `<HEAD_SHA>` from your first `gh pr view`, the PR changed while you fetched the diff: start again. Report `<HEAD_SHA>` and the hash; the base and merge-base commits are `unavailable`. The old side of this diff is the merge base. Read other files at the head commit:
 
 ```bash
 gh api -H 'Accept: application/vnd.github.raw+json' 'repos/<OWNER>/<REPO>/contents/<path>?ref=<HEAD_SHA>'
 ```
 
-Before you report, run the hash command and `gh pr view <PR_URL> --json baseRefName,headRefOid` again. If the hash, the base branch or the head commit changed, start again. If they change again, report the commits you reviewed and say that the PR has changed since.
+Before you report, run `DIFF=$(gh pr diff <PR_URL>) && printf '%s\n' "$DIFF" | git hash-object --stdin` and `gh pr view <PR_URL> --json baseRefName,headRefOid` again. If the hash, the base branch or the head commit changed, start again. If they change again, report the commits you reviewed and say that the PR has changed since. If either command fails, say that you could not check the PR again.
 
 If a fetch or `git merge-base` fails, use the steps for a directory that is not a clone. If you cannot read files at the head commit either, review the checked `gh pr diff` output and state clearly that surrounding-code inspection was limited.
 
@@ -259,12 +256,12 @@ Use full ref names, such as `refs/heads/<name>` or `refs/remotes/<REMOTE>/<name>
 
 Set the head, `<HEAD_REF>`:
 
-- If the user named a branch, use `refs/heads/<name>`, even when another branch is checked out. Check it with `git rev-parse --verify refs/heads/<name>`. If there is no local branch with that name, list remote-tracking branches with `git branch -r --list '*/<name>'`. If exactly one matches, use it and say so; if several match, ask which one.
+- If the user named a branch, use `refs/heads/<name>`, even when another branch is checked out. Check it with `git rev-parse --verify refs/heads/<name>`. If there is no local branch with that name, list remote-tracking branches with `git branch -r --list '*/<name>'`. If exactly one matches, use it and say so; if several match, ask which one. If none matches, check the remote with `git ls-remote --heads <REMOTE> refs/heads/<name>`; if it has the branch, refresh it (see below) and use `refs/remotes/<REMOTE>/<name>`.
 - If the user asked you to review the current branch, use `HEAD`.
 
 `<BRANCH>` is the head branch’s name. `<REMOTE>` is the remote for the repository you merge into: `upstream` in a fork workflow, otherwise usually `origin`. Set the base, `<BASE_REF>`, from the first of these that applies:
 
-1. the base branch the user named, as `refs/heads/<name>` or `refs/remotes/<REMOTE>/<name>`, whichever exists. If both exist and point at different commits, fetch the remote one, then use whichever contains the other (`git merge-base --is-ancestor <A> <B>` succeeds when `<B>` contains `<A>`). If they have diverged, ask which one to use.
+1. the base branch the user named, as `refs/heads/<name>` or `refs/remotes/<REMOTE>/<name>`, whichever exists. If both exist and point at different commits, refresh the remote one (see below), then use whichever contains the other (`git merge-base --is-ancestor <A> <B>` succeeds when `<B>` contains `<A>`). If they have diverged, ask which one to use.
 2. the target branch of an open PR from `<BRANCH>`, if exactly one open PR has `<BRANCH>` as its source branch and that PR’s head commit is in the head’s history (`git merge-base --is-ancestor <PR head commit> <HEAD_REF>` succeeds). GitHub: `gh pr list --head <BRANCH> --state open --json baseRefName,headRefOid,url`. Azure DevOps: `az repos pr list --source-branch <BRANCH> --status active --org <ORG_URL> --project <PROJECT> --repository <REPO> --detect false --output json`, with the names taken from the remote URL; the PR’s head commit is `lastMergeSourceCommit.commitId`. Use the remote-tracking ref of the remote that points at the PR’s repository.
 3. the default branch of `<REMOTE>`: `git ls-remote --symref <REMOTE> HEAD` prints it as `ref: refs/heads/<name>`, so use `refs/remotes/<REMOTE>/<name>`. If the remote cannot be reached, `git symbolic-ref refs/remotes/<REMOTE>/HEAD` prints the last known value as a full ref; use it as it is.
 4. a local `main` or `master` branch
@@ -272,7 +269,13 @@ Set the head, `<HEAD_REF>`:
 
 The head branch’s own upstream (for example, `origin/<BRANCH>`) is not a base: a diff against it shows only unpushed commits.
 
-If the repository has no remote, use local branches and do not fetch. Before you use a remote-tracking ref `refs/remotes/<remote>/<name>` as the head or the base, update it with `git fetch <remote> <name>`; if the fetch fails, say so and use the ref you have.
+If the repository has no remote, use local branches and do not fetch. Before you use a remote branch as the head or the base, refresh its remote-tracking ref with an explicit refspec. The full source name means that a tag with the same name is never fetched instead, and the destination creates the ref even in a single-branch clone:
+
+```bash
+git fetch <remote> +refs/heads/<name>:refs/remotes/<remote>/<name>
+```
+
+If the fetch fails, say so and use the ref you have.
 
 Record the two commits:
 
@@ -635,7 +638,7 @@ PR summary:
 - Source:
 - Apparent intent:
 - Changed areas:
-- Commits (base, head, merge base):
+- Commits (base, head, merge base; "unavailable" if unknown):
 - Surrounding code inspected: Yes/No
 ```
 
