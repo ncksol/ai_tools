@@ -32,6 +32,11 @@ export async function probePort(port, { timeoutMs = 2500 } = {}) {
  * probes the winner and reuses it if it is a dashboard.
  */
 export async function listenShared({ port, makeServer, probe = probePort, attempts = 3, pauseMs = 300 }) {
+  // Look before binding: macOS lets a loopback bind succeed beside a program that holds the port on every address.
+  const holder = await probe(port);
+  if (holder.state === 'ours') return { status: 'running', health: holder.health };
+  if (holder.state === 'other') return { status: 'taken' };
+  if (holder.state === 'unresponsive') return { status: 'unresponsive' };
   let status = 'taken';
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const server = makeServer();
@@ -45,7 +50,7 @@ export async function listenShared({ port, makeServer, probe = probePort, attemp
     if (found.state === 'ours') return { status: 'running', health: found.health };
     if (found.state === 'other') return { status: 'taken' };
     status = found.state === 'unresponsive' ? 'unresponsive' : 'taken';
-    await new Promise(resolve => setTimeout(resolve, pauseMs));
+    if (attempt < attempts - 1) await new Promise(resolve => setTimeout(resolve, pauseMs));
   }
   return { status };
 }

@@ -53,6 +53,17 @@ test('the probe tells a free port, our dashboard, another program and a silent l
   }
 });
 
+test('a program holding the port on every address counts as taken, not as a free loopback port', async () => {
+  const port = await freePort();
+  const other = createServer((req, res) => res.end('hello'));
+  await new Promise(resolve => other.listen(port, '0.0.0.0', resolve));
+  try {
+    assert.deepEqual(await listenShared({ port, makeServer: () => dashboard(port) }), { status: 'taken' });
+  } finally {
+    await close(other);
+  }
+});
+
 test('listenShared starts a server, finds a running dashboard, or reports a taken port', async () => {
   const port = await freePort();
   const first = await listenShared({ port, makeServer: () => dashboard(port) });
