@@ -5,6 +5,8 @@ import { EventLog } from './event-log.mjs';
 export const T0 = Date.UTC(2026, 9, 15, 8, 0, 0);
 export const DAY = 24 * HOUR;
 export const at = minutes => T0 + minutes * MINUTE;
+/** Above Linux's largest pid_max (4,194,304) and macOS's (99,999), so no real process can own these lock files. */
+export const NO_SUCH_PID = 2_000_000_000;
 export const alwaysAlive = async locks => new Map(locks.map(lock => [lock.pid, true]));
 
 /** A live synthetic swarm (root with an open tagged question, two idle units) and a finished one from 30 days earlier. */
@@ -34,9 +36,9 @@ export function scenario() {
   home.writeEvents('cli-old', old.events);
 
   home.usage([{ sessionId: 'cli-root', nanoAiu: 3e9, createdAt: at(1) }, { sessionId: 'cli-api', nanoAiu: 4e9, createdAt: at(20) }]);
-  home.lock('cli-root', 101, T0);
-  home.lock('cli-api', 102, at(5));
-  home.lock('cli-ui', 103, at(6));
+  home.lock('cli-root', NO_SUCH_PID + 1, T0);
+  home.lock('cli-api', NO_SUCH_PID + 2, at(5));
+  home.lock('cli-ui', NO_SUCH_PID + 3, at(6));
   home.sessionDb('cli-api', { todos: [{ id: 'a', status: 'done' }, { id: 'b' }] });
   home.workspaceYaml('cli-api', { cwd: '/synthetic/worktrees/api', branch: 'feature/api' });
   return home;

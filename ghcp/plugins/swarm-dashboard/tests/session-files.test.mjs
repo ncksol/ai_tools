@@ -21,6 +21,8 @@ test('lock files list their PIDs and times', () => {
   home.lock('cli-3', 4242, 1_700_000_000_000);
   writeFileSync(path.join(home.dir('cli-3'), 'inuse.oops.lock'), '');
   assert.deepEqual(listLocks(home.dir('cli-3')), [{ pid: 4242, mtimeMs: 1_700_000_000_000 }]);
+  for (const pid of ['0', '00']) writeFileSync(path.join(home.dir('cli-3'), `inuse.${pid}.lock`), '');
+  assert.deepEqual(listLocks(home.dir('cli-3')), [{ pid: 4242, mtimeMs: 1_700_000_000_000 }]);
   assert.deepEqual(listLocks(home.dir('cli-4')), []);
   assert.equal(listLocks(path.join(home.stateDir, 'missing')), null);
 });

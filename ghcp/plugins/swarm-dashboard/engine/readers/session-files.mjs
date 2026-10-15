@@ -29,8 +29,10 @@ export function listLocks(dir) {
   for (const name of names) {
     const match = /^inuse\.(\d+)\.lock$/.exec(name);
     if (!match) continue;
+    const pid = Number(match[1]);
+    if (!Number.isSafeInteger(pid) || pid < 1) continue;
     try {
-      locks.push({ pid: Number(match[1]), mtimeMs: Math.round(statSync(path.join(dir, name)).mtimeMs) });
+      locks.push({ pid, mtimeMs: Math.round(statSync(path.join(dir, name)).mtimeMs) });
     } catch {
       // removed between readdir and stat
     }
