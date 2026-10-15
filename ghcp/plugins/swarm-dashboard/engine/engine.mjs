@@ -136,22 +136,27 @@ export function createSwarmEngine(options = {}) {
     const totals = ledger.sumFor(cliIds);
     last = Math.max(last, totals.lastAt ?? 0);
     cheapLast.set(root.id, last);
-    const runningFlag = cliIds.some(id => app.sessions.get(id)?.isRunning);
     const recent = at - last < thresholds.runFinishedAfterMs;
+    const entry = snapshots.get(root.id);
+    const tracked = entry && entry.last === last ? entry.snapshot : null;
+    // Design call 12: a run stays Live while anything in it is busy or stuck, so a quiet run is checked for live
+    // processes too, unless it is already confirmed finished at this activity time.
     let alive = false;
-    if (recent || runningFlag) {
+    let allDead = cliIds.length > 0;
+    if (knownFinished.get(root.id) !== last) {
       for (const cliId of cliIds) {
-        if ((await livenessOf(cliId, at)) === true) {
+        const value = await livenessOf(cliId, at);
+        if (value === true) {
           alive = true;
           break;
         }
+        if (value !== false) allDead = false;
       }
     }
-    const entry = snapshots.get(root.id);
-    const tracked = entry && entry.last === last ? entry.snapshot : null;
+    if (!tracked && !recent && !alive && allDead) knownFinished.set(root.id, last);
     const lifecycle = tracked ? tracked.run.lifecycle
       : knownFinished.get(root.id) === last ? 'finished'
-        : recent || (runningFlag && alive) ? 'live' : 'finished';
+        : recent || alive ? 'live' : 'finished';
     const lastActivityAt = tracked?.run.lastActivityAt ?? (last || at);
     return {
       id: root.id, name: root.name ?? '', project: projectOf(root), startedAt: root.createdAt || lastActivityAt, lastActivityAt,

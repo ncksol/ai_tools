@@ -9,7 +9,7 @@ import { validateRunListItem, validateRunSummary, validateSnapshot, validateSwar
 import { HOUR, MINUTE } from '../engine/time.mjs';
 import { CopilotHome } from './helpers/copilot-home.mjs';
 import { EventLog } from './helpers/event-log.mjs';
-import { DAY, T0, alwaysAlive, at, scenario } from './helpers/scenario.mjs';
+import { DAY, NO_SUCH_PID, T0, alwaysAlive, at, scenario } from './helpers/scenario.mjs';
 import { tempDir } from './helpers/temp.mjs';
 
 function fingerprint(dir) {
@@ -406,4 +406,76 @@ test('a stored summary picks up PR results that arrive later', async t => {
     await engine.refresh();
     assert.deepEqual(stat(stored), settled);
   });
+});
+
+/** A root session that has been quiet for 181 minutes. With background = true it launched a sub-agent that never reported. */
+function quietHome({ background }) {
+  const home = new CopilotHome();
+  home.project({ id: 'project-1', name: 'sample-project' });
+  home.workspace({ id: 'ws-quiet', projectId: 'project-1', name: 'Quiet story', createdAt: T0, sessionId: 'cli-quiet' });
+  home.workspace({ id: 'ws-quiet-unit', projectId: 'project-1', name: 'Quiet q1 unit', createdAt: at(1), sessionId: 'cli-quiet-unit', parentId: 'ws-quiet', creatorSessionId: 'cli-quiet' });
+  const unit = new EventLog(at(1));
+  unit.start(); unit.turnStart(); unit.wait(MINUTE); unit.turnEnd();
+  home.writeEvents('cli-quiet-unit', unit.events);
+  home.lock('cli-quiet-unit', NO_SUCH_PID + 10, at(1));
+  const root = new EventLog(T0);
+  root.start(); root.user('go'); root.turnStart();
+  if (background) root.subagent({ name: 'hung', mode: 'background' });
+  root.wait(MINUTE); root.turnEnd();
+  home.writeEvents('cli-quiet', root.events);
+  home.lock('cli-quiet', NO_SUCH_PID + 9, T0);
+  return { home, quietAt: T0 + 2 * MINUTE + 181 * MINUTE };
+}
+
+function countingProbe(alive) {
+  const probe = async locks => {
+    probe.calls += 1;
+    return new Map(locks.map(lock => [lock.pid, alive]));
+  };
+  probe.calls = 0;
+  return probe;
+}
+
+const quietEngine = (home, processProbe, clock) => createSwarmEngine({
+  copilotHome: home.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: clock, processProbe, prLookup: 'off',
+});
+
+test('a quiet run with a hung background sub-agent stays live from a cold start', async () => {
+  const { home, quietAt } = quietHome({ background: true });
+  const engine = quietEngine(home, countingProbe(true), () => quietAt);
+  await engine.refresh();
+  assert.deepEqual(engine.listSwarms().map(swarm => [swarm.id, swarm.lifecycle]), [['ws-quiet', 'live']]);
+  const snapshot = await engine.getSnapshot('ws-quiet');
+  assert.equal(snapshot.run.lifecycle, 'live');
+  assert.equal(snapshot.orchestrator.statusDetail, 'stuck_subagent');
+});
+
+test('the same quiet run is listed finished when its process is dead, and is not probed again', async () => {
+  const { home, quietAt } = quietHome({ background: true });
+  const probe = countingProbe(false);
+  let clock = quietAt;
+  const engine = quietEngine(home, probe, () => clock);
+  await engine.refresh();
+  assert.deepEqual(engine.listSwarms().map(swarm => [swarm.id, swarm.lifecycle]), [['ws-quiet', 'finished']]);
+  const afterFirst = probe.calls;
+  assert.ok(afterFirst >= 1);
+  clock += MINUTE;
+  await engine.refresh();
+  assert.equal(probe.calls, afterFirst);
+  assert.equal(engine.listSwarms()[0].lifecycle, 'finished');
+});
+
+test('a quiet run with a live process and nothing busy or stuck is finished, and is not probed or rebuilt again', async () => {
+  const { home, quietAt } = quietHome({ background: false });
+  const probe = countingProbe(true);
+  let clock = quietAt;
+  const engine = quietEngine(home, probe, () => clock);
+  await engine.refresh();
+  assert.ok(probe.calls >= 1, 'the first refresh checks for live processes');
+  assert.deepEqual(engine.listSwarms().map(swarm => [swarm.id, swarm.lifecycle]), [['ws-quiet', 'finished']]);
+  const afterFirst = probe.calls;
+  clock += MINUTE;
+  await engine.refresh();
+  assert.equal(probe.calls, afterFirst, 'neither the listing nor a rebuild probes again');
+  assert.equal(engine.listSwarms()[0].lifecycle, 'finished');
 });
