@@ -54,6 +54,19 @@ export function contrastRatio(a, b) {
   return (high + 0.05) / (low + 0.05);
 }
 
+/** Whether an element shows an ellipsis where it cuts its text: block containers draw one, flex and grid containers do not. */
+export function showsEllipsis(style) {
+  return style.textOverflow === 'ellipsis' && !/flex|grid/.test(style.display);
+}
+
+/** Whether an ancestor that hides its overflow cuts a box: across unless the ancestor shows an ellipsis there, or down. `area` is its padding box. */
+export function cutsBox(box, area, style) {
+  const hides = value => value === 'hidden' || value === 'clip';
+  const across = hides(style.overflowX) && !showsEllipsis(style) && (box.left < area.left - 0.5 || box.right > area.right + 0.5);
+  const down = hides(style.overflowY) && (box.top < area.top - 0.5 || box.bottom > area.bottom + 0.5);
+  return across || down;
+}
+
 /** Check the rendered page under options.root and return { checks, issues }. Runs in the browser. */
 export function auditPage(options) {
   const issues = [];
@@ -167,13 +180,29 @@ export function auditPage(options) {
     }
   }
 
+  // The nearest ancestor whose hidden overflow cuts the element's box.
+  const cutBy = el => {
+    const box = el.getBoundingClientRect();
+    for (let node = el.parentElement; node && node !== document.documentElement; node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if (style.overflowX === 'visible' && style.overflowY === 'visible') continue;
+      const outer = node.getBoundingClientRect();
+      const left = outer.left + node.clientLeft;
+      const top = outer.top + node.clientTop;
+      if (cutsBox(box, { left, top, right: left + node.clientWidth, bottom: top + node.clientHeight }, style)) return node;
+    }
+    return null;
+  };
   for (const el of texts) {
     const style = getComputedStyle(el);
     checks += 1;
     if (style.display !== 'inline' && el.scrollWidth > el.clientWidth + 1) {
       if (style.overflowX === 'visible') report('spill', el, `${el.scrollWidth}px of content in ${el.clientWidth}px`);
-      else if (style.textOverflow !== 'ellipsis') report('clipped', el, `${el.scrollWidth}px of content in ${el.clientWidth}px`);
+      else if (!showsEllipsis(style)) report('clipped', el, `${el.scrollWidth}px of content in ${el.clientWidth}px`);
     }
+    if (style.display !== 'inline' && style.overflowY !== 'visible' && el.scrollHeight > el.clientHeight + 1) report('hidden-lines', el, `${el.scrollHeight}px of lines in ${el.clientHeight}px`);
+    const cut = cutBy(el);
+    if (cut) report('cut', el, `cut off by ${describe(cut)}`);
     const container = el.parentElement && el.parentElement.closest(options.containers);
     if (container) {
       const box = clippedBox(el);
@@ -230,6 +259,6 @@ export const AUDIT_DEFAULTS = Object.freeze({
 
 /** The audit as one expression for Runtime.evaluate. */
 export function auditScript(options = AUDIT_DEFAULTS) {
-  const source = [oklchToSrgb, parseColor, composite, luminance, contrastRatio, auditPage].map(fn => fn.toString()).join('\n');
+  const source = [oklchToSrgb, parseColor, composite, luminance, contrastRatio, showsEllipsis, cutsBox, auditPage].map(fn => fn.toString()).join('\n');
   return `(() => {\n${source}\nreturn auditPage(${JSON.stringify(options)});\n})()`;
 }
