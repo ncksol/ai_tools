@@ -66,11 +66,17 @@ function syncNode(from, to, moved) {
   }
   syncAttributes(from, to, moved);
   if (from.hasAttribute('data-drawn') && to.hasAttribute('data-drawn')) return;
-  syncChildren(from, to, moved);
-  if (from.nodeName === 'SELECT') {
-    const chosen = to.querySelector('option[selected]') ?? to.querySelector('option');
-    if (chosen) from.value = chosen.getAttribute('value') ?? chosen.textContent;
+  if (from.nodeName !== 'SELECT') {
+    syncChildren(from, to, moved);
+    return;
   }
+  // Someone may be choosing in this select right now: leave its options and choice alone until it loses focus.
+  if (from === document.activeElement) return;
+  // Read the rendered choice before syncing, which moves new options out of `to`.
+  const chosen = to.querySelector('option[selected]') ?? to.querySelector('option');
+  const value = chosen ? chosen.getAttribute('value') ?? chosen.textContent : null;
+  syncChildren(from, to, moved);
+  if (value !== null) from.value = value;
 }
 
 function syncAttributes(from, to, moved) {

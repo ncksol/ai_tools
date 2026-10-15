@@ -51,7 +51,6 @@ let source = null;
 let reconnectTimer = null;
 let justConnected = true;
 let renderQueued = false;
-let renderDeferred = false;
 let lastWidth = 0;
 let ticks = 0;
 let freshUntil = 0;
@@ -153,11 +152,6 @@ function isReady() {
 
 function render() {
   renderQueued = false;
-  if (document.activeElement?.matches('select[data-swarm]')) {
-    renderDeferred = true;
-    return;
-  }
-  renderDeferred = false;
   const started = performance.now();
   const width = dash.clientWidth;
   view.narrow = isNarrow(width);
@@ -309,8 +303,9 @@ dash.addEventListener('change', event => {
   connect();
   render();
 });
-dash.addEventListener('focusout', () => {
-  if (renderDeferred) scheduleRender();
+// morph() leaves the focused swarm picker alone, so bring it up to date once it loses focus.
+dash.addEventListener('focusout', event => {
+  if (event.target.matches('select[data-swarm]')) scheduleRender();
 });
 new ResizeObserver(() => {
   if (dash.clientWidth !== lastWidth) scheduleRender();
