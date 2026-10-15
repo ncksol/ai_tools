@@ -1,6 +1,16 @@
 ---
 name: strict-code-review
-description: Use this skill whenever the user asks to review a pull request, PR URL, merge request, branch diff, GitHub PR, Azure DevOps PR, Azure Repos PR, or code review link. It detects the provider, gathers PR context, checks out or diffs the change locally where possible, and performs a strict senior-engineer review without posting comments or modifying code.
+description: >-
+  Strict, first-pass code review of a GitHub or Azure DevOps (Azure Repos)
+  pull request URL, a local or current branch, or a pasted diff.
+  Inspection-only: reports evidence-backed findings and a merge verdict in
+  chat, and never posts to the PR, votes, changes the user's files, commits
+  or pushes. Use when the user asks to review a pull request or PR link, to
+  review a branch or diff before merge, or for a strict or critical code
+  review. Do not use to triage review comments already on a pull request
+  (use analyse-pr-feedback), to re-review a pull request after fixes for
+  earlier findings (use rereview-pr), or to publish review comments on a
+  pull request.
 ---
 
 # Strict Pull Request Review
