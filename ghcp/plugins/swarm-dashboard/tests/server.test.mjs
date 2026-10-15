@@ -79,9 +79,61 @@ test('API calls create the engine on demand and drop it when idle', async () => 
     assert.equal(snapshot.run.id, 'ws-0000-root');
     await new Promise(resolve => setTimeout(resolve, 150));
     assert.equal(idle, 1);
+    assert.equal(calls.stop, 1, 'the dropped engine is stopped');
     await get(server.port, '/api/swarms');
     assert.equal(calls.created, 2, 'a new engine after the old one was dropped');
+    await server.close();
+    assert.equal(calls.stop, 2, 'closing the server stops the engine it holds');
   } finally {
+    await server.close();
+  }
+});
+
+test('a HEAD request for the event stream opens no connection', async () => {
+  const { createEngine, calls } = spyEngine();
+  const server = await started(createEngine);
+  try {
+    const response = await fetch(`${server.url}api/events`, { method: 'HEAD' });
+    assert.equal(response.status, 200);
+    assert.equal(server.clientCount(), 0);
+    assert.equal(calls.created, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test('a page hears hello before anything else', async () => {
+  const { fake } = spyEngine();
+  const engine = { ...fake, async refresh() { const next = exampleSnapshot(); next.revision += 1; fake.push(next); } };
+  const server = await started(() => engine);
+  const page = openEvents(server.port, '/api/events');
+  try {
+    await page.waitFor(entry => entry.event === 'snapshot');
+    assert.deepEqual(page.events.slice(0, 3).map(entry => entry.event), ['hello', 'swarms', 'snapshot']);
+  } finally {
+    page.close();
+    await server.close();
+  }
+});
+
+test('an engine dropped while a request reads from it is stopped again afterwards', async () => {
+  const { fake } = spyEngine();
+  let stops = 0;
+  let open;
+  const gate = new Promise(resolve => { open = resolve; });
+  const engine = { ...fake, stop() { stops += 1; }, async listHistory() { await gate; return fake.listHistory(); } };
+  const server = await started(() => engine);
+  try {
+    const request = get(server.port, '/api/history').catch(() => null);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    await server.close();
+    assert.equal(stops, 1);
+    open();
+    await request;
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(stops, 2, 'the request stops the engine it used once it ends');
+  } finally {
+    open();
     await server.close();
   }
 });

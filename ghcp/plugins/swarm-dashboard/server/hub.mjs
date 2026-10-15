@@ -69,7 +69,7 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
     const key = JSON.stringify(swarms.map(swarm => [swarm.id, swarm.name, swarm.lifecycle]));
     if (!force && key === swarmsKey) return;
     swarmsKey = key;
-    for (const client of target ? [target] : clients) send(client, 'swarms', swarms);
+    for (const client of target ? [target] : [...clients].filter(item => item.greeted)) send(client, 'swarms', swarms);
   }
 
   async function push(client) {
@@ -86,6 +86,11 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
         if (!current || client.closed) return;
         const fromSession = !client.swarm && !pinned && client.session ? await current.findSwarm(client.session) : null;
         const snapshot = await current.getSnapshot(client.swarm ?? pinned ?? fromSession ?? undefined);
+        if (current !== engine) {
+          // An engine dropped or closed meanwhile may have reopened its read-only connections, so stop it again.
+          current.stop();
+          return;
+        }
         if (client.closed) return;
         // Pin a page to the swarm it was first shown, so the default does not jump between swarms; changed() unpins a
         // default page whose swarm is no longer live while another is. A page opened from a session that is in no swarm
@@ -108,6 +113,8 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
     sendSwarms(false);
     const live = new Set(engine ? engine.listSwarms().filter(swarm => swarm.lifecycle === 'live').map(swarm => swarm.id) : []);
     for (const client of clients) {
+      // add() sends a page its swarms and snapshot after hello.
+      if (!client.greeted) continue;
       // A page that asked for no swarm follows the default again once its swarm is no longer live while another is.
       if (!client.swarm && !client.session && client.pinned && live.size && !live.has(client.pinned)) client.pinned = null;
       const shown = client.swarm ?? client.pinned;
@@ -119,7 +126,7 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
   async function add(req, res, { swarm = null, session = null } = {}) {
     res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
     res.write('retry: 2000\n\n');
-    const client = { res, swarm, session, pinned: null, lastKey: null, busy: false, again: false, closed: false };
+    const client = { res, swarm, session, pinned: null, lastKey: null, busy: false, again: false, closed: false, greeted: false };
     clients.add(client);
     req.on('close', () => {
       client.closed = true;
@@ -129,6 +136,7 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
     const current = await acquire();
     if (client.closed) return;
     send(client, 'hello', { serverNow: now(), demo: Boolean(current.isDemo) });
+    client.greeted = true;
     startPolling();
     sendSwarms(true, client);
     await push(client);
@@ -140,6 +148,8 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
     try {
       return await fn(current);
     } finally {
+      // An engine dropped or closed while fn ran may have reopened its read-only connections, so stop it again.
+      if (current !== engine) current.stop();
       scheduleRelease();
     }
   }

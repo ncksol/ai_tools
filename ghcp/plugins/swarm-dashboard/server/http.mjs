@@ -35,7 +35,11 @@ export function createDashboardServer({ createEngine, host = '127.0.0.1', port =
     const path = url.pathname;
     const param = name => url.searchParams.get(name) || null;
     if (path === '/api/health') return json(res, { app: APP_ID, version, pid: process.pid, startedAt });
-    if (path === '/api/events') return hub.add(req, res, { swarm: param('swarm'), session: param('session') });
+    if (path === '/api/events') {
+      // A HEAD request gets the headers only; it opens no live connection and creates no engine.
+      if (req.method === 'HEAD') return reply(res, 200, 'text/event-stream; charset=utf-8', '', { 'Cache-Control': 'no-store' });
+      return hub.add(req, res, { swarm: param('swarm'), session: param('session') });
+    }
     if (path === '/api/swarms') return json(res, await hub.withEngine(engine => engine.listSwarms()));
     if (path === '/api/snapshot') return json(res, { serverNow: now(), snapshot: await hub.withEngine(engine => engine.getSnapshot(param('swarm') ?? undefined)) });
     if (path === '/api/history') return json(res, await hub.withEngine(engine => engine.listHistory()));

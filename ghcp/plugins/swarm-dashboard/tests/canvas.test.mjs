@@ -116,9 +116,20 @@ test('an open canvas takes the port over when the host goes away', async () => {
   }
 });
 
+/** A host whose engines count their stop() calls. */
+function countingHost(port, options = {}) {
+  const counts = { stops: 0 };
+  const createEngine = () => {
+    const engine = demo();
+    return { ...engine, stop() { counts.stops += 1; engine.stop(); } };
+  };
+  const canvasHost = host(port, { makeServer: ({ onIdle }) => createDashboardServer({ createEngine, port, version: 'test', hub: { engineIdleMs: 60 }, onIdle }), ...options });
+  return { canvasHost, counts };
+}
+
 test('a host keeps serving while a page is connected and stops once nothing uses it', async () => {
   const port = await freePort();
-  const canvasHost = host(port, { graceMs: 60 });
+  const { canvasHost, counts } = countingHost(port, { graceMs: 60 });
   try {
     await canvasHost.open({ sessionId: 'cli-0003-b1', instanceId: 'a' });
     const page = openEvents(port, '/api/events?session=cli-0003-b1');
@@ -129,7 +140,26 @@ test('a host keeps serving while a page is connected and stops once nothing uses
     page.close();
     await until(() => !canvasHost.hosting());
     assert.deepEqual(await probePort(port), { state: 'free' });
+    assert.ok(counts.stops >= 1, 'the engine is stopped once the server has gone');
   } finally {
+    await canvasHost.dispose();
+  }
+});
+
+test('disposing a hosting canvas with a connected page closes the server and stops its engine', async () => {
+  const port = await freePort();
+  const { canvasHost, counts } = countingHost(port);
+  let page = null;
+  try {
+    await canvasHost.open({ instanceId: 'a' });
+    page = openEvents(port, '/api/events');
+    await page.waitFor(entry => entry.event === 'snapshot');
+    await canvasHost.dispose();
+    assert.equal(canvasHost.hosting(), false);
+    assert.deepEqual(await probePort(port), { state: 'free' });
+    assert.ok(counts.stops >= 1, 'the engine is stopped');
+  } finally {
+    page?.close();
     await canvasHost.dispose();
   }
 });
