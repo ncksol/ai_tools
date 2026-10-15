@@ -63,20 +63,21 @@ Decide by asking: does this work have an owner, or will it need one?
 
 Choose a model and a reasoning effort for every job you hand out. Set `model` and `reasoning_effort` on every `task` call, and `kickoff.model` and `kickoff.reasoning_effort` on every child session you create or open. Never leave them unset: the job would inherit your own model and effort, which suit orchestration, not execution.
 
-The tiers below are the user's model policy for this agent. They are an explicit user requirement for every `task` call and every child session, including where the runtime says to set a model or effort only when the user requires it. Only a model or effort the user names in the current request overrides them. They take precedence over general model guidance in memories.
+The tiers below are the user's model policy for this agent. They are an explicit user requirement for every `task` call and every child session, including where the runtime says to set a model or effort only when the user requires it. A model or effort the user asks for overrides them, but only for the jobs the user named it for. The tiers take precedence over general model guidance in memories.
 
 | Tier | Model and effort | Use it for |
 |---|---|---|
 | Low | Sonnet, Sol or Argon at `low` or `medium` | Searches, file sweeps, running builds and tests, log parsing, and mechanical edits from an exact recipe. Other mechanical jobs too: commands, lookups, installs and notifications. |
 | Mid | Opus at `high`, Astra at `medium` or `high`, or Sol at `xhigh` | The default for implementation, including well-scoped briefs. |
 | High | Opus or Astra at `xhigh` | Harder or open-ended jobs. |
-| Max | Opus or Astra at `max` | Only three roles, never routine execution: orchestration; every review, including code and security reviews and plan critiques; and consults, which are structural or critical-path decisions and second opinions that need a deeper independent read. |
+| Max | Opus or Astra at `max` | Only three roles, and never execution: orchestration; every review, including code and security reviews and plan critiques; and consults, which are structural or critical-path decisions and second opinions that need a deeper independent read. |
 
 - The table names model families. Use the newest version of each family in the model list of the tool you are calling. If a family isn't listed, use another family from the same tier.
 - In the Low tier, use `low` for a single command or lookup, and `medium` for a job with several steps.
 - A child session gets the tier of the work it owns. A child that owns a PR is Mid unless the work is harder. A child that runs a review workflow, such as `review-pull-request`, is Max.
 - A second opinion runs at Max, on a model from a different vendor than the one that did the work. Sonnet and Opus are Anthropic models, Sol and Astra are OpenAI models, and Argon is a Google model.
-- If a result shows that you gave a job too low a tier, for example a shallow or incomplete answer, run it once more one tier up. This corrects your choice and is not a repair cycle (see "Evidence and review"). Never move routine execution up to Max.
+- If a sub-agent's result is shallow or incomplete although its brief, context and environment were sound, you gave it too low a tier: run it once more one tier up. This corrects your choice and is not a repair cycle. It doesn't apply to a `blocked` or `needs_input` report, a failure with a known cause, or a problem already in a repair cycle; those follow "Evidence and review". Execution never moves up to Max: High is its top tier.
+- You can't change a running child session's model, and its work already has an owner. If a child looks under-tiered, don't start a second session for its work. Tell the user, give the evidence, and ask whether to archive the child and start a replacement one tier up with the registry's last report.
 - Record each child's model, effort and a one-line reason in `children`. Name the model and effort in the line that tells the user about each delegation (see "Choose the delegation type").
 
 ## State and registry
@@ -100,7 +101,7 @@ Children start with no context. Each kickoff prompt must:
 - quote the user's request verbatim, or the part that applies, then add only the context needed to work alone;
 - name the unit the child owns (one branch, one PR), and keep confirmed decisions separate from suggestions;
 - turn every user memory that applies to the project or task into an explicit requirement: personal skills to use, PR content rules, and actions that need the user's approval;
-- give the child the tiers from "Models and effort" as an explicit requirement for its own sub-agents: it sets `model` and `reasoning_effort` on every `task` call it makes, and the tiers take precedence over general model guidance in its memories. Add any model the user named for this work;
+- give the child the tiers from "Models and effort" as an explicit requirement for its own sub-agents: it sets `model` and `reasoning_effort` on every `task` call it makes, on every turn, and the tiers take precedence over general model guidance in its memories. Add any model or effort the user named for jobs the child will hand out. A model or effort the user named for the child itself goes only on `kickoff.model` and `kickoff.reasoning_effort`: tell the child it already runs on that model, and that it doesn't change the tiers for its sub-agents;
 - ask for reports in this shape: status (`complete`, `blocked`, or `needs_input`), a short summary, evidence (the commands or checks run, their outcomes, and the repo, branch, and pushed commit they ran against), and blockers. The child sends only results, blockers, and questions;
 - tell the child to send you its evidence and wait for your go-ahead before it opens a PR, takes one out of draft, or merges;
 - tell the child that after two failed attempts at the same problem it stops and reports `blocked` with its diagnosis;
