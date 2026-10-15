@@ -1,0 +1,102 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { esc } from '../ui/format.mjs';
+import { cardsHtml, headerHtml, needsHtml } from '../ui/live.mjs';
+import { findByLabel } from '../ui/model.mjs';
+import { NOW, closedSnapshot, context, exampleSnapshot } from './helpers/ui.mjs';
+
+const text = html => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+const card = (html, id) => html.split('<article').find(part => part.includes(`data-open="${id}"`));
+const cardIds = html => [...html.matchAll(/<article class="b-card[^"]*" data-open="([^"]+)"/g)].map(match => match[1]);
+
+test('a unit whose PR closed without merging stays in PR open with a badge, and its monitor has ended', () => {
+  const d5 = card(cardsHtml(context(closedSnapshot())), 'ws-0007-d5');
+  assert.match(d5, /<span class="r">PR open<\/span>/);
+  assert.match(d5, /<span class="mon mon-ended"><span class="dot"><\/span>ended<span class="badge rp-blocked">closed, not merged<\/span><\/span>/);
+  assert.doesNotMatch(card(cardsHtml(context(exampleSnapshot())), 'ws-0007-d5'), /closed, not merged/);
+});
+
+test('the header shows the run, its running time, swarm cost and counts by bucket', () => {
+  const html = headerHtml(context(exampleSnapshot()));
+  assert.match(text(html), /Sample story B Orchestrator · sample-project Running 2d 23h 12m 00s Swarm cost 97,652 cr · ≈\$977/);
+  assert.match(html, /<span class="ring st-question" title="SB">/);
+  assert.match(html, /data-t="1791809280000" data-f="clock"/);
+  const tiles = [...html.matchAll(/<div class="tile st-(\w+)"><span class="v">(\d+)<\/span><span class="k"><span class="dot"><\/span>(\w+)<\/span><\/div>/g)].map(match => match.slice(1));
+  assert.deepEqual(tiles, [['busy', '1', 'working'], ['stuck', '1', 'stuck'], ['plan', '2', 'waiting'], ['idle', '1', 'idle'], ['merged', '2', 'done'], ['blocked', '0', 'failed']]);
+});
+
+test('a finished run shows how long it ran, with no ticking clock', () => {
+  const snapshot = exampleSnapshot();
+  Object.assign(snapshot.run, { lifecycle: 'finished', finishedAt: snapshot.run.startedAt + 3600000 });
+  const html = headerHtml(context(snapshot));
+  assert.match(text(html), /Ran 1h 00m 00s/);
+  assert.doesNotMatch(html, /data-f="clock"/);
+});
+
+test('Needs you lists each item with its unit and wait time, or says nothing is waiting', () => {
+  const snapshot = exampleSnapshot();
+  const html = needsHtml(context(snapshot));
+  assert.match(text(html), /Needs you 2 waiting, longest first/);
+  assert.deepEqual([...html.matchAll(/<div class="need st-(\w+)" data-key="[^"]+">/g)].map(match => match[1]), ['plan', 'pr']);
+  assert.ok(html.includes(esc(snapshot.needs[0].text)));
+  assert.match(text(html), /Plan to approve .* B2 import · waiting 38m/);
+  assert.match(text(html), /PR to approve .* D5 docs · waiting 25m/);
+  snapshot.needs = [];
+  const empty = needsHtml(context(snapshot));
+  assert.match(text(empty), /Needs you Nothing waiting/);
+  assert.doesNotMatch(empty, /needs-list/);
+});
+
+test('a stalled swarm is the first Needs you item, in stuck colours', () => {
+  const snapshot = exampleSnapshot();
+  snapshot.run.stalled = { since: NOW - 600000, reason: 'Swarm rule: the orchestrator and every open child are idle, and no monitor is due.' };
+  const html = needsHtml(context(snapshot));
+  assert.deepEqual([...html.matchAll(/<div class="need st-(\w+)" data-key="[^"]+">/g)].map(match => match[1]), ['stuck', 'plan', 'pr']);
+  assert.match(text(html), /Swarm stalled Swarm rule: the orchestrator .* Sample story B · stalled 10m/);
+});
+
+test('cards sort by attention, hide archived units and name them in a note', () => {
+  const html = cardsHtml(context(exampleSnapshot()));
+  assert.deepEqual(cardIds(html), ['ws-0005-i1', 'ws-0004-b2', 'ws-0006-f1', 'ws-0003-b1', 'ws-0007-d5', 'ws-0002-f2a']);
+  assert.match(text(html), /Archived and hidden here: B0 schema\. The Board tab shows them\./);
+});
+
+test('a card shows state, clock, cost bar, report, progress, stage, monitor and chips', () => {
+  const html = card(cardsHtml(context(exampleSnapshot())), 'ws-0003-b1');
+  assert.match(html, /class="b-card st-busy" data-open="ws-0003-b1" tabindex="0" role="button" aria-label="Open details for B1 API"/);
+  assert.match(text(html), /API Busy · 35m PR #418 Running 1d 20h 03m 00s Cost 24,016 cr · ≈\$240\.16/);
+  assert.match(html, /<span class="meter"><i style="width:100%"><\/i><\/span>/);
+  assert.match(html, /<div class="b-rep rp-complete"><span class="badge">complete<\/span><span class="b-rep-t" title="Opened PR #418/);
+  assert.match(text(html), /Progress 70% Stage In review Monitor missing · no check for 42m code-review 6m/);
+});
+
+test('ended, stuck, report-less and task-list-less cards say so', () => {
+  const snapshot = exampleSnapshot();
+  Object.assign(findByLabel(snapshot, 'D5'), { report: null, progress: null });
+  const html = cardsHtml(context(snapshot));
+  const f2a = card(html, 'ws-0002-f2a');
+  assert.match(text(f2a), /Ran 23h 50m 00s/);
+  assert.doesNotMatch(f2a, /data-f="clock"/);
+  assert.match(card(html, 'ws-0005-i1'), /class="chip st-stuck" data-key="tool" title="bash: dotnet test --filter E2E"/);
+  const d5 = card(html, 'ws-0007-d5');
+  assert.match(text(d5), /No report yet .*Progress No task list/);
+  assert.doesNotMatch(d5, /class="bar"/);
+});
+
+test('selection, fresh reports and fresh chips are marked; names are escaped', () => {
+  const snapshot = exampleSnapshot();
+  findByLabel(snapshot, 'B1').name = '<script>alert(1)</script>';
+  const html = cardsHtml(context(snapshot, { detail: 'ws-0003-b1', fresh: { feed: new Set(), reports: new Set(['ws-0003-b1']), chips: new Set(['call-b1-8']) } }));
+  const b1 = card(html, 'ws-0003-b1');
+  assert.match(b1, /class="b-card st-busy is-sel"/);
+  assert.match(b1, /class="b-rep rp-complete is-new"/);
+  assert.match(b1, /class="chip st-busy is-new"/);
+  assert.match(b1, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.doesNotMatch(html, /<script>/);
+});
+
+test('a swarm with no active units says so', () => {
+  const snapshot = exampleSnapshot();
+  snapshot.units = [];
+  assert.equal(cardsHtml(context(snapshot)), '<p class="none">No active child sessions.</p>');
+});
