@@ -4,7 +4,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const PLUGIN_NAME = 'swarm-dashboard';
-export const REQUIRED_FILES = ['LICENSE', 'plugin.json', 'package.json', 'scripts/validate-plugin.mjs'];
+export const REQUIRED_FILES = [
+  'LICENSE', 'plugin.json', 'package.json', 'scripts/validate-plugin.mjs', 'scripts/swarm-snapshot.mjs',
+  'engine/schema.mjs', 'engine/fake-engine.mjs', 'engine/engine.mjs', 'engine/config.mjs', 'engine/sqlite.mjs', 'engine/time.mjs', 'engine/text.mjs',
+  'engine/readers/app-db.mjs', 'engine/readers/events.mjs', 'engine/readers/ledger.mjs', 'engine/readers/process-probe.mjs', 'engine/readers/session-files.mjs',
+  'engine/model/contract.mjs', 'engine/model/forest.mjs', 'engine/model/history.mjs', 'engine/model/messages.mjs', 'engine/model/pr-lookup.mjs',
+  'engine/model/session-state.mjs', 'engine/model/stage.mjs', 'engine/model/state-utils.mjs', 'engine/model/status.mjs', 'engine/model/swarm.mjs',
+  'tests/fixtures/example-snapshot.json', 'tests/fixtures/example-swarms.json', 'tests/fixtures/example-history.json', 'tests/fixtures/example-run-summary.json',
+];
 const TEST_SCRIPT = 'node --test tests/*.test.mjs';
 const VALIDATE_SCRIPT = 'node scripts/validate-plugin.mjs';
 
@@ -46,6 +53,7 @@ export async function validatePlugin(root, repositoryRoot) {
   if (pkg.scripts?.test !== TEST_SCRIPT || pkg.scripts?.validate !== VALIDATE_SCRIPT) {
     errors.push('package.json must expose the test and validate commands');
   }
+  if (pkg.scripts?.snapshot !== 'node scripts/swarm-snapshot.mjs') errors.push('package.json must expose the snapshot command');
   if (Object.keys(pkg.dependencies ?? {}).length || Object.keys(pkg.devDependencies ?? {}).length) {
     errors.push('the plugin must not require package dependencies');
   }
