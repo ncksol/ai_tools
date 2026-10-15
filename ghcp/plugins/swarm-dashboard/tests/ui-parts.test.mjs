@@ -14,6 +14,15 @@ test('rings spin when busy, blink dashed when stuck and lose their arc when arch
   assert.equal(phase(2.4, 3000), 'data-phase style="animation-delay:-0.60s"');
 });
 
+test('a stuck sub-agent shows once, not again as the open call that launched it', () => {
+  const startedAt = NOW - 15 * 60000;
+  const sub = { id: 'call-launch', name: 'map', type: 'explore', status: 'stuck', startedAt, task: 'Map the module' };
+  const tool = { id: 'call-launch', name: 'task', summary: 'task: Map the module', startedAt, limitMs: null };
+  const html = chipsHtml({ status: 'stuck', subagents: [sub], activity: { label: 'Waiting', tool, lastEventAt: NOW } }, NOW);
+  assert.equal((html.match(/class="chip /g) ?? []).length, 1);
+  assert.doesNotMatch(html, /data-key="tool"/);
+});
+
 test('ring labels show up to four characters; a four-character label may still be cut, longer ones are', () => {
   assert.match(ring('idle', 'B1'), /<span class="ring-l">B1<\/span>/);
   assert.match(ring('idle', 'C6-1'), /title="C6-1".*<span class="ring-l" data-fit>C6-1<\/span>/);

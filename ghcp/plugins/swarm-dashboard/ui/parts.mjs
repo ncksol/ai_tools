@@ -69,7 +69,8 @@ export function chipsHtml(session, now, freshChips = new Set()) {
     .filter(sub => sub.status === 'running' || sub.status === 'stuck')
     .map(sub => `<span class="chip st-${sub.status === 'stuck' ? 'stuck' : 'busy'}${freshChips.has(sub.id) ? ' is-new' : ''}" data-key="${esc(sub.id)}" title="${esc(sub.task ?? sub.name)}"><span class="dot"></span><span class="chip-t">${esc(sub.type)} ${elapsed(sub.startedAt, now)}</span></span>`);
   const tool = session.activity.tool;
-  if (session.status === 'stuck' && tool) {
+  // A stuck sub-agent already has its chip; its launching task call would only repeat it.
+  if (session.status === 'stuck' && tool && !session.subagents.some(sub => sub.id === tool.id)) {
     chips.push(`<span class="chip st-stuck" data-key="tool" title="${esc(tool.summary)}"><span class="dot"></span><span class="chip-t">${esc(tool.summary)} · ${elapsed(tool.startedAt, now)}</span></span>`);
   }
   return chips.length ? chips.join('') : '<span class="none">No active sub-agents</span>';
