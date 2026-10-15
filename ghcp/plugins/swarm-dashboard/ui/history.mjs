@@ -66,7 +66,7 @@ export function runHtml(run) {
     + `<div class="kv"><span class="k">Children</span><span class="v">${count(run.children.total)}, ${count(run.children.merged)} merged</span></div>`
     + `<div class="kv"><span class="k">Sub-agents</span><span class="v">${count(run.subagents)}</span></div>`
     + `<div class="kv"><span class="k">First child</span><span class="v">${firstChild}</span></div></div></div>`
-    + `<section class="sec"><h3>Time by unit</h3><p>Light bar: start to finish. Dark line: total busy time, drawn from the start. Peach: closed without merging.</p>${axis}<div class="gantt">${gantt}</div></section>`
+    + `<section class="sec"><h3>Time by unit</h3><p>Light bar: start to finish. Dark line: total busy time, drawn from the start. Peach: closed without merging or failed.</p>${axis}<div class="gantt">${gantt}</div></section>`
     + `<div class="run-grid"><section class="sec"><h3>Cost by unit</h3><div class="hb">${units}</div></section>`
     + `<div class="sec"><section class="sec"><h3>Cost and time by model</h3><div class="hb">${models}</div></section>`
     + `<section class="sec"><h3>Sub-agents by type</h3><p>${plural(total.runs, 'run')}, ${dur(total.ms, 'hm')}, ${credits(total.credits)}. Already included in the unit costs.</p><div class="hb">${types}</div></section></div></div></div>`;

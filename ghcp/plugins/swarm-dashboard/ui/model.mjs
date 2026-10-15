@@ -40,8 +40,15 @@ export const TIMELINE_WORDS = Object.freeze({ stuck: 'stuck {t}', plan: 'waiting
 export const PLAN_WORDS = Object.freeze({ busy: 'busy', idle: 'idle', plan: 'plan waiting', question: 'question', stuck: 'stuck {t}', blocked: 'blocked' });
 export const BOARD_WORDS = Object.freeze({ busy: 'busy', idle: 'idle {t}', plan: 'plan waiting {t}', question: 'question {t}', stuck: 'stuck {t}', blocked: 'blocked', merged: 'merged {a}', archived: 'archived {a}' });
 
-/** When a unit's work ended (null while it runs): the engine sets endedAt from the unit's outcome time. */
-export const unitEnd = session => session.endedAt ?? null;
+/** When a finished run ended (null while it is live). */
+export const runEnd = snapshot => (snapshot.run.lifecycle === 'finished' ? snapshot.run.finishedAt ?? snapshot.run.lastActivityAt : null);
+/**
+ * When a session's work ended (null while it runs): the engine sets endedAt from the unit's outcome time. A session ends
+ * at its own end, or at the run's end once the run has finished.
+ */
+export const unitEnd = (session, snapshot = null) => session.endedAt ?? (snapshot ? runEnd(snapshot) : null);
+/** A report's title, or a placeholder when it is blank. */
+export const reportTitle = report => report.title.trim() || 'Untitled report';
 
 /** Its PR closed without merging and it is not archived: it stays in its PR stage, with a badge (approved decision 5). */
 export const closedNotMerged = unit => Boolean(unit.closedWithoutMerge && unit.pr && unit.stage !== 'archived' && (unit.pr.state === 'closed' || unit.outcome === 'closed'));
@@ -53,7 +60,7 @@ export function cardUnits(snapshot) {
   return snapshot.units
     .map((unit, index) => ({ unit, index }))
     .filter(({ unit }) => unit.status !== 'archived')
-    .sort((a, b) => STATUS_ORDER[a.unit.status] - STATUS_ORDER[b.unit.status] || a.index - b.index)
+    .sort((a, b) => (STATUS_ORDER[a.unit.status] ?? 9) - (STATUS_ORDER[b.unit.status] ?? 9) || a.index - b.index)
     .map(({ unit }) => unit);
 }
 export const archivedUnits = snapshot => snapshot.units.filter(unit => unit.status === 'archived');

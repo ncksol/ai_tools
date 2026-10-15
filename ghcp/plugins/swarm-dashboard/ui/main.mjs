@@ -173,7 +173,7 @@ function render() {
   lastWidth = width;
   afterRender();
   if (focused && !dash.contains(document.activeElement)) dash.querySelector(focused)?.focus({ preventScroll: true });
-  window.scrollTo(scrollX, scrollY);
+  if (window.scrollX !== scrollX || window.scrollY !== scrollY) window.scrollTo(scrollX, scrollY);
   document.documentElement.dataset.narrow = view.narrow ? '1' : '0';
   document.documentElement.dataset.ready = isReady() ? '1' : '0';
   if (parseMs !== null) {
@@ -254,9 +254,11 @@ async function loadHistory() {
 async function loadRun(id) {
   try {
     const response = await fetch(`/api/runs/${encodeURIComponent(id)}`);
-    view.run = response.ok ? await response.json() : false;
+    const run = response.ok ? await response.json() : false;
+    // A slow answer for a run the user has left must not replace the one shown.
+    if (view.runId === id) view.run = run;
   } catch {
-    view.run = false;
+    if (view.runId === id) view.run = false;
   }
   scheduleRender();
 }
@@ -335,7 +337,7 @@ setInterval(() => {
   }
 }, 1000);
 
-// Browsers allow few connections per host, so free the live connection when the page is hidden or cached.
+// Browsers allow few connections per host, so free the live connection when the page is unloaded or kept in the back-forward cache.
 window.addEventListener('pagehide', () => {
   clearTimeout(reconnectTimer);
   source?.close();

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { esc } from '../ui/format.mjs';
+import { dur, esc } from '../ui/format.mjs';
 import { cardsHtml, headerHtml, needsHtml } from '../ui/live.mjs';
 import { findByLabel } from '../ui/model.mjs';
 import { NOW, closedSnapshot, context, exampleSnapshot } from './helpers/ui.mjs';
@@ -20,6 +20,7 @@ test('the header shows the run, its running time, swarm cost and counts by bucke
   const html = headerHtml(context(exampleSnapshot()));
   assert.match(text(html), /Sample story B Orchestrator · sample-project Running 2d 23h 12m 00s Swarm cost 97,652 cr · ≈\$977/);
   assert.match(html, /<span class="ring st-question" title="SB">/);
+  assert.match(html, /<div class="d-counts" role="group" aria-label="Child sessions by state">/);
   assert.match(html, /data-t="1791809280000" data-f="clock"/);
   const tiles = [...html.matchAll(/<div class="tile st-(\w+)"><span class="v">(\d+)<\/span><span class="k"><span class="dot"><\/span>(\w+)<\/span><\/div>/g)].map(match => match.slice(1));
   assert.deepEqual(tiles, [['busy', '1', 'working'], ['stuck', '1', 'stuck'], ['plan', '2', 'waiting'], ['idle', '1', 'idle'], ['merged', '2', 'done'], ['blocked', '0', 'failed']]);
@@ -31,6 +32,21 @@ test('a finished run shows how long it ran, with no ticking clock', () => {
   const html = headerHtml(context(snapshot));
   assert.match(text(html), /Ran 1h 00m 00s/);
   assert.doesNotMatch(html, /data-f="clock"/);
+});
+
+test('a finished run stops the clock of a unit that has no end of its own', () => {
+  const snapshot = exampleSnapshot();
+  Object.assign(snapshot.run, { lifecycle: 'finished', finishedAt: NOW - 3600000 });
+  const b1 = findByLabel(snapshot, 'B1');
+  const html = card(cardsHtml(context(snapshot)), b1.id);
+  assert.ok(text(html).includes(`Ran ${dur(NOW - 3600000 - b1.startedAt, 'clock')}`), text(html));
+  assert.doesNotMatch(html, /data-f="clock"/);
+});
+
+test('a card names a report with a blank title "Untitled report"', () => {
+  const snapshot = exampleSnapshot();
+  findByLabel(snapshot, 'B1').report.title = '  ';
+  assert.match(card(cardsHtml(context(snapshot)), 'ws-0003-b1'), /<span class="b-rep-t" title="Untitled report">Untitled report<\/span>/);
 });
 
 test('Needs you lists each item with its unit and wait time, or says nothing is waiting', () => {

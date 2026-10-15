@@ -1,5 +1,5 @@
 import { HOUR, MIN, ago, costHtml, costText, dur, elapsed, esc } from './format.mjs';
-import { REPORT_CLASS, TIMELINE_WORDS, unitEnd } from './model.mjs';
+import { REPORT_CLASS, TIMELINE_WORDS, reportTitle, runEnd, unitEnd } from './model.mjs';
 import { fill, phase } from './parts.mjs';
 
 export const SPANS = Object.freeze({ '3h': 3 * HOUR, '12h': 12 * HOUR, run: null });
@@ -138,7 +138,7 @@ export function costSvg(cost, width, t0, t1, now) {
 
 function whoHtml(session, snapshot, now) {
   const isOrchestrator = session === snapshot.orchestrator;
-  const end = isOrchestrator ? null : unitEnd(session);
+  const end = isOrchestrator ? runEnd(snapshot) : unitEnd(session, snapshot);
   const runtime = end ? `ran ${dur(end - session.startedAt)}` : elapsed(session.startedAt, now);
   return `<div class="c-name"><span class="dot${session.status === 'stuck' ? ' stuck' : ''}"></span><span class="tx">${esc(isOrchestrator ? session.name : `${session.label} ${session.name}`)}</span></div>`
     + `<div class="c-meta">${runtime} · ${costText(session.cost.credits)}</div>`;
@@ -149,7 +149,7 @@ function sumHtml(session, snapshot, now) {
   const words = TIMELINE_WORDS[session.status];
   const state = words ? `<span class="s">${fill(words, session.since, now)}</span>` : '';
   if (!session.report) return `<div class="c-rep muted">No report yet</div><div class="c-meta">${state || '&nbsp;'}</div>`;
-  return `<div class="c-rep rp-${REPORT_CLASS[session.report.status]}"><span class="dot"></span>${esc(session.report.title)}</div>`
+  return `<div class="c-rep rp-${REPORT_CLASS[session.report.status]}"><span class="dot"></span>${esc(reportTitle(session.report))}</div>`
     + `<div class="c-meta">${ago(session.report.at, now)}${state ? ` · ${state}` : ''}</div>`;
 }
 

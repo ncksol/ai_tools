@@ -2,9 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   BOARD_STAGES, STATE_LINES, archivedUnits, boardColumns, cardUnits, closedNotMerged, findByLabel, findPlanned, flattenPlan, needItems,
-  planForest, planLayout, progressPercent, sharePercent, stateLine, unitEnd,
+  planForest, planLayout, progressPercent, reportTitle, runEnd, sharePercent, stateLine, unitEnd,
 } from '../ui/model.mjs';
-import { closedSnapshot, exampleSnapshot } from './helpers/ui.mjs';
+import { NOW, closedSnapshot, exampleSnapshot } from './helpers/ui.mjs';
 
 const labels = units => units.map(unit => unit.label);
 
@@ -29,6 +29,31 @@ test('a unit ends at endedAt, which the engine sets from its outcome', () => {
   assert.equal(unitEnd(f2a), f2a.endedAt);
   assert.equal(unitEnd({ ...f2a, endedAt: null }), null);
   assert.equal(unitEnd(findByLabel(snapshot, 'B1')), null);
+});
+
+test('a finished run ends at finishedAt, else at its last activity, and a session without endedAt ends with it', () => {
+  const snapshot = exampleSnapshot();
+  const b1 = findByLabel(snapshot, 'B1');
+  const f2a = findByLabel(snapshot, 'F2a');
+  assert.equal(runEnd(snapshot), null, 'a live run has not ended');
+  assert.equal(unitEnd(b1, snapshot), null);
+  snapshot.run.lifecycle = 'finished';
+  assert.equal(runEnd(snapshot), snapshot.run.lastActivityAt);
+  snapshot.run.finishedAt = NOW - 3600000;
+  assert.equal(runEnd(snapshot), NOW - 3600000);
+  assert.equal(unitEnd(b1, snapshot), NOW - 3600000);
+  assert.equal(unitEnd(f2a, snapshot), f2a.endedAt, 'its own end comes first');
+});
+
+test('cards put a status the view does not know last', () => {
+  const snapshot = exampleSnapshot();
+  findByLabel(snapshot, 'B1').status = 'something_new';
+  assert.deepEqual(labels(cardUnits(snapshot)), ['I1', 'B2', 'F1', 'D5', 'F2a', 'B1']);
+});
+
+test('a blank report title reads "Untitled report"', () => {
+  assert.equal(reportTitle({ title: '  ' }), 'Untitled report');
+  assert.equal(reportTitle({ title: 'Done' }), 'Done');
 });
 
 test('state lines follow statusDetail and fall back to status', () => {

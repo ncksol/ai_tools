@@ -38,6 +38,14 @@ test('rows name the session, its running time or run length, cost and latest rep
   assert.match(text(row(timelineHtml(context(snapshot), '12h'), 'ws-0003-b1')), /No report yet/);
 });
 
+test('a blank report title reads "Untitled report", and a finished run stops the orchestrator\'s clock', () => {
+  const snapshot = exampleSnapshot();
+  findByLabel(snapshot, 'B1').report.title = '  ';
+  assert.match(text(row(timelineHtml(context(snapshot), '12h'), 'ws-0003-b1')), /Untitled report/);
+  Object.assign(snapshot.run, { lifecycle: 'finished', finishedAt: snapshot.run.startedAt + 2 * HOUR });
+  assert.match(text(row(timelineHtml(context(snapshot), '12h'), snapshot.orchestrator.id)), /Sample story B ran 2h 00m ·/);
+});
+
 test('a lane draws busy spans, idle lines, a blinking live stuck span and the tool mark', () => {
   const i1 = findByLabel(exampleSnapshot(), 'I1');
   const svg = laneSvg(i1, 600, NOW - 12 * HOUR, NOW, NOW, 0);

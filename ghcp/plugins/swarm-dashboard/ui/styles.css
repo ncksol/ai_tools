@@ -46,6 +46,8 @@
 *, *::before, *::after { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { margin: 0; }
+/* Keep room for a classic scrollbar, so the layout does not switch between graph and list, or wide and narrow, when one appears. */
+html { scrollbar-gutter: stable; }
 body { padding: 16px; background: var(--page); color: var(--ink); font: 400 14px/20px var(--font-sans, system-ui, -apple-system, "Segoe UI", sans-serif); font-variant-numeric: tabular-nums; }
 html[data-host="canvas"] body { padding: 0; background: var(--surface); }
 h2, h3, h4, p, ol, ul { margin: 0; padding: 0; }

@@ -1,6 +1,6 @@
 import { ago, costHtml, costText, dur, elapsed, esc, liveTime } from './format.mjs';
 import {
-  COUNT_TILES, NEED_CLASS, NEED_LABELS, STAGE_NAMES, archivedUnits, cardUnits, closedNotMerged, needItems, progressPercent, sharePercent, unitEnd,
+  COUNT_TILES, NEED_CLASS, NEED_LABELS, STAGE_NAMES, archivedUnits, cardUnits, closedNotMerged, needItems, progressPercent, reportTitle, runEnd, sharePercent, unitEnd,
 } from './model.mjs';
 import { badge, bar, chipsHtml, closedBadge, feedList, meter, monitorHtml, reportClass, ring, stageTrack, stateLineHtml } from './parts.mjs';
 
@@ -12,13 +12,13 @@ import { badge, bar, chipsHtml, closedBadge, feedList, meter, monitorHtml, repor
 
 export function headerHtml({ snapshot, now, phaseMs }) {
   const { run, orchestrator, counts, cost } = snapshot;
-  const ended = run.lifecycle === 'finished' ? run.finishedAt ?? run.lastActivityAt : null;
+  const ended = runEnd(snapshot);
   const tiles = COUNT_TILES.map(([bucket, state]) => `<div class="tile st-${state}"><span class="v">${counts[bucket]}</span><span class="k"><span class="dot"></span>${bucket}</span></div>`).join('');
   return `<div class="d-head">`
     + `<div class="d-id">${ring(orchestrator.status, orchestrator.label, phaseMs)}<div class="b-who"><div class="d-name">${esc(run.name)}</div><div class="small muted">Orchestrator${run.project ? ` · ${esc(run.project.name)}` : ''}</div></div></div>`
     + `<div class="d-facts"><div class="kv"><span class="k">${ended ? 'Ran' : 'Running'}</span><span class="v l">${ended ? dur(ended - run.startedAt, 'clock') : liveTime(run.startedAt, now, 'clock')}</span></div>`
     + `<div class="kv"><span class="k">Swarm cost</span><span class="v l">${costHtml(cost.credits, true)}</span></div></div>`
-    + `<div class="d-counts" aria-label="Child sessions by state">${tiles}</div></div>`;
+    + `<div class="d-counts" role="group" aria-label="Child sessions by state">${tiles}</div></div>`;
 }
 
 export function needsHtml({ snapshot, now }) {
@@ -35,12 +35,12 @@ function reportRow(unit, now, fresh) {
   const report = unit.report;
   if (!report) return '<div class="b-rep"><span class="b-rep-t muted">No report yet</span></div>';
   return `<div class="b-rep ${reportClass(report.status)}${fresh.reports.has(unit.id) ? ' is-new' : ''}">${badge(report.status)}`
-    + `<span class="b-rep-t" title="${esc(report.title)}">${esc(report.title)}</span><span class="b-age">${ago(report.at, now)}</span></div>`;
+    + `<span class="b-rep-t" title="${esc(reportTitle(report))}">${esc(reportTitle(report))}</span><span class="b-age">${ago(report.at, now)}</span></div>`;
 }
 
 export function cardHtml(unit, ctx) {
   const { snapshot, now, phaseMs, detail, fresh } = ctx;
-  const end = unitEnd(unit);
+  const end = unitEnd(unit, snapshot);
   const progress = progressPercent(unit);
   const progressRow = progress === null
     ? '<span class="k">Progress</span><span class="none-r">No task list</span>'
@@ -81,7 +81,7 @@ function whyHtml(unit) {
 function reportHtml(report, now) {
   if (!report) return '<p class="small muted">No report yet.</p>';
   const list = entries => `<ul class="dt-list">${entries.map(entry => `<li>${esc(entry)}</li>`).join('')}</ul>`;
-  const lead = report.summary ?? (report.body ? null : report.title);
+  const lead = report.summary ?? (report.body ? null : reportTitle(report));
   return `<div class="dt-rep-h ${reportClass(report.status)}">${badge(report.status)}<span class="small muted">${ago(report.at, now)}</span></div>`
     + (lead ? `<p class="dt-p">${esc(lead)}</p>` : '')
     + (report.body ? `<p class="dt-p dt-body">${esc(report.body)}</p>` : '')
@@ -94,7 +94,7 @@ function subagentsHtml(subagents, now) {
   const rows = subagents.slice(0, SUBAGENT_LIMIT).map(sub => {
     const [state, word] = SUBAGENT_PILLS[sub.status] ?? ['idle', sub.status];
     const runtime = sub.endedAt ? dur(sub.durationMs ?? sub.endedAt - sub.startedAt) : elapsed(sub.startedAt, now);
-    return `<li class="sa" title="${esc(sub.task ?? sub.name)}"><div class="sa-1"><span>${esc(sub.type)}${sub.mode === 'sync' ? ' (sync)' : ''}</span><span class="pill st-${state}">${word}</span></div>`
+    return `<li class="sa" title="${esc(sub.task ?? sub.name)}"><div class="sa-1"><span>${esc(sub.type)}${sub.mode === 'sync' ? ' (sync)' : ''}</span><span class="pill st-${state}">${esc(word)}</span></div>`
       + `<div class="sa-2">${esc(sub.model ?? 'model unknown')} · ${runtime} · ${costText(sub.credits)}</div></li>`;
   }).join('');
   const more = subagents.length > SUBAGENT_LIMIT ? `<p class="small muted">${subagents.length - SUBAGENT_LIMIT} earlier sub-agents not shown</p>` : '';
@@ -128,7 +128,7 @@ export function detailHtml(unitId, inMain, ctx) {
   const { snapshot, now, phaseMs, fresh } = ctx;
   const unit = snapshot.units.find(item => item.id === unitId);
   if (!unit) return '';
-  const end = unitEnd(unit);
+  const end = unitEnd(unit, snapshot);
   const activity = unit.activity;
   const progress = progressPercent(unit);
   const top = `<div class="dt-top">${inMain ? '<button type="button" class="link" data-close>← Back to cards</button>' : ''}`
