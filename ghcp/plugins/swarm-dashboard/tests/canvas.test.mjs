@@ -100,6 +100,20 @@ test('another program on the port makes open() fail with port_in_use', async () 
   }
 });
 
+test('a sample-data dashboard on the port makes open() fail with port_in_use', async () => {
+  const port = await freePort();
+  const sample = createDashboardServer({ createEngine: demo, port, version: 'test', demo: 'example' });
+  await sample.listen();
+  const canvasHost = host(port);
+  try {
+    await assert.rejects(canvasHost.open({ sessionId: 'cli-1', instanceId: 'a' }), error => error.code === 'port_in_use' && error.message.includes('sample data'));
+    assert.equal(canvasHost.instanceCount(), 0);
+  } finally {
+    await canvasHost.dispose();
+    await sample.close();
+  }
+});
+
 test('an open canvas takes the port over when the host goes away', async () => {
   const port = await freePort();
   const first = host(port);

@@ -15,7 +15,7 @@ const TEXT = 'text/plain; charset=utf-8';
  * The dashboard's HTTP server: the page, its assets, a JSON API and the live event stream. Loopback only, GET and HEAD
  * only, and only for requests addressed to its own host and port. Writes nothing to stdout or disk.
  */
-export function createDashboardServer({ createEngine, host = '127.0.0.1', port = 0, version = '0.0.0', now = Date.now, log = () => {}, hub: hubOptions = {}, onIdle = () => {} }) {
+export function createDashboardServer({ createEngine, host = '127.0.0.1', port = 0, version = '0.0.0', now = Date.now, log = () => {}, hub: hubOptions = {}, onIdle = () => {}, demo = null }) {
   const assets = loadAssets();
   const hub = createHub({ createEngine, now, log, onIdle, ...hubOptions });
   const startedAt = now();
@@ -34,7 +34,7 @@ export function createDashboardServer({ createEngine, host = '127.0.0.1', port =
     const url = new URL(req.url, `http://127.0.0.1:${boundPort}`);
     const path = url.pathname;
     const param = name => url.searchParams.get(name) || null;
-    if (path === '/api/health') return json(res, { app: APP_ID, version, pid: process.pid, startedAt });
+    if (path === '/api/health') return json(res, { app: APP_ID, version, pid: process.pid, startedAt, demo });
     if (path === '/api/events') {
       // A HEAD request gets the headers only; it opens no live connection and creates no engine.
       if (req.method === 'HEAD') return reply(res, 200, 'text/event-stream; charset=utf-8', '', { 'Cache-Control': 'no-store' });

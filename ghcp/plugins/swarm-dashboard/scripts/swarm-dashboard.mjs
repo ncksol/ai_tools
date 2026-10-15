@@ -10,7 +10,7 @@ export const USAGE = `Usage: swarm-dashboard [--port <n>] [--demo [example|stres
 
 Serves the swarm dashboard at http://127.0.0.1:<port>/ (default ${DEFAULT_PORT}) for any browser or the
 app's browser canvas. Reads Copilot data read-only. Stop it with Ctrl+C.
-If the dashboard is already running on the port, prints its address and exits.
+If a dashboard with the same data already runs on the port, prints its address and exits; one with other data is an error.
 
   --port <n>       Port to use (default ${DEFAULT_PORT}, or SWARM_DASHBOARD_PORT)
   --demo [name]    Serve a synthetic swarm instead of your data: example (default) or stress
@@ -56,11 +56,16 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
     ? () => createDemoEngine({ scenario: options.demo, simulate: !options.still })
     : () => createDefaultEngine({ log });
   const port = options.port;
-  const result = await listenShared({ port, makeServer: () => createDashboardServer({ createEngine, port, version, log }) });
+  const result = await listenShared({ port, makeServer: () => createDashboardServer({ createEngine, port, version, log, demo: options.demo }) });
   const url = `http://127.0.0.1:${port}/`;
   if (result.status === 'running') {
-    stdout.write(`The swarm dashboard is already running at ${url}\n`);
-    return 0;
+    const running = result.health.demo ?? null;
+    if (running === (options.demo ?? null)) {
+      stdout.write(`The swarm dashboard is already running at ${url}\n`);
+      return 0;
+    }
+    stderr.write(`${running === null ? 'The dashboard with your Copilot data' : `A dashboard with sample data (${running})`} already runs at ${url}. Add --port <n> to start this one beside it.\n`);
+    return 1;
   }
   if (result.status !== 'started') {
     stderr.write(`Port ${port} ${result.status === 'taken' ? 'is used by another program' : 'is in use and not answering'}. Start with --port <n> or set SWARM_DASHBOARD_PORT.\n`);

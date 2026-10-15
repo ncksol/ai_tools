@@ -51,6 +51,19 @@ test('the page, its assets and health answer only to the dashboard\'s own host',
   }
 });
 
+test('health says which sample data the server shows, if any', async () => {
+  const { createEngine } = spyEngine();
+  const plain = await started(createEngine);
+  const sample = await started(createEngine, { demo: 'example' });
+  try {
+    assert.equal(JSON.parse((await get(plain.port, '/api/health')).body).demo, null);
+    assert.equal(JSON.parse((await get(sample.port, '/api/health')).body).demo, 'example');
+  } finally {
+    await plain.close();
+    await sample.close();
+  }
+});
+
 test('other methods are refused', async () => {
   const { createEngine } = spyEngine();
   const server = await started(createEngine);

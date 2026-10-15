@@ -50,6 +50,11 @@ export function createCanvasHost({
           server = result.server;
           report('info', `serving the dashboard at http://127.0.0.1:${port}/`);
         } else if (result.status === 'running') {
+          if (result.health.demo) {
+            const error = new Error(`Port ${port} serves the dashboard with sample data, started from the command line. Stop it with Ctrl+C in its terminal so the canvas can show your data.`);
+            error.code = 'port_in_use';
+            throw error;
+          }
           if (result.health.version !== version) report('warn', `version ${result.health.version} of the dashboard serves port ${port}, not ${version}; restart the app or reload extensions everywhere to update it`);
         } else {
           const error = new Error(`Port ${port} ${result.status === 'taken' ? 'is used by another program' : 'is in use and not answering'}. Stop that program, or set SWARM_DASHBOARD_PORT to a free port for the Copilot app and restart it.`);

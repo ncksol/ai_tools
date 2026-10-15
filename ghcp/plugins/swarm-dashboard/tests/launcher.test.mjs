@@ -61,6 +61,28 @@ test('a second launch reuses the running dashboard; another program on the port 
   }
 });
 
+test('a launch never reuses a dashboard that serves other data', async () => {
+  const port = await freePort();
+  const mine = createDashboardServer({ createEngine: () => createDemoEngine({ simulate: false }), port, version: 'test' });
+  await mine.listen();
+  try {
+    const stderr = sink();
+    assert.equal(await main(['--port', String(port), '--demo'], { stdout: sink(), stderr }), 1);
+    assert.ok(stderr.text.includes(`The dashboard with your Copilot data already runs at http://127.0.0.1:${port}/. Add --port <n> to start this one beside it.`), stderr.text);
+  } finally {
+    await mine.close();
+  }
+  const sample = createDashboardServer({ createEngine: () => createDemoEngine({ simulate: false }), port, version: 'test', demo: 'example' });
+  await sample.listen();
+  try {
+    const stderr = sink();
+    assert.equal(await main(['--port', String(port)], { stdout: sink(), stderr }), 1);
+    assert.ok(stderr.text.includes(`A dashboard with sample data (example) already runs at http://127.0.0.1:${port}/. Add --port <n> to start this one beside it.`), stderr.text);
+  } finally {
+    await sample.close();
+  }
+});
+
 test('bad arguments print the usage and exit 2', async () => {
   const stderr = sink();
   assert.equal(await main(['--port', '0'], { stdout: sink(), stderr }), 2);
