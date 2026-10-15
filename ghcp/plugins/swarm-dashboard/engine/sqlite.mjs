@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
-import { closeSync, existsSync, openSync, readSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readSync, statSync } from 'node:fs';
+import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const MAGIC = 'SQLite format 3\u0000';
@@ -8,6 +9,14 @@ export class SqliteUnavailableError extends Error {
   constructor(message) {
     super(message);
     this.name = 'SqliteUnavailableError';
+  }
+}
+
+/** A WAL database that cannot be read without side effects or data loss right now (retry on the next refresh). */
+export class UnsafeReadError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'UnsafeReadError';
   }
 }
 
@@ -49,15 +58,30 @@ export function inspectDatabase(file) {
   }
 }
 
+function sizeOf(file) {
+  try {
+    return statSync(file).size;
+  } catch {
+    return 0;
+  }
+}
+
 /**
- * How to open a database without side effects. A WAL database whose writer has closed has no -shm file; a plain
- * read-only open would create -wal and -shm beside it, so it is read through the immutable=1 URI instead.
+ * How to open a database without side effects.
+ * - Rollback journal: a plain read-only open.
+ * - WAL with a missing or empty -wal: the main file holds every committed row, so it is read through the immutable=1 URI
+ *   (a plain open would create -wal and -shm beside it).
+ * - WAL with data in -wal and a -shm file: a plain read-only open.
+ * - WAL with data in -wal and no -shm file: immutable mode would silently drop the committed rows in the -wal, and a plain
+ *   open would create side files, so it throws UnsafeReadError.
  */
 export function openTarget(file) {
   const info = inspectDatabase(file);
   if (!info || !info.sqlite) return null;
-  if (info.wal && !existsSync(`${file}-shm`)) return { target: `${pathToFileURL(file).href}?immutable=1`, immutable: true };
-  return { target: file, immutable: false };
+  if (!info.wal) return { target: file, immutable: false };
+  if (sizeOf(`${file}-wal`) === 0) return { target: `${pathToFileURL(file).href}?immutable=1`, immutable: true };
+  if (existsSync(`${file}-shm`)) return { target: file, immutable: false };
+  throw new UnsafeReadError(`${path.basename(file)}: its write-ahead log has data but no shared-memory file, so it cannot be read safely now.`);
 }
 
 /** Replace each ? with an SQL literal. Only for the engine's constant SQL, which has no ? inside string literals. */

@@ -94,6 +94,8 @@ export function createSessionDbCache(read = readSessionDb) {
     cache.set(file, { key, value });
     return value;
   }
+  /** The last value read successfully for this file, or undefined. */
+  get.last = file => cache.get(file)?.value;
   get.retain = files => {
     for (const file of [...cache.keys()]) if (!files.has(file)) cache.delete(file);
   };

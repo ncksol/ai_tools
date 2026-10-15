@@ -76,6 +76,21 @@ test('the session.db cache drops files that are not retained', async () => {
   assert.deepEqual(await get(drop), { read: 3 });
 });
 
+test('the session.db cache keeps the last good value when a later read fails', async () => {
+  const file = home.sessionDb('cli-last-good', { todos: [{ id: 'a' }] });
+  let reads = 0;
+  const get = createSessionDbCache(async () => {
+    reads += 1;
+    if (reads > 1) throw new Error('unreadable now');
+    return { read: reads };
+  });
+  assert.equal(get.last(file), undefined);
+  assert.deepEqual(await get(file), { read: 1 });
+  utimesSync(file, new Date(), new Date(Date.now() + 9000));
+  await assert.rejects(get(file), /unreadable now/);
+  assert.deepEqual(get.last(file), { read: 1 });
+});
+
 test('the session.db cache also re-reads after a WAL write', async () => {
   const file = home.sessionDb('cli-wal-cache', { todos: [{ id: 'a' }] });
   const wal = `${file}-wal`;

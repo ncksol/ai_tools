@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
-  SqliteUnavailableError, bindLiterals, inspectDatabase, loadNodeSqlite, nodeSqliteSupportsUri, openReadOnly, openTarget, sqliteBackends,
+  SqliteUnavailableError, UnsafeReadError, bindLiterals, inspectDatabase, loadNodeSqlite, nodeSqliteSupportsUri, openReadOnly, openTarget, sqliteBackends,
   withReadOnly,
 } from '../engine/sqlite.mjs';
 import { TEST_BACKENDS, canWriteWithNode, execSql, openWriter } from './helpers/sqlite-writer.mjs';
@@ -130,3 +130,61 @@ test('the node backend needs URI support for an immutable target', { skip: !back
     error => error instanceof SqliteUnavailableError && /22\.15/.test(error.message),
   );
 });
+
+/** A WAL database copy whose -wal holds a committed row that is not checkpointed, and that has no -shm file. */
+function walDataWithoutShm(name) {
+  const source = path.join(dir, `${name}-source.db`);
+  const copy = path.join(dir, `${name}.db`);
+  const writer = openWriter(source);
+  try {
+    writer.exec('PRAGMA journal_mode = WAL; CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT); PRAGMA wal_checkpoint(TRUNCATE);');
+    writer.exec("PRAGMA wal_autocheckpoint = 0; INSERT INTO t (v) VALUES ('in-wal');");
+    assert.ok(existsSync(`${source}-wal`));
+    copyFileSync(source, copy);
+    copyFileSync(`${source}-wal`, `${copy}-wal`);
+  } finally {
+    writer.close();
+  }
+  assert.equal(existsSync(`${copy}-shm`), false);
+  return copy;
+}
+
+test('openTarget follows the decision table for WAL databases', { skip: !canWriteWithNode }, () => {
+  const withData = walDataWithoutShm('table-data');
+  assert.throws(() => openTarget(withData), error => error instanceof UnsafeReadError && error.name === 'UnsafeReadError');
+  const empty = walDataWithoutShm('table-empty');
+  writeFileSync(`${empty}-wal`, '');
+  assert.equal(openTarget(empty).immutable, true);
+  rmSync(`${empty}-wal`);
+  assert.equal(openTarget(empty).immutable, true);
+  writeFileSync(`${withData}-shm`, '');
+  assert.deepEqual(openTarget(withData), { target: withData, immutable: false });
+});
+
+for (const backend of backends) {
+  test(`${backend}: a WAL database with unread -wal data and no -shm is not read, and nothing is created`, { skip: !canWriteWithNode }, async () => {
+    const file = walDataWithoutShm(`unsafe-${backend}`);
+    const before = readdirSync(dir).sort();
+    await assert.rejects(
+      openReadOnly(file, { backend }),
+      error => error instanceof UnsafeReadError
+        && error.message === `unsafe-${backend}.db: its write-ahead log has data but no shared-memory file, so it cannot be read safely now.`,
+    );
+    assert.deepEqual(readdirSync(dir).sort(), before);
+  });
+
+  test(`${backend}: a WAL database with an empty -wal and no -shm is read immutably`, { skip: !canWriteWithNode }, async () => {
+    const file = path.join(dir, `empty-wal-${backend}.db`);
+    copyFileSync(closedWal, file);
+    writeFileSync(`${file}-wal`, '');
+    const before = readdirSync(dir).sort();
+    const db = await openReadOnly(file, { backend });
+    try {
+      assert.equal(db.immutable, true);
+      assert.deepEqual(await db.all('SELECT v FROM t'), [{ v: 'w' }]);
+    } finally {
+      db.close();
+    }
+    assert.deepEqual(readdirSync(dir).sort(), before);
+  });
+}

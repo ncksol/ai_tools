@@ -208,6 +208,8 @@ export function createSwarmEngine(options = {}) {
       try {
         sessionDbs.set(cliId, await readDb(dbFile, sqlite));
       } catch (error) {
+        const lastGood = readDb.last(dbFile);
+        if (lastGood) sessionDbs.set(cliId, lastGood);
         diag.push({ level: 'warn', source: 'session.db', message: `${shortId(cliId)}: ${error.message}` });
       }
     }
