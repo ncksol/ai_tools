@@ -5,6 +5,7 @@ import { validateSnapshot } from '../engine/schema.mjs';
 import { createLedger } from '../engine/readers/ledger.mjs';
 import { buildForest } from '../engine/model/forest.mjs';
 import { buildSegments, buildSnapshot, deriveLabels, runLifecycle, splitFeed } from '../engine/model/swarm.mjs';
+import { summarizeRun } from '../engine/model/history.mjs';
 import { HOUR, MINUTE } from '../engine/time.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { fold } from './helpers/fold.mjs';
@@ -341,4 +342,19 @@ test('a status line that only the orchestrator received still gives the unit its
   assert.equal(unit.pr.source, 'status_line');
   const withRegistry = buildSnapshot(receivedOnly({ registry: true })).units.find(item => item.id === 'ws-api');
   assert.deepEqual([withRegistry.pr.provider, withRegistry.pr.id, withRegistry.pr.source], ['ado', 4711, 'registry']);
+});
+
+test('a sub-agent that is retyped by its start event appears under its final type only in the run summary', () => {
+  const data = input(true);
+  const root = new EventLog(T0);
+  root.start(); root.turnStart();
+  const call = root.tool('task', { name: 'helper', mode: 'sync', description: 'no type given' });
+  root.push('subagent.started', { toolCallId: call, agentType: 'explore', agentDisplayName: 'helper', executionMode: 'sync' });
+  root.subagentDone(call, { durationMs: 1000 });
+  root.at(at(100));
+  root.turnStart();
+  data.states.set('cli-root', fold(root, 'cli-root'));
+  const summary = summarizeRun(buildSnapshot(data), { computedAt: at(120) });
+  assert.deepEqual(summary.subagentTypes.map(entry => entry.type).sort(), ['code-review', 'explore']);
+  assert.equal(summary.subagents, 2);
 });

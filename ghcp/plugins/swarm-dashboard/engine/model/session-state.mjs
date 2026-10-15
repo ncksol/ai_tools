@@ -224,16 +224,16 @@ function finishSubagent(state, sub, at, status, durationMs) {
 /** Moves a sub-agent's run (and finished duration) to another type when its start event names a different one. */
 function retypeSubagent(state, sub, type) {
   sub.type = type;
-  const bucket = typeBucket(state.subagentStats, type);
-  if (bucket === sub.bucket) return;
+  if (typeBucket(state.subagentStats, type) === sub.bucket) return;
   const from = statsEntry(state.subagentStats, sub.bucket);
-  const to = statsEntry(state.subagentStats, bucket);
   from.runs -= 1;
+  if (sub.durationMs !== null) from.durationMs -= sub.durationMs;
+  // An old type with no runs left is dropped, so it neither shows in the totals nor holds one of the type slots.
+  if (from.runs <= 0) state.subagentStats.delete(sub.bucket);
+  const bucket = typeBucket(state.subagentStats, type);
+  const to = statsEntry(state.subagentStats, bucket);
   to.runs += 1;
-  if (sub.durationMs !== null) {
-    from.durationMs -= sub.durationMs;
-    to.durationMs += sub.durationMs;
-  }
+  if (sub.durationMs !== null) to.durationMs += sub.durationMs;
   sub.bucket = bucket;
   if (state.subagentIndex.has(sub.id)) state.subagentIndex.set(sub.id, bucket);
 }
@@ -285,24 +285,39 @@ function evictSubagent(state) {
   if (victim.agentId) state.agentToTask.delete(victim.agentId);
 }
 
+/**
+ * A sub-agent is counted once per task tool-call id. A repeated start for an id that is still in the details updates them;
+ * for an id that only the type index remembers (evicted from the details) the details are restored. Neither changes the counts.
+ */
 function newSubagent(state, id, at, args) {
-  const sub = {
-    id,
+  const fields = {
     name: oneLine(args.name ?? args.description ?? 'sub-agent', 80) || 'sub-agent',
     type: oneLine(args.agent_type ?? 'task', 60) || 'task',
     mode: args.mode === 'background' ? 'background' : 'sync',
     model: typeof args.model === 'string' ? args.model : null,
     effort: typeof args.reasoning_effort === 'string' ? args.reasoning_effort : null,
     task: typeof args.description === 'string' ? oneLine(args.description, 200) : null,
-    launchedAt: at, startedAt: null, endedAt: null, durationMs: null, status: 'running', lastEventAt: at, agentId: null,
   };
-  sub.bucket = typeBucket(state.subagentStats, sub.type);
+  const known = state.subagents.get(id);
+  if (known) {
+    const { type, ...rest } = fields;
+    Object.assign(known, rest);
+    retypeSubagent(state, known, type);
+    return known;
+  }
+  const indexed = state.subagentIndex.get(id);
+  const sub = { id, ...fields, launchedAt: at, startedAt: null, endedAt: null, durationMs: null, status: 'running', lastEventAt: at, agentId: null };
+  if (indexed === undefined) {
+    sub.bucket = typeBucket(state.subagentStats, sub.type);
+    state.subagentCount += 1;
+    statsEntry(state.subagentStats, sub.bucket).runs += 1;
+    state.subagentIndex.set(id, sub.bucket);
+    while (state.subagentIndex.size > LIMITS.subagentIndex) state.subagentIndex.delete(state.subagentIndex.keys().next().value);
+  } else {
+    sub.bucket = indexed;
+    retypeSubagent(state, sub, sub.type);
+  }
   state.subagents.set(id, sub);
-  state.subagentCount += 1;
-  statsEntry(state.subagentStats, sub.bucket).runs += 1;
-  state.subagentIndex.delete(id);
-  state.subagentIndex.set(id, sub.bucket);
-  while (state.subagentIndex.size > LIMITS.subagentIndex) state.subagentIndex.delete(state.subagentIndex.keys().next().value);
   while (state.subagents.size > LIMITS.subagents) evictSubagent(state);
   return sub;
 }
@@ -326,8 +341,9 @@ function onToolStart(state, data, at) {
       addFeed(state, at, 'plan-req', 'sent a plan for approval');
     }
   } else if (name === 'task') {
+    const repeated = state.subagents.has(id);
     const sub = newSubagent(state, id, at, args);
-    addFeed(state, at, 'subagent-start', `started ${sub.type}: ${sub.name}${sub.mode === 'sync' ? ' (sync)' : ''}`);
+    if (!repeated) addFeed(state, at, 'subagent-start', `started ${sub.type}: ${sub.name}${sub.mode === 'sync' ? ' (sync)' : ''}`);
   } else {
     recordToolStart(state, name, args, id, at);
   }

@@ -260,6 +260,46 @@ test('distinct sub-agent types beyond the limit are counted under other', () => 
   assert.deepEqual(state.subagentStats.get('other'), { runs: 5, durationMs: 50 });
 });
 
+test('a sub-agent whose start event names another type leaves no empty type behind', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const call = log.tool('task', { name: 'helper', mode: 'sync', description: 'no type given' });
+  log.push('subagent.started', { toolCallId: call, agentType: 'explore', agentDisplayName: 'helper', executionMode: 'sync' }, { agentId: 'agent-1' });
+  log.subagentDone(call, { durationMs: 2000 });
+  const state = fold(log);
+  assert.deepEqual([...state.subagentStats], [['explore', { runs: 1, durationMs: 2000 }]]);
+  assert.equal(state.subagentIndex.get(call), 'explore');
+  assert.equal(state.subagentCount, 1);
+});
+
+test('a repeated start event for one task call counts the sub-agent once', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const call = log.tool('task', { name: 'helper', agent_type: 'explore', mode: 'background', description: 'first' });
+  log.push('tool.execution_start', { toolCallId: call, toolName: 'task', arguments: { name: 'helper', agent_type: 'explore', mode: 'background', description: 'second' } });
+  const state = fold(log);
+  assert.equal(state.subagentCount, 1);
+  assert.deepEqual([...state.subagentStats], [['explore', { runs: 1, durationMs: 0 }]]);
+  assert.equal(state.subagentIndex.size, 1);
+  assert.equal(state.subagents.size, 1);
+  assert.equal(state.subagents.get(call).task, 'second');
+  assert.equal(state.subagents.get(call).launchedAt, T0);
+});
+
+test('a start event for a task call that left the detail list restores it without counting it again', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const first = log.subagent({ mode: 'sync', type: 'explore' });
+  log.subagentDone(first, { durationMs: 10 });
+  for (let i = 0; i < 505; i += 1) log.subagentDone(log.subagent({ mode: 'sync', type: 'explore' }), { durationMs: 10 });
+  assert.equal(fold(log).subagents.has(first), false);
+  log.push('tool.execution_start', { toolCallId: first, toolName: 'task', arguments: { name: 'helper', agent_type: 'explore', mode: 'sync' } });
+  const state = fold(log);
+  assert.equal(state.subagentCount, 506);
+  assert.equal(state.subagentStats.get('explore').runs, 506);
+  assert.equal(state.subagents.size, 500);
+});
+
 test('merged states add up the sub-agent totals and keep the task index', () => {
   const make = (id, type, count) => {
     const log = new EventLog(T0);
