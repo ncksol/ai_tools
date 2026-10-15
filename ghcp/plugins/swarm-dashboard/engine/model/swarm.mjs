@@ -234,13 +234,19 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
     extraFeed.push({ id: `${node.id}:report:${item.source}`, at: item.at, unitId: node.id, label, kind: 'report', text: oneLine(`reported ${STATUS_WORDS[view.status]}: ${view.title}`, 200) });
   }
   let report = sent.length ? sent[sent.length - 1].view : null;
-  if (!report) {
-    const received = parent.all.inbound.filter(item => c.ids.has(item.fromSessionId) || c.ids.has(item.fromProjectSessionId));
-    const last = received[received.length - 1];
-    if (last) {
-      report = reportFromMessage(last.content, null, last.at);
-      if (report.source === 'contract') flags.statusLines = true;
+  // Design section 10 accepts either copy of a report: the child's sent message or the orchestrator's received one.
+  const received = parent.all.inbound.filter(item => c.ids.has(item.fromSessionId) || c.ids.has(item.fromProjectSessionId));
+  if (!statusLines.length) {
+    for (let index = received.length - 1; index >= 0; index -= 1) {
+      const line = parseStatusLine(received[index].content);
+      if (!line) continue;
+      flags.statusLines = true;
+      statusLines.push({ at: received[index].at, pr: line.pr });
     }
+  }
+  if (!report) {
+    const last = received[received.length - 1];
+    if (last) report = reportFromMessage(last.content, null, last.at);
   }
   const lastTask = c.all.taskCompletes[c.all.taskCompletes.length - 1];
   if (lastTask && (!report || lastTask.at > report.at + TASK_OVERRIDE_MS)) report = reportFromTask(lastTask);

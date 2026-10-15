@@ -315,3 +315,30 @@ test('a unit on an unknown code host gets no PR from mentions', () => {
   assert.equal(api.stage, 'coding');
   assert.equal(data.requests.length, 0);
 });
+
+/** The unit sent no report of its own; only the orchestrator's received copy of its status line exists. */
+function receivedOnly({ registry }) {
+  const data = input(true);
+  const api = new EventLog(at(5));
+  api.start(); api.turnStart(); api.at(at(31)); api.turnEnd();
+  const root = new EventLog(T0);
+  root.start();
+  root.at(at(30));
+  root.crossSession({ fromSessionId: 'cli-api', fromProjectSessionId: 'ws-api', name: 'api', content: 'swarm-status: complete unit=api pr=github:77\nSummary: API done.' });
+  root.at(at(100));
+  root.turnStart();
+  data.states.set('cli-api', fold(api, 'cli-api'));
+  data.states.set('cli-root', fold(root, 'cli-root'));
+  if (!registry) data.sessionDbs = new Map([['cli-root', { todos: [], deps: [], children: null }]]);
+  return data;
+}
+
+test('a status line that only the orchestrator received still gives the unit its PR', () => {
+  const unit = buildSnapshot(receivedOnly({ registry: false })).units.find(item => item.id === 'ws-api');
+  assert.equal(unit.report.source, 'contract');
+  assert.equal(unit.pr.provider, 'github');
+  assert.equal(unit.pr.id, 77);
+  assert.equal(unit.pr.source, 'status_line');
+  const withRegistry = buildSnapshot(receivedOnly({ registry: true })).units.find(item => item.id === 'ws-api');
+  assert.deepEqual([withRegistry.pr.provider, withRegistry.pr.id, withRegistry.pr.source], ['ado', 4711, 'registry']);
+});
