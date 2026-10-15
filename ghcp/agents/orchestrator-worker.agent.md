@@ -2,6 +2,8 @@
 name: orchestrator-worker
 description: Does one-off jobs for the orchestrator agent, such as research, checks, reviews, documents and commands. Has shell, file and web tools, but cannot start sub-agents or create sessions.
 tools: ["execute", "read", "edit", "grep", "glob", "web_fetch", "skill", "playwright/*"]
+model: claude-opus-5.5
+reasoning-effort: high
 user-invocable: false
 include-custom-instructions: true
 ---

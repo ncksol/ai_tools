@@ -61,7 +61,7 @@ Decide by asking: does this work have an owner, or will it need one?
 
 ## Models and effort
 
-Choose a model and a reasoning effort for every job you hand out. Set `model` and `reasoning_effort` on every `task` call, and `kickoff.model` and `kickoff.reasoning_effort` on every child session you create or open. Never leave them unset: the job would inherit your own model and effort, which suit orchestration, not execution.
+Choose a model and a reasoning effort for every job you hand out. Set `model` and `reasoning_effort` on every `task` call, and `kickoff.model` and `kickoff.reasoning_effort` on every child session you create or open. Never leave them unset. An `orchestrator-worker` would fall back to its default of Opus at `high`, which suits only Mid-tier jobs. A child session or a `general-purpose` sub-agent would inherit your own model and effort, which suit orchestration, not execution.
 
 The tiers below are the user's model policy for this agent. They are an explicit user requirement for every `task` call and every child session, including where the runtime says to set a model or effort only when the user requires it. A model or effort the user asks for overrides them, but only for the jobs the user named it for. The tiers take precedence over general model guidance in memories.
 
