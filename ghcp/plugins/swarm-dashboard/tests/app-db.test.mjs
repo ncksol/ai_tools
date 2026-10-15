@@ -1,10 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { APP_QUERIES, readAppDb } from '../engine/readers/app-db.mjs';
+import { APP_TABLES, SCHEMA_SQL, readAppDb } from '../engine/readers/app-db.mjs';
 import { buildForest, descendants, resolveNodeId, treeNodes } from '../engine/model/forest.mjs';
 import { withReadOnly } from '../engine/sqlite.mjs';
 import { CopilotHome } from './helpers/copilot-home.mjs';
-import { TEST_BACKENDS } from './helpers/sqlite-writer.mjs';
+import { TEST_BACKENDS, execSql } from './helpers/sqlite-writer.mjs';
+import { tempDir } from './helpers/temp.mjs';
+import path from 'node:path';
 
 const T0 = Date.UTC(2026, 9, 15, 8, 0, 0);
 const home = new CopilotHome();
@@ -21,8 +23,39 @@ home.workspace({ id: 'ws-d', name: 'Chat child', createdAt: T0 + 6000, creatorSe
 home.workspace({ id: 'ws-solo', name: 'Solo', createdAt: T0 + 7000 });
 home.automation({ sessionId: 'ws-a', nextRunAt: T0 + 600_000 });
 
-test('the app queries select named columns only and never touch secrets', () => {
-  for (const sql of Object.values(APP_QUERIES)) {
+/** A fake db that answers SCHEMA_SQL from `missing` ({table: [columns]}; true drops the table) and records every SQL string. */
+function fakeDb({ missing = {}, rows = {} } = {}) {
+  const sqls = [];
+  const schema = [];
+  for (const { table, columns } of Object.values(APP_TABLES)) {
+    if (missing[table] === true) continue;
+    for (const column of columns) if (!(missing[table] ?? []).includes(column)) schema.push({ table_name: table, column_name: column });
+  }
+  return {
+    sqls,
+    all: async sql => {
+      sqls.push(sql);
+      if (sql === SCHEMA_SQL) return schema;
+      const table = /FROM (\w+)/.exec(sql)?.[1];
+      return rows[table] ?? [];
+    },
+  };
+}
+
+test('the app queries select named columns only and never touch secrets', async () => {
+  for (const { table, columns } of Object.values(APP_TABLES)) {
+    for (const name of [table, ...columns]) {
+      assert.match(name, /^[a-z_]+$/);
+      assert.doesNotMatch(name, /settings|token/i);
+    }
+  }
+  assert.doesNotMatch(SCHEMA_SQL, /\*/);
+  assert.doesNotMatch(SCHEMA_SQL, /settings|token/i);
+  const db = fakeDb();
+  await readAppDb(db);
+  assert.ok(db.sqls.length > 1);
+  for (const sql of db.sqls) {
+    assert.match(sql, /^\s*SELECT/);
     assert.doesNotMatch(sql, /\*/);
     assert.doesNotMatch(sql, /settings|token/i);
   }
@@ -58,11 +91,53 @@ for (const backend of TEST_BACKENDS) {
 }
 
 test('a missing table becomes a warning and an empty list', async () => {
-  const db = { all: async sql => { if (sql.includes('session_automations')) throw new Error('no such table: session_automations'); return []; } };
-  const app = await readAppDb(db);
+  const app = await readAppDb(fakeDb({ missing: { session_automations: true } }));
   assert.deepEqual(app.automations, []);
-  assert.deepEqual(app.diagnostics, [{ level: 'warn', source: 'data.db', message: 'automations: no such table: session_automations' }]);
+  assert.deepEqual(app.diagnostics, [{ level: 'warn', source: 'data.db', message: 'automations: table session_automations not found' }]);
 });
+
+test('missing optional columns are read as empty', async () => {
+  const db = fakeDb({
+    missing: { workspaces: ['coordinating_creator_session_id', 'created_pr_state'] },
+    rows: { workspaces: [{ id: 'ws-1', name: 'One', created_pr_number: 5 }] },
+  });
+  const app = await readAppDb(db);
+  const select = db.sqls.find(sql => /FROM workspaces/.test(sql));
+  assert.doesNotMatch(select, /coordinating_creator_session_id|created_pr_state/);
+  const ws = app.workspaces.get('ws-1');
+  assert.equal(ws.coordinatingCreatorSessionId, null);
+  assert.equal(ws.createdPr.state, null);
+  assert.equal(ws.createdPr.number, 5);
+  assert.deepEqual(app.diagnostics, [{ level: 'info', source: 'data.db', message: 'workspaces: column(s) not found, read as empty: coordinating_creator_session_id, created_pr_state' }]);
+});
+
+test('a missing required column skips the table', async () => {
+  const app = await readAppDb(fakeDb({ missing: { workspace_parent_links: ['parent_workspace_id'] } }));
+  assert.deepEqual(app.parentLinks, []);
+  assert.deepEqual(app.diagnostics, [{ level: 'warn', source: 'data.db', message: 'parentLinks: missing column(s) parent_workspace_id' }]);
+});
+
+for (const backend of TEST_BACKENDS) {
+  test(`${backend}: a minimal database degrades instead of failing`, async () => {
+    const file = path.join(tempDir('swarm-minimal-'), 'data.db');
+    execSql(file, "CREATE TABLE workspaces (id TEXT, name TEXT, created_at TEXT); INSERT INTO workspaces (id, name, created_at) VALUES ('ws-1', 'One', '2026-10-15T08:00:00.000Z')");
+    const app = await withReadOnly(file, { backend }, readAppDb);
+    const ws = app.workspaces.get('ws-1');
+    assert.equal(ws.name, 'One');
+    assert.equal(ws.createdAt, T0);
+    assert.equal(ws.branch, null);
+    assert.equal(ws.createdPr, null);
+    assert.equal(app.workspaces.size, 1);
+    for (const key of ['projects', 'worktrees', 'sessions']) assert.equal(app[key].size, 0);
+    for (const key of ['parentLinks', 'aliases', 'chatLinks', 'automations']) assert.deepEqual(app[key], []);
+    const tables = ['projects', 'worktrees', 'workspace_parent_links', 'workspace_session_aliases', 'chat_parent_links', 'sessions', 'session_automations'];
+    const keys = ['projects', 'worktrees', 'parentLinks', 'aliases', 'chatLinks', 'sessions', 'automations'];
+    const warns = keys.map((key, i) => ({ level: 'warn', source: 'data.db', message: `${key}: table ${tables[i]} not found` }));
+    const info = { level: 'info', source: 'data.db', message: 'workspaces: column(s) not found, read as empty: project_id, worktree_id, branch, archived_at, session_id, creator_session_id, coordinating_creator_session_id, created_pr_repo_full_name, created_pr_number, created_pr_html_url, created_pr_state, created_pr_merged_at' };
+    assert.equal(app.diagnostics.length, 8);
+    for (const d of [...warns, info]) assert.ok(app.diagnostics.some(x => x.level === d.level && x.message === d.message), d.message);
+  });
+}
 
 test('parent cycles are broken instead of looping', () => {
   const app = {
@@ -73,4 +148,21 @@ test('parent cycles are broken instead of looping', () => {
   const forest = buildForest(app);
   assert.equal(forest.roots.length, 1);
   assert.equal(descendants(forest, forest.roots[0].id).length, 1);
+});
+
+test('orphan aliases and links to them do not break the tree', () => {
+  const ws = { id: 'ws-1', projectId: null, worktreeId: null, name: 'One', branch: null, createdAt: 1, archivedAt: null, sessionId: 'cli-1', creatorSessionId: null, coordinatingCreatorSessionId: null, createdPr: null };
+  const session = id => [id, { id, title: id, mode: null, model: null, reasoningEffort: null, isRunning: false, wasInterrupted: false, createdAt: 2, archivedAt: null }];
+  const app = {
+    projects: new Map(), worktrees: new Map(), automations: [], diagnostics: [], parentLinks: [],
+    workspaces: new Map([['ws-1', ws]]),
+    aliases: [{ sessionId: 'cli-gone', workspaceId: 'ws-gone', createdAt: 1 }],
+    sessions: new Map([session('cli-gone'), session('chat-x')]),
+    chatLinks: [{ sessionId: 'chat-x', parentSessionId: 'cli-gone' }],
+  };
+  const forest = buildForest(app);
+  assert.equal(forest.nodes.has('cli-gone'), false);
+  assert.equal(forest.nodes.get('chat-x').parentId, null);
+  assert.equal(resolveNodeId(forest, 'cli-gone'), null);
+  assert.equal(resolveNodeId(forest, 'cli-1'), 'ws-1');
 });

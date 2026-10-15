@@ -11,8 +11,13 @@ export function buildForest(app) {
   const nodes = new Map();
   const workspaceOfSession = new Map();
   const aliasesByWorkspace = new Map();
+  const orphanSessions = new Set();
   for (const alias of [...app.aliases].sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))) {
     if (!alias.sessionId || !alias.workspaceId) continue;
+    if (!app.workspaces.has(alias.workspaceId)) {
+      orphanSessions.add(alias.sessionId);
+      continue;
+    }
     workspaceOfSession.set(alias.sessionId, alias.workspaceId);
     if (!aliasesByWorkspace.has(alias.workspaceId)) aliasesByWorkspace.set(alias.workspaceId, []);
     aliasesByWorkspace.get(alias.workspaceId).push(alias.sessionId);
@@ -31,12 +36,17 @@ export function buildForest(app) {
       baseBranch: worktree?.baseBranch ?? null, createdAt: ws.createdAt, archivedAt: ws.archivedAt, cliSessionIds: ids, createdPr: ws.createdPr,
     }));
   }
-  const resolve = id => (!id ? null : nodes.has(id) ? id : workspaceOfSession.get(id) ?? null);
+  const resolve = id => {
+    if (!id) return null;
+    if (nodes.has(id)) return id;
+    const mapped = workspaceOfSession.get(id);
+    return mapped && nodes.has(mapped) ? mapped : null;
+  };
   const chatNode = id => {
     if (!id) return null;
     if (nodes.has(id)) return id;
     const row = app.sessions.get(id);
-    if (!row || workspaceOfSession.has(id)) return null;
+    if (!row || workspaceOfSession.has(id) || orphanSessions.has(id)) return null;
     nodes.set(id, makeNode({
       id, kind: 'chat', name: row.title, projectId: null, branch: null, baseBranch: null, createdAt: row.createdAt,
       archivedAt: row.archivedAt, cliSessionIds: [id], createdPr: null,
@@ -70,7 +80,12 @@ export function buildForest(app) {
       seen.add(cursor);
     }
   }
-  for (const node of nodes.values()) if (node.parentId) nodes.get(node.parentId).childIds.push(node.id);
+  for (const node of nodes.values()) {
+    if (!node.parentId) continue;
+    const parent = nodes.get(node.parentId);
+    if (parent) parent.childIds.push(node.id);
+    else node.parentId = null;
+  }
   const byCreated = (a, b) => (nodes.get(a).createdAt ?? 0) - (nodes.get(b).createdAt ?? 0) || (a < b ? -1 : a > b ? 1 : 0);
   for (const node of nodes.values()) node.childIds.sort(byCreated);
   const roots = [...nodes.values()].filter(node => !node.parentId && node.childIds.length > 0);
@@ -107,5 +122,6 @@ export function treeNodes(forest, rootId) {
 export function resolveNodeId(forest, id) {
   if (!id) return null;
   if (forest.nodes.has(id)) return id;
-  return forest.workspaceOfSession.get(id) ?? null;
+  const mapped = forest.workspaceOfSession.get(id);
+  return mapped && forest.nodes.has(mapped) ? mapped : null;
 }

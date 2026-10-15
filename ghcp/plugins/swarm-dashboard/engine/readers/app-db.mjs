@@ -1,19 +1,28 @@
 import { parseTime } from '../time.mjs';
 
-/** Named columns only: data.db also holds a GitHub token column, which the engine never reads. */
-export const APP_QUERIES = Object.freeze({
-  projects: 'SELECT id, name, github_owner, github_repo FROM projects',
-  worktrees: 'SELECT id, branch, base_branch FROM worktrees',
-  workspaces: `SELECT id, project_id, worktree_id, name, branch, created_at, archived_at, session_id,
-      creator_session_id, coordinating_creator_session_id,
-      created_pr_repo_full_name, created_pr_number, created_pr_html_url, created_pr_state, created_pr_merged_at
-    FROM workspaces`,
-  parentLinks: 'SELECT child_workspace_id, parent_workspace_id FROM workspace_parent_links',
-  aliases: 'SELECT session_id, workspace_id, created_at FROM workspace_session_aliases',
-  chatLinks: 'SELECT session_id, parent_session_id FROM chat_parent_links',
-  sessions: 'SELECT id, title, mode, model, reasoning_effort, is_running, was_interrupted, created_at, archived_at FROM sessions',
-  automations: 'SELECT session_id, interval, every_minutes, last_run_at, next_run_at, paused_at, name FROM session_automations',
+const table = (name, columns, required) => Object.freeze({ table: name, columns: Object.freeze(columns), required: Object.freeze(required) });
+
+/**
+ * Named columns only: data.db also holds a GitHub token column, which the engine never reads. data.db is the app's
+ * private database with no contract, so each table is read through the columns that exist (see readAppDb).
+ */
+export const APP_TABLES = Object.freeze({
+  projects: table('projects', ['id', 'name', 'github_owner', 'github_repo'], ['id']),
+  worktrees: table('worktrees', ['id', 'branch', 'base_branch'], ['id']),
+  workspaces: table('workspaces', [
+    'id', 'project_id', 'worktree_id', 'name', 'branch', 'created_at', 'archived_at', 'session_id',
+    'creator_session_id', 'coordinating_creator_session_id',
+    'created_pr_repo_full_name', 'created_pr_number', 'created_pr_html_url', 'created_pr_state', 'created_pr_merged_at',
+  ], ['id']),
+  parentLinks: table('workspace_parent_links', ['child_workspace_id', 'parent_workspace_id'], ['child_workspace_id', 'parent_workspace_id']),
+  aliases: table('workspace_session_aliases', ['session_id', 'workspace_id', 'created_at'], ['session_id', 'workspace_id']),
+  chatLinks: table('chat_parent_links', ['session_id', 'parent_session_id'], ['session_id', 'parent_session_id']),
+  sessions: table('sessions', ['id', 'title', 'mode', 'model', 'reasoning_effort', 'is_running', 'was_interrupted', 'created_at', 'archived_at'], ['id']),
+  automations: table('session_automations', ['session_id', 'interval', 'every_minutes', 'last_run_at', 'next_run_at', 'paused_at', 'name'], ['session_id']),
 });
+
+/** Lists the existing columns of exactly the tables in APP_TABLES. */
+export const SCHEMA_SQL = `SELECT m.name AS table_name, p.name AS column_name FROM sqlite_master AS m JOIN pragma_table_info(m.name) AS p WHERE m.type = 'table' AND m.name IN (${Object.values(APP_TABLES).map(item => `'${item.table}'`).join(', ')})`;
 
 const text = value => (typeof value === 'string' && value.length ? value : null);
 const count = value => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value));
@@ -21,11 +30,39 @@ const count = value => (value === null || value === undefined || value === '' ||
 export async function readAppDb(db) {
   const diagnostics = [];
   const rows = {};
-  for (const [key, sql] of Object.entries(APP_QUERIES)) {
+  let present = null;
+  try {
+    present = new Map();
+    for (const row of await db.all(SCHEMA_SQL)) {
+      if (!present.has(row.table_name)) present.set(row.table_name, new Set());
+      present.get(row.table_name).add(row.column_name);
+    }
+  } catch (error) {
+    present = null;
+    diagnostics.push({ level: 'warn', source: 'data.db', message: `schema: ${error.message}` });
+  }
+  for (const [key, { table: name, columns, required }] of Object.entries(APP_TABLES)) {
+    rows[key] = [];
+    let selected = columns;
+    if (present) {
+      const have = present.get(name);
+      if (!have) {
+        diagnostics.push({ level: 'warn', source: 'data.db', message: `${key}: table ${name} not found` });
+        continue;
+      }
+      const missingRequired = required.filter(column => !have.has(column));
+      if (missingRequired.length) {
+        const names = columns.filter(column => missingRequired.includes(column));
+        diagnostics.push({ level: 'warn', source: 'data.db', message: `${key}: missing column(s) ${names.join(', ')}` });
+        continue;
+      }
+      selected = columns.filter(column => have.has(column));
+      const absent = columns.filter(column => !have.has(column));
+      if (absent.length) diagnostics.push({ level: 'info', source: 'data.db', message: `${key}: column(s) not found, read as empty: ${absent.join(', ')}` });
+    }
     try {
-      rows[key] = await db.all(sql);
+      rows[key] = await db.all(`SELECT ${selected.join(', ')} FROM ${name}`);
     } catch (error) {
-      rows[key] = [];
       diagnostics.push({ level: 'warn', source: 'data.db', message: `${key}: ${error.message}` });
     }
   }
