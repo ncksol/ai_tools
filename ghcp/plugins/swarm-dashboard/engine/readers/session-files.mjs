@@ -48,8 +48,10 @@ export const SESSION_DB_QUERIES = Object.freeze({
     created_at, updated_at, ended_at FROM children`,
 });
 
-export async function readSessionDb(file, sqliteOptions = {}) {
-  return withReadOnly(file, sqliteOptions, async db => {
+/** `source` is either openReadOnly's options or a reader from createSqliteReader (which holds live WAL connections). */
+export async function readSessionDb(file, source = {}) {
+  const run = typeof source.read === 'function' ? fn => source.read(file, fn) : fn => withReadOnly(file, source, fn);
+  return run(async db => {
     const safe = async sql => {
       try {
         return await db.all(sql);

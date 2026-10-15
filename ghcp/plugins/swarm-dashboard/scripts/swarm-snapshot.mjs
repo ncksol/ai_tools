@@ -72,28 +72,32 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
     now, prLookup: lookup ?? 'off', sqlite: options.sqlite ?? 'auto',
   });
   let result;
-  if (options.list) {
-    await engine.refresh();
-    result = engine.listSwarms();
-  } else if (options.history) {
-    result = await engine.listHistory();
-  } else if (options.run !== undefined) {
-    if (lookup) {
-      await engine.getSnapshot(options.run);
-      await lookup.settle();
+  try {
+    if (options.list) {
       await engine.refresh();
+      result = engine.listSwarms();
+    } else if (options.history) {
+      result = await engine.listHistory();
+    } else if (options.run !== undefined) {
+      if (lookup) {
+        await engine.getSnapshot(options.run);
+        await lookup.settle();
+        await engine.refresh();
+      }
+      result = await engine.getRunSummary(options.run);
+    } else {
+      result = await engine.getSnapshot(options.swarm);
+      if (result && lookup) {
+        await lookup.settle();
+        await engine.refresh();
+        result = await engine.getSnapshot(result.run.id);
+      }
     }
-    result = await engine.getRunSummary(options.run);
-  } else {
-    result = await engine.getSnapshot(options.swarm);
-    if (result && lookup) {
-      await lookup.settle();
-      await engine.refresh();
-      result = await engine.getSnapshot(result.run.id);
-    }
-  }
-  for (const item of engine.diagnostics()) if (item.level === 'warn') stderr.write(`warning: ${item.source}: ${item.message}\n`);
-  stdout.write(`${JSON.stringify(result ?? null, null, options.compact ? 0 : 2)}\n`);
+    for (const item of engine.diagnostics()) if (item.level === 'warn') stderr.write(`warning: ${item.source}: ${item.message}\n`);
+  } finally {
+    // Closes the engine's SQLite connections before this process returns.
+    engine.stop();
+  }  stdout.write(`${JSON.stringify(result ?? null, null, options.compact ? 0 : 2)}\n`);
   if (result === null || result === undefined) {
     stderr.write(options.run !== undefined ? `No run ${options.run}\n` : options.swarm !== undefined ? `No swarm ${options.swarm}\n` : 'No swarm found\n');
     return 1;

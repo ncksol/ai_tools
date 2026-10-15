@@ -3,7 +3,7 @@ import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { copilotPaths, resolveThresholds } from './config.mjs';
 import { CREDIT_USD, NANO_AIU_PER_CREDIT } from './schema.mjs';
-import { SqliteUnavailableError, loadNodeSqlite, withReadOnly } from './sqlite.mjs';
+import { SqliteUnavailableError, createSqliteReader, loadNodeSqlite } from './sqlite.mjs';
 import { readAppDb } from './readers/app-db.mjs';
 import { createTail, readNewLines } from './readers/events.mjs';
 import { createLedger, pullLedger } from './readers/ledger.mjs';
@@ -64,6 +64,7 @@ export function createSwarmEngine(options = {}) {
   const now = options.now ?? Date.now;
   const thresholds = resolveThresholds(options.thresholds);
   const sqlite = { backend: options.sqlite ?? 'auto' };
+  const reader = createSqliteReader(sqlite);
   const log = item => {
     try {
       if (typeof options.log === 'function') options.log(item);
@@ -216,7 +217,7 @@ export function createSwarmEngine(options = {}) {
       const dbFile = path.join(paths.stateDir, cliId, 'session.db');
       dbFiles.add(dbFile);
       try {
-        sessionDbs.set(cliId, await readDb(dbFile, sqlite));
+        sessionDbs.set(cliId, await readDb(dbFile, reader));
       } catch (error) {
         const lastGood = readDb.last(dbFile);
         if (lastGood) sessionDbs.set(cliId, lastGood);
@@ -270,7 +271,7 @@ export function createSwarmEngine(options = {}) {
       diag.push({ level: 'info', source: 'sqlite', message: (await loadNodeSqlite()) ? 'Reading SQLite through node:sqlite.' : 'Reading SQLite through the sqlite3 command-line tool.' });
     }
     try {
-      const data = await withReadOnly(paths.dataDb, sqlite, readAppDb);
+      const data = await reader.read(paths.dataDb, readAppDb);
       if (data) {
         app = data;
         diag.push(...data.diagnostics);
@@ -289,7 +290,7 @@ export function createSwarmEngine(options = {}) {
       diag.push({ level: 'warn', source: 'forest', message: error.message });
     }
     try {
-      const pulled = await withReadOnly(paths.storeDb, sqlite, db => pullLedger(db, ledger));
+      const pulled = await reader.read(paths.storeDb, db => pullLedger(db, ledger));
       if (pulled === null) diag.push({ level: 'warn', source: 'session-store.db', message: 'The Copilot session store was not found, so costs are unknown.' });
     } catch (error) {
       diag.push(sqliteProblem('session-store.db', error));
@@ -344,6 +345,7 @@ export function createSwarmEngine(options = {}) {
     for (const rootId of [...pendingRoots]) if (!current.has(rootId)) pendingRoots.delete(rootId);
     for (const [cliId, entry] of [...liveness]) if (at - entry.checkedAt > 4 * LIVENESS_TTL_MS) liveness.delete(cliId);
     readDb.retain(dbFiles);
+    reader.retain(new Set([...dbFiles, paths.dataDb, paths.storeDb]));
     swarms = swarms.map(item => {
       const entry = snapshots.get(item.id);
       return entry ? { ...item, lifecycle: entry.snapshot.run.lifecycle, lastActivityAt: entry.snapshot.run.lastActivityAt } : item;
@@ -459,6 +461,8 @@ export function createSwarmEngine(options = {}) {
       generation += 1;
       if (timer) clearTimeout(timer);
       timer = null;
+      // An engine dropped without stop() releases its connections when garbage collected (node:sqlite closes a collected database).
+      reader.close();
     },
     listSwarms: () => swarms.map(item => ({ ...item })),
     getSnapshot,

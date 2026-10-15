@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFileSync, existsSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
-  SqliteUnavailableError, UnsafeReadError, bindLiterals, inspectDatabase, loadNodeSqlite, nodeSqliteSupportsUri, openReadOnly, openTarget, sqliteBackends,
+  SqliteUnavailableError, UnsafeReadError, bindLiterals, createSqliteReader, inspectDatabase, loadNodeSqlite, nodeSqliteSupportsUri, openReadOnly, openTarget, sqliteBackends,
   withReadOnly,
 } from '../engine/sqlite.mjs';
 import { TEST_BACKENDS, canWriteWithNode, execSql, openWriter } from './helpers/sqlite-writer.mjs';
@@ -158,7 +159,7 @@ test('openTarget follows the decision table for WAL databases', { skip: !canWrit
   rmSync(`${empty}-wal`);
   assert.equal(openTarget(empty).immutable, true);
   writeFileSync(`${withData}-shm`, '');
-  assert.deepEqual(openTarget(withData), { target: withData, immutable: false });
+  assert.deepEqual(openTarget(withData), { target: withData, immutable: false, live: true });
 });
 
 for (const backend of backends) {
@@ -188,3 +189,174 @@ for (const backend of backends) {
     assert.deepEqual(readdirSync(dir).sort(), before);
   });
 }
+
+const names = folder => readdirSync(folder).sort();
+const SCHEMA = 'PRAGMA journal_mode = WAL; CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT);';
+const values = db => db.all('SELECT v FROM t ORDER BY id');
+
+test('one long-lived connection reads a live WAL database and creates no side files', { skip: !canWriteWithNode }, async () => {
+  const folder = tempDir('swarm-live-');
+  const file = path.join(folder, 'live.db');
+  const writer = openWriter(file);
+  const reader = createSqliteReader({ backend: 'node' });
+  try {
+    writer.exec(`${SCHEMA} INSERT INTO t (v) VALUES ('first');`);
+    for (let i = 0; i < 4; i += 1) {
+      if (i) writer.exec(`INSERT INTO t (v) VALUES ('row-${i}');`);
+      const rows = await reader.read(file, values);
+      assert.equal(rows.length, i + 1);
+      assert.equal(reader.openConnections, 1);
+      assert.equal(reader.lastPath, 'live');
+      assert.deepEqual(names(folder), ['live.db', 'live.db-shm', 'live.db-wal']);
+    }
+    assert.equal(reader.opened, 1);
+    const checkpoint = writer.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get();
+    assert.equal(checkpoint.busy, 0, 'an idle reader connection must not block checkpoints');
+    writer.close();
+    assert.deepEqual((await reader.read(file, values)).map(row => row.v), ['first', 'row-1', 'row-2', 'row-3']);
+    assert.deepEqual(names(folder), ['live.db', 'live.db-shm', 'live.db-wal']);
+    assert.equal(reader.openConnections, 1);
+  } finally {
+    reader.close();
+  }
+  assert.equal(reader.openConnections, 0);
+});
+
+test('the reader takes the immutable path only for a missing or empty -wal', { skip: !canWriteWithNode }, async t => {
+  for (const backend of backends) {
+    await t.test(backend, async () => {
+      const reader = createSqliteReader({ backend });
+      try {
+        assert.deepEqual((await reader.read(rollback, values)).map(row => row.v), ["a'q", 'b', 'c']);
+        assert.equal(reader.lastPath, 'plain');
+        const folder = tempDir('swarm-table-');
+        const missingWal = path.join(folder, 'missing-wal.db');
+        copyFileSync(closedWal, missingWal);
+        assert.deepEqual((await reader.read(missingWal, values)).map(row => row.v), ['w']);
+        assert.equal(reader.lastPath, 'immutable');
+        const emptyWal = path.join(folder, 'empty-wal.db');
+        copyFileSync(closedWal, emptyWal);
+        writeFileSync(`${emptyWal}-wal`, '');
+        assert.deepEqual((await reader.read(emptyWal, values)).map(row => row.v), ['w']);
+        assert.equal(reader.lastPath, 'immutable');
+        const noShm = walDataWithoutShm(`reader-${backend}`);
+        await assert.rejects(reader.read(noShm, values), UnsafeReadError);
+        const live = path.join(folder, 'live.db');
+        const writer = openWriter(live);
+        try {
+          writer.exec(`${SCHEMA} INSERT INTO t (v) VALUES ('live');`);
+          assert.deepEqual((await reader.read(live, values)).map(row => row.v), ['live']);
+          assert.equal(reader.lastPath, backend === 'node' ? 'live' : 'plain');
+        } finally {
+          writer.close();
+        }
+        assert.equal(await reader.read(path.join(folder, 'missing.db'), values), null);
+      } finally {
+        reader.close();
+      }
+    });
+  }
+});
+
+test('a replaced database file closes the old connection and opens a new one', { skip: !canWriteWithNode }, async () => {
+  const folder = tempDir('swarm-inode-');
+  const file = path.join(folder, 'live.db');
+  const reader = createSqliteReader({ backend: 'node' });
+  const first = openWriter(file);
+  try {
+    first.exec(`${SCHEMA} INSERT INTO t (v) VALUES ('old');`);
+    assert.deepEqual((await reader.read(file, values)).map(row => row.v), ['old']);
+    first.close();
+    for (const suffix of ['-wal', '-shm']) rmSync(`${file}${suffix}`, { force: true });
+    const next = path.join(folder, 'next.db');
+    execSql(next, `${SCHEMA} INSERT INTO t (v) VALUES ('checkpointed');`);
+    renameSync(next, file);
+    const second = openWriter(file);
+    try {
+      second.exec("INSERT INTO t (v) VALUES ('new');");
+      assert.deepEqual((await reader.read(file, values)).map(row => row.v), ['checkpointed', 'new']);
+      assert.equal(reader.opened, 2);
+      assert.equal(reader.openConnections, 1);
+      assert.deepEqual(names(folder), ['live.db', 'live.db-shm', 'live.db-wal']);
+    } finally {
+      second.close();
+    }
+  } finally {
+    reader.close();
+  }
+});
+
+test('close releases every connection, a later read reopens, and retain keeps only the named files', { skip: !canWriteWithNode }, async () => {
+  const folder = tempDir('swarm-close-');
+  const writers = [];
+  const files = ['a.db', 'b.db'].map(name => path.join(folder, name));
+  for (const file of files) {
+    const writer = openWriter(file);
+    writer.exec(`${SCHEMA} INSERT INTO t (v) VALUES ('x');`);
+    writers.push(writer);
+  }
+  const reader = createSqliteReader({ backend: 'node' });
+  try {
+    for (const file of files) await reader.read(file, values);
+    assert.equal(reader.openConnections, 2);
+    reader.retain(new Set([files[0]]));
+    assert.equal(reader.openConnections, 1);
+    reader.close();
+    assert.equal(reader.openConnections, 0);
+    assert.deepEqual((await reader.read(files[0], values)).map(row => row.v), ['x']);
+    assert.equal(reader.openConnections, 1);
+    assert.equal(reader.opened, 3);
+    // With no reader connection left, the last writer to close removes the side files, as it does with no reader at all.
+    reader.close();
+    for (const writer of writers) writer.close();
+    assert.deepEqual(names(folder), ['a.db', 'b.db']);
+  } finally {
+    reader.close();
+  }
+});
+
+test('a failed read closes the connection, and the next read opens a new one', { skip: !canWriteWithNode }, async () => {
+  const folder = tempDir('swarm-fail-');
+  const file = path.join(folder, 'live.db');
+  const writer = openWriter(file);
+  const reader = createSqliteReader({ backend: 'node' });
+  try {
+    writer.exec(`${SCHEMA} INSERT INTO t (v) VALUES ('x');`);
+    await reader.read(file, values);
+    await assert.rejects(reader.read(file, db => db.all('SELECT nope FROM t')), /nope/);
+    assert.equal(reader.openConnections, 0);
+    assert.deepEqual((await reader.read(file, values)).map(row => row.v), ['x']);
+    assert.equal(reader.opened, 2);
+  } finally {
+    reader.close();
+    writer.close();
+  }
+});
+
+test('the CLI backend applies the table before every query', async () => {
+  const folder = tempDir('swarm-cli-table-');
+  const file = path.join(folder, 'cli.db');
+  copyFileSync(closedWal, file);
+  const targets = [];
+  const execFileImpl = (command, args, options, callback) => {
+    targets.push(args[4]);
+    callback(null, '[{"v":"w"}]', '');
+  };
+  const reader = createSqliteReader({ backend: 'cli', execFileImpl });
+  const query = db => db.all('SELECT v FROM t');
+  const uri = `${pathToFileURL(file).href}?immutable=1`;
+  await reader.read(file, async db => {
+    await query(db);
+    writeFileSync(`${file}-wal`, '');
+    await query(db);
+    writeFileSync(`${file}-wal`, 'data');
+    await assert.rejects(query(db), error => error instanceof UnsafeReadError && error.message.startsWith('cli.db: '));
+    writeFileSync(`${file}-shm`, '');
+    await query(db);
+    rmSync(`${file}-shm`);
+    rmSync(`${file}-wal`);
+    await query(db);
+  });
+  assert.deepEqual(targets, [uri, uri, file, uri]);
+  assert.equal(reader.openConnections, 0);
+});

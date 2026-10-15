@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { createSwarmEngine } from '../engine/engine.mjs';
 import { createPrLookup } from '../engine/model/pr-lookup.mjs';
@@ -10,6 +10,7 @@ import { HOUR, MINUTE } from '../engine/time.mjs';
 import { CopilotHome } from './helpers/copilot-home.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { DAY, NO_SUCH_PID, T0, alwaysAlive, at, scenario } from './helpers/scenario.mjs';
+import { canWriteWithNode, openWriter } from './helpers/sqlite-writer.mjs';
 import { tempDir } from './helpers/temp.mjs';
 
 function fingerprint(dir) {
@@ -530,4 +531,56 @@ test('a log line over the size limit is skipped with a warning, and later lines 
   assert.equal(warning.level, 'warn');
   assert.match(warning.message, /^cli-ui: skipped 1 log line/);
   assert.equal((await engine.getSnapshot('ws-root')).units.find(unit => unit.id === 'ws-ui').statusDetail, 'busy');
+});
+
+/** Opens a writer on data.db that holds an uncheckpointed rename of the root workspace in the -wal. */
+function holdUncheckpointedRename(home) {
+  const writer = openWriter(home.dataDb);
+  writer.exec("PRAGMA wal_autocheckpoint = 0; UPDATE workspaces SET name = 'Renamed in the WAL' WHERE id = 'ws-root';");
+  return writer;
+}
+
+test('data.db with log data but no shared-memory file keeps the last good data and warns', { skip: !canWriteWithNode }, async () => {
+  const home = scenario();
+  let clock = at(60);
+  const engine = createSwarmEngine({ copilotHome: home.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => clock, processProbe: alwaysAlive, prLookup: 'off' });
+  await engine.refresh();
+  assert.equal(engine.listSwarms().find(swarm => swarm.id === 'ws-root').name, 'Sample story');
+  const aside = tempDir('swarm-aside-');
+  const writer = holdUncheckpointedRename(home);
+  copyFileSync(home.dataDb, path.join(aside, 'data.db'));
+  copyFileSync(`${home.dataDb}-wal`, path.join(aside, 'data.db-wal'));
+  writer.close();
+  for (const suffix of ['-wal', '-shm']) rmSync(`${home.dataDb}${suffix}`, { force: true });
+  copyFileSync(path.join(aside, 'data.db'), home.dataDb);
+  copyFileSync(path.join(aside, 'data.db-wal'), `${home.dataDb}-wal`);
+  clock = at(61);
+  await engine.refresh();
+  assert.equal(engine.listSwarms().find(swarm => swarm.id === 'ws-root').name, 'Sample story');
+  const warning = engine.diagnostics().find(item => item.source === 'data.db');
+  assert.equal(warning.level, 'warn');
+  assert.equal(warning.message, 'data.db: its write-ahead log has data but no shared-memory file, so it cannot be read safely now.');
+  assert.equal(existsSync(`${home.dataDb}-shm`), false);
+});
+
+test('stop() closes the reader connections, so a closing writer can remove its side files', { skip: !canWriteWithNode }, async () => {
+  const kept = scenario();
+  const engine = createSwarmEngine({ copilotHome: kept.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => at(60), processProbe: alwaysAlive, prLookup: 'off' });
+  let writer = holdUncheckpointedRename(kept);
+  await engine.refresh();
+  assert.equal(engine.listSwarms().find(swarm => swarm.id === 'ws-root').name, 'Renamed in the WAL');
+  writer.close();
+  assert.equal(existsSync(`${kept.dataDb}-shm`), true, 'the engine connection keeps the side files while it is open');
+  engine.stop();
+  assert.equal(await engine.getSnapshot('ws-root') !== null, true, 'a read after stop() reopens');
+  engine.stop();
+
+  const stopped = scenario();
+  const second = createSwarmEngine({ copilotHome: stopped.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => at(60), processProbe: alwaysAlive, prLookup: 'off' });
+  writer = holdUncheckpointedRename(stopped);
+  await second.refresh();
+  second.stop();
+  writer.close();
+  assert.equal(existsSync(`${stopped.dataDb}-shm`), false);
+  assert.equal(existsSync(`${stopped.dataDb}-wal`), false);
 });
