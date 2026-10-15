@@ -89,9 +89,8 @@ The body is a prompt addressed to the future Copilot session ("You are…"), not
   - GitHub: `gh pr view`, `gh pr diff`, `gh api repos/.../pulls/...`, and a GraphQL query for `reviewThreads` (REST does not reliably expose thread resolution state).
   - Azure DevOps: `az repos pr show`, `az repos pr work-item list`, `az repos pr policy list`, and `az devops invoke --area git --resource pullRequestThreads ... --api-version 7.1`.
 - A working-tree safety check: run `git status` first; if the tree is not clean, do **not** check out the PR — fall back to remote metadata + diff.
-- Shared **Severity** scale: `Critical | High | Medium | Low | Info` (use the same wording across the review skills).
+- Shared **Severity** scale: `Critical | High | Medium | Low` (use the same wording across the review skills).
 - Adapter sections for `Local branch` and `Pasted diff/feedback` so the skill works without network access.
-- End strict/re-review skills with the literal line `No code was changed.`
 
 When extending an existing skill, keep that skill's established section ordering and vocabulary so the family stays consistent. Do **not** bolt PR-review machinery (provider adapters, PR safety rules) onto a non-PR skill such as `storm-research`.
 

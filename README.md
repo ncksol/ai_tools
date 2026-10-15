@@ -265,7 +265,7 @@ The PR-related skills here all share the same shape so they feel like a coherent
 - **`description` is written for the router**, not the human reader. State *exactly when this skill should activate*, including the verbs a user is likely to say.
 - **Safety rules up top.** Be explicit about what the skill must NOT do (edit, commit, push, post comments, approve, merge, …). Inspection-only skills are the default here.
 - **Provider-neutral** for any PR/repo workflow: support GitHub *and* Azure DevOps, with adapters for local branches and pasted input.
-- **Shared severity vocabulary**: `Critical | High | Medium | Low | Info`.
+- **Shared severity vocabulary**: `Critical | High | Medium | Low`.
 - **Concrete commands, not vibes.** Show the exact `gh` / `az` invocations to use, including the GraphQL query for GitHub review-thread resolution state (REST doesn't expose it reliably).
 - **Prescribed output format** — usually a markdown table — so results are skimmable and comparable across runs.
 - **Forbid hallucination**: don't invent line numbers, don't claim a command ran when it didn't, don't claim surrounding code was inspected when only the diff was read.
