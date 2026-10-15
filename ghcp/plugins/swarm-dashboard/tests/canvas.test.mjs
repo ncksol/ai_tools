@@ -164,6 +164,55 @@ test('disposing a hosting canvas with a connected page closes the server and sto
   }
 });
 
+/** A host whose server waits to bind its port until the test opens the gate. */
+function gatedHost(port, options = {}) {
+  let openGate;
+  const gate = new Promise(resolve => { openGate = resolve; });
+  const makeServer = ({ onIdle }) => {
+    const server = createDashboardServer({ createEngine: demo, port, version: 'test', hub: { engineIdleMs: 60 }, onIdle });
+    const listen = server.listen;
+    server.listen = async () => {
+      await gate;
+      return listen();
+    };
+    return server;
+  };
+  return { canvasHost: host(port, { makeServer, ...options }), openGate };
+}
+
+test('a canvas closed while its server starts lets the server go', async () => {
+  const port = await freePort();
+  const { canvasHost, openGate } = gatedHost(port, { graceMs: 60 });
+  try {
+    const opening = canvasHost.open({ instanceId: 'a' });
+    canvasHost.onClose({ instanceId: 'a' });
+    openGate();
+    await opening;
+    await until(async () => (await probePort(port)).state === 'free');
+    assert.equal(canvasHost.hosting(), false);
+    assert.equal(canvasHost.instanceCount(), 0);
+  } finally {
+    openGate();
+    await canvasHost.dispose();
+  }
+});
+
+test('a host disposed while a canvas opens refuses the open and frees the port', async () => {
+  const port = await freePort();
+  const { canvasHost, openGate } = gatedHost(port);
+  try {
+    const opening = canvasHost.open({ instanceId: 'a' });
+    const disposing = canvasHost.dispose();
+    openGate();
+    await assert.rejects(opening, error => error.code === 'unavailable');
+    await disposing;
+    assert.deepEqual(await probePort(port), { state: 'free' });
+  } finally {
+    openGate();
+    await canvasHost.dispose();
+  }
+});
+
 test('a closed canvas stops watching the shared server', async () => {
   const port = await freePort();
   const first = host(port);

@@ -39,6 +39,7 @@ export function createCanvasHost({
   let lastSeen = null;
   let disposed = false;
   const report = (level, message) => log({ level, source: 'canvas', message });
+  const unavailable = () => Object.assign(new Error('The swarm dashboard extension is shutting down.'), { code: 'unavailable' });
 
   function ensureServer() {
     if (server) return Promise.resolve();
@@ -89,7 +90,11 @@ export function createCanvasHost({
           const found = await probe(port, { timeoutMs: 1500 });
           if (found.state === 'other' && lastSeen !== 'other') report('warn', `port ${port} is now used by another program; open canvases cannot reach the dashboard`);
           lastSeen = found.state;
-          if (found.state === 'free' && instances.size && !disposed) await ensureServer();
+          if (found.state === 'free' && instances.size && !disposed) {
+            await ensureServer();
+            // The last canvas here may have closed while this process took the port over.
+            if (server && !instances.size) scheduleRelease();
+          }
         }
       } catch (error) {
         report('warn', error.message);
@@ -111,12 +116,23 @@ export function createCanvasHost({
 
   return {
     async open(ctx = {}) {
-      if (disposed) throw Object.assign(new Error('The swarm dashboard extension is shutting down.'), { code: 'unavailable' });
-      await ensureServer();
-      instances.add(ctx.instanceId ?? '');
+      if (disposed) throw unavailable();
+      const id = ctx.instanceId ?? '';
+      // Counting the canvas before the server starts keeps a close that arrives meanwhile.
+      instances.add(id);
       clearTimeout(graceTimer);
       graceTimer = null;
-      watch();
+      try {
+        await ensureServer();
+      } catch (error) {
+        instances.delete(id);
+        if (!instances.size) stopWatching();
+        throw error;
+      }
+      if (disposed) throw unavailable();
+      // A canvas that closed meanwhile, if it was the last one here, lets this process's server go once nothing uses it.
+      if (!instances.has(id) && !instances.size && server) scheduleRelease();
+      else watch();
       return { url: pageUrl(port, ctx), title: CANVAS_TITLE };
     },
     onClose(ctx = {}) {
