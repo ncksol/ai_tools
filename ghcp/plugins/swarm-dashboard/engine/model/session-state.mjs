@@ -13,7 +13,17 @@ const SKIP_NAMES = new Map([...SKIP_TYPES].map(type => [type, type]));
 const WAIT_TOOLS = { ask_user: 'question', exit_plan_mode: 'plan' };
 const BUSY_JOIN_MS = 5000;
 
-const argsOf = value => (value && typeof value === 'object' && !Array.isArray(value) ? value : typeof value === 'string' ? { raw: value } : {});
+function argsOf(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string') return {};
+  try {
+    const parsed = JSON.parse(value);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+  } catch {
+    // Not JSON: keep the text as is.
+  }
+  return { raw: value };
+}
 const numberOrNull = value => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value));
 
 export function createSessionState(id) {
@@ -235,6 +245,14 @@ function newSubagent(state, id, at, args) {
     launchedAt: at, startedAt: null, endedAt: null, durationMs: null, status: 'running', lastEventAt: at, agentId: null,
   };
   state.subagents.set(id, sub);
+  if (state.subagents.size > LIMITS.subagents) {
+    for (const [oldId, old] of state.subagents) {
+      if (state.subagents.size <= LIMITS.subagents) break;
+      if (old.status === 'running') continue;
+      state.subagents.delete(oldId);
+      if (old.agentId) state.agentToTask.delete(old.agentId);
+    }
+  }
   return sub;
 }
 
@@ -303,7 +321,8 @@ function onToolComplete(state, data, at) {
 function onSubagentLifecycle(state, event, data, at) {
   const id = typeof data.toolCallId === 'string' ? data.toolCallId : null;
   if (!id) return;
-  const sub = state.subagents.get(id) ?? newSubagent(state, id, at, {});
+  const sub = state.subagents.get(id);
+  if (!sub) return;
   if (event.agentId !== undefined && event.agentId !== null) {
     sub.agentId = String(event.agentId);
     state.agentToTask.set(sub.agentId, id);

@@ -1,7 +1,7 @@
 import { oneLine } from '../text.mjs';
 
 /** Caps that keep a session's state small however long its log grows. */
-export const LIMITS = Object.freeze({ feed: 120, marks: 400, sent: 40, inbound: 80, taskCompletes: 20, recent: 200, spans: 5000, saves: 50, wakes: 500 });
+export const LIMITS = Object.freeze({ feed: 120, marks: 400, sent: 40, inbound: 80, taskCompletes: 20, recent: 200, spans: 5000, saves: 50, wakes: 500, subagents: 500 });
 
 export function pushBounded(list, item, max) {
   list.push(item);

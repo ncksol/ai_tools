@@ -175,3 +175,48 @@ test('large irrelevant lines only move the clock, and malformed lines are counte
   assert.equal(state.parseErrors, 1);
   assert.equal(state.lines, 2);
 });
+
+test('sub-agent history is capped, keeping running sub-agents', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const finished = [];
+  for (let i = 0; i < 505; i += 1) {
+    const call = log.subagent({ mode: 'sync', agentId: `agent-${i}` });
+    log.subagentDone(call);
+    log.done(call);
+    finished.push(call);
+  }
+  const running = log.subagent({ mode: 'background', agentId: 'agent-running' });
+  const state = fold(log);
+  assert.equal(state.subagents.size, 500);
+  assert.equal(state.subagents.has(finished[0]), false);
+  assert.equal(state.subagents.has(finished[5]), false);
+  assert.equal(state.subagents.has(finished[6]), true);
+  assert.equal(state.agentToTask.has('agent-0'), false);
+  assert.equal(state.agentToTask.has('agent-5'), false);
+  assert.equal(state.agentToTask.has('agent-6'), true);
+  assert.equal(state.subagents.get(running).status, 'running');
+  assert.equal(state.agentToTask.get('agent-running'), running);
+});
+
+test('lifecycle events for an unknown tool call do not create sub-agents', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  log.push('subagent.started', { toolCallId: 'ghost-1', agentType: 'explore', agentDisplayName: 'ghost', executionMode: 'sync' }, { agentId: 'agent-ghost' });
+  log.push('subagent.completed', { toolCallId: 'ghost-1', durationMs: 1000 }, { agentId: 'agent-ghost' });
+  const state = fold(log);
+  assert.equal(state.subagents.size, 0);
+  assert.equal(state.agentToTask.has('agent-ghost'), false);
+  assert.equal(state.feed.some(item => item.kind === 'subagent-done'), false);
+});
+
+test('tool arguments given as a JSON string are read like an object', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const call = log.tool('task', JSON.stringify({ name: 'helper', agent_type: 'explore', mode: 'background', description: 'Look around' }));
+  const plain = log.tool('bash', 'echo hi');
+  const state = fold(log);
+  const sub = state.subagents.get(call);
+  assert.deepEqual({ name: sub.name, type: sub.type, mode: sub.mode }, { name: 'helper', type: 'explore', mode: 'background' });
+  assert.equal(state.openTools.get(plain).args.summary, 'bash: echo hi');
+});
