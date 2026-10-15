@@ -465,6 +465,32 @@ test('the example snapshot shows the main states and consistent counts', () => {
   assert.equal(Math.round(total * 10) / 10, snapshot.cost.credits);
 });
 
+test('the example snapshot is internally consistent', () => {
+  const snapshot = fixture('example-snapshot.json');
+  const children = new Map();
+  for (const unit of snapshot.units) children.set(unit.parentId, [...(children.get(unit.parentId) ?? []), unit]);
+  const order = [];
+  const walk = id => {
+    for (const unit of [...(children.get(id) ?? [])].sort((a, b) => a.startedAt - b.startedAt)) {
+      order.push(unit.id);
+      walk(unit.id);
+    }
+  };
+  walk(snapshot.orchestrator.id);
+  assert.deepEqual(snapshot.units.map(unit => unit.id), order, 'units are depth-first by creation time');
+  const sum = values => Math.round(values.reduce((total, value) => total + value, 0) * 10) / 10;
+  const sessions = [snapshot.orchestrator, ...snapshot.units];
+  assert.equal(sum(snapshot.cost.byModel.map(entry => entry.credits)), snapshot.cost.credits);
+  assert.equal(sum(snapshot.cost.byModel.map(entry => entry.calls)), sum(sessions.map(session => session.cost.calls)));
+  assert.equal(snapshot.cost.maxUnitCredits, Math.max(...snapshot.units.map(unit => unit.cost.credits)));
+  const { series } = snapshot.cost;
+  series.forEach((point, index) => {
+    assert.equal(point.at % (5 * 60 * 1000), 0, `series[${index}] starts a 5-minute bucket`);
+    if (index) assert.ok(point.credits >= series[index - 1].credits, `series[${index}] is cumulative`);
+  });
+  assert.equal(series[series.length - 1].credits, snapshot.cost.credits);
+});
+
 test('the validator reports missing, unexpected and invalid fields with their paths', () => {
   const snapshot = fixture('example-snapshot.json');
   delete snapshot.units[0].stage;
@@ -1036,35 +1062,33 @@ All ids, names, repositories and times are invented. `generatedAt` is 2026-10-15
 
 ```json
     {
-      "id": "ws-0004-b2", "kind": "project", "label": "B2", "name": "import",
-      "cliSessionIds": ["cli-0004-b2"], "branch": "feature/b2-import", "model": "claude-sonnet-5",
-      "status": "plan", "statusDetail": "waiting_plan", "bucket": "waiting", "since": 1792063320000, "reason": null,
-      "startedAt": 1792043880000, "endedAt": null, "lastEventAt": 1792063320000,
-      "busyMs": 5400000, "waitingOnUserMs": 2280000, "alive": true,
-      "cost": { "credits": 5790.0, "calls": 410 },
-      "activity": { "label": "Waiting for plan approval", "tool": null, "lastEventAt": 1792063320000 },
-      "report": { "status": "complete", "source": "contract", "at": 1792063140000, "title": "The parser is done. The plan for step 2 is waiting for approval.", "summary": "The parser is done. The plan for step 2 is waiting for approval.", "evidence": ["Parser handles CSV and TSV", "18 parser tests pass"], "blockers": ["Plan for step 2 needs approval"], "body": null, "unit": "B2", "commit": null },
-      "progress": { "done": 3, "total": 10 },
-      "subagents": [
-        { "id": "call-b2-1", "name": "find-import-code", "type": "explore", "model": "gpt-5.4-mini", "mode": "background", "status": "completed", "startedAt": 1792044600000, "endedAt": 1792044780000, "durationMs": 180000, "credits": 12.0, "task": "Find existing import code" }
-      ],
+      "id": "ws-0007-d5", "kind": "project", "label": "D5", "name": "docs",
+      "cliSessionIds": ["cli-0007-d5"], "branch": "feature/d5-docs", "model": "claude-haiku-5.5",
+      "status": "idle", "statusDetail": "idle", "bucket": "idle", "since": 1792065060000, "reason": null,
+      "startedAt": 1791971400000, "endedAt": null, "lastEventAt": 1792065060000,
+      "busyMs": 7200000, "waitingOnUserMs": 0, "alive": true,
+      "cost": { "credits": 3058.0, "calls": 260 },
+      "activity": { "label": "Idle", "tool": null, "lastEventAt": 1792065060000 },
+      "report": { "status": "complete", "source": "contract", "at": 1792047600000, "title": "Opened PR #421 and started a PR monitor. Waiting for review.", "summary": "Opened PR #421 and started a PR monitor. Waiting for review.", "evidence": ["Docs build passes", "PR #421 opened"], "blockers": [], "body": null, "unit": "D5", "commit": "c41d0e7" },
+      "progress": { "done": 9, "total": 10 },
+      "subagents": [],
       "timeline": {
         "segments": [
-          { "start": 1792043880000, "end": 1792049400000, "state": "busy" },
-          { "start": 1792049400000, "end": 1792060200000, "state": "idle" },
-          { "start": 1792060200000, "end": 1792063320000, "state": "busy" },
-          { "start": 1792063320000, "end": null, "state": "plan" }
+          { "start": 1791971400000, "end": 1791985800000, "state": "busy" },
+          { "start": 1791985800000, "end": null, "state": "idle" }
         ],
-        "subagents": [{ "id": "call-b2-1", "start": 1792044600000, "end": 1792044780000, "type": "explore" }],
+        "subagents": [],
         "marks": [
-          { "at": 1792063140000, "kind": "report", "text": "The parser is done.", "status": "complete" },
-          { "at": 1792063320000, "kind": "plan-req", "text": "Plan sent for approval", "status": null }
+          { "at": 1792047480000, "kind": "pr-open", "text": "PR opened", "status": null },
+          { "at": 1792047600000, "kind": "report", "text": "Opened PR #421 and started a PR monitor.", "status": "complete" },
+          { "at": 1792064460000, "kind": "monitor", "text": "PR monitor check", "status": null },
+          { "at": 1792065060000, "kind": "monitor", "text": "PR monitor check", "status": null }
         ]
       },
-      "parentId": "ws-0000-root", "depth": 1, "stage": "coding", "closedWithoutMerge": false, "outcome": null,
-      "pr": null,
-      "monitor": { "state": "none", "lastCheckAt": null, "nextCheckAt": null, "everyMinutes": null, "since": null },
-      "dependsOn": "B0", "todoId": "b2-import"
+      "parentId": "ws-0000-root", "depth": 1, "stage": "pr_open", "closedWithoutMerge": false, "outcome": null,
+      "pr": { "provider": "github", "id": 421, "repo": "sample-org/sample-repo", "url": "https://github.com/sample-org/sample-repo/pull/421", "title": "Docs for the v3 schema", "state": "draft", "openedAt": 1792047480000, "mergedAt": null, "closedAt": null, "reviewNote": "review required", "source": "registry", "checkedAt": 1792065300000 },
+      "monitor": { "state": "alive", "lastCheckAt": 1792065060000, "nextCheckAt": 1792065660000, "everyMinutes": 10, "since": null },
+      "dependsOn": "B0", "todoId": "d5-docs"
     },
     {
       "id": "ws-0005-i1", "kind": "project", "label": "I1", "name": "integration",
@@ -1128,33 +1152,35 @@ All ids, names, repositories and times are invented. `generatedAt` is 2026-10-15
       "dependsOn": "B1", "todoId": "f1-ui"
     },
     {
-      "id": "ws-0007-d5", "kind": "project", "label": "D5", "name": "docs",
-      "cliSessionIds": ["cli-0007-d5"], "branch": "feature/d5-docs", "model": "claude-haiku-5.5",
-      "status": "idle", "statusDetail": "idle", "bucket": "idle", "since": 1792065060000, "reason": null,
-      "startedAt": 1791971400000, "endedAt": null, "lastEventAt": 1792065060000,
-      "busyMs": 7200000, "waitingOnUserMs": 0, "alive": true,
-      "cost": { "credits": 3058.0, "calls": 260 },
-      "activity": { "label": "Idle", "tool": null, "lastEventAt": 1792065060000 },
-      "report": { "status": "complete", "source": "contract", "at": 1792047600000, "title": "Opened PR #421 and started a PR monitor. Waiting for review.", "summary": "Opened PR #421 and started a PR monitor. Waiting for review.", "evidence": ["Docs build passes", "PR #421 opened"], "blockers": [], "body": null, "unit": "D5", "commit": "c41d0e7" },
-      "progress": { "done": 9, "total": 10 },
-      "subagents": [],
+      "id": "ws-0004-b2", "kind": "project", "label": "B2", "name": "import",
+      "cliSessionIds": ["cli-0004-b2"], "branch": "feature/b2-import", "model": "claude-sonnet-5",
+      "status": "plan", "statusDetail": "waiting_plan", "bucket": "waiting", "since": 1792063320000, "reason": null,
+      "startedAt": 1792043880000, "endedAt": null, "lastEventAt": 1792063320000,
+      "busyMs": 5400000, "waitingOnUserMs": 2280000, "alive": true,
+      "cost": { "credits": 5790.0, "calls": 410 },
+      "activity": { "label": "Waiting for plan approval", "tool": null, "lastEventAt": 1792063320000 },
+      "report": { "status": "complete", "source": "contract", "at": 1792063140000, "title": "The parser is done. The plan for step 2 is waiting for approval.", "summary": "The parser is done. The plan for step 2 is waiting for approval.", "evidence": ["Parser handles CSV and TSV", "18 parser tests pass"], "blockers": ["Plan for step 2 needs approval"], "body": null, "unit": "B2", "commit": null },
+      "progress": { "done": 3, "total": 10 },
+      "subagents": [
+        { "id": "call-b2-1", "name": "find-import-code", "type": "explore", "model": "gpt-5.4-mini", "mode": "background", "status": "completed", "startedAt": 1792044600000, "endedAt": 1792044780000, "durationMs": 180000, "credits": 12.0, "task": "Find existing import code" }
+      ],
       "timeline": {
         "segments": [
-          { "start": 1791971400000, "end": 1791985800000, "state": "busy" },
-          { "start": 1791985800000, "end": null, "state": "idle" }
+          { "start": 1792043880000, "end": 1792049400000, "state": "busy" },
+          { "start": 1792049400000, "end": 1792060200000, "state": "idle" },
+          { "start": 1792060200000, "end": 1792063320000, "state": "busy" },
+          { "start": 1792063320000, "end": null, "state": "plan" }
         ],
-        "subagents": [],
+        "subagents": [{ "id": "call-b2-1", "start": 1792044600000, "end": 1792044780000, "type": "explore" }],
         "marks": [
-          { "at": 1792047480000, "kind": "pr-open", "text": "PR opened", "status": null },
-          { "at": 1792047600000, "kind": "report", "text": "Opened PR #421 and started a PR monitor.", "status": "complete" },
-          { "at": 1792064460000, "kind": "monitor", "text": "PR monitor check", "status": null },
-          { "at": 1792065060000, "kind": "monitor", "text": "PR monitor check", "status": null }
+          { "at": 1792063140000, "kind": "report", "text": "The parser is done.", "status": "complete" },
+          { "at": 1792063320000, "kind": "plan-req", "text": "Plan sent for approval", "status": null }
         ]
       },
-      "parentId": "ws-0000-root", "depth": 1, "stage": "pr_open", "closedWithoutMerge": false, "outcome": null,
-      "pr": { "provider": "github", "id": 421, "repo": "sample-org/sample-repo", "url": "https://github.com/sample-org/sample-repo/pull/421", "title": "Docs for the v3 schema", "state": "draft", "openedAt": 1792047480000, "mergedAt": null, "closedAt": null, "reviewNote": "review required", "source": "registry", "checkedAt": 1792065300000 },
-      "monitor": { "state": "alive", "lastCheckAt": 1792065060000, "nextCheckAt": 1792065660000, "everyMinutes": 10, "since": null },
-      "dependsOn": "B0", "todoId": "d5-docs"
+      "parentId": "ws-0000-root", "depth": 1, "stage": "coding", "closedWithoutMerge": false, "outcome": null,
+      "pr": null,
+      "monitor": { "state": "none", "lastCheckAt": null, "nextCheckAt": null, "everyMinutes": null, "since": null },
+      "dependsOn": "B0", "todoId": "b2-import"
     }
   ],
   "planned": [
@@ -1181,7 +1207,7 @@ All ids, names, repositories and times are invented. `generatedAt` is 2026-10-15
   "cost": {
     "credits": 97652.4, "usd": 976.52, "maxUnitCredits": 24016.0,
     "byModel": [
-      { "model": "claude-sonnet-5", "credits": 52100.0, "calls": 3000, "apiMs": 30000000 },
+      { "model": "claude-sonnet-5", "credits": 52100.0, "calls": 3460, "apiMs": 30000000 },
       { "model": "claude-opus-4.8", "credits": 31532.4, "calls": 1540, "apiMs": 22000000 },
       { "model": "claude-haiku-5.5", "credits": 7370.0, "calls": 560, "apiMs": 4000000 },
       { "model": "gpt-5.4-mini", "credits": 6650.0, "calls": 140, "apiMs": 900000 }
@@ -1189,7 +1215,7 @@ All ids, names, repositories and times are invented. `generatedAt` is 2026-10-15
     "series": [
       { "at": 1791809100000, "credits": 40.0 },
       { "at": 1791936000000, "credits": 41000.0 },
-      { "at": 1792022300000, "credits": 78000.0 },
+      { "at": 1792022100000, "credits": 78000.0 },
       { "at": 1792063500000, "credits": 96100.0 },
       { "at": 1792065300000, "credits": 97652.4 }
     ]
