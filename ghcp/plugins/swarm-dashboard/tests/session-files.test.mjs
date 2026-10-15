@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createSessionDbCache, listLocks, readSessionDb, readWorkspaceYaml } from '../engine/readers/session-files.mjs';
 import { createProcessProbe, parsePsOutput } from '../engine/readers/process-probe.mjs';
@@ -58,6 +58,21 @@ test('the session.db cache re-reads only after a change', async () => {
   utimesSync(file, new Date(), new Date(Date.now() + 5000));
   assert.deepEqual(await get(file), { read: 2 });
   assert.equal(await get(path.join(home.stateDir, 'none', 'session.db')), null);
+});
+
+test('the session.db cache also re-reads after a WAL write', async () => {
+  const file = home.sessionDb('cli-wal-cache', { todos: [{ id: 'a' }] });
+  const wal = `${file}-wal`;
+  writeFileSync(wal, 'one');
+  let reads = 0;
+  const get = createSessionDbCache(async () => ({ read: ++reads }));
+  assert.deepEqual(await get(file), { read: 1 });
+  assert.deepEqual(await get(file), { read: 1 });
+  appendFileSync(wal, 'two');
+  assert.deepEqual(await get(file), { read: 2 });
+  rmSync(wal);
+  assert.deepEqual(await get(file), { read: 3 });
+  assert.deepEqual(await get(file), { read: 3 });
 });
 
 test('parsePsOutput reads PID and start time lines', () => {

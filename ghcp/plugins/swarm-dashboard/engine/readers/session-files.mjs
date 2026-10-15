@@ -79,7 +79,13 @@ export function createSessionDbCache(read = readSessionDb) {
       cache.delete(file);
       return null;
     }
-    const key = `${stat.mtimeMs}:${stat.size}`;
+    let key = `${stat.mtimeMs}:${stat.size}`;
+    try {
+      const wal = statSync(`${file}-wal`);
+      key += `|${wal.mtimeMs}:${wal.size}`;
+    } catch {
+      // no WAL file
+    }
     const hit = cache.get(file);
     if (hit && hit.key === key) return hit.value;
     const value = await read(file, sqliteOptions);
