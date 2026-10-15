@@ -2119,6 +2119,23 @@ test('the stress scenario is valid and covers every status, a stalled run, a war
   assert.throws(() => createDemoEngine({ scenario: 'nope' }), /scenario/);
 });
 
+test('every reference in a scenario swarm points inside that swarm', async () => {
+  for (const scenario of ['example', 'stress']) {
+    const engine = createDemoEngine({ scenario, now: () => T, simulate: false });
+    for (const { id } of engine.listSwarms()) {
+      const snapshot = await engine.getSnapshot(id);
+      if (!snapshot) continue;
+      const ids = new Set([snapshot.orchestrator.id, ...snapshot.units.map(unit => unit.id)]);
+      const refs = [
+        ...snapshot.feed.map(item => item.unitId),
+        ...snapshot.needs.flatMap(need => [need.fromId, ...need.unitIds]),
+        ...snapshot.units.flatMap(unit => [unit.parentId, ...unit.recent.map(item => item.unitId)]),
+      ];
+      for (const ref of refs) assert.ok(ids.has(ref), `${scenario}, ${id}: ${ref}`);
+    }
+  }
+});
+
 test('the default engine is the demo engine until PR 1\'s engine is in', () => {
   assert.equal(createDefaultEngine({ log: () => {} }).isDemo, true);
 });
@@ -2403,10 +2420,10 @@ export function stressScenario(fixtures) {
   const last = snapshot.cost.series[snapshot.cost.series.length - 1];
   snapshot.cost.series.push({ at: last.at + 5 * MIN, credits: snapshot.cost.credits });
 
-  const other = structuredClone(example);
-  other.run = { ...other.run, id: 'ws-8000-root', name: 'Sample story C', lastActivityAt: t - 40 * MIN };
-  other.orchestrator = { ...other.orchestrator, id: 'ws-8000-root', label: 'SC', name: 'Sample story C', cliSessionIds: ['cli-8000-root'] };
-  other.units = other.units.map(unit => ({ ...unit, id: unit.id.replace(/^ws-0/, 'ws-8'), parentId: 'ws-8000-root', cliSessionIds: unit.cliSessionIds.map(id => id.replace(/^cli-0/, 'cli-8')) }));
+  // A second live swarm for the picker: the example under new ids everywhere, so every reference stays inside it.
+  const other = JSON.parse(JSON.stringify(example).replace(/\b(ws|cli)-0(\d{3})-/g, '$1-8$2-'));
+  other.run = { ...other.run, name: 'Sample story C', lastActivityAt: t - 40 * MIN };
+  other.orchestrator = { ...other.orchestrator, label: 'SC', name: 'Sample story C' };
   return { snapshots: [snapshot, other], swarms: null, history: fixtures.history, summaries: fixtures.summaries };
 }
 ```
@@ -2414,7 +2431,7 @@ export function stressScenario(fixtures) {
 - [ ] **Step 6: Run the test to verify it passes**
 
 Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/demo-engine.test.mjs`
-Expected: PASS, 7 tests. If the stress snapshot fails validation, the validator's message names the field path; fix the scenario, not the schema.
+Expected: PASS, 8 tests. If the stress snapshot fails validation, the validator's message names the field path; fix the scenario, not the schema.
 
 - [ ] **Step 7: Commit**
 
@@ -5986,6 +6003,12 @@ export const canvas = createCanvas({
   },
 });
 
+// When the CLI stops this extension, close the server first, and with it the engine's read-only database connections,
+// then end the way the signal would have ended the process.
+process.once('SIGTERM', () => {
+  Promise.resolve(canvasHost?.dispose()).finally(() => process.kill(process.pid, 'SIGTERM'));
+});
+
 await joinSession({ canvases: [canvas] });
 ```
 
@@ -6353,10 +6376,11 @@ The dashboard always uses `http://127.0.0.1:7927/`. One dashboard server runs on
 
 If another program already uses port 7927, the launcher says so and exits, and the canvas shows the same error. Use another port with `npm start -- --port <n>`, or set `SWARM_DASHBOARD_PORT` for both the launcher and the environment the Copilot app starts with.
 
-## Privacy
+## Privacy and data access
 
-- It reads `~/.copilot/data.db`, `~/.copilot/session-store.db` and the session files under `~/.copilot/session-state/`, and never changes them. From `data.db` it reads named columns only.
-- The only place it writes is its history folder, `~/.copilot/swarm-dashboard/history`, which keeps a summary of each finished run so that history survives log clean-up.
+Read-only access. The dashboard reads `~/.copilot/data.db`, `~/.copilot/session-store.db` and the session folders, and never writes to them. Its only writes are run summaries in `~/.copilot/swarm-dashboard/history/`, which keep finished runs in History after logs are cleaned up. SQLite databases are opened read-only. A database in WAL mode that a running Copilot process has open is read through one long-lived read-only connection, opened only when its `-wal` and `-shm` files already exist; while it's open, its lock keeps those files in place. A database that nothing has open is read in immutable mode, which never touches side files. If a database's write-ahead log holds data but its shared-memory file is missing, the dashboard skips that read, keeps the last data it read and shows a warning. One narrow case remains: if the last Copilot process finishes closing a database in the few microseconds between the dashboard's check and SQLite's read lock, SQLite creates an empty `-wal` and `-shm` beside it. No data changes, and the next process that opens the database reuses or removes them.
+
+- From `data.db` it reads named columns only.
 - The server listens on 127.0.0.1 only, answers only requests addressed to `127.0.0.1` or `localhost` on its port, and serves only GET and HEAD. The page loads nothing from the internet.
 - The only outbound requests are read-only `gh` and `az` queries for the state of the swarm's pull requests, made with your existing CLI login and cached.
 
