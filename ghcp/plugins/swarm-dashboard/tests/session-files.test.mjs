@@ -60,6 +60,20 @@ test('the session.db cache re-reads only after a change', async () => {
   assert.equal(await get(path.join(home.stateDir, 'none', 'session.db')), null);
 });
 
+test('the session.db cache drops files that are not retained', async () => {
+  const keep = home.sessionDb('cli-retain-keep', { todos: [{ id: 'a' }] });
+  const drop = home.sessionDb('cli-retain-drop', { todos: [{ id: 'a' }] });
+  let reads = 0;
+  const get = createSessionDbCache(async () => ({ read: ++reads }));
+  await get(keep);
+  await get(drop);
+  assert.equal(reads, 2);
+  get.retain(new Set([keep]));
+  await get(keep);
+  assert.equal(reads, 2);
+  assert.deepEqual(await get(drop), { read: 3 });
+});
+
 test('the session.db cache also re-reads after a WAL write', async () => {
   const file = home.sessionDb('cli-wal-cache', { todos: [{ id: 'a' }] });
   const wal = `${file}-wal`;

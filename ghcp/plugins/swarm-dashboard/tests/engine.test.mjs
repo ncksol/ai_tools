@@ -7,7 +7,7 @@ import { createSwarmEngine } from '../engine/engine.mjs';
 import { validateRunListItem, validateRunSummary, validateSnapshot, validateSwarmListItem } from '../engine/schema.mjs';
 import { HOUR, MINUTE } from '../engine/time.mjs';
 import { EventLog } from './helpers/event-log.mjs';
-import { alwaysAlive, at, scenario } from './helpers/scenario.mjs';
+import { DAY, T0, alwaysAlive, at, scenario } from './helpers/scenario.mjs';
 import { tempDir } from './helpers/temp.mjs';
 
 function fingerprint(dir) {
@@ -137,4 +137,91 @@ test('missing Copilot data degrades to diagnostics', async () => {
   assert.deepEqual(engine.listSwarms(), []);
   assert.equal(await engine.getSnapshot(), null);
   assert.ok(engine.diagnostics().some(item => item.source === 'data.db' && item.level === 'warn'));
+});
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+test('a swarm keeps increasing its revision after it leaves tracking', async () => {
+  const home = scenario();
+  for (const n of [1, 2, 3]) {
+    home.workspace({ id: `ws-x${n}`, name: `Extra ${n}`, createdAt: T0 - 20 * DAY + n * MINUTE, sessionId: `cli-x${n}` });
+    home.workspace({ id: `ws-x${n}-child`, name: `Extra ${n} child`, createdAt: T0 - 20 * DAY + (n + 5) * MINUTE, sessionId: `cli-x${n}-child`, parentId: `ws-x${n}`, creatorSessionId: `cli-x${n}` });
+  }
+  const engine = createSwarmEngine({ copilotHome: home.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => at(60), processProbe: alwaysAlive, prLookup: 'off' });
+  const first = await engine.getSnapshot('ws-old');
+  assert.ok(first.revision >= 1);
+  for (const n of [1, 2, 3]) assert.ok(await engine.getSnapshot(`ws-x${n}`));
+
+  const later = new EventLog(T0 - 30 * DAY + 10 * MINUTE);
+  later.turnStart();
+  home.writeEvents('cli-old', later.events, { append: true });
+  const second = await engine.getSnapshot('ws-old');
+  assert.ok(second.revision > first.revision, `${second.revision} should be above ${first.revision}`);
+});
+
+test('one failing swarm does not stop the refresh', async () => {
+  const home = scenario();
+  home.workspace({ id: 'ws-bad', name: 'Bad swarm', createdAt: at(10), sessionId: 'cli-bad' });
+  home.workspace({ id: 'ws-bad-child', name: 'Bad child', createdAt: at(11), sessionId: 'cli-bad-child', parentId: 'ws-bad', creatorSessionId: 'cli-bad', pr: { repo: 'sample/repo', number: 77, state: 'open' } });
+  const bad = new EventLog(at(11));
+  bad.start(); bad.turnStart();
+  home.writeEvents('cli-bad-child', bad.events);
+  const lookup = {
+    request(pr) {
+      if (pr.id === 77) throw new Error('a lookup failure');
+    },
+    get: () => null,
+    errors: () => [],
+  };
+  const engine = createSwarmEngine({ copilotHome: home.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => at(60), processProbe: alwaysAlive, prLookup: lookup });
+  const changes = [];
+  engine.subscribe(change => changes.push(change));
+  await engine.refresh();
+  assert.equal((await engine.getSnapshot('ws-root')).run.id, 'ws-root');
+  assert.deepEqual(changes.map(change => change.swarmIds), [['ws-root']]);
+  assert.ok(engine.listSwarms().some(swarm => swarm.id === 'ws-bad'));
+  const problem = engine.diagnostics().find(item => item.source === 'snapshot');
+  assert.equal(problem.level, 'warn');
+  assert.equal(problem.message, 'ws-bad: a lookup failure');
+});
+
+test('stop then start runs a single polling chain', async () => {
+  const home = scenario();
+  let refreshes = 0;
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const probe = async locks => {
+    await gate;
+    return alwaysAlive(locks);
+  };
+  const engine = createSwarmEngine({
+    copilotHome: home.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => { refreshes += 1; return at(60); }, processProbe: probe, prLookup: 'off',
+  });
+  engine.start({ intervalMs: 50 });
+  const deadline = Date.now() + 5000;
+  while (refreshes < 1 && Date.now() < deadline) await sleep(5);
+  assert.equal(refreshes, 1);
+  engine.stop();
+  engine.start({ intervalMs: 50 });
+  await sleep(20);
+  release();
+  await engine.refresh();
+  engine.stop();
+  const settled = refreshes;
+  await sleep(250);
+  assert.equal(refreshes, settled);
+});
+
+test('a finished run that is first requested through getRunSummary is written once', async () => {
+  const home = scenario();
+  const historyDir = path.join(tempDir('swarm-engine-'), 'history');
+  const stored = path.join(historyDir, 'runs', 'ws-old.json');
+  let readsAfterWrite = 0;
+  const engine = createSwarmEngine({
+    copilotHome: home.root, historyDir, now: () => { if (existsSync(stored)) readsAfterWrite += 1; return at(60); }, processProbe: alwaysAlive, prLookup: 'off',
+  });
+  const summary = await engine.getRunSummary('ws-old');
+  assert.deepEqual(validateRunSummary(summary), []);
+  assert.ok(existsSync(stored));
+  assert.equal(readsAfterWrite, 0);
 });

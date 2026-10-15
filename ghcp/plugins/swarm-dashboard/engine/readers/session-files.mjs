@@ -71,7 +71,7 @@ export async function readSessionDb(file, sqliteOptions = {}) {
 
 export function createSessionDbCache(read = readSessionDb) {
   const cache = new Map();
-  return async function get(file, sqliteOptions) {
+  async function get(file, sqliteOptions) {
     let stat;
     try {
       stat = statSync(file);
@@ -91,5 +91,9 @@ export function createSessionDbCache(read = readSessionDb) {
     const value = await read(file, sqliteOptions);
     cache.set(file, { key, value });
     return value;
+  }
+  get.retain = files => {
+    for (const file of [...cache.keys()]) if (!files.has(file)) cache.delete(file);
   };
+  return get;
 }

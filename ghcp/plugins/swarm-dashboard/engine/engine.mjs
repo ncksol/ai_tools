@@ -69,6 +69,7 @@ export function createSwarmEngine(options = {}) {
   const sessions = new Map();
   const liveness = new Map();
   const snapshots = new Map();
+  const revisions = new Map();
   const cheapLast = new Map();
   const knownFinished = new Map();
   const requested = [];
@@ -79,6 +80,7 @@ export function createSwarmEngine(options = {}) {
   let diagnostics = [];
   let revision = 0;
   let timer = null;
+  let generation = 0;
   let running = null;
 
   const projectOf = node => {
@@ -113,36 +115,44 @@ export function createSwarmEngine(options = {}) {
     return value;
   }
 
-  async function listRoots(at) {
-    const items = [];
-    for (const root of forest.roots) {
-      const nodes = treeNodes(forest, root.id);
-      const cliIds = [...new Set(nodes.flatMap(node => node.cliSessionIds))];
-      let last = root.createdAt ?? 0;
-      for (const cliId of cliIds) last = Math.max(last, (await mtimeOf(path.join(paths.stateDir, cliId, 'events.jsonl'))) ?? 0);
-      const totals = ledger.sumFor(cliIds);
-      last = Math.max(last, totals.lastAt ?? 0);
-      cheapLast.set(root.id, last);
-      const runningFlag = cliIds.some(id => app.sessions.get(id)?.isRunning);
-      const recent = at - last < thresholds.runFinishedAfterMs;
-      let alive = false;
-      if (recent || runningFlag) {
-        for (const cliId of cliIds) {
-          if ((await livenessOf(cliId, at)) === true) {
-            alive = true;
-            break;
-          }
+  async function listRoot(root, at) {
+    const nodes = treeNodes(forest, root.id);
+    const cliIds = [...new Set(nodes.flatMap(node => node.cliSessionIds))];
+    let last = root.createdAt ?? 0;
+    for (const cliId of cliIds) last = Math.max(last, (await mtimeOf(path.join(paths.stateDir, cliId, 'events.jsonl'))) ?? 0);
+    const totals = ledger.sumFor(cliIds);
+    last = Math.max(last, totals.lastAt ?? 0);
+    cheapLast.set(root.id, last);
+    const runningFlag = cliIds.some(id => app.sessions.get(id)?.isRunning);
+    const recent = at - last < thresholds.runFinishedAfterMs;
+    let alive = false;
+    if (recent || runningFlag) {
+      for (const cliId of cliIds) {
+        if ((await livenessOf(cliId, at)) === true) {
+          alive = true;
+          break;
         }
       }
-      const tracked = snapshots.get(root.id)?.snapshot ?? null;
-      const lifecycle = tracked ? tracked.run.lifecycle
-        : knownFinished.get(root.id) === last ? 'finished'
-          : recent || (runningFlag && alive) ? 'live' : 'finished';
-      const lastActivityAt = tracked?.run.lastActivityAt ?? (last || at);
-      items.push({
-        id: root.id, name: root.name ?? '', project: projectOf(root), startedAt: root.createdAt || lastActivityAt, lastActivityAt,
-        lifecycle, units: nodes.length - 1, credits: round1(totals.nanoAiu / NANO_AIU_PER_CREDIT), alive,
-      });
+    }
+    const tracked = snapshots.get(root.id)?.snapshot ?? null;
+    const lifecycle = tracked ? tracked.run.lifecycle
+      : knownFinished.get(root.id) === last ? 'finished'
+        : recent || (runningFlag && alive) ? 'live' : 'finished';
+    const lastActivityAt = tracked?.run.lastActivityAt ?? (last || at);
+    return {
+      id: root.id, name: root.name ?? '', project: projectOf(root), startedAt: root.createdAt || lastActivityAt, lastActivityAt,
+      lifecycle, units: nodes.length - 1, credits: round1(totals.nanoAiu / NANO_AIU_PER_CREDIT), alive,
+    };
+  }
+
+  async function listRoots(at, diag) {
+    const items = [];
+    for (const root of forest.roots) {
+      try {
+        items.push(await listRoot(root, at));
+      } catch (error) {
+        diag.push({ level: 'warn', source: 'swarms', message: `${shortId(root.id)}: ${error.message}` });
+      }
     }
     return items.sort(byLifecycleThenActivity);
   }
@@ -166,7 +176,7 @@ export function createSwarmEngine(options = {}) {
     return entry.missing ? null : entry.state;
   }
 
-  async function buildTracked(rootId, at, diag) {
+  async function buildTracked(rootId, at, diag, dbFiles) {
     const nodes = treeNodes(forest, rootId);
     const states = new Map();
     const alive = new Map();
@@ -179,8 +189,10 @@ export function createSwarmEngine(options = {}) {
     }
     const sessionDbs = new Map();
     for (const cliId of new Set([...nodes[0].cliSessionIds, ...nodes.map(node => node.currentCliSessionId).filter(Boolean)])) {
+      const dbFile = path.join(paths.stateDir, cliId, 'session.db');
+      dbFiles.add(dbFile);
       try {
-        sessionDbs.set(cliId, await readDb(path.join(paths.stateDir, cliId, 'session.db'), sqlite));
+        sessionDbs.set(cliId, await readDb(dbFile, sqlite));
       } catch (error) {
         diag.push({ level: 'warn', source: 'session.db', message: `${shortId(cliId)}: ${error.message}` });
       }
@@ -225,7 +237,12 @@ export function createSwarmEngine(options = {}) {
       app = app ?? emptyApp();
       diag.push(sqliteProblem('data.db', error));
     }
-    forest = buildForest(app);
+    try {
+      forest = buildForest(app);
+    } catch (error) {
+      forest = forest ?? buildForest(emptyApp());
+      diag.push({ level: 'warn', source: 'forest', message: error.message });
+    }
     try {
       const pulled = await withReadOnly(paths.storeDb, sqlite, db => pullLedger(db, ledger));
       if (pulled === null) diag.push({ level: 'warn', source: 'session-store.db', message: 'The Copilot session store was not found, so costs are unknown.' });
@@ -234,33 +251,47 @@ export function createSwarmEngine(options = {}) {
     }
     for (const failure of lookup?.errors() ?? []) diag.push({ level: 'info', source: 'pr-lookup', message: `${failure.key}: ${failure.error}` });
 
-    swarms = await listRoots(at);
+    swarms = await listRoots(at, diag);
     const rootIds = new Set(forest.roots.map(root => root.id));
     const tracked = new Set([...swarms.filter(swarm => swarm.lifecycle === 'live').map(swarm => swarm.id), ...requested.filter(id => rootIds.has(id))]);
     const changed = [];
+    const failed = new Set();
+    const dbFiles = new Set();
     for (const rootId of tracked) {
-      const snapshot = await buildTracked(rootId, at, diag);
-      const hash = digest(snapshot);
-      const entry = snapshots.get(rootId);
-      if (entry && entry.hash === hash) {
-        snapshot.revision = entry.revision;
-        entry.snapshot = snapshot;
-      } else {
-        snapshot.revision = (entry?.revision ?? 0) + 1;
-        snapshots.set(rootId, { snapshot, hash, revision: snapshot.revision });
-        changed.push(rootId);
-      }
-      if (snapshot.run.lifecycle === 'finished') {
-        knownFinished.set(rootId, cheapLast.get(rootId));
-        await persistFinished(snapshot, diag);
-      } else {
-        knownFinished.delete(rootId);
+      try {
+        const snapshot = await buildTracked(rootId, at, diag, dbFiles);
+        const hash = digest(snapshot);
+        const entry = snapshots.get(rootId);
+        if (entry && entry.hash === hash) {
+          snapshot.revision = entry.revision;
+          entry.snapshot = snapshot;
+        } else {
+          snapshot.revision = (entry?.revision ?? revisions.get(rootId) ?? 0) + 1;
+          snapshots.set(rootId, { snapshot, hash, revision: snapshot.revision });
+          revisions.set(rootId, snapshot.revision);
+          changed.push(rootId);
+        }
+        if (snapshot.run.lifecycle === 'finished') {
+          knownFinished.set(rootId, cheapLast.get(rootId));
+          await persistFinished(snapshot, diag);
+        } else {
+          knownFinished.delete(rootId);
+        }
+      } catch (error) {
+        failed.add(rootId);
+        diag.push({ level: 'warn', source: 'snapshot', message: `${shortId(rootId)}: ${error.message}` });
       }
     }
     const keep = new Set();
     for (const rootId of tracked) for (const node of treeNodes(forest, rootId)) for (const cliId of node.cliSessionIds) keep.add(cliId);
     for (const cliId of [...sessions.keys()]) if (!keep.has(cliId)) sessions.delete(cliId);
-    for (const rootId of [...snapshots.keys()]) if (!tracked.has(rootId)) snapshots.delete(rootId);
+    for (const rootId of [...snapshots.keys()]) if (!tracked.has(rootId) && !failed.has(rootId)) snapshots.delete(rootId);
+    const current = new Set(forest.roots.map(root => root.id));
+    for (const rootId of [...revisions.keys()]) if (!current.has(rootId)) revisions.delete(rootId);
+    for (const rootId of [...cheapLast.keys()]) if (!current.has(rootId)) cheapLast.delete(rootId);
+    for (const rootId of [...knownFinished.keys()]) if (!current.has(rootId)) knownFinished.delete(rootId);
+    for (const [cliId, entry] of [...liveness]) if (at - entry.checkedAt > 4 * LIVENESS_TTL_MS) liveness.delete(cliId);
+    readDb.retain(dbFiles);
     swarms = swarms.map(item => {
       const entry = snapshots.get(item.id);
       return entry ? { ...item, lifecycle: entry.snapshot.run.lifecycle, lastActivityAt: entry.snapshot.run.lastActivityAt } : item;
@@ -332,6 +363,8 @@ export function createSwarmEngine(options = {}) {
     if (stored) return stored;
     const snapshot = await getSnapshot(runId);
     if (!snapshot) return null;
+    const persisted = await history.get(runId);
+    if (persisted) return persisted;
     const summary = summarizeRun(snapshot, { computedAt: now() });
     if (persist && snapshot.run.lifecycle === 'finished') {
       try {
@@ -347,17 +380,19 @@ export function createSwarmEngine(options = {}) {
     refresh,
     start({ intervalMs = 3000 } = {}) {
       if (timer) return;
+      const mine = ++generation;
       const tick = async () => {
         try {
           await refresh();
         } catch (error) {
           log({ level: 'warn', source: 'engine', message: error.message });
         }
-        if (timer) timer = setTimeout(tick, intervalMs);
+        if (mine === generation && timer) timer = setTimeout(tick, intervalMs);
       };
       timer = setTimeout(tick, 0);
     },
     stop() {
+      generation += 1;
       if (timer) clearTimeout(timer);
       timer = null;
     },
