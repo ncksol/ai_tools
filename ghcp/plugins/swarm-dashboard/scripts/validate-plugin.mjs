@@ -2,6 +2,7 @@
 import { access, readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { validateDashboard } from './lib/validate-dashboard.mjs';
 
 export const PLUGIN_NAME = 'swarm-dashboard';
 export const REQUIRED_FILES = [
@@ -85,6 +86,7 @@ export async function validatePlugin(root, repositoryRoot) {
       errors.push(`${file}: required file is missing`);
     }
   }
+  errors.push(...await validateDashboard(root, manifest, pkg));
   return errors;
 }
 

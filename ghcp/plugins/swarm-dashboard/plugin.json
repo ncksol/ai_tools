@@ -1,4 +1,5 @@
 {
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "swarm-dashboard",
   "description": "Watch-only dashboard for agentic swarms in the GitHub Copilot app: sessions, sub-agents, cost, stuck detection and run history.",
   "version": "0.1.0",
@@ -13,5 +14,8 @@
     "cost",
     "copilot-app"
   ],
-  "category": "development"
+  "category": "development",
+  "extensions": {
+    "com.github.copilot": {}
+  }
 }
