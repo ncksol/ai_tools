@@ -451,6 +451,21 @@ function touchSubagent(state, owner, at) {
   if (sub && at > sub.lastEventAt) sub.lastEventAt = at;
 }
 
+/**
+ * Keeps at most LIMITS.subagents details in a merged state, in the order eviction uses: running sub-agents first (the newest
+ * when there are too many), then the most recently finished. The totals (count, per-type stats, index) are not touched.
+ */
+function capSubagents(merged) {
+  if (merged.subagents.size <= LIMITS.subagents) return;
+  const all = [...merged.subagents.values()];
+  const running = all.filter(sub => sub.status === 'running').sort((a, b) => a.launchedAt - b.launchedAt).slice(-LIMITS.subagents);
+  const room = LIMITS.subagents - running.length;
+  const finished = room > 0
+    ? all.filter(sub => sub.status !== 'running').sort((a, b) => (a.endedAt ?? a.launchedAt) - (b.endedAt ?? b.launchedAt)).slice(-room)
+    : [];
+  merged.subagents = new Map([...finished, ...running].sort((a, b) => a.launchedAt - b.launchedAt).map(sub => [sub.id, sub]));
+}
+
 /** Aggregate of one project session's CLI sessions, oldest first. Live fields stay empty. */
 export function mergeStates(states) {
   const merged = createSessionState(states.map(state => state.id).join('+') || 'none');
@@ -501,6 +516,7 @@ export function mergeStates(states) {
   }
   while (merged.subagentIndex.size > LIMITS.subagentIndex) merged.subagentIndex.delete(merged.subagentIndex.keys().next().value);
   const byAt = (a, b) => a.at - b.at;
+  capSubagents(merged);
   for (const list of [merged.sent, merged.inbound, merged.taskCompletes, merged.feed, merged.marks, merged.automation.saves]) list.sort(byAt);
   merged.automation.wakes.sort((a, b) => a - b);
   merged.busySpans.sort((a, b) => a[0] - b[0]);

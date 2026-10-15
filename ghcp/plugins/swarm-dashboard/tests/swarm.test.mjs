@@ -334,6 +334,36 @@ function receivedOnly({ registry }) {
   return data;
 }
 
+test('a unit that spans two CLI sessions lists at most 500 sub-agents, while the run counts all of them', () => {
+  const data = input(true);
+  data.app.aliases.push({ sessionId: 'cli-api-2', workspaceId: 'ws-api', createdAt: at(40) });
+  data.forest = buildForest(data.app);
+  assert.deepEqual([...data.forest.nodes.get('ws-api').cliSessionIds].sort(), ['cli-api', 'cli-api-2']);
+  const session = (base, id) => {
+    const log = new EventLog(at(5));
+    log.calls = base;
+    log.start(); log.turnStart();
+    for (let i = 0; i < 350; i += 1) {
+      const call = log.subagent({ mode: 'sync', type: 'explore' });
+      log.wait(1000);
+      log.subagentDone(call, { durationMs: 1000 });
+      log.done(call);
+    }
+    log.turnEnd();
+    return fold(log, id);
+  };
+  data.states.set('cli-api', session(0, 'cli-api'));
+  data.states.set('cli-api-2', session(1000, 'cli-api-2'));
+  data.alive.set('cli-api-2', true);
+  const snapshot = buildSnapshot(data);
+  const unit = snapshot.units.find(item => item.id === 'ws-api');
+  assert.equal(unit.subagents.length, 500);
+  assert.ok(unit.timeline.subagents.length <= 500);
+  const summary = summarizeRun(snapshot, { computedAt: at(120) });
+  assert.equal(summary.subagents, 700);
+  assert.deepEqual(summary.subagentTypes.map(entry => [entry.type, entry.runs, entry.durationMs]), [['explore', 700, 700_000]]);
+});
+
 test('a status line that only the orchestrator received still gives the unit its PR', () => {
   const unit = buildSnapshot(receivedOnly({ registry: false })).units.find(item => item.id === 'ws-api');
   assert.equal(unit.report.source, 'contract');
