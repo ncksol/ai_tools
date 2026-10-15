@@ -37,9 +37,9 @@ Do not:
 - commit
 - push
 - run destructive commands
-- change branches unless this is required to inspect the PR and the user’s working tree is clean
+- check out the PR, change branches, stash, reset, or clean the working tree
 
-If the working tree is not clean, do not check out the PR until the user decides what to do. Continue with remote metadata and patch/diff if possible.
+Leave the user’s working tree as you found it, including uncommitted changes. Read the PR from Git objects or from the provider instead (see the adapters).
 
 ## Inputs
 
@@ -53,7 +53,7 @@ The user may provide one of:
 
 If the prompt contains a PR URL, use that URL as the source of truth.
 
-If the provider or repository cannot be determined, ask for the missing PR URL.
+If the user gave a PR number or URL and its provider or repository cannot be determined, ask for the full PR URL.
 
 ## Provider detection
 
@@ -75,58 +75,96 @@ https://dev.azure.com/org/project/_git/repo/pullrequest/123
 https://org.visualstudio.com/project/_git/repo/pullrequest/123
 ```
 
-If the provider cannot be determined, ask the user to provide the full PR URL.
+A local branch or a pasted diff has no provider. Use the local-only branch adapter or the pasted diff adapter, and give `Local branch` or `Pasted diff` as the provider in the report.
+
+If a PR’s provider cannot be determined, ask the user to provide the full PR URL.
 
 ## General review flow
 
 When reviewing a PR:
 
-1. Identify the PR provider.
+1. Identify the PR provider, or that the input is a local branch or a pasted diff.
 2. Gather PR metadata.
-3. Gather the diff.
-4. If possible, inspect surrounding code locally.
+3. Find the base and head commits, and gather the diff between them.
+4. Inspect surrounding code at the head commit, without switching branches.
 5. Read project-specific instructions and nearby implementation patterns.
 6. Review the PR against its stated intent.
 7. Report only concrete issues introduced or made worse by this PR.
 
-Do not review only the raw diff if local repository context is available. Diffs often hide important control flow, type definitions, configuration, tests, and existing helper functions.
+Do not review only the raw diff if you can read the repository at the head commit. Diffs often hide important control flow, type definitions, configuration, tests, and existing helper functions.
+
+## Base and head commits
+
+The adapters below give you a base commit, `<BASE_SHA>`, and a head commit, `<HEAD_SHA>`, except for a pasted diff and a GitHub PR without a local clone. Review the change between them from Git objects. No checkout is needed, so this works even when the working tree has uncommitted changes or another branch is checked out. Run Git commands in the repository under review; if the user gave its path, use `git -C <path> …`.
+
+```bash
+git merge-base <BASE_SHA> <HEAD_SHA>
+git diff <BASE_SHA>...<HEAD_SHA>
+git ls-tree -r --name-only <HEAD_SHA>
+git show <HEAD_SHA>:<path> | cat -n
+git grep -n '<pattern>' <HEAD_SHA> -- <pathspec>
+```
+
+- `git merge-base` prints `<MERGE_BASE>`. The three-dot diff compares `<HEAD_SHA>` with `<MERGE_BASE>`, not with `<BASE_SHA>`, so later changes on the base branch are left out. Review only this diff.
+- Read code at `<HEAD_SHA>`, never from the working tree: it may hold another branch or uncommitted edits. `cat -n` adds the line numbers you cite.
+- When you need the old side, such as a deleted file or the code around a removed line, read it at `<MERGE_BASE>` and take old-side line numbers from there.
+- Report the base and head refs and the three commits.
+
+Before you report, check the commits again as the adapter describes:
+
+- If the head commit changed, or the PR now targets another base branch, start the adapter again.
+- If only the base commit changed, get the new base commit the same way and run `git merge-base <NEW_BASE_SHA> <HEAD_SHA>`. If it prints `<MERGE_BASE>` again, the diff has not changed and your review stands. If not, review the new diff.
+- If anything changes again during the second review, report the commits you reviewed and say that the branch or PR has changed since.
 
 ## GitHub PR adapter
 
 For GitHub PRs, prefer GitHub CLI.
 
-Use the PR URL directly where possible.
+Use the PR URL directly where possible. `<OWNER>`, `<REPO>` and `<NUMBER>` come from the URL. If you have only a PR number, run `gh pr view <NUMBER> --json url` in the repository and use the URL it prints.
 
 Gather PR metadata:
 
 ```bash
-gh pr view <PR_URL> --json number,title,body,baseRefName,headRefName,headRepository,headRepositoryOwner,files,commits,statusCheckRollup,reviews,comments,url
+gh pr view <PR_URL> --json number,title,body,baseRefName,baseRefOid,headRefName,headRefOid,headRepository,headRepositoryOwner,files,commits,statusCheckRollup,reviews,comments,url
 ```
 
-Gather the patch and changed file list:
+`headRefOid` is the head commit, `<HEAD_SHA>`. Review that commit and no other. Do not use `baseRefOid` as the base commit: GitHub does not update it every time the base branch moves.
+
+Run `git --no-optional-locks status --short` and `git remote -v`, and find the remote that points at `<OWNER>/<REPO>`. In a fork workflow this is often `upstream`, not `origin`. If one matches, fetch the PR head and the base branch from it:
 
 ```bash
-gh pr diff <PR_URL> --patch
+git fetch <REMOTE> refs/pull/<NUMBER>/head
+git rev-parse FETCH_HEAD
+git fetch <REMOTE> refs/heads/<baseRefName>
+git rev-parse FETCH_HEAD
+```
+
+The first `git rev-parse FETCH_HEAD` must print `<HEAD_SHA>`; if it does not, the PR changed after `gh pr view`, so start again. The second prints `<BASE_SHA>`, the current tip of the base branch. Then follow "Base and head commits". `git diff --name-only <BASE_SHA>...<HEAD_SHA>` should list the same files as `gh pr diff <PR_URL> --name-only`; if it does not, say which files differ. To check the commits again before you report, run:
+
+```bash
+gh pr view <PR_URL> --json baseRefName,headRefOid
+git ls-remote <REMOTE> refs/heads/<baseRefName> refs/pull/<NUMBER>/head
+```
+
+If no remote matches, the current directory is not a clone of this repository, so do not fetch into it. Review GitHub’s net diff instead. Do not use `--patch`: it prints one patch per commit, not the net change of the PR.
+
+```bash
+gh pr diff <PR_URL> | git hash-object --stdin
+gh pr diff <PR_URL>
 gh pr diff <PR_URL> --name-only
+gh pr diff <PR_URL> | git hash-object --stdin
+gh pr view <PR_URL> --json baseRefName,headRefOid
 ```
 
-If local repository context is available and the working tree is clean, check out the PR:
+The two hashes must match; the hash then identifies the diff you reviewed. If they differ, or the last command does not print the `baseRefName` and `<HEAD_SHA>` from your first `gh pr view`, the PR changed while you fetched the diff: start again. The old side of this diff is the merge base. Read other files at the head commit:
 
 ```bash
-gh pr checkout <PR_URL>
-git status
+gh api -H 'Accept: application/vnd.github.raw+json' 'repos/<OWNER>/<REPO>/contents/<path>?ref=<HEAD_SHA>'
 ```
 
-Then compare the PR branch against the base branch.
+Before you report, run the hash command and `gh pr view <PR_URL> --json baseRefName,headRefOid` again. If the hash, the base branch or the head commit changed, start again. If they change again, report the commits you reviewed and say that the PR has changed since.
 
-Determine the base branch from `gh pr view`. Then run:
-
-```bash
-git fetch origin
-git diff origin/<baseRefName>...HEAD
-```
-
-If checkout fails, continue with the PR metadata and patch. State clearly that surrounding-code inspection was limited.
+If a fetch or `git merge-base` fails, use the steps for a directory that is not a clone. If you cannot read files at the head commit either, review the checked `gh pr diff` output and state clearly that surrounding-code inspection was limited.
 
 ## Azure DevOps PR adapter
 
@@ -146,7 +184,7 @@ the PR ID is:
 123
 ```
 
-If Azure DevOps defaults are not configured, parse the organisation and project from the URL and pass them explicitly.
+Take the organisation, project and repository from the URL. Do not rely on `az devops configure` defaults or on detection from the current Git remote: PR IDs are unique only within an organisation, so another organisation can return a different PR with the same ID. If you have only a PR ID, build the URL from the remote that points at Azure DevOps (`git remote -v`).
 
 For `dev.azure.com` URLs:
 
@@ -154,132 +192,97 @@ For `dev.azure.com` URLs:
 https://dev.azure.com/<org>/<project>/_git/<repo>/pullrequest/<id>
 ```
 
-the organisation URL is:
+the organisation URL, `<ORG_URL>`, is `https://dev.azure.com/<org>`. For `https://<org>.visualstudio.com/[DefaultCollection/]<project>/_git/<repo>/pullrequest/<id>` URLs, it is also `https://dev.azure.com/<org>`. URL-decode `<project>` and `<repo>` (for example, `%20` becomes a space).
 
-```text
-https://dev.azure.com/<org>
-```
+Pass `--org <ORG_URL> --detect false` to every `az repos pr` command. The three commands below do not accept `--project`; do not pass it.
 
-and the project is:
-
-```text
-<project>
-```
-
-Gather PR metadata:
+Gather PR metadata, linked work items and policy status:
 
 ```bash
-az repos pr show --id <PR_ID> --output json
+az repos pr show --id <PR_ID> --org <ORG_URL> --detect false --output json
+az repos pr work-item list --id <PR_ID> --org <ORG_URL> --detect false --output json
+az repos pr policy list --id <PR_ID> --org <ORG_URL> --detect false --output json
 ```
 
-If organisation and project are required:
-
-```bash
-az repos pr show --id <PR_ID> --org https://dev.azure.com/<ORG> --project "<PROJECT>" --output json
-```
-
-Gather linked work items where available:
-
-```bash
-az repos pr work-item list --id <PR_ID> --output json
-```
-
-If organisation and project are required:
-
-```bash
-az repos pr work-item list --id <PR_ID> --org https://dev.azure.com/<ORG> --project "<PROJECT>" --output json
-```
-
-Gather PR policy/status information where available:
-
-```bash
-az repos pr policy list --id <PR_ID> --output json
-```
-
-If organisation and project are required:
-
-```bash
-az repos pr policy list --id <PR_ID> --org https://dev.azure.com/<ORG> --project "<PROJECT>" --output json
-```
-
-If local repository context is available and the working tree is clean, check out the PR:
-
-```bash
-az repos pr checkout --id <PR_ID>
-git status
-```
-
-If organisation and project are required:
-
-```bash
-az repos pr checkout --id <PR_ID> --org https://dev.azure.com/<ORG> --project "<PROJECT>"
-git status
-```
+Check that `repository.name` and `repository.project.name` in the `show` result match `<repo>` and `<project>` from the URL, ignoring case. If they do not, stop and report the mismatch: this is not the PR the user asked for.
 
 From `az repos pr show`, identify:
 
 - `sourceRefName`
 - `targetRefName`
+- `forkSource`, if present
 - PR title
 - PR description
 - repository
 - reviewers
 - status
 
-Normalise branch refs.
+In the report, shorten branch refs (`refs/heads/main` becomes `main`). Use the full ref names in Git commands.
 
-For example:
+Get the diff from Git, without switching the user’s branch. Do not use `az repos pr checkout`: before it checks out the branch, it asks Azure DevOps to mark the source branch as one of your favourites, which is a write to the service. `az repos` has no command that prints the PR diff.
 
-```text
-refs/heads/main
-```
+Run `git --no-optional-locks status --short` and `git remote -v`, and find two remotes before you fetch anything:
 
-becomes:
-
-```text
-main
-```
-
-Then compare against the target branch:
+- `<BASE_REMOTE>` points at the PR’s repository. Its URL names the same organisation, project and repository, for example `dev.azure.com/<org>/<project>/_git/<repo>`, `<org>.visualstudio.com/<project>/_git/<repo>`, or `v3/<org>/<project>/<repo>` over SSH. Names in remote URLs may be URL-encoded.
+- `<HEAD_REMOTE>` is the same remote, unless `forkSource` is present. Then it must point at the fork’s repository, `forkSource.repository`.
 
 ```bash
-git fetch origin
-git diff origin/<targetBranch>...HEAD
+git fetch <BASE_REMOTE> <targetRefName>
+git rev-parse FETCH_HEAD
+git fetch <HEAD_REMOTE> <sourceRefName>
+git rev-parse FETCH_HEAD
 ```
 
-If checkout is not possible, continue with available PR metadata. Clearly state that surrounding-code inspection was limited.
+The first `git rev-parse FETCH_HEAD` prints `<BASE_SHA>` and the second prints `<HEAD_SHA>`. Then follow "Base and head commits". To check the commits again before you report, run:
 
-Azure DevOps does not always provide a convenient direct patch command equivalent to GitHub CLI’s `gh pr diff`. Prefer local checkout plus `git diff` whenever possible.
+```bash
+az repos pr show --id <PR_ID> --org <ORG_URL> --detect false --query "[targetRefName, sourceRefName]" --output json
+git ls-remote <BASE_REMOTE> <targetRefName>
+git ls-remote <HEAD_REMOTE> <sourceRefName>
+```
+
+If a remote is missing, do not add one, and do not fetch. If a remote is missing or a fetch fails, you cannot see the code, so do not review the metadata alone. Report that the review is incomplete, show the failed step, and ask for a local clone with the needed remotes, or a pasted diff.
 
 ## Local-only branch adapter
 
-If the user gives a local branch or asks to review the current branch, inspect the local git state.
+Use this adapter when the user names a local branch or asks you to review the current branch. Use any title, description or intent that the user gives you as the PR metadata.
 
 Start with:
 
 ```bash
-git status
+git --no-optional-locks status --short
 git branch --show-current
 git remote -v
 ```
 
-Identify the likely base branch.
+Use full ref names, such as `refs/heads/<name>` or `refs/remotes/<REMOTE>/<name>`, so that a tag with the same name is never used instead.
 
-Prefer, in order:
+Set the head, `<HEAD_REF>`:
 
-1. the branch’s configured upstream target, if obvious
-2. `origin/main`
-3. `origin/master`
-4. ask the user for the base branch if none can be inferred
+- If the user named a branch, use `refs/heads/<name>`, even when another branch is checked out. Check it with `git rev-parse --verify refs/heads/<name>`. If there is no local branch with that name, list remote-tracking branches with `git branch -r --list '*/<name>'`. If exactly one matches, use it and say so; if several match, ask which one.
+- If the user asked you to review the current branch, use `HEAD`.
 
-Then run:
+`<BRANCH>` is the head branch’s name. `<REMOTE>` is the remote for the repository you merge into: `upstream` in a fork workflow, otherwise usually `origin`. Set the base, `<BASE_REF>`, from the first of these that applies:
+
+1. the base branch the user named, as `refs/heads/<name>` or `refs/remotes/<REMOTE>/<name>`, whichever exists. If both exist and point at different commits, fetch the remote one, then use whichever contains the other (`git merge-base --is-ancestor <A> <B>` succeeds when `<B>` contains `<A>`). If they have diverged, ask which one to use.
+2. the target branch of an open PR from `<BRANCH>`, if exactly one open PR has `<BRANCH>` as its source branch and that PR’s head commit is in the head’s history (`git merge-base --is-ancestor <PR head commit> <HEAD_REF>` succeeds). GitHub: `gh pr list --head <BRANCH> --state open --json baseRefName,headRefOid,url`. Azure DevOps: `az repos pr list --source-branch <BRANCH> --status active --org <ORG_URL> --project <PROJECT> --repository <REPO> --detect false --output json`, with the names taken from the remote URL; the PR’s head commit is `lastMergeSourceCommit.commitId`. Use the remote-tracking ref of the remote that points at the PR’s repository.
+3. the default branch of `<REMOTE>`: `git ls-remote --symref <REMOTE> HEAD` prints it as `ref: refs/heads/<name>`, so use `refs/remotes/<REMOTE>/<name>`. If the remote cannot be reached, `git symbolic-ref refs/remotes/<REMOTE>/HEAD` prints the last known value as a full ref; use it as it is.
+4. a local `main` or `master` branch
+5. otherwise, ask the user for the base branch
+
+The head branch’s own upstream (for example, `origin/<BRANCH>`) is not a base: a diff against it shows only unpushed commits.
+
+If the repository has no remote, use local branches and do not fetch. Before you use a remote-tracking ref `refs/remotes/<remote>/<name>` as the head or the base, update it with `git fetch <remote> <name>`; if the fetch fails, say so and use the ref you have.
+
+Record the two commits:
 
 ```bash
-git fetch origin
-git diff origin/<baseBranch>...HEAD
+git rev-parse <BASE_REF> <HEAD_REF>
 ```
 
-Review only the diff against the base branch.
+It prints `<BASE_SHA>`, then `<HEAD_SHA>`. Then follow "Base and head commits". To check the commits again before you report, repeat any fetch or PR lookup you used, and run the same command.
+
+The review covers commits only. If `<HEAD_REF>` is the checked-out branch and `git status` shows uncommitted or untracked changes, say that the review leaves them out. Review them too (`git diff HEAD` and the untracked files) only if the user asked for that. If another branch is checked out, its uncommitted changes are not part of this review.
 
 ## Pasted diff adapter
 
@@ -322,7 +325,7 @@ First summarise the PR:
 - source branch
 - apparent intent
 - changed areas
-- whether local checkout was available
+- the base and head commits you reviewed
 - whether surrounding code was inspected
 
 Then review the PR against:
@@ -632,7 +635,7 @@ PR summary:
 - Source:
 - Apparent intent:
 - Changed areas:
-- Local checkout inspected: Yes/No
+- Commits (base, head, merge base):
 - Surrounding code inspected: Yes/No
 ```
 
@@ -724,12 +727,12 @@ If a command fails:
 1. Show the command that failed.
 2. Briefly explain the limitation.
 3. Continue with the best available source of information.
-4. Do not stop unless the PR cannot be accessed at all.
+4. Do not stop unless you cannot get the diff of the change at all.
 
 Common fallbacks:
 
-- If checkout fails, use PR metadata and patch/diff.
-- If PR metadata fails, use the URL and any accessible local branch.
+- If you cannot fetch the PR’s commits, use the fallback in the provider adapter.
+- If PR metadata fails, you cannot tell which commits belong to the PR. Do not review a local branch in its place unless the user confirms that it is the PR’s source branch; ask for access, or for the base and head branch names.
 - If provider auth fails, ask the user to authenticate with the relevant CLI.
 - If line numbers are unavailable, reference file and function/block.
 
