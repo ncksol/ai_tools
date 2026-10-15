@@ -244,7 +244,7 @@ Look for real issues in these categories.
 - maintainability and simplicity
 - dependencies and deployment safety
 
-Before you start reviewing the code (step 4 of “General review flow”), read [references/checklist.md](references/checklist.md), which lists what to check in each category. Read it for every review. If you cannot read it, use the categories above and say so under `Not verified`.
+Before you start reviewing the code (step 4 of “General review flow”), read [references/checklist.md](references/checklist.md), which lists what to check in each category. Do not skip it, even for a small change. If you cannot read it, use the categories above and say so under `Not verified`.
 
 ## What not to report
 
