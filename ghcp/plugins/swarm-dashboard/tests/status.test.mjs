@@ -120,6 +120,21 @@ test('silent busy catches a stale busy flag or a tool without its own limit', ()
   assert.equal(silent.reason, 'Busy, but its log has had no new line for 11 min; the limit is 10 min.');
 });
 
+test('an open task call exempts a session from silent busy only while its sub-agent runs', () => {
+  const heavy = busyLog();
+  heavy.subagent({ type: 'general-purpose', model: 'claude-opus-5.5', effort: 'max' });
+  assert.equal(evaluate(fold(heavy), T0 + 11 * MINUTE).detail, 'busy');
+  const log = busyLog();
+  const call = log.subagent({ name: 'reviewer', type: 'code-review' });
+  log.subagentDone(call);
+  const silent = evaluate(fold(log), T0 + 11 * MINUTE);
+  assert.equal(silent.detail, 'silent');
+  assert.equal(silent.reason, 'Busy, but its log has had no new line for 11 min; the limit is 10 min.');
+  const failed = busyLog();
+  failed.subagentDone(failed.subagent({ name: 'reviewer', type: 'code-review' }), { failed: true });
+  assert.equal(evaluate(fold(failed), T0 + 11 * MINUTE).detail, 'silent');
+});
+
 test('spinning: failures, the same call in a row within a prompt, close compactions or an unattended denial', () => {
   const failing = busyLog();
   for (let i = 0; i < 5; i += 1) failing.done(failing.tool('view', { path: `missing-${i}` }), { success: false });

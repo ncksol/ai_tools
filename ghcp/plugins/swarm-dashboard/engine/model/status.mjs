@@ -155,7 +155,7 @@ export function evaluateStatus(input) {
     return result('stuck_model_call', state.turn.progressAt,
       `No model response for ${formatDuration(now - state.turn.progressAt)}; the limit is ${formatDuration(t.modelCallStuckMs)}.`);
   }
-  const ownLimit = openTools.some(tool => tool.name === 'task' || toolLimitMs(tool, t) !== null);
+  const ownLimit = openTools.some(tool => (tool.name === 'task' ? state.subagents.get(tool.id)?.status === 'running' : toolLimitMs(tool, t) !== null));
   if ((turnOpen || input.isRunningFlag) && !ownLimit && now - lastAt >= t.silentBusyMs) {
     return result('silent', lastAt, `Busy, but its log has had no new line for ${formatDuration(now - lastAt)}; the limit is ${formatDuration(t.silentBusyMs)}.`);
   }

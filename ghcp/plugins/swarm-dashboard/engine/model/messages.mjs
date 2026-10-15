@@ -7,6 +7,18 @@ const PR_PATTERNS = [
   { provider: null, re: /\bPR\s*#?(\d{1,9})\b/gi },
 ];
 
+function dropOldestMention(mentions) {
+  let oldestKey = null;
+  let oldestAt = Infinity;
+  for (const [key, entry] of mentions) {
+    if (entry.lastAt < oldestAt) {
+      oldestAt = entry.lastAt;
+      oldestKey = key;
+    }
+  }
+  if (oldestKey !== null) mentions.delete(oldestKey);
+}
+
 /** Count PR references for the Azure DevOps heuristic: !123 and /pullrequest/123, and a bare "PR #12" (provider unknown). */
 export function countPrMentions(state, text, at) {
   if (typeof text !== 'string' || !text) return;
@@ -15,7 +27,11 @@ export function countPrMentions(state, text, at) {
       const id = Number(match[1]);
       if (!Number.isInteger(id) || id <= 0) continue;
       const key = `${provider ?? 'any'}::${id}`;
-      const entry = state.prMentions.get(key) ?? { provider, repo: null, id, count: 0, firstAt: at, lastAt: at };
+      let entry = state.prMentions.get(key);
+      if (!entry) {
+        if (state.prMentions.size >= LIMITS.prMentions) dropOldestMention(state.prMentions);
+        entry = { provider, repo: null, id, count: 0, firstAt: at, lastAt: at };
+      }
       entry.count += 1;
       entry.lastAt = Math.max(entry.lastAt, at);
       state.prMentions.set(key, entry);

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mergeStates } from '../engine/model/session-state.mjs';
-import { parseEnvelope } from '../engine/model/messages.mjs';
+import { countPrMentions, parseEnvelope } from '../engine/model/messages.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { fold } from './helpers/fold.mjs';
 
@@ -108,4 +108,16 @@ test('a string-typed clear flag stops the monitor', () => {
   const state = fold(log);
   assert.deepEqual(state.automation.saves.map(save => save.clear), [true]);
   assert.deepEqual(state.feed.map(item => item.kind), ['monitor-cleared']);
+});
+
+test('PR mentions are capped at 200, dropping the oldest first', () => {
+  const state = { prMentions: new Map() };
+  for (let i = 0; i < 250; i += 1) countPrMentions(state, `Opened PR !${1000 + i}`, T0 + i * 1000);
+  assert.equal(state.prMentions.size, 200);
+  assert.equal(state.prMentions.has('ado::1049'), false);
+  assert.equal(state.prMentions.has('ado::1050') && state.prMentions.has('ado::1249'), true);
+  countPrMentions(state, 'Again PR !1100', T0 + 400_000);
+  assert.equal(state.prMentions.size, 200);
+  assert.equal(state.prMentions.get('ado::1100').count, 2);
+  assert.equal(state.prMentions.get('ado::1100').lastAt, T0 + 400_000);
 });
