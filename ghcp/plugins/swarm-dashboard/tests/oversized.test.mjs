@@ -205,3 +205,56 @@ test('a recovered event of a skipped large type only moves the clock, as applyLi
   applyRecovered(state, null);
   assert.equal(state.lines, 2);
 });
+
+test('an oversized task completion adds no text, PR mention or feed entry, but moves the clock', async () => {
+  const log = new EventLog(T0);
+  log.start();
+  const complete = {
+    type: 'session.task_complete', id: 'ev-task', timestamp: new Date(T0 + 5 * MINUTE).toISOString(), parentId: null,
+    data: { summary: 'Opened PR !4711 for review.', success: true },
+  };
+  const { state } = await fold([...log.events.map(lineOf), bigLine(complete, { typeLast: true })]);
+  assert.equal(state.lastEventAt, T0 + 5 * MINUTE);
+  assert.equal(state.taskCompletes.length, 0);
+  assert.equal(state.prMentions.size, 0);
+  assert.equal(state.feed.some(item => item.kind === 'task-complete'), false);
+});
+
+test('an oversized ask_user start adds no wait and no question text', async () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const ask = {
+    type: 'tool.execution_start', id: 'ev-ask', timestamp: new Date(T0 + MINUTE).toISOString(), parentId: null,
+    data: { toolCallId: 'call-ask', toolName: 'ask_user', arguments: JSON.stringify({ question: 'Which colour?' }) },
+  };
+  const { state } = await fold([...log.events.map(lineOf), bigLine(ask, { typeLast: true })]);
+  assert.equal(state.lastEventAt, T0 + MINUTE);
+  assert.equal(state.waits.size, 0);
+  assert.equal(state.openTools.size, 0);
+  assert.equal(state.marks.length, 0);
+  assert.equal(state.feed.some(item => item.kind === 'question'), false);
+});
+
+test('an oversized user message does not count as a prompt or reach the message lists', async () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const prompt = {
+    type: 'user.message', id: 'ev-user', timestamp: new Date(T0 + MINUTE).toISOString(), parentId: null,
+    data: { content: 'Please open PR !4711', source: 'system' },
+  };
+  const { state } = await fold([...log.events.map(lineOf), bigLine(prompt, { typeLast: true })]);
+  assert.equal(state.prompts, 0);
+  assert.equal(state.lastHumanAt, null);
+  assert.equal(state.inbound.length, 0);
+  assert.equal(state.automation.wakes.length, 0);
+  assert.equal(state.lastEventAt, T0 + MINUTE);
+});
+
+test('other oversized events inside a sub-agent only move that sub-agent\'s clock', async () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const call = log.subagent({ name: 'helper', mode: 'background', agentId: 'agent-7' });
+  const inside = { type: 'assistant.message', id: 'ev-in', timestamp: new Date(T0 + 9 * MINUTE).toISOString(), parentId: null, agentId: 'agent-7', data: {} };
+  const { state } = await fold([...log.events.map(lineOf), bigLine(inside, { typeLast: true })]);
+  assert.equal(state.subagents.get(call).lastEventAt, T0 + 9 * MINUTE);
+});

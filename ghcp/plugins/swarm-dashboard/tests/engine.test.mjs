@@ -549,10 +549,14 @@ test('log lines over the size limit are skipped with a warning, and a recoverabl
   assert.notEqual((await engine.getSnapshot('ws-root')).units.find(unit => unit.id === 'ws-ui').statusDetail, 'busy');
   const file = path.join(home.dir('cli-ui'), 'events.jsonl');
   const filler = 'x'.repeat(17 * 1024 * 1024);
+  const working = new EventLog(at(61));
+  working.turnStart();
+  const call = working.tool('bash', { command: 'npm test' });
+  home.writeEvents('cli-ui', working.events, { append: true });
   appendFileSync(file, `${filler}\n`);
-  const started = JSON.stringify({ data: { turnId: '1', filler }, id: 'ev-big', timestamp: new Date(at(61)).toISOString(), type: 'assistant.turn_start' });
-  appendFileSync(file, `${started}\n`);
-  clock = at(62);
+  const done = JSON.stringify({ data: { toolCallId: call, filler, success: true }, id: 'ev-big', timestamp: new Date(at(79)).toISOString(), type: 'tool.execution_complete' });
+  appendFileSync(file, `${done}\n`);
+  clock = at(80);
   await engine.refresh();
   const warning = engine.diagnostics().find(item => item.source === 'events');
   assert.equal(warning.level, 'warn');

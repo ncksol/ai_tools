@@ -65,18 +65,37 @@ export function applyLine(state, line) {
   if (event && typeof event === 'object' && typeof event.type === 'string') applyEvent(state, event);
 }
 
-/** Applies an event recovered from an oversized line (see readers/json-scan.mjs): it counts the line like applyLine, and the
- * event carries only its type, time, ids and primitive data keys, so text-derived effects see empty text. */
+/** The only data keys applied from an oversized line, by event type: enough to close a tool call, wait or sub-agent. */
+const RECOVERED_DATA = Object.freeze({
+  'tool.execution_complete': ['toolCallId', 'success', 'parentToolCallId'],
+  'subagent.completed': ['toolCallId', 'durationMs', 'parentToolCallId', 'agentId'],
+  'subagent.failed': ['toolCallId', 'durationMs', 'parentToolCallId', 'agentId'],
+});
+
+/**
+ * Applies an event recovered from an oversized line (see readers/json-scan.mjs). It counts the line like applyLine and applies
+ * metadata only, never text: a tool completion or a sub-agent completion or failure is applied with just the ids, success flag
+ * and duration it needs to close its tool call, wait or sub-agent. Any other event only moves the session's clock, and the
+ * clock of the sub-agent it belongs to (by data.parentToolCallId, or a top-level agentId that is known).
+ */
 export function applyRecovered(state, event) {
   state.lines += 1;
   if (!event) return;
-  const skipped = SKIP_NAMES.get(event.type);
-  if (skipped) {
-    const at = parseTime(event.timestamp);
-    if (at !== null) touch(state, at, skipped);
+  const at = parseTime(event.timestamp);
+  if (at === null) return;
+  const keys = RECOVERED_DATA[event.type];
+  if (keys) {
+    const data = {};
+    for (const key of keys) if (event.data && event.data[key] !== undefined) data[key] = event.data[key];
+    const metadata = { type: event.type, timestamp: event.timestamp, data };
+    for (const key of ['id', 'parentId', 'agentId']) if (event[key] !== undefined) metadata[key] = event[key];
+    applyEvent(state, metadata);
     return;
   }
-  applyEvent(state, event);
+  touch(state, at, SKIP_NAMES.get(event.type) ?? event.type);
+  const agentId = event.agentId === undefined || event.agentId === null ? null : String(event.agentId);
+  const owner = event.data?.parentToolCallId ?? (agentId ? state.agentToTask.get(agentId) ?? null : null);
+  touchSubagent(state, owner, at);
 }
 
 function sniffTimestamp(line) {
