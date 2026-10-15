@@ -36,7 +36,7 @@ export function createSessionState(id) {
     subagents: new Map(), agentToTask: new Map(),
     // Whole-session sub-agent totals that the capped detail list never changes: launches, per type runs and finished
     // duration, and each task tool-call id's type (to attribute ledger credits by type).
-    subagentCount: 0, subagentStats: new Map(), subagentIndex: new Map(),
+    subagentCount: 0, subagentStats: new Map(), subagentIndex: new Map(), evictedRunning: new Map(),
     sent: [], inbound: [], lastInboundAt: null, lastHumanAt: null, taskCompletes: [],
     automation: { saves: [], wakes: [] },
     shutdownAt: null, abortAt: null, lastErrorAt: null,
@@ -235,6 +235,14 @@ function finishSubagent(state, sub, at, status, durationMs) {
   statsEntry(state.subagentStats, sub.bucket).durationMs += sub.durationMs;
 }
 
+/** The same for a running sub-agent that was evicted from the details: adds its duration once, then forgets the record. */
+function finishEvicted(state, record, at, durationMs) {
+  state.evictedRunning.delete(record.id);
+  const ended = Math.max(at, record.launchedAt);
+  const duration = Number.isFinite(durationMs) ? Math.max(0, Math.round(durationMs)) : Math.max(0, ended - (record.startedAt ?? record.launchedAt));
+  statsEntry(state.subagentStats, record.bucket).durationMs += duration;
+}
+
 /** Moves a sub-agent's run (and finished duration) to another type when its start event names a different one. */
 function retypeSubagent(state, sub, type) {
   sub.type = type;
@@ -259,6 +267,10 @@ function endOpenWork(state, at, keepBackground) {
   for (const sub of state.subagents.values()) {
     if (sub.status !== 'running' || (keepBackground && sub.mode === 'background')) continue;
     finishSubagent(state, sub, at, 'failed', null);
+  }
+  for (const record of [...state.evictedRunning.values()]) {
+    if (keepBackground && record.mode === 'background') continue;
+    finishEvicted(state, record, at, null);
   }
 }
 
@@ -285,7 +297,11 @@ function callKey(name, raw) {
   return ownString(`${name}|${createHash('sha256').update(text).digest('base64url')}`);
 }
 
-/** Drops the oldest finished sub-agent from the detail list, or the oldest running one when none has finished. */
+/**
+ * Drops the oldest finished sub-agent from the detail list, or the oldest running one when none has finished. A running
+ * one leaves a minimal record behind (bounded like the type index), so its runtime still reaches the per-type totals when it
+ * finishes. Its details are never restored.
+ */
 function evictSubagent(state) {
   let victim = null;
   for (const sub of state.subagents.values()) {
@@ -297,6 +313,10 @@ function evictSubagent(state) {
   }
   state.subagents.delete(victim.id);
   if (victim.agentId) state.agentToTask.delete(victim.agentId);
+  if (victim.status === 'running') {
+    state.evictedRunning.set(victim.id, { id: victim.id, launchedAt: victim.launchedAt, startedAt: victim.startedAt, bucket: victim.bucket, mode: victim.mode });
+    while (state.evictedRunning.size > LIMITS.subagentIndex) state.evictedRunning.delete(state.evictedRunning.keys().next().value);
+  }
 }
 
 /**
@@ -391,6 +411,9 @@ function onToolComplete(state, data, at) {
     if (sub.status === 'running' && (data.success === false || (sub.mode === 'sync' && sub.startedAt === null))) {
       finishSubagent(state, sub, at, data.success === false ? 'failed' : 'completed', null);
     }
+  } else {
+    const record = state.evictedRunning.get(id);
+    if (record && (data.success === false || (record.mode === 'sync' && record.startedAt === null))) finishEvicted(state, record, at, null);
   }
   recordToolComplete(state, id, data);
 }
@@ -399,7 +422,13 @@ function onSubagentLifecycle(state, event, data, at) {
   const id = typeof data.toolCallId === 'string' ? data.toolCallId : null;
   if (!id) return;
   const sub = state.subagents.get(id);
-  if (!sub) return;
+  if (!sub) {
+    const record = state.evictedRunning.get(id);
+    if (!record) return;
+    if (event.type === 'subagent.started') record.startedAt = at;
+    else if (event.type === 'subagent.completed' || event.type === 'subagent.failed') finishEvicted(state, record, at, data.durationMs);
+    return;
+  }
   if (event.agentId !== undefined && event.agentId !== null) {
     sub.agentId = String(event.agentId);
     state.agentToTask.set(sub.agentId, id);

@@ -315,6 +315,55 @@ test('a repeated start for a sub-agent still in the details adds no second feed 
   assert.equal(fold(log).feed.filter(item => item.kind === 'subagent-start').length, 1);
 });
 
+test('sub-agents evicted while running still add their runtime when they finish', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const calls = [];
+  for (let i = 0; i < 510; i += 1) calls.push(log.subagent({ mode: 'background', type: 'explore', agentId: `agent-${i}` }));
+  for (const call of calls) log.subagentDone(call, { durationMs: 1000 });
+  const state = fold(log);
+  assert.equal(state.subagents.size, 500);
+  assert.equal(state.subagentCount, 510);
+  assert.deepEqual(state.subagentStats.get('explore'), { runs: 510, durationMs: 510_000 });
+  assert.equal(state.evictedRunning.size, 0, 'no record is kept once the sub-agent has finished');
+  assert.equal(state.subagents.has(calls[0]), false, 'details are never restored');
+});
+
+test('an evicted running sub-agent finishes through its task call, a failure or the end of the process', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const syncCalls = [];
+  const sync = log.tool('task', { name: 'one', agent_type: 'explore', mode: 'sync' });
+  syncCalls.push(sync);
+  const background = [];
+  for (let i = 0; i < 505; i += 1) background.push(log.subagent({ mode: 'background', type: 'research' }));
+  assert.equal(fold(log).subagents.has(sync), false);
+  log.wait(5000);
+  log.done(sync, { success: true });
+  log.subagentDone(background[0], { failed: true, durationMs: 2000 });
+  log.shutdown();
+  const state = fold(log);
+  assert.deepEqual(state.subagentStats.get('explore'), { runs: 1, durationMs: 5000 });
+  assert.equal(state.evictedRunning.size, 0);
+  // background[0] failed with its own duration (2000); the four other evicted records and the 500 retained ones end with the
+  // process, 5000 ms after they were launched
+  assert.equal(state.subagentStats.get('research').durationMs, 2000 + 4 * 5000 + 500 * 5000);
+  assert.equal(state.subagentStats.get('research').runs, 505);
+});
+
+test('a repeated start for an evicted running sub-agent stays ignored and keeps its record', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const calls = [];
+  for (let i = 0; i < 502; i += 1) calls.push(log.subagent({ mode: 'background', type: 'explore' }));
+  log.push('tool.execution_start', { toolCallId: calls[0], toolName: 'task', arguments: { name: 'again', agent_type: 'research', mode: 'background' } });
+  const state = fold(log);
+  assert.equal(state.subagentCount, 502);
+  assert.equal(state.subagents.has(calls[0]), false);
+  assert.equal(state.evictedRunning.has(calls[0]), true);
+  assert.deepEqual([...state.subagentStats.keys()], ['explore']);
+});
+
 test('merged states add up the sub-agent totals and keep the task index', () => {
   const make = (id, type, count) => {
     const log = new EventLog(T0);

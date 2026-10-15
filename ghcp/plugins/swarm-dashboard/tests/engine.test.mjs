@@ -514,6 +514,32 @@ test('a run summary counts every sub-agent of the run, though each session lists
   assert.equal(snapshot.cost.credits, 600);
 });
 
+test('a run summary includes the runtime of sub-agents that were evicted while running', async () => {
+  const home = new CopilotHome();
+  home.project({ id: 'project-1', name: 'sample-project' });
+  home.workspace({ id: 'ws-bg', projectId: 'project-1', name: 'Background story', createdAt: T0, sessionId: 'cli-bg' });
+  home.workspace({ id: 'ws-bg-unit', projectId: 'project-1', name: 'Background b1 unit', createdAt: at(1), sessionId: 'cli-bg-unit', parentId: 'ws-bg', creatorSessionId: 'cli-bg' });
+  const root = new EventLog(T0);
+  root.start(); root.turnStart();
+  const calls = [];
+  for (let i = 0; i < 510; i += 1) calls.push(root.subagent({ mode: 'background', type: 'explore' }));
+  root.wait(2000);
+  for (const call of calls) root.subagentDone(call, { durationMs: 1000 });
+  root.turnEnd();
+  home.writeEvents('cli-bg', root.events);
+  const unit = new EventLog(at(1));
+  unit.start(); unit.turnStart(); unit.wait(MINUTE); unit.turnEnd();
+  home.writeEvents('cli-bg-unit', unit.events);
+  home.lock('cli-bg', NO_SUCH_PID + 30, T0);
+  home.lock('cli-bg-unit', NO_SUCH_PID + 31, at(1));
+  const engine = quietEngine(home, countingProbe(false), () => at(500));
+  const summary = await engine.getRunSummary('ws-bg');
+  assert.deepEqual(validateRunSummary(summary), []);
+  assert.equal(summary.subagents, 510);
+  assert.deepEqual(summary.subagentTypes.map(entry => [entry.type, entry.runs, entry.durationMs]), [['explore', 510, 510_000]]);
+  assert.equal((await engine.getSnapshot('ws-bg')).orchestrator.subagents.length, 500);
+});
+
 test('log lines over the size limit are skipped with a warning, and a recoverable one is still applied', async () => {
   const home = scenario();
   let clock = at(60);
