@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyLine, createSessionState } from '../engine/model/session-state.mjs';
+import { applyLine, createSessionState, mergeStates } from '../engine/model/session-state.mjs';
+import { LIMITS } from '../engine/model/state-utils.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { fold } from './helpers/fold.mjs';
 
@@ -219,4 +220,58 @@ test('tool arguments given as a JSON string are read like an object', () => {
   const sub = state.subagents.get(call);
   assert.deepEqual({ name: sub.name, type: sub.type, mode: sub.mode }, { name: 'helper', type: 'explore', mode: 'background' });
   assert.equal(state.openTools.get(plain).args.summary, 'bash: echo hi');
+});
+
+test('running sub-agents are capped too, and eviction leaves the run totals alone', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const calls = [];
+  for (let i = 0; i < 510; i += 1) calls.push(log.subagent({ mode: 'background', type: i % 2 ? 'explore' : 'code-review', agentId: `agent-${i}` }));
+  const state = fold(log);
+  assert.equal(state.subagents.size, 500);
+  assert.equal(state.subagentCount, 510);
+  assert.equal(state.subagents.has(calls[0]), false);
+  assert.equal(state.subagents.has(calls[10]), true);
+  assert.equal(state.agentToTask.has('agent-0'), false);
+  assert.deepEqual([...state.subagentStats].map(([type, entry]) => [type, entry.runs]).sort(), [['code-review', 255], ['explore', 255]]);
+  assert.equal(state.subagentIndex.get(calls[0]), 'code-review');
+});
+
+test('finished sub-agents add their duration to the per-type totals once, and eviction keeps it', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  for (let i = 0; i < 505; i += 1) {
+    const call = log.subagent({ mode: 'sync', type: 'explore', agentId: `agent-${i}` });
+    log.subagentDone(call, { durationMs: 1000 });
+    log.done(call);
+  }
+  const state = fold(log);
+  assert.equal(state.subagents.size, 500);
+  assert.deepEqual(state.subagentStats.get('explore'), { runs: 505, durationMs: 505_000 });
+  assert.equal(state.subagentCount, 505);
+});
+
+test('distinct sub-agent types beyond the limit are counted under other', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  for (let i = 0; i < LIMITS.subagentTypes + 5; i += 1) log.subagentDone(log.subagent({ mode: 'sync', type: `type-${i}` }), { durationMs: 10 });
+  const state = fold(log);
+  assert.equal(state.subagentStats.size, LIMITS.subagentTypes + 1);
+  assert.deepEqual(state.subagentStats.get('other'), { runs: 5, durationMs: 50 });
+});
+
+test('merged states add up the sub-agent totals and keep the task index', () => {
+  const make = (id, type, count) => {
+    const log = new EventLog(T0);
+    log.calls = id.charCodeAt(id.length - 1) * 100;
+    log.start(); log.turnStart();
+    for (let i = 0; i < count; i += 1) log.subagentDone(log.subagent({ mode: 'sync', type }), { durationMs: 100 });
+    return fold(log, id);
+  };
+  const merged = mergeStates([make('cli-a', 'explore', 2), make('cli-b', 'explore', 3), make('cli-c', 'research', 1)]);
+  assert.equal(merged.subagentCount, 6);
+  assert.deepEqual(merged.subagentStats.get('explore'), { runs: 5, durationMs: 500 });
+  assert.deepEqual(merged.subagentStats.get('research'), { runs: 1, durationMs: 100 });
+  assert.equal(merged.subagentIndex.size, 6);
+  assert.equal(merged.subagentIndex.get('call-9701'), 'explore');
 });

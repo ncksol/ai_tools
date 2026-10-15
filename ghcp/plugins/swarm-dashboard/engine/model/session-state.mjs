@@ -34,6 +34,9 @@ export function createSessionState(id) {
     turn: null, busySince: null, lastTurnEndAt: null, busySpans: [], busyMs: 0,
     openTools: new Map(), waits: new Map(), waitSpans: [], waitingMs: 0,
     subagents: new Map(), agentToTask: new Map(),
+    // Whole-session sub-agent totals that the capped detail list never changes: launches, per type runs and finished
+    // duration, and each task tool-call id's type (to attribute ledger credits by type).
+    subagentCount: 0, subagentStats: new Map(), subagentIndex: new Map(),
     sent: [], inbound: [], lastInboundAt: null, lastHumanAt: null, taskCompletes: [],
     automation: { saves: [], wakes: [] },
     shutdownAt: null, abortAt: null, lastErrorAt: null,
@@ -195,10 +198,44 @@ function closeWait(state, id, wait, at) {
   state.waitingMs += end - wait.startedAt;
 }
 
-function finishSubagent(sub, at, status, durationMs) {
+/** The type a sub-agent is counted under: its own, or 'other' once the session has LIMITS.subagentTypes distinct types. */
+function typeBucket(stats, type) {
+  return stats.has(type) || stats.size < LIMITS.subagentTypes ? type : 'other';
+}
+
+function statsEntry(stats, bucket) {
+  let entry = stats.get(bucket);
+  if (!entry) {
+    entry = { runs: 0, durationMs: 0 };
+    stats.set(bucket, entry);
+  }
+  return entry;
+}
+
+/** The single place a sub-agent leaves 'running'. Adds its duration to the per-type totals, once. */
+function finishSubagent(state, sub, at, status, durationMs) {
+  if (sub.status !== 'running') return;
   sub.status = status;
   sub.endedAt = Math.max(at, sub.launchedAt);
   sub.durationMs = Number.isFinite(durationMs) ? Math.max(0, Math.round(durationMs)) : Math.max(0, sub.endedAt - (sub.startedAt ?? sub.launchedAt));
+  statsEntry(state.subagentStats, sub.bucket).durationMs += sub.durationMs;
+}
+
+/** Moves a sub-agent's run (and finished duration) to another type when its start event names a different one. */
+function retypeSubagent(state, sub, type) {
+  sub.type = type;
+  const bucket = typeBucket(state.subagentStats, type);
+  if (bucket === sub.bucket) return;
+  const from = statsEntry(state.subagentStats, sub.bucket);
+  const to = statsEntry(state.subagentStats, bucket);
+  from.runs -= 1;
+  to.runs += 1;
+  if (sub.durationMs !== null) {
+    from.durationMs -= sub.durationMs;
+    to.durationMs += sub.durationMs;
+  }
+  sub.bucket = bucket;
+  if (state.subagentIndex.has(sub.id)) state.subagentIndex.set(sub.id, bucket);
 }
 
 /** Work that cannot outlive the turn or process: open waits, tools and running sub-agents. */
@@ -207,7 +244,7 @@ function endOpenWork(state, at, keepBackground) {
   state.openTools.clear();
   for (const sub of state.subagents.values()) {
     if (sub.status !== 'running' || (keepBackground && sub.mode === 'background')) continue;
-    finishSubagent(sub, at, 'failed', null);
+    finishSubagent(state, sub, at, 'failed', null);
   }
 }
 
@@ -234,6 +271,20 @@ function callKey(name, raw) {
   return ownString(`${name}|${createHash('sha256').update(text).digest('base64url')}`);
 }
 
+/** Drops the oldest finished sub-agent from the detail list, or the oldest running one when none has finished. */
+function evictSubagent(state) {
+  let victim = null;
+  for (const sub of state.subagents.values()) {
+    if (sub.status !== 'running') {
+      victim = sub;
+      break;
+    }
+    victim ??= sub;
+  }
+  state.subagents.delete(victim.id);
+  if (victim.agentId) state.agentToTask.delete(victim.agentId);
+}
+
 function newSubagent(state, id, at, args) {
   const sub = {
     id,
@@ -245,15 +296,14 @@ function newSubagent(state, id, at, args) {
     task: typeof args.description === 'string' ? oneLine(args.description, 200) : null,
     launchedAt: at, startedAt: null, endedAt: null, durationMs: null, status: 'running', lastEventAt: at, agentId: null,
   };
+  sub.bucket = typeBucket(state.subagentStats, sub.type);
   state.subagents.set(id, sub);
-  if (state.subagents.size > LIMITS.subagents) {
-    for (const [oldId, old] of state.subagents) {
-      if (state.subagents.size <= LIMITS.subagents) break;
-      if (old.status === 'running') continue;
-      state.subagents.delete(oldId);
-      if (old.agentId) state.agentToTask.delete(old.agentId);
-    }
-  }
+  state.subagentCount += 1;
+  statsEntry(state.subagentStats, sub.bucket).runs += 1;
+  state.subagentIndex.delete(id);
+  state.subagentIndex.set(id, sub.bucket);
+  while (state.subagentIndex.size > LIMITS.subagentIndex) state.subagentIndex.delete(state.subagentIndex.keys().next().value);
+  while (state.subagents.size > LIMITS.subagents) evictSubagent(state);
   return sub;
 }
 
@@ -313,7 +363,7 @@ function onToolComplete(state, data, at) {
       state.agentToTask.set(agentId, id);
     }
     if (sub.status === 'running' && (data.success === false || (sub.mode === 'sync' && sub.startedAt === null))) {
-      finishSubagent(sub, at, data.success === false ? 'failed' : 'completed', null);
+      finishSubagent(state, sub, at, data.success === false ? 'failed' : 'completed', null);
     }
   }
   recordToolComplete(state, id, data);
@@ -332,11 +382,11 @@ function onSubagentLifecycle(state, event, data, at) {
   if (event.type === 'subagent.started') {
     sub.startedAt = at;
     if (typeof data.model === 'string') sub.model = data.model;
-    if (typeof data.agentType === 'string' && data.agentType) sub.type = oneLine(data.agentType, 60);
+    if (typeof data.agentType === 'string' && data.agentType) retypeSubagent(state, sub, oneLine(data.agentType, 60));
     if (typeof data.agentDisplayName === 'string' && data.agentDisplayName) sub.name = oneLine(data.agentDisplayName, 80);
     if (data.executionMode === 'background' || data.executionMode === 'sync') sub.mode = data.executionMode;
   } else if ((event.type === 'subagent.completed' || event.type === 'subagent.failed') && sub.status === 'running') {
-    finishSubagent(sub, at, event.type === 'subagent.failed' ? 'failed' : 'completed', data.durationMs);
+    finishSubagent(state, sub, at, event.type === 'subagent.failed' ? 'failed' : 'completed', data.durationMs);
     addFeed(state, at, 'subagent-done', `${sub.type} ${sub.name} ${sub.status === 'failed' ? 'failed' : 'finished'}`);
   }
 }
@@ -364,6 +414,16 @@ export function mergeStates(states) {
     merged.busySpans.push(...state.busySpans);
     merged.waitSpans.push(...state.waitSpans);
     for (const [id, sub] of state.subagents) merged.subagents.set(id, sub);
+    merged.subagentCount += state.subagentCount;
+    for (const [type, entry] of state.subagentStats) {
+      const target = statsEntry(merged.subagentStats, typeBucket(merged.subagentStats, type));
+      target.runs += entry.runs;
+      target.durationMs += entry.durationMs;
+    }
+    for (const [id, type] of state.subagentIndex) {
+      merged.subagentIndex.delete(id);
+      merged.subagentIndex.set(id, merged.subagentStats.has(type) ? type : 'other');
+    }
     merged.sent.push(...state.sent);
     merged.inbound.push(...state.inbound);
     merged.taskCompletes.push(...state.taskCompletes);
@@ -384,6 +444,7 @@ export function mergeStates(states) {
     merged.abortAt = maxTime(merged.abortAt, state.abortAt);
     merged.lastErrorAt = maxTime(merged.lastErrorAt, state.lastErrorAt);
   }
+  while (merged.subagentIndex.size > LIMITS.subagentIndex) merged.subagentIndex.delete(merged.subagentIndex.keys().next().value);
   const byAt = (a, b) => a.at - b.at;
   for (const list of [merged.sent, merged.inbound, merged.taskCompletes, merged.feed, merged.marks, merged.automation.saves]) list.sort(byAt);
   merged.automation.wakes.sort((a, b) => a - b);

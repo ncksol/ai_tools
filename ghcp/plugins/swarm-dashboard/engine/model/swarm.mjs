@@ -3,6 +3,7 @@ import { clip, firstLine, oneLine } from '../text.mjs';
 import { MINUTE, maxTime, minTime } from '../time.mjs';
 import { UNIT_LABEL_RE, normaliseRegistry, parseQuestionTag, parseReportBody, parseStatusLine, purposeToStatus } from './contract.mjs';
 import { descendants, resolveNodeId } from './forest.mjs';
+import { setRunStats } from './run-stats.mjs';
 import { mergeStates } from './session-state.mjs';
 import { deriveMonitor, deriveStage, hostOf, prView, resolvePr } from './stage.mjs';
 import { ACTIVE_DETAILS, displayOf, evaluateStatus, swarmStalled, toolLimitMs, toolView } from './status.mjs';
@@ -139,6 +140,36 @@ function subagentViews(all, cost, stuckIds) {
     startedAt: sub.startedAt ?? sub.launchedAt, endedAt: sub.endedAt, durationMs: sub.durationMs,
     credits: credits(cost.byParentToolCall.get(sub.id)?.nanoAiu ?? 0), task: sub.task,
   })).sort((a, b) => Number(running(b.status)) - Number(running(a.status)) || b.startedAt - a.startedAt);
+}
+
+/** Run-level sub-agent totals from every session's uncapped counters; credits join the ledger through the task id. */
+function runSubagentStats(contexts) {
+  const types = new Map();
+  let subagents = 0;
+  const entryOf = type => {
+    let entry = types.get(type);
+    if (!entry) {
+      entry = { runs: 0, durationMs: 0, nanoAiu: 0 };
+      types.set(type, entry);
+    }
+    return entry;
+  };
+  for (const c of contexts.values()) {
+    subagents += c.all.subagentCount;
+    for (const [type, item] of c.all.subagentStats) {
+      const entry = entryOf(type);
+      entry.runs += item.runs;
+      entry.durationMs += item.durationMs;
+    }
+    for (const [taskId, type] of c.all.subagentIndex) {
+      const spent = c.cost.byParentToolCall.get(taskId);
+      if (spent) entryOf(type).nanoAiu += spent.nanoAiu;
+    }
+  }
+  return {
+    subagents,
+    types: new Map([...types].map(([type, entry]) => [type, { runs: entry.runs, durationMs: entry.durationMs, credits: credits(entry.nanoAiu) }])),
+  };
 }
 
 function nodeContext(input, node) {
@@ -463,7 +494,7 @@ export function buildSnapshot(input) {
   const { feed, recent } = buildFeed(contexts, labels, extraFeed, flags);
   for (const view of [orchestrator, ...units]) view.recent = recent.get(view.id) ?? [];
 
-  return {
+  const snapshot = {
     schemaVersion: SCHEMA_VERSION,
     generatedAt: now,
     revision: input.revision ?? 0,
@@ -482,4 +513,6 @@ export function buildSnapshot(input) {
     cost,
     diagnostics: input.diagnostics ?? [],
   };
+  setRunStats(snapshot, runSubagentStats(contexts));
+  return snapshot;
 }

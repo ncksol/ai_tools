@@ -1,6 +1,7 @@
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { SCHEMA_VERSION, validateRunSummary } from '../schema.mjs';
+import { getRunStats } from './run-stats.mjs';
 
 const ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
 const round1 = value => Math.round(value * 10) / 10;
@@ -30,14 +31,23 @@ export function summarizeRun(snapshot, { computedAt }) {
       if (segment.state === 'question' || segment.state === 'plan') waits.push([segment.start, segment.end ?? finishedAt]);
     }
   }
+  // Whole-run totals from the engine's counters when the snapshot has them; otherwise from the snapshot's own lists.
+  const stats = getRunStats(snapshot);
   const types = new Map();
-  for (const session of sessions) {
-    for (const sub of session.subagents) {
-      const entry = types.get(sub.type) ?? { type: sub.type, runs: 0, durationMs: 0, credits: 0 };
-      entry.runs += 1;
-      entry.durationMs += sub.durationMs ?? 0;
-      entry.credits = round1(entry.credits + sub.credits);
-      types.set(sub.type, entry);
+  let subagentTotal = 0;
+  if (stats) {
+    subagentTotal = stats.subagents;
+    for (const [type, entry] of stats.types) types.set(type, { type, runs: entry.runs, durationMs: entry.durationMs, credits: round1(entry.credits) });
+  } else {
+    for (const session of sessions) {
+      for (const sub of session.subagents) {
+        const entry = types.get(sub.type) ?? { type: sub.type, runs: 0, durationMs: 0, credits: 0 };
+        entry.runs += 1;
+        entry.durationMs += sub.durationMs ?? 0;
+        entry.credits = round1(entry.credits + sub.credits);
+        types.set(sub.type, entry);
+        subagentTotal += 1;
+      }
     }
   }
   const count = predicate => units.filter(predicate).length;
@@ -61,7 +71,7 @@ export function summarizeRun(snapshot, { computedAt }) {
       failed: count(unit => unit.outcome === 'failed'),
       noOutcome: count(unit => unit.outcome === null),
     },
-    subagents: sessions.reduce((sum, session) => sum + session.subagents.length, 0),
+    subagents: subagentTotal,
     units: [
       {
         id: orchestrator.id, label: orchestrator.label, name: orchestrator.name, isOrchestrator: true, startedAt: orchestrator.startedAt,

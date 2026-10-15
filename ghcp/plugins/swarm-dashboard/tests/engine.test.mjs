@@ -479,3 +479,36 @@ test('a quiet run with a live process and nothing busy or stuck is finished, and
   assert.equal(probe.calls, afterFirst, 'neither the listing nor a rebuild probes again');
   assert.equal(engine.listSwarms()[0].lifecycle, 'finished');
 });
+
+test('a run summary counts every sub-agent of the run, though each session lists at most 500', async () => {
+  const home = new CopilotHome();
+  home.project({ id: 'project-1', name: 'sample-project' });
+  home.workspace({ id: 'ws-many', projectId: 'project-1', name: 'Many story', createdAt: T0, sessionId: 'cli-many' });
+  home.workspace({ id: 'ws-many-unit', projectId: 'project-1', name: 'Many m1 unit', createdAt: at(1), sessionId: 'cli-many-unit', parentId: 'ws-many', creatorSessionId: 'cli-many' });
+  const root = new EventLog(T0);
+  root.start(); root.turnStart();
+  const usage = [];
+  for (let i = 0; i < 600; i += 1) {
+    const call = root.subagent({ mode: 'sync', type: i % 3 ? 'explore' : 'code-review' });
+    root.wait(1000);
+    root.subagentDone(call, { durationMs: 1000 });
+    root.done(call);
+    usage.push({ sessionId: 'cli-many', parentToolCallId: call, nanoAiu: 1e9, createdAt: T0 + MINUTE });
+  }
+  root.turnEnd();
+  home.writeEvents('cli-many', root.events);
+  const unit = new EventLog(at(1));
+  unit.start(); unit.turnStart(); unit.wait(MINUTE); unit.turnEnd();
+  home.writeEvents('cli-many-unit', unit.events);
+  home.usage(usage);
+  home.lock('cli-many', NO_SUCH_PID + 20, T0);
+  home.lock('cli-many-unit', NO_SUCH_PID + 21, at(1));
+  const engine = quietEngine(home, countingProbe(false), () => at(500));
+  const summary = await engine.getRunSummary('ws-many');
+  assert.deepEqual(validateRunSummary(summary), []);
+  assert.equal(summary.subagents, 600);
+  assert.deepEqual(summary.subagentTypes.map(entry => [entry.type, entry.runs, entry.credits, entry.durationMs]).sort(), [['code-review', 200, 200, 200_000], ['explore', 400, 400, 400_000]]);
+  const snapshot = await engine.getSnapshot('ws-many');
+  assert.equal(snapshot.orchestrator.subagents.length, 500);
+  assert.equal(snapshot.cost.credits, 600);
+});
