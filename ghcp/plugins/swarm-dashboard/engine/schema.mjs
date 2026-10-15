@@ -3,6 +3,7 @@
  *
  * - Times are epoch milliseconds (UTC). Durations are milliseconds.
  * - Credits are AI credits: nano-AIU / 1e9. Dollars = credits × CREDIT_USD (list price).
+ * - Credits are rounded to 0.1 and dollars to 0.01 wherever they appear.
  * - Free text (report bodies, questions, feed text) is for local display only. It never reaches the history store.
  * - Any breaking change bumps SCHEMA_VERSION and needs the coordinator's approval, because PR 2 depends on it.
  */
@@ -154,13 +155,16 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  * @property {'auto'|'off'|object} [prLookup]  Read-only gh/az PR lookups. Default 'auto'
  * @property {(entry: Diagnostic) => void} [log]  Never writes to stdout
  *
+ * SnapshotChange: `revision` is an engine-wide change counter. It increases by one for each refresh (or fake push)
+ * that changed at least one snapshot. It is not `Snapshot.revision`, which counts per swarm.
+ * `swarmIds` lists the swarms whose snapshots changed.
  * @typedef {{ revision: number, swarmIds: string[] }} SnapshotChange
  * @typedef {object} SwarmEngine
  * @property {() => Promise<void>} refresh                 Read new data once and rebuild tracked swarms
  * @property {(options?: { intervalMs?: number }) => void} start  Poll every intervalMs (default 3000); no timers before this
  * @property {() => void} stop
  * @property {() => SwarmListItem[]} listSwarms             Live first, then by last activity
- * @property {(swarmId?: string) => Promise<Snapshot|null>} getSnapshot  Default: most recently active live swarm
+ * @property {(swarmId?: string) => Promise<Snapshot|null>} getSnapshot  Default: the most recently active live swarm, else the most recently active swarm; null when there is none
  * @property {(listener: (change: SnapshotChange) => void) => () => void} subscribe  Returns unsubscribe
  * @property {() => Promise<RunListItem[]>} listHistory
  * @property {(runId: string) => Promise<RunSummary|null>} getRunSummary

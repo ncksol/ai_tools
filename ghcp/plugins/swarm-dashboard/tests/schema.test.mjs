@@ -92,3 +92,57 @@ test('the fake engine serves fixtures through the engine API', async () => {
   assert.equal(await engine.getRunSummary('missing'), null);
   assert.deepEqual(engine.diagnostics(), []);
 });
+
+test('the fake engine keeps its swarm list in step with pushed snapshots', async () => {
+  const snapshot = fixture('example-snapshot.json');
+  const engine = createFakeEngine({ snapshots: [snapshot] });
+  const [entry] = engine.listSwarms();
+  assert.equal(entry.id, snapshot.run.id);
+  assert.equal(entry.lifecycle, 'live');
+  assert.equal(entry.units, 7);
+  assert.equal(entry.credits, 97652.4);
+
+  const later = structuredClone(snapshot);
+  later.run.lastActivityAt = snapshot.run.lastActivityAt + 60000;
+  later.cost.credits = 98000.5;
+  engine.push(later);
+  const afterPush = engine.listSwarms();
+  assert.equal(afterPush.length, 1);
+  assert.equal(afterPush[0].lastActivityAt, later.run.lastActivityAt);
+  assert.equal(afterPush[0].credits, 98000.5);
+
+  const other = structuredClone(later);
+  other.run.id = 'swarm-synthetic-2';
+  other.run.lastActivityAt = later.run.lastActivityAt + 60000;
+  engine.push(other);
+  assert.deepEqual(engine.listSwarms().map(swarm => swarm.id), ['swarm-synthetic-2', snapshot.run.id]);
+  assert.equal((await engine.getSnapshot()).run.id, 'swarm-synthetic-2');
+
+  other.run.lifecycle = 'finished';
+  engine.push(other);
+  const ordered = engine.listSwarms();
+  assert.deepEqual(ordered.map(swarm => swarm.id), [snapshot.run.id, 'swarm-synthetic-2']);
+  assert.equal(ordered[1].lifecycle, 'finished');
+  assert.equal((await engine.getSnapshot()).run.id, snapshot.run.id);
+});
+
+test('the fake engine falls back to the most recent swarm, else null', async () => {
+  const finished = fixture('example-snapshot.json');
+  finished.run.lifecycle = 'finished';
+  const engine = createFakeEngine({ snapshots: [finished] });
+  assert.equal((await engine.getSnapshot()).run.id, finished.run.id);
+  const empty = createFakeEngine();
+  assert.deepEqual(empty.listSwarms(), []);
+  assert.equal(await empty.getSnapshot(), null);
+});
+
+test('the fake engine does not share its inputs', () => {
+  const swarms = fixture('example-swarms.json');
+  const name = swarms[0].name;
+  const engine = createFakeEngine({ swarms });
+  swarms[0].name = 'changed';
+  swarms.push({ ...swarms[0], id: 'extra' });
+  const listed = engine.listSwarms();
+  assert.equal(listed.length, fixture('example-swarms.json').length);
+  assert.equal(listed[0].name, name);
+});
