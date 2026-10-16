@@ -475,6 +475,25 @@ function subagentUnitView(input, rootContext, root, sub, evaluation, label, roll
 }
 
 /**
+ * The liveness of one CLI session of a node. The node's current CLI session has the node's own liveness (true, false or unknown);
+ * an older one counts as gone unless its process is alive: it may have died without a shutdown event, leaving its work open for good.
+ */
+function cliAlive(input, context, cliId) {
+  return cliId === undefined || cliId === context.node.currentCliSessionId ? context.alive : input.alive.get(cliId) === true;
+}
+
+/** True when a sub-agent started by a sub-agent is still running in a CLI session that counts as alive, in any session of the swarm. */
+function nestedWorkRuns(input, contexts) {
+  for (const context of contexts.values()) {
+    for (const state of context.states) {
+      if (cliAlive(input, context, state.id) === false) continue;
+      for (const entry of state.descendants.values()) if (entry.status === 'running') return true;
+    }
+  }
+  return false;
+}
+
+/**
  * The root orchestrator's one-off sub-agents as units: every one that has not finished, plus the MAX_FINISHED_SUBAGENT_UNITS that
  * finished last, oldest start first. The others are only counted (`omitted`). Their feed items go to `extraFeed` for every one of them.
  */
@@ -484,14 +503,10 @@ function buildSubagentUnits(input, rootContext, root, takenLabels, extraFeed) {
   const labels = assignSubagentLabels(subs, takenLabels);
   const rollup = rollupCost(rootContext.cost.byParentToolCall, all.descendants);
   const startOf = sub => sub.startedAt ?? sub.launchedAt;
-  // A sub-agent is judged by the liveness of the CLI session whose log holds it. One in an older session counts as gone unless
-  // that session is alive: its process may have died without a shutdown event, leaving the run open for good.
+  // A sub-agent is judged by the liveness of the CLI session whose log holds it.
   const holder = new Map();
   for (const state of rootContext.states) for (const id of state.subagents.keys()) holder.set(id, state.id);
-  const aliveFor = sub => {
-    const cliId = holder.get(sub.id);
-    return cliId === undefined || cliId === rootContext.node.currentCliSessionId ? rootContext.alive : input.alive.get(cliId) === true;
-  };
+  const aliveFor = sub => cliAlive(input, rootContext, holder.get(sub.id));
   const entries = subs.map(sub => {
     const evaluation = evaluateSubagentUnit(sub, { alive: aliveFor(sub), now: input.now, thresholds: input.thresholds });
     for (const item of sub.unit.feed) {
@@ -624,7 +639,8 @@ export function buildSnapshot(input) {
   counts.failed += subagents.omitted.failed;
 
   const lastActivityAt = maxTime(...[...contexts.values()].map(c => c.all.lastEventAt), lastCostAt) ?? root.createdAt ?? now;
-  const anyActive = [orchestrator, ...everyUnit].some(session => ACTIVE_DETAILS.has(session.statusDetail));
+  // A nested sub-agent that is still running also keeps the run live: it is not a unit of its own, so no unit status shows it.
+  const anyActive = [orchestrator, ...everyUnit].some(session => ACTIVE_DETAILS.has(session.statusDetail)) || nestedWorkRuns(input, contexts);
   const { lifecycle, finishedAt } = runLifecycle({ lastActivityAt, anyActive, now, thresholds });
   const monitorDue = units.some(unit => unit.monitor.state === 'alive') || app.automations.some(item => rootContext.ids.has(item.sessionId)
     && item.pausedAt === null && item.nextRunAt !== null && item.nextRunAt > now - thresholds.monitorGraceMs);

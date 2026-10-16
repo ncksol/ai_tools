@@ -5,6 +5,7 @@ import { MAX_FINISHED_SUBAGENT_UNITS, validateRunSummary, validateSnapshot } fro
 import { createLedger } from '../engine/readers/ledger.mjs';
 import { buildForest } from '../engine/model/forest.mjs';
 import { buildSegments, buildSnapshot, deriveLabels, runLifecycle, splitFeed } from '../engine/model/swarm.mjs';
+import { ACTIVE_DETAILS } from '../engine/model/status.mjs';
 import { summarizeRun } from '../engine/model/history.mjs';
 import { HOUR, MINUTE } from '../engine/time.mjs';
 import { EventLog } from './helpers/event-log.mjs';
@@ -970,4 +971,84 @@ test('a follow-up that completes shows a completed item as the latest of its uni
   assert.notEqual(first.id, unit.recent[0].id);
   const ids2 = snapshot.feed.map(item => item.id);
   assert.equal(new Set(ids2).size, ids2.length);
+});
+
+// --- A nested sub-agent that still works keeps the run live ---
+
+/** A top task with a nested one (and, at depth 2, a grandchild). Only the ones above the last level complete; the last one sends an event at minute 112. */
+function nestedSwarm({ now = at(112 + 121), alive = true, depth = 1 } = {}) {
+  const ids = {};
+  const { data } = quietSwarm(root => {
+    root.at(at(100)); ids.top = root.subagent({ name: 'top', type: 'explore', mode: 'background', agentId: 'ag-top' });
+    root.at(at(101)); ids.kid = root.nested(ids.top, { name: 'kid', type: 'explore', mode: 'background', agentId: 'ag-kid' });
+    if (depth === 2) ids.grand = root.nested(ids.kid, { name: 'grand', type: 'explore', mode: 'background', agentId: 'ag-grand' });
+    root.at(at(102)); root.subagentDone(ids.top, { durationMs: 2 * MINUTE, agentId: 'ag-top' });
+    if (depth === 2) root.subagentDone(ids.kid, { durationMs: MINUTE, agentId: 'ag-kid' });
+    root.at(at(112)); root.sub(ids.grand ?? ids.kid, 'assistant.message', { content: 'still here' });
+  }, now);
+  data.alive.set('cli-root', alive);
+  return { data, ids };
+}
+
+test('a run stays live while a nested sub-agent works under a completed top task, and finishes when the process is gone', () => {
+  const { data } = nestedSwarm();
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  const [top] = subUnits(snapshot);
+  assert.equal(top.statusDetail, 'completed', 'the unit statuses are not changed');
+  assert.deepEqual(top.subagents.map(sub => sub.status), ['stuck']);
+  assert.equal(snapshot.run.lifecycle, 'live');
+  assert.equal(snapshot.run.finishedAt, null);
+  const dead = buildSnapshot(nestedSwarm({ alive: false }).data);
+  assert.equal(dead.run.lifecycle, 'finished');
+  assert.equal(dead.run.finishedAt, at(112));
+});
+
+test('a grandchild that still works under a completed child and top task keeps the run live', () => {
+  const snapshot = buildSnapshot(nestedSwarm({ depth: 2 }).data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  assert.equal(subUnits(snapshot)[0].statusDetail, 'completed');
+  assert.equal(snapshot.run.lifecycle, 'live');
+});
+
+test('a running nested sub-agent in a child session keeps the run live', () => {
+  const { data } = quietSwarm(() => {}, at(112 + 121));
+  const api = new EventLog(at(5));
+  api.start(); api.turnStart(); api.at(at(20));
+  const top = api.subagent({ name: 'reviewer', type: 'code-review', mode: 'background', agentId: 'agent-r' });
+  api.nested(top, { name: 'kid', type: 'explore', mode: 'background', agentId: 'agent-k' });
+  api.at(at(22)); api.subagentDone(top, { durationMs: 2 * MINUTE, agentId: 'agent-r' });
+  api.at(at(23)); api.turnEnd();
+  data.states.set('cli-api', fold(api, 'cli-api'));
+  const kid = api.events.find(event => event.type === 'tool.execution_start' && event.data.toolName === 'task' && event.data.parentToolCallId).data.toolCallId;
+  api.at(at(112)); api.sub(kid, 'assistant.message', { content: 'still here' });
+  data.states.set('cli-api', fold(api, 'cli-api'));
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  const unit = snapshot.units.find(item => item.id === 'ws-api');
+  assert.deepEqual(unit.subagents.map(sub => sub.status), ['completed']);
+  assert.equal(ACTIVE_DETAILS.has(unit.statusDetail), false, 'the session itself is not active');
+  assert.equal(snapshot.run.lifecycle, 'live');
+  data.alive.set('cli-api', false);
+  assert.equal(buildSnapshot(data).run.lifecycle, 'finished', 'a dead session\'s sub-agents do not keep it live');
+});
+
+test('a running nested sub-agent in an older root CLI session counts only while that process is alive', () => {
+  const swarm = alive => {
+    const { data } = quietSwarm(() => {}, at(112 + 121));
+    data.app.aliases.push({ sessionId: 'cli-root-old', workspaceId: 'ws-root', createdAt: T0 - MINUTE });
+    data.forest = buildForest(data.app);
+    const old = new EventLog(T0);
+    old.calls = 200;
+    old.start();
+    old.at(at(100)); const top = old.subagent({ name: 'top', type: 'explore', mode: 'background', agentId: 'ag-top' });
+    old.at(at(101)); const kid = old.nested(top, { name: 'kid', type: 'explore', mode: 'background', agentId: 'ag-kid' });
+    old.at(at(102)); old.subagentDone(top, { durationMs: MINUTE, agentId: 'ag-top' });
+    old.at(at(112)); old.sub(kid, 'assistant.message', { content: 'still here' });
+    data.states.set('cli-root-old', fold(old, 'cli-root-old', ROOT_STATE));
+    data.alive.set('cli-root-old', alive);
+    return buildSnapshot(data);
+  };
+  assert.equal(swarm(false).run.lifecycle, 'finished');
+  assert.equal(swarm(true).run.lifecycle, 'live');
 });
