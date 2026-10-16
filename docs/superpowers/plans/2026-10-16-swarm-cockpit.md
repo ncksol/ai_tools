@@ -3918,6 +3918,11 @@ git add ghcp/plugins/swarm-dashboard/scripts/lib/cockpit-check.mjs ghcp/plugins/
 git commit -m "test(swarm-dashboard): check the links between the regular view and the cockpit"
 ```
 
+Review amendments (16 October 2026), applied in follow-up commits after this task's review:
+- `ui/main.mjs`: `applySnapshot` drops `view.cockpitNote` when the shown swarm changes (`prev?.run.id !== next?.run.id`), so the side panel never shows an address for a swarm it no longer shows. Its own commit.
+- `checkLinks`: everything after the click sits in `try`/`finally`, which closes every new `/cockpit?` target and resets the regular page's `window.name`, so the checks after it start clean. It fails on page errors, as `checkLayout` does, and says when a tile never appeared.
+- `checkLinks` also proves "the shown swarm" on the stress server (two live swarms): in the browser host, without `swarm=` in the address, it picks the second swarm and expects the cockpit to open on it; in the canvas host, it expects the address to name the picked swarm and to disappear after picking the other one. In the opened cockpit it posts a request for an unknown unit to the regular window and expects no details and no navigation.
+
 ---
 
 ### Task 13: The layout check runs the cockpit's checks, and the regular view stays fast
