@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { dur } from '../ui/format.mjs';
 import { findByLabel } from '../ui/model.mjs';
 import { bar, chipsHtml, feedList, fill, meter, monitorHtml, phase, ring, shortLabel, stageTrack, stateLineHtml } from '../ui/parts.mjs';
 import { NOW, exampleSnapshot } from './helpers/ui.mjs';
@@ -21,6 +22,16 @@ test('a stuck sub-agent shows once, not again as the open call that launched it'
   const html = chipsHtml({ status: 'stuck', subagents: [sub], activity: { label: 'Waiting', tool, lastEventAt: NOW } }, NOW);
   assert.equal((html.match(/class="chip /g) ?? []).length, 1);
   assert.doesNotMatch(html, /data-key="tool"/);
+});
+
+test('chip times stop at the session\'s end once it has ended', () => {
+  const sub = { id: 'call-sub', name: 'map', type: 'explore', status: 'stuck', startedAt: NOW - 15 * 60000, task: 'Map the module' };
+  const tool = { id: 'call-tool', name: 'bash', summary: 'bash: npm test', startedAt: NOW - 5 * 60000, limitMs: null };
+  const html = chipsHtml({ status: 'stuck', subagents: [sub], activity: { label: 'Waiting', tool, lastEventAt: NOW } }, NOW + 600000, new Set(), NOW);
+  assert.equal(text(html), `explore ${dur(NOW - sub.startedAt)}${tool.summary} · ${dur(NOW - tool.startedAt)}`);
+  assert.match(html, /data-key="call-sub"/);
+  assert.match(html, /data-key="tool"/);
+  assert.doesNotMatch(html, /data-t/);
 });
 
 test('ring labels show up to four characters; a four-character label may still be cut, longer ones are', () => {

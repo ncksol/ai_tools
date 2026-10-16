@@ -1,4 +1,4 @@
-import { ago, costHtml, costText, dur, elapsed, esc, liveTime, plainText } from './format.mjs';
+import { ago, costHtml, costText, dur, elapsed, esc, liveTime, plainText, runningFor } from './format.mjs';
 import {
   COUNT_TILES, NEED_CLASS, NEED_LABELS, STAGE_NAMES, cardUnits, closedNotMerged, needItems, progressPercent, reportTitle, runEnd, sharePercent, unitEnd,
 } from './model.mjs';
@@ -52,7 +52,7 @@ export function cardHtml(unit, ctx) {
     + reportRow(unit, now, fresh)
     + `<div class="b-rows st-${unit.status}">${progressRow}<span class="k">Stage</span>${stageTrack(unit.stage)}<span class="r">${STAGE_NAMES[unit.stage]}</span>`
     + `<span class="k">Monitor</span><span class="mon mon-${unit.monitor.state}">${monitorHtml(unit, now)}${closedNotMerged(unit) ? closedBadge : ''}</span></div>`
-    + `<div class="chips">${chipsHtml(unit, now, fresh.chips)}</div></article>`;
+    + `<div class="chips">${chipsHtml(unit, now, fresh.chips, end)}</div></article>`;
 }
 
 export function cardsHtml(ctx) {
@@ -90,11 +90,11 @@ function reportHtml(report, now) {
     + (report.blockers === null ? '' : `<span class="small muted">Blockers</span>${report.blockers.length ? list(report.blockers) : '<p class="small">None reported</p>'}`);
 }
 
-function subagentsHtml(subagents, now) {
+function subagentsHtml(subagents, now, end) {
   if (!subagents.length) return '<p class="small muted">None in this session</p>';
   const rows = subagents.slice(0, SUBAGENT_LIMIT).map(sub => {
     const [state, word] = SUBAGENT_PILLS[sub.status] ?? ['idle', sub.status];
-    const runtime = sub.endedAt ? dur(sub.durationMs ?? sub.endedAt - sub.startedAt) : elapsed(sub.startedAt, now);
+    const runtime = sub.endedAt ? dur(sub.durationMs ?? sub.endedAt - sub.startedAt) : runningFor(sub.startedAt, end, now);
     return `<li class="sa" title="${esc(sub.task ?? sub.name)}"><div class="sa-1"><span>${esc(sub.type)}${sub.mode === 'sync' ? ' (sync)' : ''}</span><span class="pill st-${state}">${esc(word)}</span></div>`
       + `<div class="sa-2">${esc(sub.model ?? 'model unknown')} · ${runtime} · ${costText(sub.credits)}</div></li>`;
   }).join('');
@@ -142,11 +142,11 @@ export function detailHtml(unitId, inMain, ctx) {
     + `<div class="kv"><span class="k">Model</span><span class="v">${esc(unit.model ?? 'unknown')}</span></div></div>`;
   const current = `<div class="dt-sec"><h4>Current activity</h4><div class="dt-kv"><span class="k">Doing</span><span>${esc(activity.label)}</span>`
     + (unit.reason && !WHY_STATUSES.has(unit.status) ? `<span class="k">Note</span><span>${esc(unit.reason)}</span>` : '')
-    + (activity.tool ? `<span class="k">Tool call</span><span><span class="code">${esc(activity.tool.summary)}</span> · ${elapsed(activity.tool.startedAt, now)}</span>` : '')
+    + (activity.tool ? `<span class="k">Tool call</span><span><span class="code">${esc(activity.tool.summary)}</span> · ${runningFor(activity.tool.startedAt, end, now)}</span>` : '')
     + `<span class="k">Last event</span><span>${activity.lastEventAt ? ago(activity.lastEventAt, now) : 'none yet'}</span></div></div>`;
   return `<section class="detail" aria-label="Details for ${esc(unit.label)}">${top}${facts}${whyHtml(unit)}${current}`
     + `<div class="dt-sec"><h4>Latest report</h4>${reportHtml(unit.report, now)}</div>`
-    + `<div class="dt-sec"><h4>Sub-agents</h4>${subagentsHtml(unit.subagents, now)}</div>`
+    + `<div class="dt-sec"><h4>Sub-agents</h4>${subagentsHtml(unit.subagents, now, end)}</div>`
     + `<div class="dt-sec"><h4>PR and monitor</h4>${prHtml(unit, now)}</div>`
     + `<div class="dt-sec"><h4>Recent activity</h4>${feedList(unit.recent, 6, now, fresh.feed, 'No recent activity')}</div></section>`;
 }

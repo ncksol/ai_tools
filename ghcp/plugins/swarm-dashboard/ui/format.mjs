@@ -43,6 +43,8 @@ export function liveTime(at, now, format = 'short') {
   return `<span data-t="${at}" data-f="${format}">${tickText(at, format, now)}</span>`;
 }
 export const elapsed = (at, now) => liveTime(at, now, 'short');
+/** How long something has run: ticking while its session runs, fixed at the session's end once that has ended. */
+export const runningFor = (start, end, now) => (end == null ? elapsed(start, now) : dur(Math.max(0, end - start)));
 export const ago = (at, now) => liveTime(at, now, 'age');
 export const countdown = (at, now) => liveTime(at, now, 'left');
 

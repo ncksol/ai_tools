@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { dur, esc } from '../ui/format.mjs';
-import { cardsHtml, headerHtml, needsHtml } from '../ui/live.mjs';
+import { cardHtml, cardsHtml, detailHtml, headerHtml, needsHtml } from '../ui/live.mjs';
 import { findByLabel } from '../ui/model.mjs';
 import { NOW, closedSnapshot, context, exampleSnapshot } from './helpers/ui.mjs';
 
@@ -142,4 +142,50 @@ test('with every unit archived, the Board note follows the empty line', () => {
   const snapshot = exampleSnapshot();
   snapshot.units = snapshot.units.map(unit => ({ ...unit, status: 'archived' }));
   assert.equal(cardsHtml(context(snapshot)), '<p class="none">No active child sessions.</p><p class="cards-note">Archived and hidden sessions are on the <button type="button" class="link" data-tab="board">Board tab</button>.</p>');
+});
+
+const NESTED_AT = NOW + 600000;
+/** The Sub-agents row, the Tool call line and the chip for B1's running code-review sub-agent, rendered at NESTED_AT. */
+function nestedClocks(snapshot) {
+  const b1 = findByLabel(snapshot, 'B1');
+  const ctx = context(snapshot, { now: NESTED_AT });
+  const detail = detailHtml(b1.id, false, ctx);
+  const row = detail.split('<li class="sa"').find(part => part.includes('code-review'));
+  const toolFrom = detail.indexOf('Tool call');
+  const tool = detail.slice(toolFrom, detail.indexOf('<span class="k">', toolFrom));
+  const chip = cardHtml(b1, ctx).split('<span class="chip ').find(part => part.includes('data-key="call-b1-8"'));
+  return { row, tool, chip };
+}
+
+test('a crashed unit\'s unfinished sub-agent and tool call stop at its end', () => {
+  const snapshot = exampleSnapshot();
+  const b1 = findByLabel(snapshot, 'B1');
+  Object.assign(b1, { status: 'blocked', statusDetail: 'crashed', alive: false, endedAt: NOW - 59000 });
+  b1.subagents.find(sub => sub.id === 'call-b1-8').startedAt = NOW - 60000;
+  assert.equal(b1.activity.tool.startedAt, NOW - 60000);
+  const { row, tool, chip } = nestedClocks(snapshot);
+  assert.ok(row.includes(` · ${dur(1000)} · `), row);
+  assert.doesNotMatch(row, /data-t/);
+  assert.ok(tool.includes(` · ${dur(1000)}</span>`), tool);
+  assert.doesNotMatch(tool, /data-t/);
+  assert.equal(text(chip.slice(chip.indexOf('<span class="chip-t">'))), `code-review ${dur(1000)}`);
+  assert.doesNotMatch(chip, /data-t/);
+});
+
+test('a finished run stops the nested clocks of units that have no end of their own', () => {
+  const snapshot = exampleSnapshot();
+  Object.assign(snapshot.run, { lifecycle: 'finished', finishedAt: NOW - 59000 });
+  const b1 = findByLabel(snapshot, 'B1');
+  assert.equal(b1.endedAt, null);
+  b1.subagents.find(sub => sub.id === 'call-b1-8').startedAt = NOW - 60000;
+  const { row, tool, chip } = nestedClocks(snapshot);
+  assert.ok(row.includes(` · ${dur(1000)} · `), row);
+  assert.ok(tool.includes(` · ${dur(1000)}</span>`), tool);
+  assert.equal(text(chip.slice(chip.indexOf('<span class="chip-t">'))), `code-review ${dur(1000)}`);
+  for (const html of [row, tool, chip]) assert.doesNotMatch(html, /data-t/);
+});
+
+test('a running unit\'s sub-agent and tool clocks keep ticking', () => {
+  const { row, tool, chip } = nestedClocks(exampleSnapshot());
+  for (const html of [row, tool, chip]) assert.match(html, /<span data-t="\d+" data-f="short">/);
 });

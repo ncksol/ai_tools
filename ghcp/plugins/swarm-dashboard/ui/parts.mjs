@@ -1,4 +1,4 @@
-import { ago, countdown, elapsed, esc } from './format.mjs';
+import { ago, countdown, elapsed, esc, runningFor } from './format.mjs';
 import { REPORT_CLASS, REPORT_LABELS, STAGE_NAMES, UNIT_STAGES, feedText, stateLine } from './model.mjs';
 
 const RING = 2 * Math.PI * 17;
@@ -63,15 +63,18 @@ export function monitorHtml(unit, now, long = false) {
   return `${dot}${long ? 'starts when the PR opens' : 'no PR yet'}`;
 }
 
-/** Chips for running (or stuck) sub-agents, plus the open tool call of a stuck session. */
-export function chipsHtml(session, now, freshChips = new Set()) {
+/**
+ * Chips for running (or stuck) sub-agents, plus the open tool call of a stuck session; their times stop at end, the
+ * session's or run's end, once it has ended.
+ */
+export function chipsHtml(session, now, freshChips = new Set(), end = null) {
   const chips = session.subagents
     .filter(sub => sub.status === 'running' || sub.status === 'stuck')
-    .map(sub => `<span class="chip st-${sub.status === 'stuck' ? 'stuck' : 'busy'}${freshChips.has(sub.id) ? ' is-new' : ''}" data-key="${esc(sub.id)}" title="${esc(sub.task ?? sub.name)}"><span class="dot"></span><span class="chip-t">${esc(sub.type)} ${elapsed(sub.startedAt, now)}</span></span>`);
+    .map(sub => `<span class="chip st-${sub.status === 'stuck' ? 'stuck' : 'busy'}${freshChips.has(sub.id) ? ' is-new' : ''}" data-key="${esc(sub.id)}" title="${esc(sub.task ?? sub.name)}"><span class="dot"></span><span class="chip-t">${esc(sub.type)} ${runningFor(sub.startedAt, end, now)}</span></span>`);
   const tool = session.activity.tool;
   // A stuck sub-agent already has its chip; its launching task call would only repeat it.
   if (session.status === 'stuck' && tool && !session.subagents.some(sub => sub.id === tool.id)) {
-    chips.push(`<span class="chip st-stuck" data-key="tool" title="${esc(tool.summary)}"><span class="dot"></span><span class="chip-t">${esc(tool.summary)} · ${elapsed(tool.startedAt, now)}</span></span>`);
+    chips.push(`<span class="chip st-stuck" data-key="tool" title="${esc(tool.summary)}"><span class="dot"></span><span class="chip-t">${esc(tool.summary)} · ${runningFor(tool.startedAt, end, now)}</span></span>`);
   }
   return chips.length ? chips.join('') : '<span class="none">No active sub-agents</span>';
 }

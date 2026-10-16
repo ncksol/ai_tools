@@ -4,8 +4,9 @@ import assert from 'node:assert/strict';
 import { CREDIT_USD as ENGINE_CREDIT_USD } from '../engine/schema.mjs';
 import {
   CREDIT_USD, DAY, HOUR, MIN, ago, costHtml, costText, countdown, credits, dateRange, dateTime, dur, elapsed, esc, liveTime,
-  plainText, plural, tickText, usd, usdRounded,
+  plainText, plural, runningFor, tickText, usd, usdRounded,
 } from '../ui/format.mjs';
+import { NOW } from './helpers/ui.mjs';
 
 const span = (days, hours, minutes, seconds = 0) => ((days * 24 + hours) * 60 + minutes) * MIN + seconds * 1000;
 
@@ -38,6 +39,15 @@ test('live times carry their start and format so the page can tick them', () => 
   assert.equal(countdown(10 * MIN, 9 * MIN), '<span data-t="600000" data-f="left">1m</span>');
   assert.equal(tickText(10 * MIN, 'left', 9 * MIN + 37 * 1000), '23s');
   assert.equal(tickText(0, 'clock', 61 * 1000), '1m 01s');
+});
+
+test('runningFor ticks while its session runs and is fixed after the session ended', () => {
+  assert.equal(runningFor(NOW - 5000, null, NOW), elapsed(NOW - 5000, NOW));
+  assert.match(runningFor(NOW - 5000, null, NOW), /data-t=/);
+  const fixed = runningFor(NOW - 5000, NOW - 4000, NOW + 600000);
+  assert.equal(fixed, dur(1000));
+  assert.doesNotMatch(fixed, /data-t/);
+  assert.equal(runningFor(NOW - 3000, NOW - 4000, NOW + 600000), dur(0));
 });
 
 test('cost shows credits with the list-price dollar estimate', () => {
