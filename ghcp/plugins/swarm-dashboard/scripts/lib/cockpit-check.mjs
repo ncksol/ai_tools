@@ -361,8 +361,65 @@ async function checkMotion({ page, urls, engine, stdout, stderr }) {
   return problems.length;
 }
 
-/** The cockpit's checks in the order they run. Tasks 12 and 13 add links and slowdown. */
-export const CHECKS = new Map([['scene', checkScene], ['layout', checkLayout], ['motion', checkMotion]]);
+async function waitForTarget(browser, known, accept, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { targetInfos } = await browser.send('Target.getTargets');
+    const found = targetInfos.find(info => !known.has(info.targetId) && accept(info));
+    if (found) return found;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  return null;
+}
+
+/** Chrome only: the control opens the cockpit on the shown swarm; a tile opens its unit in the regular window, in place; the canvas shows the address. */
+async function checkLinks({ page, browser, urls, engine, stdout, stderr }) {
+  if (engine !== 'chrome' || !urls.example) {
+    stdout.write('Cockpit links: checked in Chrome, on the synthetic swarm.\n');
+    return 0;
+  }
+  const problems = [];
+  const regular = `${urls.example}?host=browser&swarm=ws-0000-root`;
+  await page.goto(regular, 1440, 900);
+  await page.waitFor(`location.href === ${JSON.stringify(regular)} && document.documentElement.dataset.ready === '1' && document.querySelector('[data-cockpit]') !== null`);
+  await page.evaluate('window.swarmKept = true');
+  const known = new Set((await browser.send('Target.getTargets')).targetInfos.map(info => info.targetId));
+  await page.send('Runtime.evaluate', { expression: "document.querySelector('[data-cockpit]').click()", userGesture: true });
+  const opened = await waitForTarget(browser, known, info => info.type === 'page' && info.url.includes('/cockpit?'), 5000);
+  if (!opened) {
+    problems.push('the Cockpit control opened no window');
+  } else {
+    if (new URL(opened.url).searchParams.get('swarm') !== 'ws-0000-root') problems.push(`the cockpit opened at ${opened.url}`);
+    const { sessionId } = await browser.send('Target.attachToTarget', { targetId: opened.targetId, flatten: true });
+    const inCockpit = async (expression, userGesture = false) => (await browser.send('Runtime.evaluate', { expression, returnByValue: true, userGesture }, sessionId)).result.value;
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline && await inCockpit("document.querySelector('.ck-tile[data-detail=\"ws-0005-i1\"]') !== null") !== true) await new Promise(resolve => setTimeout(resolve, 100));
+    await inCockpit("document.querySelector('.ck-tile[data-detail=\"ws-0005-i1\"]').click()", true);
+    try {
+      await page.waitFor("document.querySelector('.detail[aria-label=\"Details for I1\"]') !== null && window.swarmKept === true", 5000);
+    } catch {
+      problems.push('a tile in the cockpit did not open its details in the regular window in place');
+    }
+    await browser.send('Target.closeTarget', { targetId: opened.targetId });
+  }
+  const canvas = `${urls.example}?host=canvas&swarm=ws-0000-root`;
+  await page.goto(canvas, 480, 900);
+  await page.waitFor(`location.href === ${JSON.stringify(canvas)} && document.documentElement.dataset.ready === '1' && document.querySelector('[data-cockpit]') !== null`);
+  const before = new Set((await browser.send('Target.getTargets')).targetInfos.map(info => info.targetId));
+  await page.send('Runtime.evaluate', { expression: "document.querySelector('[data-cockpit]').click()", userGesture: true });
+  try {
+    await page.waitFor("(document.querySelector('.ck-addr-url')?.textContent ?? '').endsWith('/cockpit?swarm=ws-0000-root')", 3000);
+  } catch {
+    problems.push('in the canvas the control did not show the cockpit\'s address');
+  }
+  if (await waitForTarget(browser, before, info => info.type === 'page', 500)) problems.push('in the canvas the control opened a window');
+  stdout.write(`Cockpit links: ${problems.length ? `${problems.length} problems` : 'the control opens the cockpit on the shown swarm, a tile opens its details in place, and the canvas shows the address'}.\n`);
+  for (const problem of problems) stderr.write(`links: ${problem}\n`);
+  return problems.length;
+}
+
+/** The cockpit's checks in the order they run. Task 13 adds slowdown. */
+export const CHECKS = new Map([['scene', checkScene], ['layout', checkLayout], ['motion', checkMotion], ['links', checkLinks]]);
 
 export async function runCockpitChecks(context) {
   let issues = 0;
