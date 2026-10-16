@@ -696,7 +696,8 @@ test('only the root orchestrator\'s sessions follow sub-agents in detail, and a 
   assert.deepEqual(validateSnapshot(snapshot), []);
   assert.deepEqual(texts(snapshot.orchestrator), [], 'a root session keeps its one-off sub-agents out of the session feed');
   assert.deepEqual(texts(snapshot.units[0]), ['started explore: peeker'], 'a child session keeps its sub-agents as feed items');
-  assert.equal(snapshot.feed.some(item => item.text.includes('scout')), false);
+  assert.equal(snapshot.feed.some(item => item.text.includes('scout') && item.unitId === 'ws-root'), false);
+  assert.deepEqual(snapshot.feed.filter(item => item.text.includes('scout')).map(item => [item.unitId === snapshot.units.find(unit => unit.kind === 'subagent').id, item.label]), [[true, 'scout']], 'the item belongs to the sub-agent\'s own unit');
 
   home.workspace({ id: 'ws-top', projectId: 'project-1', name: 'Top story', createdAt: T0 - 5 * MINUTE, sessionId: 'cli-top' });
   home.insert(home.dataDb, 'workspace_parent_links', { child_workspace_id: 'ws-root', parent_workspace_id: 'ws-top', creator_session_id: 'cli-top', created_at: new Date(T0).toISOString() });
@@ -711,4 +712,58 @@ test('only the root orchestrator\'s sessions follow sub-agents in detail, and a 
   assert.deepEqual(texts(snapshot.units[0]), ['started explore: scout'], 'the session was read again from its start without the flag');
   assert.deepEqual(texts(snapshot.orchestrator), []);
   assert.equal((await engine.getRunSummary('ws-top')).subagents, 2, 'the counters were reset, not added twice');
+});
+
+test('a background sub-agent of the root orchestrator is a unit: busy, done with its final answer, then busy again after a follow-up', async () => {
+  const home = new CopilotHome();
+  home.project({ id: 'project-1', name: 'sample-project' });
+  home.workspace({ id: 'ws-root', projectId: 'project-1', name: 'Sample story', createdAt: T0, sessionId: 'cli-root' });
+  home.workspace({ id: 'ws-kid', projectId: 'project-1', name: 'Sample k1 kid', createdAt: at(1), sessionId: 'cli-kid', parentId: 'ws-root', creatorSessionId: 'cli-root' });
+  const root = new EventLog(T0);
+  root.start(); root.at(at(1));
+  const call = root.subagent({ name: 'scout', type: 'explore', mode: 'background', agentId: 'ag-scout' });
+  root.at(at(2)); root.sub(call, 'assistant.message', { content: 'Working' });
+  home.writeEvents('cli-root', root.events);
+  const kid = new EventLog(at(1));
+  kid.calls = 100;
+  kid.start(); kid.turnStart(); kid.wait(MINUTE);
+  kid.subagent({ name: 'peeker', type: 'explore', mode: 'background', agentId: 'ag-peeker' });
+  home.writeEvents('cli-kid', kid.events);
+  home.lock('cli-root', NO_SUCH_PID + 30, T0);
+  home.lock('cli-kid', NO_SUCH_PID + 31, at(1));
+  let clock = at(3);
+  const engine = createSwarmEngine({ copilotHome: home.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => clock, processProbe: alwaysAlive, prLookup: 'off' });
+  const scoutUnit = async () => {
+    const snapshot = await engine.getSnapshot('ws-root');
+    assert.deepEqual(validateSnapshot(snapshot), []);
+    assert.deepEqual(snapshot.units.map(unit => [unit.kind, unit.label]), [['project', 'k1'], ['subagent', 'scout']], 'the child session\'s sub-agent stays a chip');
+    return snapshot.units[1];
+  };
+
+  let unit = await scoutUnit();
+  assert.equal(unit.id, call);
+  assert.deepEqual([unit.status, unit.statusDetail, unit.startedAt, unit.endedAt, unit.alive], ['busy', 'busy', at(1), null, true]);
+  assert.deepEqual([unit.report.status, unit.report.title], ['progress', 'Working']);
+
+  const finished = new EventLog(at(4));
+  finished.count = 1000;
+  finished.sub(call, 'assistant.message', { content: 'Final answer' });
+  finished.subagentDone(call, { durationMs: 3 * MINUTE, agentId: 'ag-scout' });
+  home.writeEvents('cli-root', finished.events, { append: true });
+  clock = at(5);
+  await engine.refresh();
+  unit = await scoutUnit();
+  assert.deepEqual([unit.status, unit.statusDetail, unit.bucket, unit.endedAt, unit.since], ['done', 'completed', 'done', at(4), at(4)]);
+  assert.deepEqual([unit.report.status, unit.report.title, unit.report.source], ['complete', 'Final answer', 'message']);
+
+  const again = new EventLog(at(6));
+  again.count = 2000;
+  again.toAgent('ag-scout', 'one more thing');
+  home.writeEvents('cli-root', again.events, { append: true });
+  clock = at(7);
+  await engine.refresh();
+  unit = await scoutUnit();
+  assert.deepEqual([unit.status, unit.statusDetail, unit.endedAt, unit.since], ['busy', 'busy', null, at(6)]);
+  assert.equal(unit.report.title, 'Final answer');
+  assert.deepEqual(unit.recent.map(item => item.text), ['resumed explore: scout', 'completed explore: scout', 'started explore: scout']);
 });

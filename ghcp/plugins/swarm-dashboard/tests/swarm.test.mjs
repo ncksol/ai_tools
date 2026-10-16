@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_THRESHOLDS } from '../engine/config.mjs';
-import { validateSnapshot } from '../engine/schema.mjs';
+import { MAX_FINISHED_SUBAGENT_UNITS, validateRunSummary, validateSnapshot } from '../engine/schema.mjs';
 import { createLedger } from '../engine/readers/ledger.mjs';
 import { buildForest } from '../engine/model/forest.mjs';
 import { buildSegments, buildSnapshot, deriveLabels, runLifecycle, splitFeed } from '../engine/model/swarm.mjs';
@@ -387,4 +387,445 @@ test('a sub-agent that is retyped by its start event appears under its final typ
   const summary = summarizeRun(buildSnapshot(data), { computedAt: at(120) });
   assert.deepEqual(summary.subagentTypes.map(entry => entry.type).sort(), ['code-review', 'explore']);
   assert.equal(summary.subagents, 2);
+});
+
+// --- Sub-agent units: the orchestrator's one-off sub-agents ---
+
+const ROOT_STATE = { subagentUnits: true };
+const subUnits = snapshot => snapshot.units.filter(unit => unit.kind === 'subagent');
+const NO_MONITOR = { state: 'none', lastCheckAt: null, nextCheckAt: null, everyMinutes: null, since: null };
+
+/** The contract swarm with the orchestrator's log replaced by one that `build` fills in; it follows sub-agents in detail, as the engine's root sessions do. */
+function withSubagents(build, { alive = true, now = at(120), ledger = [] } = {}) {
+  const data = input(true);
+  const root = new EventLog(T0);
+  root.calls = 100;
+  root.start();
+  root.at(at(1));
+  const ids = build(root);
+  data.states.set('cli-root', fold(root, 'cli-root', ROOT_STATE));
+  data.alive.set('cli-root', alive);
+  data.now = now;
+  data.ledger.apply(ledger);
+  return { data, ids };
+}
+
+function assertFixed(unit, agent) {
+  assert.deepEqual(
+    {
+      kind: unit.kind, parentId: unit.parentId, depth: unit.depth, stage: unit.stage, pr: unit.pr, monitor: unit.monitor, outcome: unit.outcome,
+      closedWithoutMerge: unit.closedWithoutMerge, progress: unit.progress, dependsOn: unit.dependsOn, todoId: unit.todoId,
+      cliSessionIds: unit.cliSessionIds, branch: unit.branch, waitingOnUserMs: unit.waitingOnUserMs, alive: unit.alive, agent: unit.agent,
+    },
+    {
+      kind: 'subagent', parentId: 'ws-root', depth: 1, stage: 'subagent', pr: null, monitor: NO_MONITOR, outcome: null,
+      closedWithoutMerge: false, progress: null, dependsOn: null, todoId: null, cliSessionIds: [], branch: null, waitingOnUserMs: 0, alive: true, agent,
+    },
+    unit.label,
+  );
+}
+
+test('sub-agent units show the orchestrator\'s one-off sub-agents in each state, after the session units, oldest start first', () => {
+  const { data, ids } = withSubagents(root => {
+    const ids = {};
+    root.at(at(4)); ids.resumedRun = root.subagent({ name: 'resumed-run', type: 'explore', mode: 'background', effort: 'high', agentId: 'ag-rr' });
+    root.at(at(5)); ids.resumedIdle = root.subagent({ name: 'resumed-idle', type: 'explore', mode: 'background', agentId: 'ag-ri' });
+    root.sub(ids.resumedRun, 'assistant.message', { content: 'Round one' });
+    root.at(at(5.5)); root.sub(ids.resumedIdle, 'assistant.message', { content: 'Round one' });
+    root.at(at(6));
+    root.subagentDone(ids.resumedRun, { durationMs: 2 * MINUTE, agentId: 'ag-rr' });
+    root.subagentDone(ids.resumedIdle, { durationMs: MINUTE, agentId: 'ag-ri' });
+    root.at(at(10)); ids.done = root.subagent({ name: 'done-one', type: 'explore', mode: 'background', agentId: 'ag-d' });
+    root.at(at(11)); root.sub(ids.done, 'assistant.message', { content: 'First' });
+    root.at(at(14)); root.sub(ids.done, 'assistant.message', { content: 'The final answer' }); root.sub(ids.done, 'assistant.message', { content: ' ' });
+    root.at(at(15)); root.subagentDone(ids.done, { durationMs: 5 * MINUTE, agentId: 'ag-d' });
+    root.at(at(20)); ids.failed = root.subagent({ name: 'failed-one', type: 'code-review', mode: 'background', agentId: 'ag-f' });
+    root.at(at(21)); root.sub(ids.failed, 'assistant.message', { content: 'Trying' });
+    root.at(at(22)); root.subagentDone(ids.failed, { failed: true, error: 'Quota exceeded', durationMs: 2 * MINUTE, agentId: 'ag-f' });
+    root.at(at(30)); ids.cancelled = root.subagent({ name: 'cancelled-one', type: 'explore', mode: 'background', agentId: 'ag-c' });
+    root.at(at(33)); root.subagentDone(ids.cancelled, { cancelled: true, durationMs: 3 * MINUTE, agentId: 'ag-c' });
+    root.at(at(50)); ids.stuck = root.subagent({ name: 'stuck-one', type: 'explore', mode: 'background', agentId: 'ag-s' });
+    root.at(at(60)); root.sub(ids.stuck, 'assistant.message', { content: 'Still going' });
+    root.at(at(80)); root.toAgent('ag-ri', 'one more round'); root.sub(ids.resumedIdle, 'assistant.turn_start');
+    root.at(at(84)); root.sub(ids.resumedIdle, 'assistant.message', { content: 'Round two' });
+    root.at(at(85)); root.sub(ids.resumedIdle, 'assistant.turn_end');
+    root.at(at(100)); ids.busy = root.subagent({ name: 'busy-one', type: 'explore', mode: 'background', agentId: 'ag-b' });
+    root.at(at(110)); root.toAgent('ag-rr', 'again');
+    root.at(at(115)); root.sub(ids.resumedRun, 'assistant.turn_start');
+    root.at(at(118));
+    root.sub(ids.busy, 'tool.execution_start', { toolCallId: 'tool-1', toolName: 'grep', arguments: { pattern: 'needle' } });
+    root.sub(ids.busy, 'assistant.message', { content: 'Working on it' });
+    return ids;
+  });
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  assert.deepEqual(snapshot.units.slice(0, 3).map(unit => unit.label), ['api', 'ui', 'docs'], 'session units come first');
+  const subs = subUnits(snapshot);
+  assert.deepEqual(subs.map(unit => unit.label), ['resumed-run', 'resumed-idle', 'done-one', 'failed-one', 'cancelled-one', 'stuck-one', 'busy-one']);
+  assert.equal(snapshot.units.length, 3 + 7);
+  const by = Object.fromEntries(subs.map(unit => [unit.label, unit]));
+  const brief = unit => ({ id: unit.id, name: unit.name, status: unit.status, statusDetail: unit.statusDetail, bucket: unit.bucket, since: unit.since, reason: unit.reason, startedAt: unit.startedAt, endedAt: unit.endedAt, busyMs: unit.busyMs, lastEventAt: unit.lastEventAt, model: unit.model });
+
+  const busy = by['busy-one'];
+  assertFixed(busy, { type: 'explore', mode: 'background', effort: null });
+  assert.deepEqual(brief(busy), {
+    id: ids.busy, name: 'busy-one work', status: 'busy', statusDetail: 'busy', bucket: 'working', since: at(100), reason: null,
+    startedAt: at(100), endedAt: null, busyMs: 20 * MINUTE, lastEventAt: at(118), model: 'claude-sonnet-5',
+  });
+  assert.deepEqual(busy.activity, {
+    label: 'Running grep: needle', lastEventAt: at(118),
+    tool: { id: 'tool-1', name: 'grep', summary: 'grep: needle', startedAt: at(118), limitMs: 2 * MINUTE },
+  });
+  assert.deepEqual(busy.report, { status: 'progress', source: 'message', at: at(118), title: 'Working on it', summary: null, evidence: [], blockers: null, body: 'Working on it', unit: null, commit: null });
+  assert.deepEqual(busy.timeline, { segments: [{ start: at(100), end: null, state: 'busy' }], subagents: [], marks: [] });
+  assert.deepEqual(busy.subagents, []);
+  assert.deepEqual(busy.cost, { credits: 0, calls: 0 });
+
+  const stuck = by['stuck-one'];
+  assertFixed(stuck, { type: 'explore', mode: 'background', effort: null });
+  assert.deepEqual(brief(stuck), {
+    id: ids.stuck, name: 'stuck-one work', status: 'stuck', statusDetail: 'stuck_subagent', bucket: 'stuck', since: at(60),
+    reason: 'No events for 60 min; the limit is 10 min.', startedAt: at(50), endedAt: null, busyMs: 70 * MINUTE, lastEventAt: at(60), model: 'claude-sonnet-5',
+  });
+  assert.deepEqual(stuck.activity, { label: 'Thinking', tool: null, lastEventAt: at(60) });
+  assert.equal(stuck.report.status, 'progress');
+  assert.deepEqual(stuck.timeline.segments, [{ start: at(50), end: at(60), state: 'busy' }, { start: at(60), end: null, state: 'stuck' }]);
+
+  const done = by['done-one'];
+  assertFixed(done, { type: 'explore', mode: 'background', effort: null });
+  assert.deepEqual(brief(done), {
+    id: ids.done, name: 'done-one work', status: 'done', statusDetail: 'completed', bucket: 'done', since: at(15), reason: null,
+    startedAt: at(10), endedAt: at(15), busyMs: 5 * MINUTE, lastEventAt: at(15), model: 'claude-sonnet-5',
+  });
+  assert.deepEqual(done.activity, { label: 'Done', tool: null, lastEventAt: at(15) });
+  assert.deepEqual(done.report, { status: 'complete', source: 'message', at: at(14), title: 'The final answer', summary: null, evidence: [], blockers: null, body: 'The final answer', unit: null, commit: null });
+  assert.deepEqual(done.timeline.segments, [{ start: at(10), end: at(15), state: 'busy' }]);
+  assert.deepEqual(done.timeline.marks, [{ at: at(15), kind: 'report', text: 'The final answer', status: 'complete' }]);
+
+  const failed = by['failed-one'];
+  assertFixed(failed, { type: 'code-review', mode: 'background', effort: null });
+  assert.deepEqual(brief(failed), {
+    id: ids.failed, name: 'failed-one work', status: 'blocked', statusDetail: 'failed', bucket: 'failed', since: at(22), reason: 'Failed: Quota exceeded',
+    startedAt: at(20), endedAt: at(22), busyMs: 2 * MINUTE, lastEventAt: at(22), model: 'claude-sonnet-5',
+  });
+  assert.deepEqual(failed.activity, { label: 'Failed', tool: null, lastEventAt: at(22) });
+  assert.deepEqual([failed.report.status, failed.report.title], ['blocked', 'Trying']);
+  assert.deepEqual(failed.timeline.marks, [{ at: at(22), kind: 'report', text: 'Trying', status: 'blocked' }]);
+
+  const cancelled = by['cancelled-one'];
+  assert.deepEqual(brief(cancelled), {
+    id: ids.cancelled, name: 'cancelled-one work', status: 'blocked', statusDetail: 'cancelled', bucket: 'failed', since: at(33),
+    reason: 'Cancelled after 3 min.', startedAt: at(30), endedAt: at(33), busyMs: 3 * MINUTE, lastEventAt: at(33), model: 'claude-sonnet-5',
+  });
+  assert.deepEqual(cancelled.activity, { label: 'Cancelled', tool: null, lastEventAt: at(33) });
+  assert.equal(cancelled.report, null);
+  assert.deepEqual(cancelled.timeline.marks, []);
+
+  const resumedRun = by['resumed-run'];
+  assertFixed(resumedRun, { type: 'explore', mode: 'background', effort: 'high' });
+  assert.deepEqual(brief(resumedRun), {
+    id: ids.resumedRun, name: 'resumed-run work', status: 'busy', statusDetail: 'busy', bucket: 'working', since: at(110), reason: null,
+    startedAt: at(4), endedAt: null, busyMs: 12 * MINUTE, lastEventAt: at(115), model: 'claude-sonnet-5',
+  });
+  assert.deepEqual([resumedRun.report.status, resumedRun.report.title], ['progress', 'Round one']);
+  assert.deepEqual(resumedRun.timeline.segments, [
+    { start: at(4), end: at(6), state: 'busy' }, { start: at(6), end: at(110), state: 'idle' }, { start: at(110), end: null, state: 'busy' },
+  ]);
+  assert.deepEqual(resumedRun.timeline.marks, []);
+
+  const resumedIdle = by['resumed-idle'];
+  assert.deepEqual(brief(resumedIdle), {
+    id: ids.resumedIdle, name: 'resumed-idle work', status: 'done', statusDetail: 'completed', bucket: 'done', since: at(85), reason: null,
+    startedAt: at(5), endedAt: at(85), busyMs: 6 * MINUTE, lastEventAt: at(85), model: 'claude-sonnet-5',
+  });
+  assert.deepEqual([resumedIdle.report.status, resumedIdle.report.title, resumedIdle.report.at], ['complete', 'Round two', at(84)]);
+  assert.deepEqual(resumedIdle.timeline.segments, [
+    { start: at(5), end: at(6), state: 'busy' }, { start: at(6), end: at(80), state: 'idle' }, { start: at(80), end: at(85), state: 'busy' },
+  ]);
+
+  assert.deepEqual(snapshot.counts, { working: 2, stuck: 2, waiting: 0, idle: 1, done: 3, failed: 2 });
+  assert.deepEqual(snapshot.omittedSubagents, { done: 0, failed: 0 });
+  assert.equal(snapshot.orchestrator.subagents.length, 7, 'the orchestrator still has a chip for each');
+  assert.equal(snapshot.orchestrator.subagents.find(sub => sub.id === ids.cancelled).status, 'cancelled');
+});
+
+test('a sub-agent whose orchestrator process ended while it ran is crashed, and its clock stops at its last event', () => {
+  const build = root => {
+    root.at(at(100));
+    const call = root.subagent({ name: 'lost', type: 'explore', mode: 'background', agentId: 'ag-lost' });
+    root.at(at(105));
+    root.sub(call, 'assistant.message', { content: 'Working' });
+    return { call };
+  };
+  const early = buildSnapshot(withSubagents(build, { alive: false, now: at(110) }).data);
+  const late = buildSnapshot(withSubagents(build, { alive: false, now: at(300) }).data);
+  assert.deepEqual(validateSnapshot(late), []);
+  const [unit] = subUnits(late);
+  assert.deepEqual(
+    { status: unit.status, detail: unit.statusDetail, bucket: unit.bucket, since: unit.since, endedAt: unit.endedAt, reason: unit.reason, alive: unit.alive, busyMs: unit.busyMs },
+    {
+      status: 'blocked', detail: 'crashed', bucket: 'failed', since: at(105), endedAt: at(105),
+      reason: 'The orchestrator\'s process ended while this sub-agent was running.', alive: false, busyMs: 5 * MINUTE,
+    },
+  );
+  assert.deepEqual(unit.activity, { label: 'Process ended unexpectedly', tool: null, lastEventAt: at(105) });
+  assert.deepEqual([unit.report.status, unit.report.title], ['blocked', 'Working']);
+  assert.deepEqual(unit.timeline.segments, [{ start: at(100), end: at(105), state: 'busy' }]);
+  assert.deepEqual(unit.timeline.marks, [{ at: at(105), kind: 'report', text: 'Working', status: 'blocked' }]);
+  assert.equal(subUnits(early)[0].busyMs, unit.busyMs);
+  assert.equal(late.counts.failed, early.counts.failed);
+  assert.equal(late.counts.failed, 1);
+});
+
+test('a snapshot lists every unfinished sub-agent and the latest finished ones, and counts the others as omitted', () => {
+  assert.equal(MAX_FINISHED_SUBAGENT_UNITS, 20);
+  const { data, ids } = withSubagents(root => {
+    const ids = { finished: [], running: [] };
+    root.at(at(10.5)); ids.running.push(root.subagent({ name: 'run-1', type: 'explore', mode: 'background', agentId: 'ag-r1' }));
+    root.at(at(11.5)); ids.running.push(root.subagent({ name: 'run-2', type: 'explore', mode: 'background', agentId: 'ag-r2' }));
+    for (let i = 0; i < 25; i += 1) {
+      root.at(at(1 + i));
+      ids.finished.push(root.subagent({ name: `done-${i}`, type: 'explore', mode: 'background', agentId: `ag-${i}` }));
+    }
+    for (let i = 0; i < 25; i += 1) {
+      root.at(at(40 + i));
+      root.subagentDone(ids.finished[i], { failed: i % 5 === 4, durationMs: MINUTE, agentId: `ag-${i}` });
+    }
+    root.at(at(119));
+    for (const id of ids.running) root.sub(id, 'assistant.message', { content: 'still working' });
+    return ids;
+  });
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  const subs = subUnits(snapshot);
+  assert.equal(subs.length, 22);
+  assert.deepEqual(subs.map(unit => unit.label), [
+    ...[5, 6, 7, 8, 9].map(i => `done-${i}`), 'run-1', 'done-10', 'run-2', ...Array.from({ length: 14 }, (_, k) => `done-${11 + k}`),
+  ]);
+  assert.deepEqual(snapshot.omittedSubagents, { done: 4, failed: 1 });
+  assert.deepEqual(snapshot.counts, { working: 2, stuck: 1, waiting: 0, idle: 1, done: 21, failed: 5 });
+  assert.equal(snapshot.units.length, 3 + 22);
+  assert.ok(snapshot.feed.some(item => item.unitId === ids.finished[0] && item.label === 'done-0' && item.text === 'completed explore: done-0'),
+    'an omitted unit keeps its feed items, under its own unit id and label');
+  assert.equal(snapshot.feed.some(item => item.unitId === ids.finished[4] && item.kind === 'subagent-done' && item.text === 'failed explore: done-4'), true);
+  assert.ok(subs.every(unit => snapshot.feed.some(item => item.unitId === unit.id)), 'every listed unit has items in the feed');
+  const feedIds = snapshot.feed.map(item => item.id);
+  assert.equal(new Set(feedIds).size, feedIds.length);
+});
+
+test('a finished sub-agent that left the 500 details still counts as omitted', () => {
+  const { data } = withSubagents(root => {
+    for (let i = 0; i < 505; i += 1) {
+      const call = root.subagent({ name: `s-${i}`, type: 'explore', mode: 'sync' });
+      root.wait(1000);
+      root.subagentDone(call, { durationMs: 1000 });
+      root.done(call);
+    }
+  });
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  assert.equal(snapshot.orchestrator.subagents.length, 500);
+  assert.equal(subUnits(snapshot).length, 20);
+  assert.deepEqual(snapshot.omittedSubagents, { done: 485, failed: 0 });
+  assert.equal(snapshot.counts.done, 1 + 20 + 485, 'the session unit, the listed ones and the omitted ones: every sub-agent is counted once');
+});
+
+test('labels come from the task names, made safe, unique against every label, and a fallback names the type and position', () => {
+  const { data } = withSubagents(root => {
+    const start = (name, extra = {}) => {
+      root.wait(MINUTE);
+      return root.subagent({ name, type: 'explore', mode: 'background', ...extra });
+    };
+    root.at(at(100));
+    for (const name of ['api', 'Fix the bug!', 'fix the bug', '***', 'API', 'x'.repeat(40), 'x'.repeat(40), 'ss']) start(name);
+    root.wait(MINUTE);
+    root.tool('task', { description: 'Do things!', agent_type: 'explore', mode: 'background' });
+    root.wait(MINUTE);
+    root.tool('task', { agent_type: 'review', mode: 'background' });
+  });
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  assert.equal(snapshot.orchestrator.label, 'SS');
+  assert.deepEqual(subUnits(snapshot).map(unit => unit.label), [
+    'api-2', 'Fix-the-bug', 'fix-the-bug-2', 'explore-4', 'API-3', 'x'.repeat(32), `${'x'.repeat(30)}-2`, 'ss-2', 'Do-things', 'sub-agent',
+  ]);
+  const labels = [snapshot.orchestrator.label, ...snapshot.units.map(unit => unit.label)].map(label => label.toLowerCase());
+  assert.equal(new Set(labels).size, labels.length);
+  assert.ok(subUnits(snapshot).every(unit => /^[A-Za-z0-9._-]{1,32}$/.test(unit.label)));
+});
+
+test('a sub-agent keeps its label when the set of listed units changes', () => {
+  const build = extra => root => {
+    for (let i = 0; i < 25; i += 1) {
+      root.at(at(1 + i));
+      const call = root.subagent({ name: 'same', type: 'explore', mode: 'background', agentId: `ag-${i}` });
+      root.at(at(40 + i));
+      root.subagentDone(call, { durationMs: MINUTE, agentId: `ag-${i}` });
+    }
+    if (extra) {
+      root.at(at(30));
+      const call = root.subagent({ name: 'same', type: 'explore', mode: 'background', agentId: 'ag-extra' });
+      root.at(at(70));
+      root.subagentDone(call, { durationMs: MINUTE, agentId: 'ag-extra' });
+    }
+  };
+  const before = subUnits(buildSnapshot(withSubagents(build(false)).data));
+  assert.deepEqual(before.map(unit => unit.label), Array.from({ length: 20 }, (_, k) => `same-${k + 6}`));
+  const after = subUnits(buildSnapshot(withSubagents(build(true)).data));
+  const labelOf = new Map(after.map(unit => [unit.id, unit.label]));
+  assert.equal(after.length, 20);
+  assert.ok(before.length > 0);
+  for (const unit of before) if (labelOf.has(unit.id)) assert.equal(labelOf.get(unit.id), unit.label);
+  assert.ok(labelOf.size > 0 && before.some(unit => !labelOf.has(unit.id)), 'the listed set did change');
+});
+
+const costRows = (parents, rows) => rows.map(([id, parent, nano]) => ({ id, session_id: 'cli-root', model: 'gpt-5.5', parent_tool_call_id: parents[parent] ?? null, total_nano_aiu: nano, duration_ms: 100, created_at: iso(30) }));
+
+test('a sub-agent unit costs what it and its own sub-agents cost, while the orchestrator\'s total and its chips stay as they were', () => {
+  const ids = {};
+  const { data } = withSubagents(root => {
+    root.at(at(10));
+    ids.lead = root.subagent({ name: 'lead', type: 'general-purpose', mode: 'background', agentId: 'ag-l' });
+    ids.kid = root.nested(ids.lead, { name: 'kid', type: 'explore', mode: 'background', agentId: 'ag-k' });
+    ids.grand = root.nested(ids.kid, { name: 'grand', type: 'explore', mode: 'background', agentId: 'ag-g' });
+    root.at(at(100));
+    ids.other = root.subagent({ name: 'other', type: 'explore', mode: 'background', agentId: 'ag-o' });
+    root.at(at(118));
+    root.sub(ids.other, 'assistant.message', { content: 'busy' });
+    root.sub(ids.lead, 'assistant.message', { content: 'busy' });
+    root.sub(ids.grand, 'assistant.message', { content: 'busy' });
+  });
+  data.ledger.apply(costRows(ids, [
+    [10, 'lead', 20e9], [11, 'kid', 10e9], [12, 'grand', 15e9], [13, 'other', 1e9], [14, null, 4e9],
+  ]));
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  const lead = snapshot.units.find(unit => unit.id === ids.lead);
+  assert.deepEqual(lead.cost, { credits: 45, calls: 3 });
+  assert.deepEqual(snapshot.units.find(unit => unit.id === ids.other).cost, { credits: 1, calls: 1 });
+  assert.deepEqual(lead.subagents.map(sub => [sub.id, sub.name, sub.credits]), [[ids.kid, 'kid', 25]], 'a child\'s chip rolls up its own sub-agents');
+  const chips = Object.fromEntries(snapshot.orchestrator.subagents.map(sub => [sub.id, sub.credits]));
+  assert.deepEqual([chips[ids.lead], chips[ids.other]], [20, 1], 'the orchestrator\'s chips count only each sub-agent\'s own calls');
+  assert.equal(snapshot.orchestrator.cost.credits, 10 + 20 + 10 + 15 + 1 + 4);
+  assert.equal(snapshot.cost.credits, 35 + 20 + 10 + 15 + 1 + 4, 'sub-agent costs are not added a second time');
+  assert.equal(snapshot.cost.maxUnitCredits, 45, 'the largest unit can be a sub-agent unit');
+});
+
+test('feed items about a one-off sub-agent belong to its unit, not to the orchestrator', () => {
+  const ids = {};
+  const { data } = withSubagents(root => {
+    root.at(at(10)); ids.lead = root.subagent({ name: 'lead', type: 'general-purpose', mode: 'background', agentId: 'ag-l' });
+    root.at(at(11)); ids.kid = root.nested(ids.lead, { name: 'kid', type: 'explore', mode: 'sync', agentId: 'ag-k' });
+    root.at(at(12)); root.subagentDone(ids.kid, { durationMs: MINUTE, agentId: 'ag-k' });
+    root.at(at(14)); root.subagentDone(ids.lead, { durationMs: 4 * MINUTE, agentId: 'ag-l' });
+    root.at(at(20)); root.toAgent('ag-l', 'once more');
+    root.at(at(21)); root.sub(ids.lead, 'assistant.turn_start');
+  });
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  assert.deepEqual(snapshot.orchestrator.recent.filter(item => item.kind.startsWith('subagent')), []);
+  assert.equal(snapshot.feed.some(item => item.unitId === snapshot.orchestrator.id && item.kind.startsWith('subagent')), false);
+  const lead = snapshot.units.find(unit => unit.id === ids.lead);
+  assert.deepEqual(lead.recent.map(item => [item.kind, item.text]), [
+    ['subagent-start', 'resumed general-purpose: lead'], ['subagent-done', 'completed general-purpose: lead'], ['subagent-done', 'completed explore: kid'],
+    ['subagent-start', 'started explore: kid (sync)'], ['subagent-start', 'started general-purpose: lead'],
+  ]);
+  assert.ok(lead.recent.every(item => item.unitId === ids.lead && item.label === 'lead'));
+  assert.deepEqual(snapshot.feed.filter(item => item.unitId === ids.lead), lead.recent);
+  const feedIds = snapshot.feed.map(item => item.id);
+  assert.equal(new Set(feedIds).size, feedIds.length);
+  assert.ok(lead.recent.every(item => item.id.startsWith(`${ids.lead}:${item.kind}:`)));
+});
+
+function quietSwarm(build, now) {
+  const { data, ids } = withSubagents(build, { now });
+  const ui = new EventLog(at(6));
+  ui.start(); ui.turnStart(); ui.at(at(30)); ui.turnEnd();
+  data.states.set('cli-ui', fold(ui, 'cli-ui'));
+  data.app.automations = [];
+  return { data, ids };
+}
+
+test('a run whose only activity is a silent resumed sub-agent stays live, and finishes once it is not', () => {
+  const build = resumed => root => {
+    root.at(at(60));
+    const call = root.subagent({ name: 'late', type: 'explore', mode: 'background', agentId: 'ag-late' });
+    root.at(at(61));
+    root.subagentDone(call, { durationMs: MINUTE, agentId: 'ag-late' });
+    if (resumed) {
+      root.at(at(62));
+      root.toAgent('ag-late', 'again');
+    }
+  };
+  const live = buildSnapshot(quietSwarm(build(true), at(261)).data);
+  assert.equal(subUnits(live)[0].statusDetail, 'stuck_subagent');
+  assert.equal(live.run.lifecycle, 'live');
+  assert.equal(live.run.finishedAt, null);
+  const finished = buildSnapshot(quietSwarm(build(false), at(261)).data);
+  assert.equal(subUnits(finished)[0].statusDetail, 'completed');
+  assert.equal(finished.run.lifecycle, 'finished');
+  assert.equal(finished.run.finishedAt, at(111));
+});
+
+test('completed and cancelled sub-agent units do not keep a swarm from stalling, and a busy one does', () => {
+  const finishedOnes = root => {
+    root.at(at(60));
+    const done = root.subagent({ name: 'one', type: 'explore', mode: 'background', agentId: 'ag-1' });
+    const cancelled = root.subagent({ name: 'two', type: 'explore', mode: 'background', agentId: 'ag-2' });
+    root.at(at(61));
+    root.subagentDone(done, { durationMs: MINUTE, agentId: 'ag-1' });
+    root.subagentDone(cancelled, { cancelled: true, durationMs: MINUTE, agentId: 'ag-2' });
+  };
+  const stalled = buildSnapshot(quietSwarm(finishedOnes, at(130)).data);
+  assert.deepEqual(subUnits(stalled).map(unit => unit.statusDetail), ['completed', 'cancelled']);
+  assert.equal(stalled.run.lifecycle, 'live');
+  assert.deepEqual(stalled.run.stalled, { since: at(111), reason: 'The orchestrator and every open unit are idle or ended, and no monitor is due.' });
+  const busyToo = buildSnapshot(quietSwarm(root => {
+    finishedOnes(root);
+    root.at(at(125));
+    root.subagent({ name: 'three', type: 'explore', mode: 'background', agentId: 'ag-3' });
+  }, at(130)).data);
+  assert.equal(subUnits(busyToo).at(-1).statusDetail, 'busy');
+  assert.equal(busyToo.run.stalled, null);
+});
+
+test('the run summary leaves sub-agent units out of its children, units and busy time, and counts every sub-agent once', () => {
+  const ids = {};
+  const { data } = withSubagents(root => {
+    root.at(at(10));
+    ids.lead = root.subagent({ name: 'lead', type: 'general-purpose', mode: 'background', agentId: 'ag-l' });
+    ids.kid = root.nested(ids.lead, { name: 'kid', type: 'explore', mode: 'background', agentId: 'ag-k' });
+    ids.grand = root.nested(ids.kid, { name: 'grand', type: 'explore', mode: 'background', agentId: 'ag-g' });
+    root.at(at(118));
+    root.sub(ids.grand, 'assistant.message', { content: 'busy' });
+  });
+  data.ledger.apply(costRows(ids, [[10, 'lead', 20e9], [11, 'kid', 10e9], [12, 'grand', 15e9]]));
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(subUnits(snapshot).map(unit => unit.id), [ids.lead], 'the unit exists, and the summary still leaves it out');
+  const summary = summarizeRun(snapshot, { computedAt: at(120) });
+  assert.deepEqual(validateRunSummary(summary), []);
+  const sessions = [snapshot.orchestrator, ...snapshot.units.filter(unit => unit.kind !== 'subagent')];
+  assert.equal(summary.busyMs, sessions.reduce((sum, session) => sum + session.busyMs, 0));
+  assert.deepEqual(summary.children, { total: 3, merged: 1, closed: 0, failed: 0, noOutcome: 2 });
+  assert.deepEqual(summary.units.map(unit => unit.id), ['ws-root', 'ws-api', 'ws-ui', 'ws-docs']);
+  assert.equal(summary.subagents, 1 + 3, 'the unit\'s session reviewer, the one-off sub-agent and its two nested ones');
+  assert.deepEqual(summary.subagentTypes.map(entry => [entry.type, entry.runs, entry.credits]).sort(), [['code-review', 1, 5], ['explore', 2, 25], ['general-purpose', 1, 20]]);
+});
+
+test('a child session\'s sub-agents stay chips, with no units of their own', () => {
+  const { data } = withSubagents(root => {
+    root.at(at(100));
+    root.subagent({ name: 'own', type: 'explore', mode: 'background', agentId: 'ag-own' });
+  });
+  data.states.set('cli-api', fold((() => {
+    const api = new EventLog(at(5));
+    api.start(); api.turnStart(); api.at(at(20));
+    api.subagent({ name: 'reviewer', type: 'code-review', mode: 'background', agentId: 'agent-r' });
+    return api;
+  })(), 'cli-api', ROOT_STATE));
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  assert.deepEqual(subUnits(snapshot).map(unit => unit.label), ['own']);
+  assert.deepEqual(snapshot.units.find(unit => unit.id === 'ws-api').subagents.map(sub => sub.name), ['reviewer']);
+  assert.deepEqual(snapshot.omittedSubagents, { done: 0, failed: 0 });
 });

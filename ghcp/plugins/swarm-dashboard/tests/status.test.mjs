@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_THRESHOLDS } from '../engine/config.mjs';
 import { STATUS_DETAILS } from '../engine/schema.mjs';
-import { busyWindowStart, displayOf, evaluateStatus, swarmStalled, toolLimitMs } from '../engine/model/status.mjs';
+import { busyWindowStart, displayOf, evaluateStatus, evaluateSubagentUnit, swarmStalled, toolLimitMs } from '../engine/model/status.mjs';
 import { MINUTE } from '../engine/time.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { fold } from './helpers/fold.mjs';
@@ -247,4 +247,83 @@ test('the swarm is stalled when the orchestrator and every open unit are idle an
 test('busyWindowStart walks back through busy spans', () => {
   const state = { turn: { startedAt: T0 + 100 * MINUTE }, busySpans: [[T0, T0 + 20 * MINUTE], [T0 + 50 * MINUTE, T0 + 60 * MINUTE]] };
   assert.equal(busyWindowStart(state, T0 + 105 * MINUTE, 30 * MINUTE), T0 + 5 * MINUTE);
+});
+
+test('completed and cancelled sub-agent units are ended like merged and archived units; a busy one keeps the swarm open', () => {
+  const stalled = { since: T0, reason: 'The orchestrator and every open unit are idle or ended, and no monitor is due.' };
+  assert.deepEqual(swarmStalled({ orchestratorDetail: 'idle', unitDetails: ['idle', 'completed', 'cancelled'], monitorDue: false, lastActivityAt: T0 }), stalled);
+  assert.deepEqual(swarmStalled({ orchestratorDetail: 'idle', unitDetails: ['stalled', 'failed', 'crashed', 'completed'], monitorDue: false, lastActivityAt: T0 }), stalled);
+  assert.equal(swarmStalled({ orchestratorDetail: 'idle', unitDetails: ['idle', 'completed', 'busy'], monitorDue: false, lastActivityAt: T0 }), null);
+  assert.equal(swarmStalled({ orchestratorDetail: 'idle', unitDetails: ['idle', 'stuck_subagent'], monitorDue: false, lastActivityAt: T0 }), null);
+  assert.equal(swarmStalled({ orchestratorDetail: 'idle', unitDetails: ['completed', 'cancelled'], monitorDue: false, lastActivityAt: T0 }), null);
+});
+
+// --- Sub-agent units ---
+
+const evaluateSub = (sub, now, extra = {}) => evaluateSubagentUnit(sub, { alive: true, now, thresholds: t, ...extra });
+const rootSub = (log, call) => fold(log, 'cli-1', { subagentUnits: true }).subagents.get(call);
+
+test('a running sub-agent unit is busy from the start of its run until it has been silent past its limit', () => {
+  const log = busyLog();
+  const call = log.subagent({ name: 'scout', type: 'explore', mode: 'background' });
+  log.wait(MINUTE); log.sub(call, 'assistant.message', { content: 'looking' });
+  const sub = rootSub(log, call);
+  assert.deepEqual(evaluateSub(sub, T0 + 11 * MINUTE), { detail: 'busy', since: T0, reason: null, endedAt: null });
+  assert.deepEqual(evaluateSub(sub, T0 + 26 * MINUTE), {
+    detail: 'stuck_subagent', since: T0 + MINUTE, reason: 'No events for 25 min; the limit is 10 min.', endedAt: null,
+  });
+  assert.equal(evaluateSub(sub, T0 + 11 * MINUTE + 1).detail, 'stuck_subagent', 'longer than the limit is stuck');
+});
+
+test('a general-purpose sub-agent on Opus at max effort gets the longer limit', () => {
+  const log = busyLog();
+  const call = log.subagent({ name: 'deep', type: 'general-purpose', mode: 'background', model: 'claude-opus-5', effort: 'max' });
+  const sub = rootSub(log, call);
+  assert.equal(evaluateSub(sub, T0 + 15 * MINUTE).detail, 'busy');
+  assert.equal(evaluateSub(sub, T0 + 16 * MINUTE).reason, 'No events for 16 min; the limit is 15 min.');
+});
+
+test('a sub-agent unit whose orchestrator process ended while it ran is crashed at its last event; a finished one is not', () => {
+  const log = busyLog();
+  const running = log.subagent({ name: 'a', type: 'explore', mode: 'background' });
+  const finished = log.subagent({ name: 'b', type: 'explore', mode: 'background' });
+  log.wait(2 * MINUTE); log.sub(running, 'assistant.message', { content: 'x' });
+  log.wait(MINUTE); log.subagentDone(finished, { durationMs: 3 * MINUTE });
+  assert.deepEqual(evaluateSub(rootSub(log, running), T0 + 90 * MINUTE, { alive: false }), {
+    detail: 'crashed', since: T0 + 2 * MINUTE, reason: 'The orchestrator\'s process ended while this sub-agent was running.', endedAt: T0 + 2 * MINUTE,
+  });
+  assert.equal(evaluateSub(rootSub(log, finished), T0 + 90 * MINUTE, { alive: false }).detail, 'completed');
+  assert.equal(evaluateSub(rootSub(log, running), T0 + 3 * MINUTE, { alive: null }).detail, 'busy', 'an unknown liveness is not a crash');
+});
+
+test('a finished sub-agent unit is failed, cancelled or completed, at the end of its last run', () => {
+  const log = busyLog();
+  const failed = log.subagent({ name: 'f', type: 'explore', mode: 'background' });
+  const bare = log.subagent({ name: 'g', type: 'explore', mode: 'background' });
+  const cancelled = log.subagent({ name: 'c', type: 'explore', mode: 'background', agentId: 'agent-c' });
+  log.wait(3 * MINUTE);
+  log.subagentDone(failed, { failed: true, error: 'Quota exceeded', durationMs: 3 * MINUTE });
+  log.subagentDone(bare, { failed: true, durationMs: 3 * MINUTE });
+  log.subagentDone(cancelled, { cancelled: true, durationMs: 3 * MINUTE });
+  const now = T0 + 60 * MINUTE;
+  assert.deepEqual(evaluateSub(rootSub(log, failed), now), { detail: 'failed', since: T0 + 3 * MINUTE, reason: 'Failed: Quota exceeded', endedAt: T0 + 3 * MINUTE });
+  assert.equal(evaluateSub(rootSub(log, bare), now).reason, 'Failed.');
+  assert.deepEqual(evaluateSub(rootSub(log, cancelled), now), { detail: 'cancelled', since: T0 + 3 * MINUTE, reason: 'Cancelled after 3 min.', endedAt: T0 + 3 * MINUTE });
+  log.wait(10 * MINUTE); log.toAgent('agent-c', 'again');
+  log.wait(2 * MINUTE); log.sub(cancelled, 'assistant.turn_end');
+  const resumed = evaluateSub(rootSub(log, cancelled), now);
+  assert.deepEqual([resumed.detail, resumed.since, resumed.endedAt, resumed.reason], ['cancelled', T0 + 15 * MINUTE, T0 + 15 * MINUTE, 'Cancelled after 3 min.']);
+});
+
+test('a resumed sub-agent unit is busy from its follow-up, stuck when silent, and completed once its turn ends', () => {
+  const log = busyLog();
+  const call = log.subagent({ name: 'r', type: 'explore', mode: 'background', agentId: 'agent-r' });
+  log.wait(MINUTE); log.subagentDone(call, { durationMs: MINUTE, agentId: 'agent-r' });
+  log.wait(30 * MINUTE); log.toAgent('agent-r', 'again');
+  const sub = rootSub(log, call);
+  assert.deepEqual(evaluateSub(sub, T0 + 35 * MINUTE), { detail: 'busy', since: T0 + 31 * MINUTE, reason: null, endedAt: null });
+  assert.equal(evaluateSub(sub, T0 + 50 * MINUTE).detail, 'stuck_subagent');
+  assert.equal(evaluateSub(sub, T0 + 50 * MINUTE).since, T0 + 31 * MINUTE);
+  log.wait(2 * MINUTE); log.sub(call, 'assistant.turn_end');
+  assert.deepEqual(evaluateSub(rootSub(log, call), T0 + 50 * MINUTE), { detail: 'completed', since: T0 + 33 * MINUTE, reason: null, endedAt: T0 + 33 * MINUTE });
 });

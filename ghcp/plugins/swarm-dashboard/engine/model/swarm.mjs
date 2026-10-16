@@ -1,4 +1,4 @@
-import { CREDIT_USD, NANO_AIU_PER_CREDIT, SCHEMA_VERSION } from '../schema.mjs';
+import { CREDIT_USD, MAX_FINISHED_SUBAGENT_UNITS, NANO_AIU_PER_CREDIT, SCHEMA_VERSION } from '../schema.mjs';
 import { clip, firstLine, oneLine } from '../text.mjs';
 import { MINUTE, maxTime, minTime } from '../time.mjs';
 import { UNIT_LABEL_RE, normaliseRegistry, parseQuestionTag, parseReportBody, parseStatusLine, purposeToStatus } from './contract.mjs';
@@ -6,7 +6,7 @@ import { descendants, resolveNodeId } from './forest.mjs';
 import { setRunStats } from './run-stats.mjs';
 import { mergeStates } from './session-state.mjs';
 import { deriveMonitor, deriveStage, hostOf, prView, resolvePr } from './stage.mjs';
-import { ACTIVE_DETAILS, displayOf, evaluateStatus, swarmStalled, toolLimitMs, toolView } from './status.mjs';
+import { ACTIVE_DETAILS, displayOf, evaluateStatus, evaluateSubagentUnit, subagentLimitMs, swarmStalled, toolLimitMs, toolView } from './status.mjs';
 
 const SEGMENT_GAP_MS = 2 * MINUTE;
 const TASK_OVERRIDE_MS = 5 * MINUTE;
@@ -132,14 +132,23 @@ function progressOf(db) {
   return { done: db.todos.filter(todo => todo.status === 'done').length, total: db.todos.length };
 }
 
-function subagentViews(all, cost, stuckIds) {
-  const running = status => status === 'running' || status === 'stuck';
-  return [...all.subagents.values()].map(sub => ({
+function subagentView(sub, nanoAiu, stuck) {
+  return {
     id: sub.id, name: sub.name, type: sub.type, model: sub.model, mode: sub.mode,
-    status: sub.status === 'running' && stuckIds.has(sub.id) ? 'stuck' : sub.status,
+    status: sub.status === 'running' && stuck ? 'stuck' : sub.status,
     startedAt: sub.startedAt ?? sub.launchedAt, endedAt: sub.endedAt, durationMs: sub.durationMs,
-    credits: credits(cost.byParentToolCall.get(sub.id)?.nanoAiu ?? 0), task: sub.task,
-  })).sort((a, b) => Number(running(b.status)) - Number(running(a.status)) || b.startedAt - a.startedAt);
+    credits: credits(nanoAiu), task: sub.task,
+  };
+}
+
+/** Running first, then latest first. */
+function sortSubagentViews(views) {
+  const running = status => status === 'running' || status === 'stuck';
+  return views.sort((a, b) => Number(running(b.status)) - Number(running(a.status)) || b.startedAt - a.startedAt);
+}
+
+function subagentViews(all, cost, stuckIds) {
+  return sortSubagentViews([...all.subagents.values()].map(sub => subagentView(sub, cost.byParentToolCall.get(sub.id)?.nanoAiu ?? 0, stuckIds.has(sub.id))));
 }
 
 /** Run-level sub-agent totals from every session's uncapped counters; credits join the ledger through the task id. */
@@ -387,6 +396,124 @@ function plannedEntries(plan) {
   });
 }
 
+const LABEL_MAX = 32;
+const safeLabel = text => String(text ?? '').replace(/[^A-Za-z0-9._-]/g, '-').replace(/^-+|-+$/g, '').slice(0, LABEL_MAX);
+
+/**
+ * Labels for the root's one-off sub-agents, given in start order over every one of them (listed or not), so a label does not change
+ * when the listed set does: the task's name made safe, else `<type>-<position>`; unique, ignoring case, against `taken` and each other.
+ */
+function assignSubagentLabels(subs, taken) {
+  const used = new Set([...taken].map(label => label.toLowerCase()));
+  const labels = new Map();
+  subs.forEach((sub, index) => {
+    const base = safeLabel(sub.unit.taskName ?? sub.name) || `${safeLabel(sub.type).slice(0, 28) || 'agent'}-${index + 1}`;
+    let label = base;
+    for (let n = 2; used.has(label.toLowerCase()); n += 1) label = `${base.slice(0, LABEL_MAX - `-${n}`.length)}-${n}`;
+    used.add(label.toLowerCase());
+    labels.set(sub.id, label);
+  });
+  return labels;
+}
+
+/** What each task call in the root's ledger rows cost, with the cost of everything it started added to it and to each task above it. */
+function rollupCost(byParentToolCall, nested) {
+  const totals = new Map();
+  for (const [taskId, spent] of byParentToolCall) {
+    let id = taskId;
+    for (let hops = 0; id && hops < 64; hops += 1) {
+      const entry = totals.get(id) ?? { nanoAiu: 0, calls: 0 };
+      entry.nanoAiu += spent.nanoAiu;
+      entry.calls += spent.calls;
+      totals.set(id, entry);
+      id = nested.get(id)?.parent ?? null;
+    }
+  }
+  return totals;
+}
+
+const SUBAGENT_DONE_ACTIVITY = { crashed: 'Process ended unexpectedly', completed: 'Done', failed: 'Failed', cancelled: 'Cancelled' };
+
+function subagentUnitView(input, rootContext, root, sub, evaluation, label, rollup) {
+  const { now, thresholds } = input;
+  const { unit } = sub;
+  const { status, bucket } = displayOf(evaluation.detail);
+  const running = evaluation.endedAt === null;
+  const startedAt = sub.startedAt ?? sub.launchedAt;
+  const clockEnd = evaluation.endedAt ?? now;
+  const spans = unit.runs.map(([start, end]) => [start, Math.max(start, end ?? clockEnd)]);
+  const nested = rootContext.all.descendants;
+  const openTool = running ? [...unit.openTools.values()].sort((a, b) => a.startedAt - b.startedAt)[0] ?? null : null;
+  const tool = openTool ? toolView(openTool, toolLimitMs(openTool, thresholds)) : null;
+  const activity = !running ? SUBAGENT_DONE_ACTIVITY[evaluation.detail]
+    : !openTool ? 'Thinking'
+      : openTool.name === 'task' ? `Waiting for its ${nested.get(openTool.id)?.sub.type ?? 'sub-agent'} (sync)` : `Running ${openTool.args.summary}`;
+  const report = unit.lastMessage
+    ? {
+      status: running ? 'progress' : evaluation.detail === 'completed' ? 'complete' : 'blocked', source: 'message', at: unit.lastMessage.at,
+      ...reportFields(unit.lastMessage.text), unit: null, commit: null,
+    }
+    : null;
+  const stuckIds = new Set(unit.children.filter(child => child.status === 'running' && now - child.lastEventAt > subagentLimitMs(child, thresholds)).map(child => child.id));
+  return {
+    id: sub.id, kind: 'subagent', label, name: sub.task || sub.name, cliSessionIds: [], branch: null, model: sub.model,
+    status, statusDetail: evaluation.detail, bucket, since: evaluation.since, reason: evaluation.reason,
+    startedAt, endedAt: evaluation.endedAt, lastEventAt: sub.lastEventAt,
+    busyMs: Math.max(0, Math.round(spans.reduce((sum, [start, end]) => sum + end - start, 0))), waitingOnUserMs: 0, alive: rootContext.alive,
+    cost: { credits: credits(rollup.get(sub.id)?.nanoAiu ?? 0), calls: rollup.get(sub.id)?.calls ?? 0 },
+    activity: { label: activity, tool, lastEventAt: sub.lastEventAt },
+    report, progress: null,
+    subagents: sortSubagentViews(unit.children.map(child => subagentView(child, rollup.get(child.id)?.nanoAiu ?? 0, stuckIds.has(child.id)))),
+    timeline: {
+      segments: buildSegments({ start: startedAt, end: evaluation.endedAt, now, busy: spans, waits: [], stuckFrom: evaluation.detail === 'stuck_subagent' ? evaluation.since : null }),
+      subagents: unit.children.map(child => ({ id: child.id, start: child.startedAt ?? child.launchedAt, end: child.endedAt ?? evaluation.endedAt, type: child.type })),
+      marks: report && !running ? [{ at: evaluation.endedAt, kind: 'report', text: report.title || 'Report', status: report.status }] : [],
+    },
+    parentId: root.id, depth: 1, stage: 'subagent', closedWithoutMerge: false, outcome: null, pr: null,
+    monitor: { state: 'none', lastCheckAt: null, nextCheckAt: null, everyMinutes: null, since: null }, dependsOn: null, todoId: null,
+    agent: { type: sub.type, mode: sub.mode, effort: sub.effort },
+  };
+}
+
+/**
+ * The root orchestrator's one-off sub-agents as units: every one that has not finished, plus the MAX_FINISHED_SUBAGENT_UNITS that
+ * finished last, oldest start first. The others are only counted (`omitted`). Their feed items go to `extraFeed` for every one of them.
+ */
+function buildSubagentUnits(input, rootContext, root, takenLabels, extraFeed) {
+  const all = rootContext.all;
+  const subs = [...all.subagents.values()].filter(sub => sub.unit).sort((a, b) => a.launchedAt - b.launchedAt);
+  const labels = assignSubagentLabels(subs, takenLabels);
+  const rollup = rollupCost(rootContext.cost.byParentToolCall, all.descendants);
+  const startOf = sub => sub.startedAt ?? sub.launchedAt;
+  const entries = subs.map(sub => {
+    const evaluation = evaluateSubagentUnit(sub, { alive: rootContext.alive, now: input.now, thresholds: input.thresholds });
+    for (const item of sub.unit.feed) {
+      extraFeed.push({ id: `${sub.id}:${item.kind}:${item.source}`, at: item.at, unitId: sub.id, label: labels.get(sub.id), kind: item.kind, text: item.text });
+    }
+    return { sub, evaluation, bucket: displayOf(evaluation.detail).bucket };
+  });
+  const isFinished = entry => entry.bucket === 'done' || entry.bucket === 'failed';
+  const latest = entries.filter(isFinished)
+    .sort((a, b) => b.evaluation.endedAt - a.evaluation.endedAt || startOf(b.sub) - startOf(a.sub) || (a.sub.id < b.sub.id ? 1 : -1))
+    .slice(0, MAX_FINISHED_SUBAGENT_UNITS);
+  const kept = new Set(latest.map(entry => entry.sub.id));
+  const listed = entries.filter(entry => !isFinished(entry) || kept.has(entry.sub.id))
+    .sort((a, b) => startOf(a.sub) - startOf(b.sub) || (a.sub.id < b.sub.id ? -1 : 1));
+  // Sub-agents that left the details (so no unit) are counted from the outcome totals; the rest from the units that are not listed.
+  const withStatus = status => subs.filter(sub => sub.status === status).length;
+  const omitted = {
+    done: Math.max(0, all.subagentOutcomes.completed - withStatus('completed')),
+    failed: Math.max(0, all.subagentOutcomes.failed + all.subagentOutcomes.cancelled - withStatus('failed') - withStatus('cancelled')),
+  };
+  for (const entry of entries) {
+    if (isFinished(entry) && !kept.has(entry.sub.id)) omitted[entry.bucket] += 1;
+  }
+  return {
+    units: listed.map(entry => subagentUnitView(input, rootContext, root, entry.sub, entry.evaluation, labels.get(entry.sub.id), rollup)),
+    omitted,
+  };
+}
+
 function buildNeeds(contexts, rootId, labels, flags) {
   const labelIndex = new Map([...labels].filter(([id]) => id !== rootId).map(([id, label]) => [label.toLowerCase(), id]));
   const needs = [];
@@ -480,20 +607,24 @@ export function buildSnapshot(input) {
   });
   const orchestrator = sessionView(input, rootContext, labels.get(root.id), evaluation, null, null, []);
   const needs = buildNeeds(contexts, root.id, labels, flags);
-  const { summary: cost, lastAt: lastCostAt } = costSummary(input.ledger, [root, ...nodes].flatMap(node => node.cliSessionIds), units);
+  const subagents = buildSubagentUnits(input, rootContext, root, labels.values(), extraFeed);
+  const everyUnit = [...units, ...subagents.units];
+  const { summary: cost, lastAt: lastCostAt } = costSummary(input.ledger, [root, ...nodes].flatMap(node => node.cliSessionIds), everyUnit);
   const counts = { working: 0, stuck: 0, waiting: 0, idle: 0, done: 0, failed: 0 };
-  for (const unit of units) counts[unit.bucket] += 1;
+  for (const unit of everyUnit) counts[unit.bucket] += 1;
+  counts.done += subagents.omitted.done;
+  counts.failed += subagents.omitted.failed;
 
   const lastActivityAt = maxTime(...[...contexts.values()].map(c => c.all.lastEventAt), lastCostAt) ?? root.createdAt ?? now;
-  const anyActive = [orchestrator, ...units].some(session => ACTIVE_DETAILS.has(session.statusDetail));
+  const anyActive = [orchestrator, ...everyUnit].some(session => ACTIVE_DETAILS.has(session.statusDetail));
   const { lifecycle, finishedAt } = runLifecycle({ lastActivityAt, anyActive, now, thresholds });
   const monitorDue = units.some(unit => unit.monitor.state === 'alive') || app.automations.some(item => rootContext.ids.has(item.sessionId)
     && item.pausedAt === null && item.nextRunAt !== null && item.nextRunAt > now - thresholds.monitorGraceMs);
   const stalled = lifecycle === 'live'
-    ? swarmStalled({ orchestratorDetail: orchestrator.statusDetail, unitDetails: units.map(unit => unit.statusDetail), monitorDue, lastActivityAt })
+    ? swarmStalled({ orchestratorDetail: orchestrator.statusDetail, unitDetails: everyUnit.map(unit => unit.statusDetail), monitorDue, lastActivityAt })
     : null;
   const { feed, recent } = buildFeed(contexts, labels, extraFeed, flags);
-  for (const view of [orchestrator, ...units]) view.recent = recent.get(view.id) ?? [];
+  for (const view of [orchestrator, ...everyUnit]) view.recent = recent.get(view.id) ?? [];
 
   const snapshot = {
     schemaVersion: SCHEMA_VERSION,
@@ -506,12 +637,12 @@ export function buildSnapshot(input) {
       contract: { registry: registry.present && registry.rows.size > 0, statusLines: flags.statusLines, questionTags: flags.questionTags },
     },
     orchestrator,
-    units,
+    units: everyUnit,
     planned: plannedEntries(plan),
     needs,
     feed,
     counts,
-    omittedSubagents: { done: 0, failed: 0 },
+    omittedSubagents: subagents.omitted,
     cost,
     diagnostics: input.diagnostics ?? [],
   };

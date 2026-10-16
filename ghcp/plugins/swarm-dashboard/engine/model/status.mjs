@@ -41,6 +41,8 @@ const QUICK_TOOLS = new Set([
 ]);
 const POLLING_TOOLS = new Set(['read_bash', 'read_agent', 'list_agents', 'list_bash', 'get_session', 'get_sessions_status', 'list_sessions_and_chats', 'get_session_automation']);
 const IDLE_DETAILS = new Set(['idle', 'stopped', 'crashed', 'failed', 'stalled', 'blocked', 'blocked_on_orchestrator']);
+/** Units that are over: they neither keep a swarm busy nor count as idle work. */
+const ENDED_DETAILS = new Set(['archived', 'merged', 'completed', 'cancelled']);
 
 /** The design's tool rule: bash initial_wait + 5 min (10 min without one); read_bash delay + 2 min; read_agent timeout + 2 min; quick tools 2 min. */
 export function toolLimitMs(tool, t) {
@@ -190,7 +192,37 @@ export function evaluateStatus(input) {
 
 export function swarmStalled({ orchestratorDetail, unitDetails, monitorDue, lastActivityAt }) {
   if (!IDLE_DETAILS.has(orchestratorDetail) || monitorDue) return null;
-  const open = unitDetails.filter(detail => detail !== 'archived' && detail !== 'merged');
+  const open = unitDetails.filter(detail => !ENDED_DETAILS.has(detail));
   if (!open.length || !open.every(detail => IDLE_DETAILS.has(detail))) return null;
   return { since: lastActivityAt, reason: 'The orchestrator and every open unit are idle or ended, and no monitor is due.' };
+}
+
+/**
+ * Status of one of the root orchestrator's one-off sub-agents, from its unit (see session-state.mjs). It is running while its last
+ * run is open: crashed when the orchestrator's process is gone, stuck after a silence longer than its limit, else busy. Once its
+ * last run has closed it is failed, cancelled or completed, and `endedAt` is the end of that run.
+ * @returns {{ detail: string, since: number, reason: string|null, endedAt: number|null }}
+ */
+export function evaluateSubagentUnit(sub, { alive, now, thresholds }) {
+  const { unit } = sub;
+  const last = unit.runs[unit.runs.length - 1];
+  if (last[1] === null) {
+    if (alive === false) {
+      return { detail: 'crashed', since: sub.lastEventAt, reason: 'The orchestrator\'s process ended while this sub-agent was running.', endedAt: sub.lastEventAt };
+    }
+    const limit = subagentLimitMs(sub, thresholds);
+    if (now - sub.lastEventAt > limit) {
+      return {
+        detail: 'stuck_subagent', since: Math.min(sub.lastEventAt, now),
+        reason: `No events for ${formatDuration(now - sub.lastEventAt)}; the limit is ${formatDuration(limit)}.`, endedAt: null,
+      };
+    }
+    return { detail: 'busy', since: Math.min(last[0], now), reason: null, endedAt: null };
+  }
+  const ended = { since: last[1], endedAt: last[1] };
+  if (sub.status === 'failed') return { detail: 'failed', reason: unit.error ? `Failed: ${unit.error}` : 'Failed.', ...ended };
+  if (sub.status === 'cancelled') {
+    return { detail: 'cancelled', reason: `Cancelled after ${formatDuration((unit.firstFinishAt ?? last[1]) - sub.launchedAt)}.`, ...ended };
+  }
+  return { detail: 'completed', reason: null, ...ended };
 }
