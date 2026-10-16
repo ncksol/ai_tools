@@ -35,6 +35,15 @@ export const staleShown = (swarm, swarms) => Boolean(swarm)
   && swarms.some(item => item.lifecycle === 'live');
 
 /**
+ * The swarm a page that shows the server's default (no swarm asked for, not opened for a session) keeps as shown when it
+ * reconnects or reloads: the one on screen, unless it would give way anyway (staleShown).
+ */
+export function keptDefault({ swarm, session, onScreen, swarms }) {
+  if (swarm || session || !onScreen) return null;
+  return staleShown(onScreen, swarms) ? null : onScreen;
+}
+
+/**
  * What a self-reload carries in this tab's storage. An addressed swarm travels in the address. A picked or remembered
  * swarm travels as a pick. Otherwise, on a page not opened for a session, the swarm on screen travels as shown, unless it
  * would give way anyway, so the reloaded page opens on it even when the server's default has moved to another swarm.
@@ -42,8 +51,8 @@ export const staleShown = (swarm, swarms) => Boolean(swarm)
 export function reloadCarry({ swarm, fromUrl, shown, session, onScreen, swarms }) {
   if (swarm && fromUrl) return { pick: null, shown: null };
   if (swarm && !shown) return { pick: swarm, shown: null };
-  const candidate = swarm ?? (session ? null : onScreen);
-  return { pick: null, shown: candidate && !staleShown(candidate, swarms) ? candidate : null };
+  if (swarm) return { pick: null, shown: staleShown(swarm, swarms) ? null : swarm };
+  return { pick: null, shown: keptDefault({ swarm, session, onScreen, swarms }) };
 }
 /**
  * What to do once the server's UI fingerprint is known: 'stay', 'wait' (hidden: decide again when visible) or 'reload'.

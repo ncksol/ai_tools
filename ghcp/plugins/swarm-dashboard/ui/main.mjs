@@ -1,4 +1,4 @@
-import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, historyReloadWanted, isNarrow, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, staleChoice, staleShown, startSwarm, startsShown } from './app.mjs';
+import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, historyReloadWanted, isNarrow, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, staleChoice, staleShown, startSwarm, startsShown } from './app.mjs';
 import { tickText } from './format.mjs';
 import { morph } from './morph.mjs';
 import { nextCardChange, runEnd, unitEnd } from './model.mjs';
@@ -66,7 +66,8 @@ if (restored) history.replaceState(null, '', `${location.pathname}${baseSearch(p
 
 // A swarm named in the address always applies; a picked or remembered one only while it is live.
 let swarmFromUrl = Boolean(urlSwarm);
-// A swarm shown by default before a self-reload is temporary: never remembered, and it gives way as a default page does on the server.
+// A swarm the page showed by default, kept through a self-reload or a reconnect, is temporary: never remembered, and it
+// gives way as a default page does on the server.
 let swarmIsShown = startsShown({ urlSwarm, restoredPick, restoredShown, session: params.get('session') });
 let offset = 0;
 let source = null;
@@ -99,11 +100,19 @@ function save() {
 function connect() {
   clearTimeout(reconnectTimer);
   source?.close();
+  // The server pins a page that asked for no swarm only for one connection, so a page showing the default asks for the
+  // swarm on screen when it connects again, as a temporary shown swarm, instead of landing on whatever is the default now.
+  const kept = keptDefault({ swarm: view.swarm, session: view.session, onScreen: view.snapshot?.run.id ?? null, swarms: view.swarms });
+  if (kept) {
+    view.swarm = kept;
+    swarmIsShown = true;
+  }
   const query = new URLSearchParams();
   if (view.swarm) query.set('swarm', view.swarm);
   else if (view.session) query.set('session', view.session);
   const search = query.toString();
-  source = new EventSource(`/api/events${search ? `?${search}` : ''}`);
+  const own = new EventSource(`/api/events${search ? `?${search}` : ''}`);
+  source = own;
   source.addEventListener('open', () => {
     justConnected = true;
     view.connection = 'open';
@@ -113,11 +122,17 @@ function connect() {
     scheduleRender();
   });
   source.addEventListener('error', () => {
+    // A late error from a connection that has since been replaced must never close the new one.
+    if (source !== own) return;
     view.connection = 'retrying';
     // The server may be down or replaced; wait for the next hello before deciding to reload.
     servedUi = null;
     scheduleRender();
-    if (source.readyState === EventSource.CLOSED) reconnectTimer = setTimeout(connect, 2000);
+    // EventSource's own retry would reuse this connection's address, so reconnect through connect() instead, which asks
+    // for the page's current state, after the same 2 s as the server's retry.
+    own.close();
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(connect, 2000);
   });
   source.addEventListener('hello', event => {
     const data = JSON.parse(event.data);

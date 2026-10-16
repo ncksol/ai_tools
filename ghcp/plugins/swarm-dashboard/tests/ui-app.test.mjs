@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, historyReloadWanted, isNarrow, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, staleChoice, staleShown, startSwarm, startsShown } from '../ui/app.mjs';
+import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, historyReloadWanted, isNarrow, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, staleChoice, staleShown, startSwarm, startsShown } from '../ui/app.mjs';
 import { NOW, deepFreeze, exampleSnapshot, fixture } from './helpers/ui.mjs';
 
 const view = (overrides = {}) => ({
@@ -282,6 +282,19 @@ test('a self-reload carries a picked swarm as a pick and the swarm on screen of 
   assert.deepEqual(reloadCarry({ ...base, session: 's-1' }), nothing, 'opened for a session');
   assert.deepEqual(reloadCarry({ ...base, swarm: 'ws-0000-root', shown: true }), { pick: null, shown: 'ws-0000-root' }, 'restored shown');
   assert.deepEqual(reloadCarry({ ...base, onScreen: null }), nothing, 'no snapshot');
+});
+
+test('a default page keeps the swarm on screen when it connects again, unless that swarm would give way anyway', () => {
+  const swarms = fixture('example-swarms.json');
+  const none = swarms.map(swarm => ({ ...swarm, lifecycle: 'finished' }));
+  const base = { swarm: null, session: null, onScreen: 'ws-0000-root', swarms };
+  assert.equal(keptDefault(base), 'ws-0000-root', 'default page, live');
+  assert.equal(keptDefault({ ...base, swarms: none }), 'ws-0000-root', 'default page, not live and nothing live');
+  assert.equal(keptDefault({ ...base, onScreen: 'ws-1000-root' }), null, 'default page, not live while another is');
+  assert.equal(keptDefault({ ...base, session: 's-1' }), null, 'opened for a session');
+  assert.equal(keptDefault({ ...base, swarm: 'ws-0000-root' }), null, 'a swarm asked for (picked, addressed or shown)');
+  assert.equal(keptDefault({ ...base, swarm: 'ws-1000-root' }), null, 'a different swarm asked for');
+  assert.equal(keptDefault({ ...base, onScreen: null }), null, 'no snapshot');
 });
 
 test('after a self-reload the address goes back to the host, the session and an addressed swarm', () => {

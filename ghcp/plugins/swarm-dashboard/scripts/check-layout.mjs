@@ -383,6 +383,101 @@ function movedDefault(demo, swarmId) {
   };
 }
 
+const stressDemo = () => createDemoEngine({ scenario: 'stress', simulate: false });
+
+/**
+ * The servers of one phase. The first listens on a free port, and restart() closes a server and listens again on that
+ * port, as an update does, so the page reconnects by itself; a restart that cannot listen is an issue. Each server is
+ * also listed in servers, so main() closes it if the phase throws, and close() closes the phase's own.
+ */
+function phaseServers(servers, issues) {
+  const started = [];
+  let port = 0;
+  const serve = async (uiFingerprint, createEngine) => {
+    const server = createDashboardServer({ createEngine, port, version: 'layout-check', uiFingerprint, hub: { engineIdleMs: 600000 } });
+    started.push(server);
+    servers.push(server);
+    await server.listen();
+    port = server.port;
+    return server;
+  };
+  return {
+    serve,
+    async restart(server, uiFingerprint, createEngine) {
+      await server.close();
+      try {
+        return await serve(uiFingerprint, createEngine);
+      } catch (error) {
+        issues.push(`the restarted server could not listen: ${error.message}`);
+        return null;
+      }
+    },
+    async close() {
+      for (const server of started) {
+        await server.close();
+        servers.splice(servers.indexOf(server), 1);
+      }
+    },
+  };
+}
+
+/**
+ * Read a JSON route on its own connection: after a restart on the same port, a kept-alive socket to the closed server
+ * could be reused before its end is noticed, and the read would fail with "other side closed".
+ */
+async function readApi(server, route) {
+  const response = await fetch(new URL(route, server.url), { headers: { connection: 'close' }, signal: AbortSignal.timeout(30000) });
+  if (!response.ok) throw new Error(`${route} answered ${response.status}`);
+  return response.json();
+}
+
+/**
+ * Open the dashboard with no swarm asked for, wait for its live connection, then open the Board and a detail panel.
+ * Returns the detail's name and the header's swarm name, or null (with an issue) when the page did not connect.
+ */
+async function openBoardDetail(page, server, issues) {
+  const url = `${server.url}?host=browser`;
+  await page.goto(url, 1280);
+  await page.waitFor(`location.href === ${JSON.stringify(url)} && document.documentElement.dataset.ready === '1'`);
+  await page.evaluate("sessionStorage.removeItem('swarm-dashboard:reloaded-for')");
+  if (!await waitForClient(server, 5000)) {
+    issues.push('the page did not open its live connection within 5 s');
+    return null;
+  }
+  await page.evaluate(`document.querySelector('[data-tab="board"]').click()`);
+  await page.waitFor(`document.querySelector('.board .mc[data-open]') !== null`, 5000);
+  await page.evaluate(`document.querySelector('.board .mc[data-open]').click()`);
+  await page.waitFor(`document.querySelector('.detail .b-name') !== null`, 5000);
+  return {
+    detail: await page.evaluate(`document.querySelector('.detail .b-name').textContent`),
+    swarm: await page.evaluate(`document.querySelector('.d-name')?.textContent ?? null`),
+  };
+}
+
+/** The swarm the server shows a page that asks for none, and another live swarm to move its default to. */
+async function defaultAndOther(server) {
+  const shownId = (await readApi(server, 'api/snapshot')).snapshot?.run.id ?? null;
+  const otherId = (await readApi(server, 'api/swarms')).find(swarm => swarm.lifecycle === 'live' && swarm.id !== shownId)?.id ?? null;
+  return { shownId, otherId };
+}
+
+/** What the page shows after a restart: the Board tab, the open detail, the header's swarm, the address and the window mark. */
+const SHOWN_STATE = `({
+  mark: window.swarmMark ?? null,
+  own: document.querySelector('meta[name="swarm-ui"]')?.content,
+  board: document.querySelector('[data-tab="board"]')?.getAttribute('aria-selected') === 'true',
+  detail: document.querySelector('.detail .b-name')?.textContent ?? null,
+  swarm: document.querySelector('.d-name')?.textContent ?? null,
+  search: location.search,
+  attempted: sessionStorage.getItem('swarm-dashboard:reloaded-for'),
+})`;
+
+/** Click a tab, which saves the page's state, and return the swarm it remembers for later visits. */
+async function rememberedSwarm(page) {
+  await page.evaluate(`document.querySelector('[data-tab="board"]').click()`);
+  return page.evaluate("JSON.parse(localStorage.getItem('swarm-dashboard:ui') ?? '{}').swarm ?? null");
+}
+
 /**
  * Open the Board with a detail panel on the stress demo, which has two live swarms, then restart the server with new
  * dashboard files, twice. The first time the server's default moves to the other live swarm, and the page must reload
@@ -391,63 +486,25 @@ function movedDefault(demo, swarmId) {
  */
 async function watchReload(page, servers) {
   const issues = [];
-  const started = [];
-  const stress = () => createDemoEngine({ scenario: 'stress', simulate: false });
-  const serve = async (port, uiFingerprint, createEngine) => {
-    const server = createDashboardServer({ createEngine, port, version: 'layout-check', uiFingerprint, hub: { engineIdleMs: 600000 } });
-    started.push(server);
-    servers.push(server);
-    await server.listen();
-    return server;
-  };
-  const read = async (server, route) => {
-    const response = await fetch(new URL(route, server.url), { signal: AbortSignal.timeout(30000) });
-    if (!response.ok) throw new Error(`${route} answered ${response.status}`);
-    return response.json();
-  };
-  let port = null;
-  // Restart on the same port, as an update does, so the page reconnects by itself.
-  const restart = async (server, uiFingerprint, createEngine) => {
-    await server.close();
-    try {
-      return await serve(port, uiFingerprint, createEngine);
-    } catch (error) {
-      issues.push(`the restarted server could not listen: ${error.message}`);
-      return null;
-    }
-  };
+  const phase = phaseServers(servers, issues);
   try {
-    const first = await serve(0, 'layout-check-a', stress);
-    port = first.port;
-    const url = `${first.url}?host=browser`;
-    await page.goto(url, 1280);
-    await page.waitFor(`location.href === ${JSON.stringify(url)} && document.documentElement.dataset.ready === '1'`);
-    await page.evaluate("sessionStorage.removeItem('swarm-dashboard:reloaded-for')");
-    if (!await waitForClient(first, 5000)) {
-      issues.push('the page did not open its live connection within 5 s');
-      return { issues };
-    }
-    await page.evaluate(`document.querySelector('[data-tab="board"]').click()`);
-    await page.waitFor(`document.querySelector('.board .mc[data-open]') !== null`, 5000);
-    await page.evaluate(`document.querySelector('.board .mc[data-open]').click()`);
-    await page.waitFor(`document.querySelector('.detail .b-name') !== null`, 5000);
-    const shown = await page.evaluate(`document.querySelector('.detail .b-name').textContent`);
-    const swarmName = await page.evaluate(`document.querySelector('.d-name')?.textContent ?? null`);
+    const first = await phase.serve('layout-check-a', stressDemo);
+    const before = await openBoardDetail(page, first, issues);
+    if (!before) return { issues };
 
     // The swarm the page shows by default, and the other live swarm the server's default moves to.
-    const shownId = (await read(first, 'api/snapshot')).snapshot?.run.id ?? null;
-    const otherId = (await read(first, 'api/swarms')).find(swarm => swarm.lifecycle === 'live' && swarm.id !== shownId)?.id ?? null;
+    const { otherId } = await defaultAndOther(first);
     if (!otherId) {
       issues.push('the stress demo has no second live swarm to move the default to');
       return { issues };
     }
-    const moved = () => movedDefault(stress(), otherId);
+    const moved = () => movedDefault(stressDemo(), otherId);
     await page.evaluate("window.swarmMark = 'a'");
 
     // New dashboard files, and the server's default is now the other swarm: the page reloads once, keeping what was on screen.
-    const second = await restart(first, 'layout-check-b', moved);
+    const second = await phase.restart(first, 'layout-check-b', moved);
     if (!second) return { issues };
-    const now = (await read(second, 'api/snapshot')).snapshot?.run.id ?? null;
+    const now = (await readApi(second, 'api/snapshot')).snapshot?.run.id ?? null;
     if (now !== otherId) issues.push(`the restarted server's default is ${now}, not the other live swarm ${otherId}`);
     try {
       await page.waitFor("window.swarmMark === undefined && document.documentElement.dataset.ready === '1'", 15000);
@@ -455,23 +512,15 @@ async function watchReload(page, servers) {
       issues.push('the page did not reload for new dashboard files within 15 s');
       return { issues };
     }
-    const after = await page.evaluate(`({
-      own: document.querySelector('meta[name="swarm-ui"]')?.content,
-      board: document.querySelector('[data-tab="board"]')?.getAttribute('aria-selected') === 'true',
-      detail: document.querySelector('.detail .b-name')?.textContent ?? null,
-      swarm: document.querySelector('.d-name')?.textContent ?? null,
-      search: location.search,
-      attempted: sessionStorage.getItem('swarm-dashboard:reloaded-for'),
-    })`);
+    const after = await page.evaluate(SHOWN_STATE);
     if (after.own !== 'layout-check-b') issues.push(`the reloaded page has the dashboard files ${after.own}, not layout-check-b`);
     if (!after.board) issues.push('the reload lost the Board tab');
-    if (after.detail !== shown) issues.push('the reload closed the detail panel');
-    if (after.swarm !== swarmName) issues.push(`the reload lost the swarm it showed by default: it shows ${after.swarm}, not ${swarmName}`);
+    if (after.detail !== before.detail) issues.push('the reload closed the detail panel');
+    if (after.swarm !== before.swarm) issues.push(`the reload lost the swarm it showed by default: it shows ${after.swarm}, not ${before.swarm}`);
     if (after.search !== '?host=browser') issues.push(`the reloaded page kept its state in the address: ${after.search}`);
     if (after.attempted !== 'layout-check-b') issues.push(`the page remembered the attempt as ${after.attempted}, not layout-check-b`);
-    // A tab click saves the page's state; a swarm shown by default must not become the remembered swarm.
-    await page.evaluate(`document.querySelector('[data-tab="board"]').click()`);
-    const remembered = await page.evaluate("JSON.parse(localStorage.getItem('swarm-dashboard:ui') ?? '{}').swarm ?? null");
+    // A swarm shown by default must not become the remembered swarm.
+    const remembered = await rememberedSwarm(page);
     if (remembered !== null) issues.push(`the page remembered the swarm it showed by default as ${remembered}`);
     if (!await waitForClient(second, 5000)) {
       issues.push('the reloaded page did not open its live connection within 5 s');
@@ -480,7 +529,7 @@ async function watchReload(page, servers) {
 
     // Files the page has already tried for: they still differ from its own, but it must not reload again.
     await page.evaluate("sessionStorage['swarm-dashboard:reloaded-for'] = 'layout-check-c'; window.swarmMark = 'b'");
-    const third = await restart(second, 'layout-check-c', moved);
+    const third = await phase.restart(second, 'layout-check-c', moved);
     if (!third) return { issues };
     if (!await waitForClient(third, 15000)) {
       issues.push('the page did not reconnect to the restarted server within 15 s');
@@ -490,10 +539,59 @@ async function watchReload(page, servers) {
     if (await page.evaluate('window.swarmMark').catch(() => undefined) !== 'b') issues.push('the page reloaded again for a fingerprint it had already tried');
     return { issues };
   } finally {
-    for (const server of started) {
-      await server.close();
-      servers.splice(servers.indexOf(server), 1);
+    await phase.close();
+  }
+}
+
+/**
+ * Open the Board with a detail panel on the stress demo, which has two live swarms, then restart the server with the same
+ * dashboard files and its default moved to the other live swarm. The page must not reload; it reconnects and must keep
+ * the Board tab, the open detail and the swarm it showed by default, without remembering that swarm for later visits.
+ */
+async function watchReconnect(page, servers) {
+  const issues = [];
+  const phase = phaseServers(servers, issues);
+  try {
+    const first = await phase.serve('layout-check-a', stressDemo);
+    const before = await openBoardDetail(page, first, issues);
+    if (!before) return { issues };
+    if (!before.detail) issues.push('the Board opened no detail panel');
+    if (!before.swarm) issues.push('the header shows no swarm name');
+    if (!before.detail || !before.swarm) return { issues };
+
+    const { shownId, otherId } = await defaultAndOther(first);
+    if (!shownId) issues.push('the server shows no swarm by default');
+    if (!otherId) issues.push('the stress demo has no second live swarm to move the default to');
+    if (!shownId || !otherId) return { issues };
+    await page.evaluate("window.swarmMark = 'r'");
+
+    // The same dashboard files, so the page must not reload, and the server's default is now the other swarm.
+    const second = await phase.restart(first, 'layout-check-a', () => movedDefault(stressDemo(), otherId));
+    if (!second) return { issues };
+    const now = (await readApi(second, 'api/snapshot')).snapshot?.run.id ?? null;
+    if (now !== otherId) issues.push(`the restarted server's default is ${now}, not the other live swarm ${otherId}`);
+    if (!await waitForClient(second, 15000)) {
+      issues.push('the page did not reconnect to the restarted server within 15 s');
+      return { issues };
     }
+    try {
+      await page.waitFor(`!(document.querySelector('.d-top-r')?.textContent ?? '').includes('Disconnected')`, 5000);
+    } catch {
+      issues.push('the top bar still said Disconnected 5 s after the page reconnected');
+    }
+    // Let the new connection's snapshot be applied and rendered.
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    const after = await page.evaluate(SHOWN_STATE);
+    if (after.mark !== 'r') issues.push('the page reloaded, though the dashboard files did not change');
+    if (!after.board) issues.push('the reconnect lost the Board tab');
+    if (after.detail !== before.detail) issues.push('the reconnect closed the detail panel');
+    if (after.swarm !== before.swarm) issues.push(`the reconnect lost the swarm it showed by default: it shows ${after.swarm}, not ${before.swarm}`);
+    if (after.search !== '?host=browser') issues.push(`the reconnected page changed its address: ${after.search}`);
+    const remembered = await rememberedSwarm(page);
+    if (remembered !== null) issues.push(`the page remembered the swarm it showed by default as ${remembered}`);
+    return { issues };
+  } finally {
+    await phase.close();
   }
 }
 
@@ -646,7 +744,13 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
       if (!reloadIssues.length) stdout.write('Self-reload (stress, two live swarms): the page reloaded once for new dashboard files, kept the Board tab, the open detail and the swarm it showed by default when the server\'s default moved to the other swarm, and did not reload again for files it had already tried.\n');
       for (const issue of reloadIssues) stderr.write(`reload: ${issue}\n`);
     }
-    return failures.length || updateIssues.length || historyIssues.length || reloadIssues.length ? 1 : 0;
+    let reconnectIssues = [];
+    if (!options.live) {
+      reconnectIssues = (await watchReconnect(page, servers)).issues;
+      if (!reconnectIssues.length) stdout.write('Reconnect (stress, two live swarms): the page reconnected to a restarted server with the same dashboard files and kept the Board tab, the open detail and the swarm it showed by default when the server\'s default moved to the other swarm.\n');
+      for (const issue of reconnectIssues) stderr.write(`reconnect: ${issue}\n`);
+    }
+    return failures.length || updateIssues.length || historyIssues.length || reloadIssues.length || reconnectIssues.length ? 1 : 0;
   } finally {
     process.off('SIGINT', interrupt);
     process.off('SIGTERM', interrupt);

@@ -116,3 +116,35 @@ test('the swarms handler reloads History through historyReloadWanted, so the fir
   assert.match(body, /historyReloadWanted\(\{ asked: historyAsked, previousKey: lifecycle, key \}\)/);
   assert.ok(body.includes('reloadHistory()'));
 });
+
+test('a page showing the default asks for the swarm on screen whenever it connects, as a temporary shown swarm', () => {
+  const main = readFileSync(file('main.mjs'), 'utf8');
+  const start = main.indexOf('function connect()');
+  const body = main.slice(start, main.indexOf('\n}\n', start));
+  const at = needle => {
+    assert.ok(body.includes(needle), needle);
+    return body.indexOf(needle);
+  };
+  assert.ok(at('keptDefault(') < at('new URLSearchParams()'), 'the swarm on screen is kept before the query is built');
+  assert.ok(at('swarmIsShown = true') < at('new URLSearchParams()'), 'the kept swarm is temporary');
+  assert.ok(at('swarmIsShown = true') < at('new EventSource('));
+  const pageshow = main.slice(main.indexOf("addEventListener('pageshow'"));
+  assert.match(pageshow.slice(0, pageshow.indexOf('});')), /connect\(\)/);
+});
+
+test('every error reconnects through connect(), and only for the EventSource that is still current', () => {
+  const main = readFileSync(file('main.mjs'), 'utf8');
+  const handler = main.slice(main.indexOf("addEventListener('error'"));
+  const error = handler.slice(0, handler.indexOf('});'));
+  const at = needle => {
+    assert.ok(error.includes(needle), needle);
+    return error.indexOf(needle);
+  };
+  assert.doesNotMatch(error, /EventSource\.CLOSED/, 'EventSource\'s own retry would reuse the old address');
+  assert.match(error, /if \(source !== (\w+)\) return;/, 'a late error from a replaced EventSource is ignored');
+  const own = error.match(/if \(source !== (\w+)\) return;/)[1];
+  assert.ok(at(`if (source !== ${own}) return;`) < at(`${own}.close()`), 'the guard comes first');
+  assert.ok(at(`${own}.close()`) < at('setTimeout(connect, 2000)'));
+  assert.ok(at('clearTimeout(reconnectTimer)') < at('setTimeout(connect, 2000)'), 'a pending timer is cleared');
+  assert.ok(at('servedUi = null') > -1);
+});
