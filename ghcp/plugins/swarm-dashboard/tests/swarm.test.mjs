@@ -1438,3 +1438,19 @@ test('a reply that is the first message of a later CLI session of the unit still
   const unit = buildSnapshot(data).units.find(item => item.id === 'ws-api');
   assert.deepEqual([unit.report.status, unit.report.at, unit.report.repliedAt], ['needs_input', at(30), at(40)]);
 });
+
+test('a fallback label fits within 32 characters from the 1,000th launch, even with a long agent type', () => {
+  const longType = 'general-purpose-with-a-really-long-agent-type-name';
+  const { data } = quietSwarm(root => {
+    unnamedTasks(999)(root);
+    root.wait(10);
+    root.tool('task', { agent_type: longType, mode: 'background' });
+  }, at(120));
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  const label = subUnits(snapshot).at(-1).label;
+  assert.ok(label.length <= 32, `${label} has ${label.length} characters`);
+  assert.ok(label.endsWith('-1000'), label);
+  assert.match(label, /^[A-Za-z0-9._-]{1,32}$/);
+  assert.ok(label.startsWith('general-purpose-with-a-r'), 'the type is cut to make room for the number');
+});

@@ -433,7 +433,13 @@ function assignSubagentLabels(subs, taken, memory, number) {
   }
   for (const sub of subs) {
     if (labels.has(sub.id)) continue;
-    const base = safeLabel(sub.unit.taskName) || `${safeLabel(sub.unit.labelType).slice(0, 28) || 'agent'}-${number(sub)}`;
+    let base = safeLabel(sub.unit.taskName);
+    if (!base) {
+      // The number is never cut: the type is cut to fit LABEL_MAX with it, and a trailing '-' is dropped.
+      const suffix = `-${number(sub)}`;
+      const prefix = safeLabel(sub.unit.labelType).slice(0, LABEL_MAX - suffix.length).replace(/-+$/, '');
+      base = `${prefix || 'agent'}${suffix}`;
+    }
     let label = base;
     for (let n = 2; used.has(label.toLowerCase()); n += 1) label = `${base.slice(0, LABEL_MAX - `-${n}`.length)}-${n}`;
     used.add(label.toLowerCase());
