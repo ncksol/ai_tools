@@ -70,7 +70,7 @@ Both reproduce the design's measurements (7.9 and 11.8 ms). Decisions:
 
 ### Builder decisions on the design's open points (section 9)
 
-These change what the owner sees, so they wait for the coordinator's confirmation before Task 6 and Task 9 start.
+These change what the owner sees. The coordinator confirmed B1 to B9 on 16 October 2026, with one change to B8: the top line drops "Watch-only", as the regular view's header now does.
 
 - B1. Tiles (design call 3 and 9.1). One tile per child session (all states, including merged and archived) plus a tile per sub-agent unit that is running or stuck, ordered attention first as on Cards. The example swarm already needs 9 tiles and the spike's console holds 8, so tile density follows the count: up to 8 tiles, three-line tiles in 2 rows (as in the spike); 9 to 12, two-line tiles (label and age, then state) in 3 rows; 13 to 16, one-line tiles (label and age) in 4 rows; more than 16, 15 tiles and a last "+N more" tile that opens the Board. The console's height does not change. The footer, which in the spike said "select a session to mark it", gives the counts: "7 child sessions · 2 sub-agents running · 3 finished".
 - B2. The clock's hours and minutes stay at 36/40 px, as in the approved spike; its seconds and everything else use 12, 14 and 18 px.
@@ -79,7 +79,7 @@ These change what the owner sees, so they wait for the coordinator's confirmatio
 - B5. Times use the regular view's formats: the run timer as "2d 23h 12m 06s", ages as "48m", the next monitor check as a countdown such as "4m".
 - B6. Clicks (design call 4 and 9.11). A tile, a "needs you" item, an activity row or a PR row opens that unit's details in the regular window; Cost opens the Timeline tab, Status and "+N more" the Board, the clock and the empty states the Cards tab. The regular window is found by its name and gets the request as a same-origin message, so it does not reload. If it is gone, the cockpit opens a new regular window on that address.
 - B7. Minimum window (9.2): 1100 × 800 CSS px, and wide enough for the arrangement: about 1.3 times as wide as tall (1200 × 900 fits; 1100 × 860 does not, and the spike's own fit failed at 1100 × 900). The side consoles keep 64 design px from the window's edges instead of the spike's 40, so the camera's drift and parallax never push them off the screen; at 1440 × 900 and larger the arrangement is the spike's. Below that the black hole still renders and a centred note says "Make this window larger to see the cockpit." with a button to open the regular view.
-- B8. Quality control (9.4): a small "High · Balanced" switch in the top right corner. The top left line reads "Swarm cockpit · Watch-only", plus "Sample data" with the demo, "Swarm finished" for a finished run and "Disconnected · retrying" when the connection drops. No frame-rate line.
+- B8. Quality control (9.4): a small "High · Balanced" switch in the top right corner. The top left line reads "Swarm cockpit", plus "Sample data" with the demo, "Swarm finished" for a finished run and "Disconnected · retrying" when the connection drops. No "Watch-only" label (the owner had it removed from the regular view: "that is not required") and no frame-rate line.
 - B9. Panel heights are fixed in CSS (the spike sized its upper panels by content), so the arrangement is pure maths and testable in Node.
 - B10. Port, not rewrite (9.7): the shader passes and the arrangement follow the spike's maths with the same constants, restructured into ES modules with named constants. The look must match the spike (D2).
 - B11. WebKit specifics (9.8): float render targets work in WebKit 27.2; the renderer still falls back to 8-bit targets without `EXT_color_buffer_float`. Text on 3D panels was crisp in both engines at 1920 × 1080 @2x and 2560 × 1440 @1x (stage scaled up to 1.6), and Chrome and WebKit project the panels to the same pixel rectangles, so no text workaround is planned.
@@ -1147,7 +1147,7 @@ git commit -m "feat(swarm-dashboard): pace the cockpit's frames and remember its
 
 ### Task 6: Panel HTML
 
-Waits for the coordinator's confirmation of builder decisions B1, B4, B5, B6 and B8.
+Builder decisions B1, B4, B5, B6 and B8 apply (confirmed).
 
 **Files:**
 - Create: `ui/cockpit-panels.mjs`
@@ -1259,10 +1259,10 @@ test('without a swarm every panel says so', () => {
 });
 
 test('the top line, the quality switch and the note', () => {
-  assert.equal(hudHtml({ demo: false, connection: 'open', snapshot: example() }), '<span>Swarm cockpit · Watch-only</span>');
+  assert.equal(hudHtml({ demo: false, connection: 'open', snapshot: example() }), '<span>Swarm cockpit</span>');
   const finished = exampleSnapshot();
   finished.run.lifecycle = 'finished';
-  assert.equal(hudHtml({ demo: true, connection: 'retrying', snapshot: finished }), '<span>Swarm cockpit · Watch-only · Sample data · Swarm finished</span><span class="ck-warn"> · Disconnected · retrying</span>');
+  assert.equal(hudHtml({ demo: true, connection: 'retrying', snapshot: finished }), '<span>Swarm cockpit · Sample data · Swarm finished</span><span class="ck-warn"> · Disconnected · retrying</span>');
   assert.equal(qualityHtml('balanced'), '<button type="button" data-quality="high" aria-pressed="false">High</button><button type="button" data-quality="balanced" aria-pressed="true">Balanced</button>');
   assert.match(noteHtml(), /Make this window larger to see the cockpit\.[\s\S]*data-tab="cards">Open the regular view<\/button>/);
 });
@@ -1380,7 +1380,7 @@ export function prsHtml(snapshot) {
 }
 
 export function hudHtml({ demo, connection, snapshot }) {
-  const parts = ['Swarm cockpit', 'Watch-only'];
+  const parts = ['Swarm cockpit'];
   if (demo) parts.push('Sample data');
   if (snapshot?.run.lifecycle === 'finished') parts.push('Swarm finished');
   return `<span>${parts.join(' · ')}</span>${connection === 'retrying' ? '<span class="ck-warn"> · Disconnected · retrying</span>' : ''}`;
@@ -2596,7 +2596,7 @@ git commit -m "feat(swarm-dashboard): draw the cockpit's black hole and room wit
 
 ### Task 9: Cockpit styles
 
-Waits for the coordinator's confirmation of builder decisions B1 to B3, B7 and B8. This task sets the look; compare the result with the approved spike's screenshots (`cockpit-hq-1440.png`, `cockpit-hq-1920.png`, outside the repository) once Task 11 renders the page.
+Builder decisions B1 to B3, B7 and B8 apply (confirmed). This task sets the look; compare the result with the approved spike's screenshots (`cockpit-hq-1440.png`, `cockpit-hq-1920.png`, outside the repository) once Task 11 renders the page.
 
 **Files:**
 - Create: `ui/cockpit.css`
@@ -3586,7 +3586,7 @@ const view = (overrides = {}) => ({
 const NOTE = { url: 'http://127.0.0.1:7927/cockpit?swarm=ws-0000-root', reason: 'canvas', copied: null };
 
 test('the Live page\'s top bar ends with the Cockpit control once a swarm shows', () => {
-  assert.match(renderApp(view()), /<span class="small muted">Watch-only<\/span><div class="seg ck-open"><button type="button" data-cockpit>Cockpit<\/button><\/div><\/div><\/div>/);
+  assert.match(renderApp(view()), /<div class="d-top-r">[\s\S]*<div class="seg ck-open"><button type="button" data-cockpit>Cockpit<\/button><\/div><\/div><\/div>/);
   assert.doesNotMatch(renderApp(view({ page: 'history', runs: [] })), /data-cockpit/);
   assert.doesNotMatch(renderApp(view({ snapshot: null })), /data-cockpit/);
 });
@@ -3758,9 +3758,9 @@ export const CHECKS = new Map([['scene', checkScene], ['layout', checkLayout], [
 Run: `node --test tests/cockpit-check.test.mjs && node scripts/check-cockpit.mjs --only links`
 Expected: PASS, and `Cockpit links: the control opens the cockpit on the shown swarm, a tile opens its details in place, and the canvas shows the address.`
 
-- [ ] **Step 8: Check focus in real windows (manual, once the coordinator agrees)**
+- [ ] **Step 8: Check focus in real windows (manual, after a heads-up)**
 
-Headless browsers cannot show whether a window comes to the front. With the coordinator's agreement (it opens windows on the owner's screen), run `node scripts/swarm-dashboard.mjs --demo example --port 7931` if it is not already running, open `http://127.0.0.1:7931/` in Chrome and in Safari, click Cockpit, then click a tile in the cockpit. Expected: the cockpit opens as its own window; the tile brings the regular window to the front with that unit's details. Report what each browser did. If a browser does not bring the window forward, report it; do not work around it.
+Headless browsers cannot show whether a window comes to the front. This step opens windows on the owner's screen: stop and send the coordinator a heads-up first, and run it only when the coordinator says the moment is right. Then run `node scripts/swarm-dashboard.mjs --demo example --port 7931` if it is not already running, open `http://127.0.0.1:7931/` in Chrome and in Safari, click Cockpit, then click a tile in the cockpit. Expected: the cockpit opens as its own window; the tile brings the regular window to the front with that unit's details. Report what each browser did. If a browser does not bring the window forward, report it; do not work around it.
 
 - [ ] **Step 9: Commit the check**
 
