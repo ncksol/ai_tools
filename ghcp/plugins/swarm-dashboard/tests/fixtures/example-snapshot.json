@@ -26,11 +26,12 @@
     "progress": { "done": 18, "total": 24 },
     "subagents": [
       { "id": "call-root-41", "name": "map-import-module", "type": "explore", "model": "gpt-5.4-mini", "mode": "background", "status": "running", "startedAt": 1792065360000, "endedAt": null, "durationMs": null, "credits": 51.0, "task": "Map the import module" },
-      { "id": "call-root-40", "name": "table-research", "type": "research", "model": "claude-sonnet-5", "mode": "background", "status": "running", "startedAt": 1792065060000, "endedAt": null, "durationMs": null, "credits": 102.0, "task": "DataGrid or a new table" }
+      { "id": "call-root-40", "name": "table-research", "type": "research", "model": "claude-sonnet-5", "mode": "background", "status": "stuck", "startedAt": 1792063500000, "endedAt": null, "durationMs": null, "credits": 102.0, "task": "DataGrid or a new table" },
+      { "id": "call-root-24", "name": "scan-docs-links", "type": "orchestrator-worker", "model": "claude-sonnet-5", "mode": "background", "status": "cancelled", "startedAt": 1791843600000, "endedAt": 1791844320000, "durationMs": 720000, "credits": 17.0, "task": "Scan the docs for broken links" },
+      { "id": "call-root-18", "name": "migrate-fixtures", "type": "task", "model": "claude-haiku-5.5", "mode": "background", "status": "failed", "startedAt": 1791838200000, "endedAt": 1791839100000, "durationMs": 900000, "credits": 38.0, "task": "Migrate the test fixtures" },
+      { "id": "call-root-12", "name": "audit-schema-usage", "type": "general-purpose", "model": "claude-sonnet-5", "mode": "sync", "status": "completed", "startedAt": 1791811200000, "endedAt": 1791812400000, "durationMs": 1200000, "credits": 140.0, "task": "Audit where the schema is used" }
     ],
     "recent": [
-      { "id": "ws-0000-root:subagent-start:call-root-41", "at": 1792065360000, "unitId": "ws-0000-root", "label": "SB", "kind": "subagent-start", "text": "started explore: map-import-module" },
-      { "id": "ws-0000-root:subagent-start:call-root-40", "at": 1792065060000, "unitId": "ws-0000-root", "label": "SB", "kind": "subagent-start", "text": "started research: table-research" },
       { "id": "ws-0000-root:question:call-root-35", "at": 1792064100000, "unitId": "ws-0000-root", "label": "SB", "kind": "question", "text": "asked: Publish PR #421 for review?" }
     ],
     "timeline": {
@@ -41,7 +42,10 @@
         { "start": 1792064100000, "end": null, "state": "question" }
       ],
       "subagents": [
-        { "id": "call-root-40", "start": 1792065060000, "end": null, "type": "research" },
+        { "id": "call-root-12", "start": 1791811200000, "end": 1791812400000, "type": "general-purpose" },
+        { "id": "call-root-18", "start": 1791838200000, "end": 1791839100000, "type": "task" },
+        { "id": "call-root-24", "start": 1791843600000, "end": 1791844320000, "type": "orchestrator-worker" },
+        { "id": "call-root-40", "start": 1792063500000, "end": null, "type": "research" },
         { "id": "call-root-41", "start": 1792065360000, "end": null, "type": "explore" }
       ],
       "marks": [
@@ -80,7 +84,7 @@
       "parentId": "ws-0000-root", "depth": 1, "stage": "archived", "closedWithoutMerge": false, "outcome": "merged",
       "pr": { "provider": "github", "id": 412, "repo": "sample-org/sample-repo", "url": "https://github.com/sample-org/sample-repo/pull/412", "title": "Schema v3 migration", "state": "merged", "openedAt": 1791939600000, "mergedAt": 1791963600000, "closedAt": 1791963600000, "reviewNote": "approved", "source": "registry", "checkedAt": 1792065300000 },
       "monitor": { "state": "ended", "lastCheckAt": 1791963000000, "nextCheckAt": null, "everyMinutes": 10, "since": null },
-      "dependsOn": null, "todoId": "b0-schema"
+      "dependsOn": null, "todoId": "b0-schema", "agent": null
     },
     {
       "id": "ws-0002-f2a", "kind": "project", "label": "F2a", "name": "tests, part 1",
@@ -109,7 +113,7 @@
       "parentId": "ws-0000-root", "depth": 1, "stage": "merged", "closedWithoutMerge": false, "outcome": "merged",
       "pr": { "provider": "github", "id": 409, "repo": "sample-org/sample-repo", "url": "https://github.com/sample-org/sample-repo/pull/409", "title": "Test harness, part 1", "state": "merged", "openedAt": 1791907200000, "mergedAt": 1791936000000, "closedAt": 1791936000000, "reviewNote": "approved", "source": "registry", "checkedAt": 1792065300000 },
       "monitor": { "state": "ended", "lastCheckAt": 1791935400000, "nextCheckAt": null, "everyMinutes": 10, "since": null },
-      "dependsOn": "B0", "todoId": "f2a-tests"
+      "dependsOn": "B0", "todoId": "f2a-tests", "agent": null
     },
     {
       "id": "ws-0003-b1", "kind": "project", "label": "B1", "name": "API",
@@ -151,7 +155,7 @@
       "parentId": "ws-0000-root", "depth": 1, "stage": "in_review", "closedWithoutMerge": false, "outcome": null,
       "pr": { "provider": "github", "id": 418, "repo": "sample-org/sample-repo", "url": "https://github.com/sample-org/sample-repo/pull/418", "title": "Orders and invoices API", "state": "open", "openedAt": 1792058040000, "mergedAt": null, "closedAt": null, "reviewNote": "changes requested", "source": "registry", "checkedAt": 1792065300000 },
       "monitor": { "state": "missing", "lastCheckAt": 1792063080000, "nextCheckAt": 1792063680000, "everyMinutes": 10, "since": 1792063680000 },
-      "dependsOn": "B0", "todoId": "b1-api"
+      "dependsOn": "B0", "todoId": "b1-api", "agent": null
     },
     {
       "id": "ws-0007-d5", "kind": "project", "label": "D5", "name": "docs",
@@ -183,7 +187,7 @@
       "parentId": "ws-0000-root", "depth": 1, "stage": "pr_open", "closedWithoutMerge": false, "outcome": null,
       "pr": { "provider": "github", "id": 421, "repo": "sample-org/sample-repo", "url": "https://github.com/sample-org/sample-repo/pull/421", "title": "Docs for the v3 schema", "state": "draft", "openedAt": 1792047480000, "mergedAt": null, "closedAt": null, "reviewNote": "review required", "source": "registry", "checkedAt": 1792065300000 },
       "monitor": { "state": "alive", "lastCheckAt": 1792065060000, "nextCheckAt": 1792065660000, "everyMinutes": 10, "since": null },
-      "dependsOn": "B0", "todoId": "d5-docs"
+      "dependsOn": "B0", "todoId": "d5-docs", "agent": null
     },
     {
       "id": "ws-0005-i1", "kind": "project", "label": "I1", "name": "integration",
@@ -214,7 +218,7 @@
       "parentId": "ws-0000-root", "depth": 1, "stage": "coding", "closedWithoutMerge": false, "outcome": null,
       "pr": null,
       "monitor": { "state": "none", "lastCheckAt": null, "nextCheckAt": null, "everyMinutes": null, "since": null },
-      "dependsOn": "B1", "todoId": "i1-integration"
+      "dependsOn": "B1", "todoId": "i1-integration", "agent": null
     },
     {
       "id": "ws-0006-f1", "kind": "project", "label": "F1", "name": "UI",
@@ -248,7 +252,7 @@
       "parentId": "ws-0000-root", "depth": 1, "stage": "coding", "closedWithoutMerge": false, "outcome": null,
       "pr": null,
       "monitor": { "state": "none", "lastCheckAt": null, "nextCheckAt": null, "everyMinutes": null, "since": null },
-      "dependsOn": "B1", "todoId": "f1-ui"
+      "dependsOn": "B1", "todoId": "f1-ui", "agent": null
     },
     {
       "id": "ws-0004-b2", "kind": "project", "label": "B2", "name": "import",
@@ -283,7 +287,153 @@
       "parentId": "ws-0000-root", "depth": 1, "stage": "coding", "closedWithoutMerge": false, "outcome": null,
       "pr": null,
       "monitor": { "state": "none", "lastCheckAt": null, "nextCheckAt": null, "everyMinutes": null, "since": null },
-      "dependsOn": "B0", "todoId": "b2-import"
+      "dependsOn": "B0", "todoId": "b2-import", "agent": null
+    },
+    {
+      "id": "call-root-12", "kind": "subagent", "label": "audit-schema-usage", "name": "Audit where the schema is used",
+      "cliSessionIds": [], "branch": null, "model": "claude-sonnet-5",
+      "status": "done", "statusDetail": "completed", "bucket": "done", "since": 1791812400000, "reason": null,
+      "startedAt": 1791811200000, "endedAt": 1791812400000, "lastEventAt": 1791812400000,
+      "busyMs": 1200000, "waitingOnUserMs": 0, "alive": true,
+      "cost": { "credits": 140.0, "calls": 24 },
+      "activity": { "label": "Done", "tool": null, "lastEventAt": 1791812400000 },
+      "report": { "status": "complete", "source": "message", "at": 1791812400000, "title": "Schema audit: 9 call sites use the old column name.", "summary": null, "evidence": [], "blockers": null, "body": "Only 3 of them read it. The other 6 only write it.\nNone of them needs a data fix.", "unit": null, "commit": null },
+      "progress": null,
+      "subagents": [],
+      "recent": [
+        { "id": "call-root-12:subagent-done:cli-0000-root/evt-root-0412", "at": 1791812400000, "unitId": "call-root-12", "label": "audit-schema-usage", "kind": "subagent-done", "text": "completed general-purpose: audit-schema-usage" },
+        { "id": "call-root-12:subagent-start:cli-0000-root/call-root-12", "at": 1791811200000, "unitId": "call-root-12", "label": "audit-schema-usage", "kind": "subagent-start", "text": "started general-purpose: audit-schema-usage" }
+      ],
+      "timeline": {
+        "segments": [
+          { "start": 1791811200000, "end": 1791812400000, "state": "busy" }
+        ],
+        "subagents": [],
+        "marks": [
+          { "at": 1791812400000, "kind": "report", "text": "Schema audit: 9 call sites use the old column name.", "status": "complete" }
+        ]
+      },
+      "parentId": "ws-0000-root", "depth": 1, "stage": "subagent", "closedWithoutMerge": false, "outcome": null,
+      "pr": null,
+      "monitor": { "state": "none", "lastCheckAt": null, "nextCheckAt": null, "everyMinutes": null, "since": null },
+      "dependsOn": null, "todoId": null,
+      "agent": { "type": "general-purpose", "mode": "sync", "effort": "high" }
+    },
+    {
+      "id": "call-root-18", "kind": "subagent", "label": "migrate-fixtures", "name": "Migrate the test fixtures",
+      "cliSessionIds": [], "branch": null, "model": "claude-haiku-5.5",
+      "status": "blocked", "statusDetail": "failed", "bucket": "failed", "since": 1791839100000,
+      "reason": "Failed: model request failed after 3 retries.",
+      "startedAt": 1791838200000, "endedAt": 1791839100000, "lastEventAt": 1791839100000,
+      "busyMs": 900000, "waitingOnUserMs": 0, "alive": true,
+      "cost": { "credits": 38.0, "calls": 11 },
+      "activity": { "label": "Failed", "tool": null, "lastEventAt": 1791839100000 },
+      "report": { "status": "blocked", "source": "message", "at": 1791839040000, "title": "Migrated 14 of 31 fixtures, then the model request failed.", "summary": null, "evidence": [], "blockers": null, "body": null, "unit": null, "commit": null },
+      "progress": null,
+      "subagents": [],
+      "recent": [
+        { "id": "call-root-18:subagent-done:cli-0000-root/evt-root-0818", "at": 1791839100000, "unitId": "call-root-18", "label": "migrate-fixtures", "kind": "subagent-done", "text": "failed task: migrate-fixtures" },
+        { "id": "call-root-18:subagent-start:cli-0000-root/call-root-18", "at": 1791838200000, "unitId": "call-root-18", "label": "migrate-fixtures", "kind": "subagent-start", "text": "started task: migrate-fixtures" }
+      ],
+      "timeline": {
+        "segments": [
+          { "start": 1791838200000, "end": 1791839100000, "state": "busy" }
+        ],
+        "subagents": [],
+        "marks": [
+          { "at": 1791839040000, "kind": "report", "text": "Migrated 14 of 31 fixtures, then the model request failed.", "status": "blocked" }
+        ]
+      },
+      "parentId": "ws-0000-root", "depth": 1, "stage": "subagent", "closedWithoutMerge": false, "outcome": null,
+      "pr": null,
+      "monitor": { "state": "none", "lastCheckAt": null, "nextCheckAt": null, "everyMinutes": null, "since": null },
+      "dependsOn": null, "todoId": null,
+      "agent": { "type": "task", "mode": "background", "effort": null }
+    },
+    {
+      "id": "call-root-24", "kind": "subagent", "label": "scan-docs-links", "name": "Scan the docs for broken links",
+      "cliSessionIds": [], "branch": null, "model": "claude-sonnet-5",
+      "status": "blocked", "statusDetail": "cancelled", "bucket": "failed", "since": 1791844320000,
+      "reason": "Cancelled after 12 min.",
+      "startedAt": 1791843600000, "endedAt": 1791844320000, "lastEventAt": 1791844320000,
+      "busyMs": 720000, "waitingOnUserMs": 0, "alive": true,
+      "cost": { "credits": 17.0, "calls": 5 },
+      "activity": { "label": "Cancelled", "tool": null, "lastEventAt": 1791844320000 },
+      "report": null,
+      "progress": null,
+      "subagents": [],
+      "recent": [
+        { "id": "call-root-24:subagent-done:cli-0000-root/evt-root-1224", "at": 1791844320000, "unitId": "call-root-24", "label": "scan-docs-links", "kind": "subagent-done", "text": "cancelled orchestrator-worker: scan-docs-links" },
+        { "id": "call-root-24:subagent-start:cli-0000-root/call-root-24", "at": 1791843600000, "unitId": "call-root-24", "label": "scan-docs-links", "kind": "subagent-start", "text": "started orchestrator-worker: scan-docs-links" }
+      ],
+      "timeline": {
+        "segments": [
+          { "start": 1791843600000, "end": 1791844320000, "state": "busy" }
+        ],
+        "subagents": [],
+        "marks": []
+      },
+      "parentId": "ws-0000-root", "depth": 1, "stage": "subagent", "closedWithoutMerge": false, "outcome": null,
+      "pr": null,
+      "monitor": { "state": "none", "lastCheckAt": null, "nextCheckAt": null, "everyMinutes": null, "since": null },
+      "dependsOn": null, "todoId": null,
+      "agent": { "type": "orchestrator-worker", "mode": "background", "effort": "medium" }
+    },
+    {
+      "id": "call-root-40", "kind": "subagent", "label": "table-research", "name": "DataGrid or a new table",
+      "cliSessionIds": [], "branch": null, "model": "claude-sonnet-5",
+      "status": "stuck", "statusDetail": "stuck_subagent", "bucket": "stuck", "since": 1792064700000,
+      "reason": "No events for 15 min; the limit is 10 min.",
+      "startedAt": 1792063500000, "endedAt": null, "lastEventAt": 1792064700000,
+      "busyMs": 2100000, "waitingOnUserMs": 0, "alive": true,
+      "cost": { "credits": 102.0, "calls": 18 },
+      "activity": { "label": "Thinking", "tool": null, "lastEventAt": 1792064700000 },
+      "report": { "status": "progress", "source": "message", "at": 1792064400000, "title": "Compared DataGrid with two lighter table libraries so far.", "summary": null, "evidence": [], "blockers": null, "body": null, "unit": null, "commit": null },
+      "progress": null,
+      "subagents": [],
+      "recent": [
+        { "id": "call-root-40:subagent-start:cli-0000-root/call-root-40", "at": 1792063500000, "unitId": "call-root-40", "label": "table-research", "kind": "subagent-start", "text": "started research: table-research" }
+      ],
+      "timeline": {
+        "segments": [
+          { "start": 1792063500000, "end": 1792064700000, "state": "busy" },
+          { "start": 1792064700000, "end": null, "state": "stuck" }
+        ],
+        "subagents": [],
+        "marks": []
+      },
+      "parentId": "ws-0000-root", "depth": 1, "stage": "subagent", "closedWithoutMerge": false, "outcome": null,
+      "pr": null,
+      "monitor": { "state": "none", "lastCheckAt": null, "nextCheckAt": null, "everyMinutes": null, "since": null },
+      "dependsOn": null, "todoId": null,
+      "agent": { "type": "research", "mode": "background", "effort": "medium" }
+    },
+    {
+      "id": "call-root-41", "kind": "subagent", "label": "map-import-module", "name": "Map the import module",
+      "cliSessionIds": [], "branch": null, "model": "gpt-5.4-mini",
+      "status": "busy", "statusDetail": "busy", "bucket": "working", "since": 1792065360000, "reason": null,
+      "startedAt": 1792065360000, "endedAt": null, "lastEventAt": 1792065540000,
+      "busyMs": 240000, "waitingOnUserMs": 0, "alive": true,
+      "cost": { "credits": 51.0, "calls": 6 },
+      "activity": { "label": "Running grep: ImportService", "tool": { "id": "call-sub41-3", "name": "grep", "summary": "grep: ImportService", "startedAt": 1792065540000, "limitMs": 120000 }, "lastEventAt": 1792065540000 },
+      "report": { "status": "progress", "source": "message", "at": 1792065480000, "title": "Found the parser entry points. Now tracing who calls them.", "summary": null, "evidence": [], "blockers": null, "body": null, "unit": null, "commit": null },
+      "progress": null,
+      "subagents": [],
+      "recent": [
+        { "id": "call-root-41:subagent-start:cli-0000-root/call-root-41", "at": 1792065360000, "unitId": "call-root-41", "label": "map-import-module", "kind": "subagent-start", "text": "started explore: map-import-module" }
+      ],
+      "timeline": {
+        "segments": [
+          { "start": 1792065360000, "end": null, "state": "busy" }
+        ],
+        "subagents": [],
+        "marks": []
+      },
+      "parentId": "ws-0000-root", "depth": 1, "stage": "subagent", "closedWithoutMerge": false, "outcome": null,
+      "pr": null,
+      "monitor": { "state": "none", "lastCheckAt": null, "nextCheckAt": null, "everyMinutes": null, "since": null },
+      "dependsOn": null, "todoId": null,
+      "agent": { "type": "explore", "mode": "background", "effort": "low" }
     }
   ],
   "planned": [
@@ -295,18 +445,25 @@
     { "id": "ws-0000-root:pr:call-root-35", "kind": "pr", "unitIds": ["ws-0007-d5"], "labels": ["D5"], "fromId": "ws-0000-root", "text": "Publish PR #421 for review?", "since": 1792064100000, "tagged": true }
   ],
   "feed": [
-    { "id": "ws-0000-root:subagent-start:call-root-41", "at": 1792065360000, "unitId": "ws-0000-root", "label": "SB", "kind": "subagent-start", "text": "started explore: map-import-module" },
+    { "id": "call-root-41:subagent-start:cli-0000-root/call-root-41", "at": 1792065360000, "unitId": "call-root-41", "label": "map-import-module", "kind": "subagent-start", "text": "started explore: map-import-module" },
     { "id": "ws-0003-b1:subagent-start:call-b1-8", "at": 1792065240000, "unitId": "ws-0003-b1", "label": "B1", "kind": "subagent-start", "text": "started code-review: review-pr-418" },
     { "id": "ws-0007-d5:monitor-check:evt-d5-0102", "at": 1792065060000, "unitId": "ws-0007-d5", "label": "D5", "kind": "monitor-check", "text": "PR monitor check" },
-    { "id": "ws-0000-root:subagent-start:call-root-40", "at": 1792065060000, "unitId": "ws-0000-root", "label": "SB", "kind": "subagent-start", "text": "started research: table-research" },
     { "id": "ws-0006-f1:report:call-f1-6", "at": 1792064880000, "unitId": "ws-0006-f1", "label": "F1", "kind": "report", "text": "reported needs input: The results page needs a table: reuse DataGrid, or build a lighter table." },
     { "id": "ws-0000-root:question:call-root-35", "at": 1792064100000, "unitId": "ws-0000-root", "label": "SB", "kind": "question", "text": "asked: Publish PR #421 for review?" },
+    { "id": "call-root-40:subagent-start:cli-0000-root/call-root-40", "at": 1792063500000, "unitId": "call-root-40", "label": "table-research", "kind": "subagent-start", "text": "started research: table-research" },
     { "id": "ws-0004-b2:plan-req:call-b2-31", "at": 1792063320000, "unitId": "ws-0004-b2", "label": "B2", "kind": "plan-req", "text": "sent a plan for approval" },
     { "id": "ws-0004-b2:report:call-b2-5", "at": 1792063140000, "unitId": "ws-0004-b2", "label": "B2", "kind": "report", "text": "reported complete: The parser is done. The plan for step 2 is waiting for approval." },
     { "id": "ws-0003-b1:monitor-check:evt-b1-0301", "at": 1792063080000, "unitId": "ws-0003-b1", "label": "B1", "kind": "monitor-check", "text": "PR monitor check" },
-    { "id": "ws-0003-b1:report:call-b1-4", "at": 1792058160000, "unitId": "ws-0003-b1", "label": "B1", "kind": "report", "text": "reported complete: Opened PR #418 with 14 endpoints. All API tests pass." }
+    { "id": "ws-0003-b1:report:call-b1-4", "at": 1792058160000, "unitId": "ws-0003-b1", "label": "B1", "kind": "report", "text": "reported complete: Opened PR #418 with 14 endpoints. All API tests pass." },
+    { "id": "call-root-24:subagent-done:cli-0000-root/evt-root-1224", "at": 1791844320000, "unitId": "call-root-24", "label": "scan-docs-links", "kind": "subagent-done", "text": "cancelled orchestrator-worker: scan-docs-links" },
+    { "id": "call-root-24:subagent-start:cli-0000-root/call-root-24", "at": 1791843600000, "unitId": "call-root-24", "label": "scan-docs-links", "kind": "subagent-start", "text": "started orchestrator-worker: scan-docs-links" },
+    { "id": "call-root-18:subagent-done:cli-0000-root/evt-root-0818", "at": 1791839100000, "unitId": "call-root-18", "label": "migrate-fixtures", "kind": "subagent-done", "text": "failed task: migrate-fixtures" },
+    { "id": "call-root-18:subagent-start:cli-0000-root/call-root-18", "at": 1791838200000, "unitId": "call-root-18", "label": "migrate-fixtures", "kind": "subagent-start", "text": "started task: migrate-fixtures" },
+    { "id": "call-root-12:subagent-done:cli-0000-root/evt-root-0412", "at": 1791812400000, "unitId": "call-root-12", "label": "audit-schema-usage", "kind": "subagent-done", "text": "completed general-purpose: audit-schema-usage" },
+    { "id": "call-root-12:subagent-start:cli-0000-root/call-root-12", "at": 1791811200000, "unitId": "call-root-12", "label": "audit-schema-usage", "kind": "subagent-start", "text": "started general-purpose: audit-schema-usage" }
   ],
-  "counts": { "working": 1, "stuck": 1, "waiting": 2, "idle": 1, "done": 2, "failed": 0 },
+  "counts": { "working": 2, "stuck": 2, "waiting": 2, "idle": 1, "done": 3, "failed": 2 },
+  "omittedSubagents": { "done": 0, "failed": 0 },
   "cost": {
     "credits": 97652.4, "usd": 976.52, "maxUnitCredits": 24016.0,
     "byModel": [

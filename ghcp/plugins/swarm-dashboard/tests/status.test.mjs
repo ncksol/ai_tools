@@ -28,6 +28,8 @@ test('every status detail maps to a colour and a header bucket', () => {
   assert.deepEqual(displayOf('crashed'), { status: 'blocked', bucket: 'failed' });
   assert.deepEqual(displayOf('stopped'), { status: 'idle', bucket: 'idle' });
   assert.deepEqual(displayOf('archived'), { status: 'archived', bucket: 'done' });
+  assert.deepEqual(displayOf('completed'), { status: 'done', bucket: 'done' });
+  assert.deepEqual(displayOf('cancelled'), { status: 'blocked', bucket: 'failed' });
 });
 
 test('ended states come first: archived, failed, merged, stopped, crashed', () => {

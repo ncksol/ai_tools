@@ -8,7 +8,7 @@ export function createFakeEngine({ snapshots = [], swarms = null, history = [], 
   const byId = new Map(snapshots.map(snapshot => [snapshot.run.id, structuredClone(snapshot)]));
   const toItem = snapshot => ({
     id: snapshot.run.id, name: snapshot.run.name, project: snapshot.run.project, startedAt: snapshot.run.startedAt,
-    lastActivityAt: snapshot.run.lastActivityAt, lifecycle: snapshot.run.lifecycle, units: snapshot.units.length,
+    lastActivityAt: snapshot.run.lastActivityAt, lifecycle: snapshot.run.lifecycle,     units: snapshot.units.filter(unit => unit.kind !== 'subagent').length,
     credits: snapshot.cost.credits, alive: snapshot.run.lifecycle === 'live',
   });
   // Live swarms first, then most recently active first, as the real engine sorts listSwarms().
@@ -28,7 +28,8 @@ export function createFakeEngine({ snapshots = [], swarms = null, history = [], 
     },
     async findSwarm(sessionId) {
       for (const snapshot of byId.values()) {
-        const sessions = [snapshot.orchestrator, ...snapshot.units];
+        // Sub-agent unit ids are tool-call ids, not session ids; the real engine ignores them too.
+        const sessions = [snapshot.orchestrator, ...snapshot.units.filter(unit => unit.kind !== 'subagent')];
         if (snapshot.run.id === sessionId || sessions.some(session => session.id === sessionId || session.cliSessionIds.includes(sessionId))) {
           return snapshot.run.id;
         }

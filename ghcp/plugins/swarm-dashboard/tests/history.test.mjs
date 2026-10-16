@@ -16,10 +16,12 @@ test('a run summary answers time and cost first, by unit, model and sub-agent ty
   assert.equal(summary.finishedAt, snapshot.run.lastActivityAt);
   assert.equal(summary.tookMs, snapshot.run.lastActivityAt - snapshot.run.startedAt);
   assert.equal(summary.credits, snapshot.cost.credits);
-  assert.equal(summary.busyMs, [snapshot.orchestrator, ...snapshot.units].reduce((sum, session) => sum + session.busyMs, 0));
+  const sessionUnits = snapshot.units.filter(unit => unit.kind !== 'subagent');
+  assert.equal(summary.busyMs, [snapshot.orchestrator, ...sessionUnits].reduce((sum, session) => sum + session.busyMs, 0));
   assert.equal(summary.waitingOnUserMs, 2_220_000);
   assert.deepEqual(summary.children, { total: 7, merged: 2, closed: 0, failed: 0, noOutcome: 5 });
-  assert.equal(summary.subagents, 7);
+  assert.equal(summary.units.length, 1 + sessionUnits.length, 'sub-agent units are not listed as run units');
+  assert.equal(summary.subagents, 10, 'every sub-agent chip counts once, the orchestrator\'s one-off sub-agents included');
   assert.deepEqual(summary.units[0], {
     id: 'ws-0000-root', label: 'SB', name: 'Sample story B', isOrchestrator: true, startedAt: snapshot.run.startedAt,
     endedAt: snapshot.orchestrator.lastEventAt, busyMs: snapshot.orchestrator.busyMs, credits: 31532.4, outcome: null, merged: false,
@@ -28,7 +30,7 @@ test('a run summary answers time and cost first, by unit, model and sub-agent ty
     id: 'ws-0001-b0', label: 'B0', name: 'schema', isOrchestrator: false, startedAt: 1791814200000, endedAt: 1791964200000,
     busyMs: 18000000, credits: 10912, outcome: 'merged', merged: true,
   });
-  assert.deepEqual(summary.subagentTypes.map(entry => entry.type), ['task', 'research', 'code-review', 'explore']);
+  assert.deepEqual(summary.subagentTypes.map(entry => entry.type), ['task', 'general-purpose', 'research', 'code-review', 'explore', 'orchestrator-worker']);
   assert.deepEqual(summary.models, snapshot.cost.byModel);
   assert.deepEqual(listItemOf(summary), {
     id: summary.id, name: summary.name, project: summary.project, startedAt: summary.startedAt, finishedAt: summary.finishedAt,

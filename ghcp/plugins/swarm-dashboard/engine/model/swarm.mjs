@@ -314,6 +314,7 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
   return {
     ...sessionView(input, c, label, evaluation, report, row?.title ?? null, marks, outcomeAt),
     parentId: node.parentId, depth: node.depth, stage, closedWithoutMerge, outcome, pr, monitor, dependsOn: null, todoId: row?.todoId ?? null,
+    agent: null,
   };
 }
 
@@ -510,6 +511,7 @@ export function buildSnapshot(input) {
     needs,
     feed,
     counts,
+    omittedSubagents: { done: 0, failed: 0 },
     cost,
     diagnostics: input.diagnostics ?? [],
   };

@@ -22,7 +22,9 @@ function unionMs(spans) {
 
 /** Summary of a run for the history view: names, ids, times, counts, costs and models only. */
 export function summarizeRun(snapshot, { computedAt }) {
-  const { run, orchestrator, units } = snapshot;
+  const { run, orchestrator } = snapshot;
+  // children, units and busyMs cover the orchestrator and its child sessions only; sub-agent units are not child sessions.
+  const units = snapshot.units.filter(unit => unit.kind !== 'subagent');
   const finishedAt = run.finishedAt ?? run.lastActivityAt;
   const sessions = [orchestrator, ...units];
   const waits = [];

@@ -22,6 +22,8 @@ const DISPLAY = {
   stopped: ['idle', 'idle'],
   crashed: ['blocked', 'failed'],
   failed: ['blocked', 'failed'],
+  completed: ['done', 'done'],
+  cancelled: ['blocked', 'failed'],
   merged: ['merged', 'done'],
   archived: ['archived', 'done'],
 };

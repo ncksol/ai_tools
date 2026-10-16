@@ -2,12 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  COUNT_BUCKETS, DISPLAY_STATES, SCHEMA_VERSION,
+  COUNT_BUCKETS, DISPLAY_STATES, MAX_FINISHED_SUBAGENT_UNITS, SCHEMA_VERSION, SESSION_KINDS, STAGES, STATUS_DETAILS, SUBAGENT_STATUSES,
   validateRunListItem, validateRunSummary, validateSnapshot, validateSwarmListItem,
 } from '../engine/schema.mjs';
 import { createFakeEngine } from '../engine/fake-engine.mjs';
 
 const fixture = name => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8'));
+const isSubagentUnit = unit => unit.kind === 'subagent';
 
 test('the example snapshot matches the schema', () => {
   const snapshot = fixture('example-snapshot.json');
@@ -25,16 +26,25 @@ test('the example snapshot shows the main states and consistent counts', () => {
   const snapshot = fixture('example-snapshot.json');
   const shown = new Set([snapshot.orchestrator, ...snapshot.units].map(session => session.status));
   for (const state of DISPLAY_STATES) assert.ok(shown.has(state), `example lacks state ${state}`);
-  const expected = Object.fromEntries(COUNT_BUCKETS.map(bucket => [bucket, snapshot.units.filter(unit => unit.bucket === bucket).length]));
-  assert.deepEqual(snapshot.counts, expected);
-  const total = [snapshot.orchestrator, ...snapshot.units].reduce((sum, session) => sum + session.cost.credits, 0);
+  const { omittedSubagents } = snapshot;
+  const expected = Object.fromEntries(COUNT_BUCKETS.map(bucket => [
+    bucket,
+    snapshot.units.filter(unit => unit.bucket === bucket).length + (omittedSubagents[bucket] ?? 0),
+  ]));
+  assert.deepEqual(snapshot.counts, expected, 'counts are the buckets of every unit plus omittedSubagents');
+  assert.deepEqual(Object.keys(omittedSubagents), ['done', 'failed']);
+  // Sub-agent unit costs are already inside the orchestrator's cost: never add them to a total.
+  const sessionUnits = snapshot.units.filter(unit => !isSubagentUnit(unit));
+  const total = [snapshot.orchestrator, ...sessionUnits].reduce((sum, session) => sum + session.cost.credits, 0);
   assert.equal(Math.round(total * 10) / 10, snapshot.cost.credits);
 });
 
 test('the example snapshot is internally consistent', () => {
   const snapshot = fixture('example-snapshot.json');
+  const sessionUnits = snapshot.units.filter(unit => !isSubagentUnit(unit));
+  const subagentUnits = snapshot.units.filter(isSubagentUnit);
   const children = new Map();
-  for (const unit of snapshot.units) children.set(unit.parentId, [...(children.get(unit.parentId) ?? []), unit]);
+  for (const unit of sessionUnits) children.set(unit.parentId, [...(children.get(unit.parentId) ?? []), unit]);
   const order = [];
   const walk = id => {
     for (const unit of [...(children.get(id) ?? [])].sort((a, b) => a.startedAt - b.startedAt)) {
@@ -43,9 +53,17 @@ test('the example snapshot is internally consistent', () => {
     }
   };
   walk(snapshot.orchestrator.id);
-  assert.deepEqual(snapshot.units.map(unit => unit.id), order, 'units are depth-first by creation time');
+  assert.deepEqual(sessionUnits.map(unit => unit.id), order, 'session units are depth-first by creation time');
+  assert.deepEqual(
+    snapshot.units.slice(0, sessionUnits.length).map(unit => unit.id), order,
+    'session units come before sub-agent units',
+  );
+  assert.deepEqual(
+    subagentUnits.map(unit => unit.id), [...subagentUnits].sort((a, b) => a.startedAt - b.startedAt).map(unit => unit.id),
+    'sub-agent units are oldest start first',
+  );
   const sum = values => Math.round(values.reduce((total, value) => total + value, 0) * 10) / 10;
-  const sessions = [snapshot.orchestrator, ...snapshot.units];
+  const sessions = [snapshot.orchestrator, ...sessionUnits];
   assert.equal(sum(snapshot.cost.byModel.map(entry => entry.credits)), snapshot.cost.credits);
   assert.equal(sum(snapshot.cost.byModel.map(entry => entry.calls)), sum(sessions.map(session => session.cost.calls)));
   assert.equal(snapshot.cost.maxUnitCredits, Math.max(...snapshot.units.map(unit => unit.cost.credits)));
@@ -55,6 +73,91 @@ test('the example snapshot is internally consistent', () => {
     if (index) assert.ok(point.credits >= series[index - 1].credits, `series[${index}] is cumulative`);
   });
   assert.equal(series[series.length - 1].credits, snapshot.cost.credits);
+});
+
+test('the example snapshot lists the orchestrator\'s one-off sub-agents as units in every state', () => {
+  const snapshot = fixture('example-snapshot.json');
+  const { orchestrator } = snapshot;
+  const currentCli = orchestrator.cliSessionIds[orchestrator.cliSessionIds.length - 1];
+  const subagentUnits = snapshot.units.filter(isSubagentUnit);
+  const detail = { busy: 'busy', stuck_subagent: 'stuck', completed: 'completed', failed: 'failed', cancelled: 'cancelled' };
+  const chipStatus = { busy: 'running', stuck_subagent: 'stuck', completed: 'completed', failed: 'failed', cancelled: 'cancelled' };
+  for (const statusDetail of Object.keys(detail)) {
+    assert.equal(subagentUnits.filter(unit => unit.statusDetail === statusDetail).length, 1, `one sub-agent unit is ${statusDetail}`);
+  }
+  assert.ok(subagentUnits.every(unit => unit.statusDetail in detail));
+  assert.equal(subagentUnits.filter(unit => unit.endedAt !== null).length <= MAX_FINISHED_SUBAGENT_UNITS, true);
+  const expectedState = {
+    busy: ['busy', 'working'], stuck_subagent: ['stuck', 'stuck'], completed: ['done', 'done'],
+    failed: ['blocked', 'failed'], cancelled: ['blocked', 'failed'],
+  };
+  for (const unit of subagentUnits) {
+    const where = `sub-agent unit ${unit.id}`;
+    assert.equal(unit.kind, 'subagent', where);
+    assert.equal(unit.parentId, orchestrator.id, where);
+    assert.equal(unit.depth, 1, where);
+    assert.equal(unit.stage, 'subagent', where);
+    assert.equal(unit.pr, null, where);
+    assert.deepEqual(unit.monitor, { state: 'none', lastCheckAt: null, nextCheckAt: null, everyMinutes: null, since: null }, where);
+    assert.equal(unit.outcome, null, where);
+    assert.equal(unit.progress, null, where);
+    assert.equal(unit.dependsOn, null, where);
+    assert.equal(unit.todoId, null, where);
+    assert.equal(unit.closedWithoutMerge, false, where);
+    assert.deepEqual(unit.cliSessionIds, [], where);
+    assert.equal(unit.branch, null, where);
+    assert.equal(unit.waitingOnUserMs, 0, where);
+    assert.ok(unit.agent && unit.agent.type && ['sync', 'background'].includes(unit.agent.mode), `${where} has an agent`);
+    assert.deepEqual([unit.status, unit.bucket], expectedState[unit.statusDetail], where);
+    assert.match(unit.label, /^[A-Za-z0-9._-]{1,32}$/, `${where} label is safe`);
+    const chip = orchestrator.subagents.find(sub => sub.id === unit.id);
+    assert.ok(chip, `${where} has a chip on the orchestrator`);
+    assert.equal(chip.status, chipStatus[unit.statusDetail], where);
+    assert.equal(chip.type, unit.agent.type, where);
+    assert.equal(chip.mode, unit.agent.mode, where);
+    assert.equal(chip.model, unit.model, where);
+    assert.equal(chip.startedAt, unit.startedAt, where);
+    assert.equal(chip.endedAt, unit.endedAt, where);
+    assert.equal(chip.credits, unit.cost.credits, `${where} cost equals its chip credits`);
+    assert.equal(chip.task, unit.name, where);
+    assert.ok(orchestrator.timeline.subagents.some(bar => bar.id === unit.id && bar.start === unit.startedAt && bar.end === unit.endedAt), where);
+    if (unit.statusDetail === 'stuck_subagent') {
+      assert.equal(unit.since, unit.lastEventAt, 'stuck: since is its last event');
+      assert.equal(unit.reason, 'No events for 15 min; the limit is 10 min.');
+      assert.equal(snapshot.generatedAt - unit.since, 15 * 60 * 1000);
+      assert.ok(snapshot.generatedAt - unit.startedAt >= 30 * 60 * 1000);
+      assert.deepEqual(unit.timeline.segments[unit.timeline.segments.length - 1], { start: unit.since, end: null, state: 'stuck' });
+    }
+    if (unit.endedAt !== null) assert.equal(unit.since, unit.endedAt, `${where} since is endedAt once finished`);
+    // Its start and finish feed items belong to its unit, not to the orchestrator.
+    const own = snapshot.feed.filter(item => item.unitId === unit.id);
+    assert.ok(own.every(item => item.label === unit.label), where);
+    assert.equal(own.find(item => item.kind === 'subagent-start')?.id, `${unit.id}:subagent-start:${currentCli}/${unit.id}`, where);
+    assert.equal(own.some(item => item.kind === 'subagent-done'), unit.endedAt !== null, where);
+    for (const item of own.filter(entry => entry.kind === 'subagent-done')) {
+      assert.ok(item.id.startsWith(`${unit.id}:subagent-done:${currentCli}/`), item.id);
+    }
+    assert.equal(orchestrator.recent.some(item => item.id.includes(`:${unit.id}`) && item.kind.startsWith('subagent-')), false, where);
+  }
+  const byDetail = Object.fromEntries(subagentUnits.map(unit => [unit.statusDetail, unit]));
+  assert.equal(byDetail.busy.agent.type, 'explore');
+  assert.ok(byDetail.busy.activity.tool, 'the busy sub-agent has an open tool call');
+  assert.equal(byDetail.busy.report.status, 'progress');
+  assert.equal(byDetail.stuck_subagent.agent.type, 'research');
+  assert.equal(byDetail.completed.agent.type, 'general-purpose');
+  assert.equal(byDetail.completed.agent.mode, 'sync');
+  assert.equal(byDetail.completed.report.status, 'complete');
+  assert.equal(byDetail.completed.report.source, 'message');
+  assert.ok(byDetail.completed.timeline.marks.some(mark => mark.kind === 'report' && mark.at === byDetail.completed.endedAt));
+  assert.equal(byDetail.failed.agent.type, 'task');
+  assert.equal(byDetail.failed.reason, 'Failed: model request failed after 3 retries.');
+  assert.equal(byDetail.cancelled.agent.type, 'orchestrator-worker');
+  assert.equal(byDetail.cancelled.reason, 'Cancelled after 12 min.');
+  assert.equal(byDetail.cancelled.endedAt - byDetail.cancelled.startedAt, 12 * 60 * 1000);
+  // The orchestrator keeps waiting: waiting takes precedence over a stuck sub-agent.
+  assert.equal(orchestrator.statusDetail, 'waiting_question');
+  assert.equal(orchestrator.subagents.find(sub => sub.id === byDetail.stuck_subagent.id).status, 'stuck');
+  for (const unit of snapshot.units.filter(entry => !isSubagentUnit(entry))) assert.equal(unit.agent, null, `${unit.id} is a session unit`);
 });
 
 test('the example snapshot has unique feed and need ids, matching recent items and consistent end times', () => {
@@ -100,6 +203,51 @@ test('the validator requires feed ids, need ids and recent items', () => {
   assert.ok(errors.includes('snapshot.units[0].recent: missing'), errors.join('\n'));
 });
 
+test('the validator requires agent on every unit and omittedSubagents on the snapshot', () => {
+  const snapshot = fixture('example-snapshot.json');
+  delete snapshot.units[0].agent;
+  delete snapshot.omittedSubagents;
+  const errors = validateSnapshot(snapshot);
+  assert.ok(errors.includes('snapshot.units[0].agent: missing'), errors.join('\n'));
+  assert.ok(errors.includes('snapshot.omittedSubagents: missing'), errors.join('\n'));
+
+  const partial = fixture('example-snapshot.json');
+  delete partial.omittedSubagents.failed;
+  partial.omittedSubagents.stuck = 1;
+  const bucketErrors = validateSnapshot(partial);
+  assert.ok(bucketErrors.includes('snapshot.omittedSubagents.failed: missing'), bucketErrors.join('\n'));
+  assert.ok(bucketErrors.includes('snapshot.omittedSubagents.stuck: unexpected field'), bucketErrors.join('\n'));
+
+  const bad = fixture('example-snapshot.json');
+  const subagentUnit = bad.units.find(isSubagentUnit);
+  subagentUnit.agent.mode = 'foreground';
+  delete subagentUnit.agent.effort;
+  const agentErrors = validateSnapshot(bad);
+  assert.ok(agentErrors.some(error => error.startsWith(`snapshot.units[${bad.units.indexOf(subagentUnit)}].agent.mode: expected one of sync, background`)), agentErrors.join('\n'));
+  assert.ok(agentErrors.includes(`snapshot.units[${bad.units.indexOf(subagentUnit)}].agent.effort: missing`), agentErrors.join('\n'));
+});
+
+test('the contract accepts the sub-agent enum values', () => {
+  assert.equal(MAX_FINISHED_SUBAGENT_UNITS, 20);
+  assert.ok(DISPLAY_STATES.includes('done'));
+  assert.deepEqual(STATUS_DETAILS.slice(STATUS_DETAILS.indexOf('failed'), STATUS_DETAILS.indexOf('failed') + 3), ['failed', 'completed', 'cancelled']);
+  assert.ok(STAGES.includes('subagent'));
+  assert.ok(SESSION_KINDS.includes('subagent'));
+  assert.ok(SUBAGENT_STATUSES.includes('cancelled'));
+
+  const snapshot = fixture('example-snapshot.json');
+  const unit = snapshot.units.find(entry => entry.statusDetail === 'cancelled');
+  assert.deepEqual([unit.kind, unit.status, unit.stage], ['subagent', 'blocked', 'subagent']);
+  const done = snapshot.units.find(entry => entry.statusDetail === 'completed');
+  assert.deepEqual([done.status, done.statusDetail], ['done', 'completed']);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  // A chip of a child session can be cancelled too.
+  snapshot.units[0].subagents[0].status = 'cancelled';
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  snapshot.units[0].subagents[0].status = 'aborted';
+  assert.ok(validateSnapshot(snapshot).some(error => error.startsWith('snapshot.units[0].subagents[0].status: expected one of running, completed, failed, stuck, cancelled')));
+});
+
 test('the fake engine serves fixtures through the engine API', async () => {
   const snapshot = fixture('example-snapshot.json');
   const history = fixture('example-history.json');
@@ -130,6 +278,10 @@ test('the fake engine finds the swarm of a session', async () => {
   assert.equal(await engine.findSwarm('ws-0003-b1'), root);
   assert.equal(await engine.findSwarm('cli-0003-b1'), root);
   assert.equal(await engine.findSwarm('unknown-session'), null);
+  // Sub-agent unit ids are tool-call ids, not session ids.
+  const subagentUnit = snapshot.units.find(isSubagentUnit);
+  assert.ok(subagentUnit);
+  for (const unit of snapshot.units.filter(isSubagentUnit)) assert.equal(await engine.findSwarm(unit.id), null, unit.id);
 });
 
 test('the fake engine keeps its swarm list in step with pushed snapshots', async () => {
@@ -138,7 +290,8 @@ test('the fake engine keeps its swarm list in step with pushed snapshots', async
   const [entry] = engine.listSwarms();
   assert.equal(entry.id, snapshot.run.id);
   assert.equal(entry.lifecycle, 'live');
-  assert.equal(entry.units, 7);
+  assert.equal(entry.units, 7, 'units counts session units only');
+  assert.ok(snapshot.units.length > 7, 'the example also lists sub-agent units');
   assert.equal(entry.credits, 97652.4);
 
   const later = structuredClone(snapshot);
