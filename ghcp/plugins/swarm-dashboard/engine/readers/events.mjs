@@ -17,6 +17,7 @@ function freshPartial(tail) {
   tail.skipBytes = 0;
   tail.scanner = null;
   tail.scanError = null;
+  tail.scanFailed = false;
 }
 
 export function createTail(file) {
@@ -69,13 +70,20 @@ export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onRes
   let lastError = '';
   const fail = error => {
     failed += 1;
-    lastError = String(error?.message ?? error).slice(0, 200);
+    let message;
+    try {
+      message = String(error?.message ?? error);
+    } catch {
+      message = '';
+    }
+    lastError = (message || 'empty error').slice(0, 200);
   };
   const scan = (chunk, start, end) => {
-    if (tail.scanError) return;
+    if (tail.scanFailed) return;
     try {
       tail.scanner.write(chunk, start, end);
     } catch (error) {
+      tail.scanFailed = true;
       tail.scanError = error;
     }
   };
@@ -119,11 +127,13 @@ export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onRes
             skipped += 1;
             skippedBytes += tail.skipBytes + 1;
             let recovered = null;
+            let lineFailed = tail.scanFailed;
             let lineError = tail.scanError;
-            if (!lineError) {
+            if (!lineFailed) {
               try {
                 recovered = tail.scanner.finish();
               } catch (error) {
+                lineFailed = true;
                 lineError = error;
               }
             }
@@ -133,11 +143,15 @@ export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onRes
               try {
                 onOversized(recovered, lineBytes);
               } catch (error) {
-                if (!lineError) lineError = error;
+                if (!lineFailed) {
+                  lineFailed = true;
+                  lineError = error;
+                }
               }
             }
-            // A line counts as failed once, whichever of the scanner and the handler threw.
-            if (lineError) fail(lineError);
+            // A line counts as failed once, whichever of the scanner and the handler threw. Failure is a flag, not the thrown
+            // value, which may be falsy.
+            if (lineFailed) fail(lineError);
           }
         } else if (newline === -1) {
           tail.pending.push(Buffer.from(chunk.subarray(start, end)));

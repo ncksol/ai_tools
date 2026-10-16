@@ -487,3 +487,77 @@ test('an oversized line counts as failed once, whether its scanner, its handler 
     assert.equal(tail.offset, statSync(file).size, broken);
   }
 });
+
+const FALSY_THROWS = [undefined, null, false, 0, ''];
+const nameOf = value => (value === '' ? "''" : String(value));
+
+/** A tail seeded as if an oversized line were already streaming (no input makes the real scanner throw), with a custom scanner. */
+function seededRead(scanner, { onOversized, chunkSize = 4 } = {}) {
+  const file = path.join(dir, `falsy-${counter += 1}.jsonl`);
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  log.at(T0 + MINUTE); log.turnEnd();
+  writeFileSync(file, `rest of a long line\n${log.events.map(lineOf).join('\n')}\n`);
+  const tail = createTail(file);
+  tail.skipping = true;
+  tail.skipBytes = 10;
+  tail.scanner = scanner;
+  const state = createSessionState('cli-1');
+  const calls = [];
+  const read = readNewLines(tail, line => applyLine(state, line), {
+    chunkSize, maxLineBytes: LIMIT, onOversized: (event, bytes) => { calls.push([event, bytes]); if (onOversized) onOversized(); },
+  });
+  return { read, calls, state, tail, file };
+}
+
+test('a scanner that throws a falsy value fails its line once, and is not written to again', async () => {
+  for (const thrown of FALSY_THROWS) {
+    const label = nameOf(thrown);
+    let writes = 0;
+    const { read, calls, state, tail, file } = seededRead({ write() { writes += 1; throw thrown; }, finish() { throw new Error('not reached'); } });
+    const result = await read;
+    assert.equal(writes, 1, label);
+    assert.equal(result.skipped, 1, label);
+    assert.equal(result.failed, 1, label);
+    assert.ok(result.lastError.length > 0, label);
+    assert.deepEqual(calls, [[null, 10 + 'rest of a long line'.length + 1]], label);
+    assert.equal(state.turn, null, label);
+    assert.equal(tail.offset, statSync(file).size, label);
+  }
+});
+
+test('a scanner whose finish throws a falsy value fails its line once', async () => {
+  for (const thrown of FALSY_THROWS) {
+    const label = nameOf(thrown);
+    const { read, calls, state } = seededRead({ write() {}, finish() { throw thrown; } });
+    const result = await read;
+    assert.equal(result.failed, 1, label);
+    assert.ok(result.lastError.length > 0, label);
+    assert.deepEqual(calls.map(call => call[0]), [null], label);
+    assert.equal(state.turn, null, label);
+  }
+});
+
+test('an onOversized that throws a falsy value fails its line once, and the turn end after it is applied', async () => {
+  for (const thrown of FALSY_THROWS) {
+    const label = nameOf(thrown);
+    const { read, calls, state } = seededRead({ write() {}, finish() { return null; } }, { onOversized() { throw thrown; } });
+    const result = await read;
+    assert.equal(calls.length, 1, label);
+    assert.equal(result.failed, 1, label);
+    assert.ok(result.lastError.length > 0, label);
+    assert.equal(state.turn, null, label);
+    assert.equal(state.lastTurnEndAt, T0 + MINUTE, label);
+  }
+});
+
+test('an onLine that throws a falsy value fails its line once', async () => {
+  for (const thrown of FALSY_THROWS) {
+    const label = nameOf(thrown);
+    const run = await readThrowing([markedLine('fine'), markedLine('fine')], { onLine: () => { throw thrown; }, onOversized: applyRecovered });
+    const result = await run.read();
+    assert.equal(result.failed, 2, label);
+    assert.ok(result.lastError.length > 0, label);
+    assert.equal(result.lines, 2, label);
+  }
+});
