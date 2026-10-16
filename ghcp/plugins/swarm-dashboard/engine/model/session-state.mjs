@@ -165,13 +165,20 @@ export function applyEvent(state, event) {
 }
 
 /**
+ * A reasoning effort from any source (a log event, a task call, data.db), on one line and at most 40 characters; null when it is
+ * not a string or is empty after that.
+ */
+export function effortOf(value) {
+  return typeof value === 'string' ? oneLine(value, 40) || null : null;
+}
+
+/**
  * The session's reasoning effort from a start, resume or model change that names one. A null or empty value clears it (a model
  * change can drop the effort); an event without the key (older CLI versions) leaves it as it is.
  */
 function setEffort(state, data) {
   if (!Object.hasOwn(data, 'reasoningEffort')) return;
-  const effort = typeof data.reasoningEffort === 'string' ? oneLine(data.reasoningEffort, 40) : '';
-  state.effort = effort || null;
+  state.effort = effortOf(data.reasoningEffort);
 }
 
 function onMainEvent(state, type, data, at) {
@@ -547,7 +554,7 @@ function subagentFields(args) {
     type: agentTypeOf(args),
     mode: args.mode === 'background' ? 'background' : 'sync',
     model: typeof args.model === 'string' ? args.model : null,
-    effort: typeof args.reasoning_effort === 'string' ? args.reasoning_effort : null,
+    effort: effortOf(args.reasoning_effort),
     task: typeof args.description === 'string' ? oneLine(args.description, 200) : null,
   };
 }
@@ -828,8 +835,9 @@ function onSubagentLifecycle(state, event, data, at) {
   touchSubagent(state, key, at);
   if (event.type === 'subagent.configured') {
     if (target && typeof data.model === 'string') target.model = data.model;
-    if (target && typeof data.reasoningEffort === 'string') {
-      target.effort = data.reasoningEffort;
+    const effort = effortOf(data.reasoningEffort);
+    if (target && effort) {
+      target.effort = effort;
       target.effortConfigured = true;
     }
   } else if (event.type === 'subagent.started') {

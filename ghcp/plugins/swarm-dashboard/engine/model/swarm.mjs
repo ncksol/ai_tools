@@ -4,7 +4,7 @@ import { MINUTE, maxTime, minTime } from '../time.mjs';
 import { UNIT_LABEL_RE, normaliseRegistry, parseQuestionTag, parseReportBody, parseStatusLine, purposeToStatus } from './contract.mjs';
 import { descendants, resolveNodeId } from './forest.mjs';
 import { setRunStats } from './run-stats.mjs';
-import { mergeStates } from './session-state.mjs';
+import { effortOf, mergeStates } from './session-state.mjs';
 import { deriveMonitor, deriveStage, hostOf, prView, resolvePr } from './stage.mjs';
 import { ACTIVE_DETAILS, displayOf, evaluateStatus, evaluateSubagentUnit, subagentLimitMs, swarmStalled, toolLimitMs, toolView } from './status.mjs';
 
@@ -246,7 +246,7 @@ function sessionView(input, c, label, evaluation, report, title, extraMarks, out
   return {
     id: node.id, kind: node.kind, label, name: title ?? node.name ?? '', cliSessionIds: [...node.cliSessionIds],
     branch: node.branch ?? null, model: current?.model ?? c.sessionRow?.model ?? all.model ?? null,
-    effort: c.sessionRow?.reasoningEffort ?? (current ? current.effort : all.effort) ?? null,
+    effort: effortOf(c.sessionRow?.reasoningEffort) ?? (current ? current.effort : all.effort) ?? null,
     status, statusDetail: evaluation.detail, bucket, since: evaluation.since, reason: evaluation.reason,
     startedAt, endedAt, lastEventAt: all.lastEventAt,
     busyMs: Math.max(0, Math.round(all.busyMs + (current?.turn ? openEnd(current.turn.startedAt) - current.turn.startedAt : 0))),

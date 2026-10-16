@@ -1535,3 +1535,38 @@ test('a child session\'s chip shows its sub-agent\'s configured effort', () => {
   assert.equal(chips.find(chip => chip.id === reviewer).effort, 'high');
   assert.equal(chips.find(chip => chip.id === helper).effort, 'medium');
 });
+
+test('a data.db row with an empty or blank effort falls through to the log\'s latest effort', () => {
+  for (const blank of ['', '   ']) {
+    const data = input(true);
+    data.states.set('cli-api', fold(effortLog(at(5), true), 'cli-api'));
+    data.app.sessions.set('cli-api', sessionRow('cli-api', blank));
+    data.app.sessions.set('cli-root', sessionRow('cli-root', ' high '));
+    const snapshot = buildSnapshot(data);
+    assert.deepEqual(validateSnapshot(snapshot), []);
+    assert.equal(snapshot.units.find(unit => unit.id === 'ws-api').effort, 'medium', JSON.stringify(blank));
+    assert.equal(snapshot.orchestrator.effort, 'high', 'a padded row effort is trimmed');
+  }
+});
+
+test('a session whose current CLI session cleared its effort shows null, not an older CLI session\'s effort', () => {
+  const data = input(true);
+  data.app.aliases.push({ sessionId: 'cli-api-old', workspaceId: 'ws-api', createdAt: T0 });
+  data.forest = buildForest(data.app);
+  assert.deepEqual(data.forest.nodes.get('ws-api').cliSessionIds, ['cli-api-old', 'cli-api']);
+  const old = new EventLog(at(5));
+  old.calls = 300;
+  old.push('session.start', { copilotVersion: '1.0.95-3', selectedModel: 'claude-opus-5', reasoningEffort: 'high' });
+  old.turnStart(); old.at(at(10)); old.turnEnd();
+  data.states.set('cli-api-old', fold(old, 'cli-api-old'));
+  data.alive.set('cli-api-old', false);
+  const current = new EventLog(at(15));
+  current.push('session.start', { copilotVersion: '1.0.95-3', selectedModel: 'claude-sonnet-5', reasoningEffort: 'medium' });
+  current.wait(1000);
+  current.push('session.model_change', { newModel: 'claude-haiku-5.5', reasoningEffort: null });
+  data.states.set('cli-api', fold(current, 'cli-api'));
+  data.app.sessions.set('cli-api', sessionRow('cli-api', null));
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  assert.equal(snapshot.units.find(unit => unit.id === 'ws-api').effort, null);
+});

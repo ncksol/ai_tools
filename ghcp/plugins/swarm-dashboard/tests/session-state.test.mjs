@@ -700,6 +700,28 @@ test('a configured sub-agent effort survives a repeated task start, for a root s
   assert.equal(fold(unconfigured).subagents.get(call).effort, 'medium', 'without a configured effort, a repeated start still updates the requested one');
 });
 
+test('sub-agent efforts are normalised: a blank configured effort keeps the requested one, and a requested effort is trimmed', () => {
+  for (const options of [undefined, ROOT]) {
+    const log = new EventLog(T0);
+    log.start(); log.turnStart();
+    const blank = log.subagent({ name: 'blank', type: 'explore', mode: 'background', effort: 'low', agentId: 'agent-b' });
+    log.push('subagent.configured', { reasoningEffort: '  ' }, { agentId: 'agent-b' });
+    const padded = log.subagent({ name: 'padded', type: 'explore', mode: 'background', effort: ' high ', agentId: 'agent-p' });
+    const empty = log.subagent({ name: 'empty', type: 'explore', mode: 'background', agentId: 'agent-e' });
+    log.push('subagent.configured', { reasoningEffort: '' }, { agentId: 'agent-e' });
+    log.push('tool.execution_start', { toolCallId: blank, toolName: 'task', arguments: { name: 'blank', agent_type: 'explore', mode: 'background', reasoning_effort: 'medium' } });
+    const state = fold(log, 'cli-1', options);
+    assert.equal(state.subagents.get(blank).effort, 'medium', 'a blank configured effort does not count as configured');
+    assert.equal(state.subagents.get(padded).effort, 'high');
+    assert.equal(state.subagents.get(empty).effort, null);
+  }
+  const once = new EventLog(T0);
+  once.start(); once.turnStart();
+  const call = once.subagent({ name: 'kept', type: 'explore', mode: 'background', effort: 'low', agentId: 'agent-k' });
+  once.push('subagent.configured', { reasoningEffort: '  ' }, { agentId: 'agent-k' });
+  assert.equal(fold(once).subagents.get(call).effort, 'low', 'a configured effort of blanks keeps the requested one');
+});
+
 test('an abort stops the sync sub-agents and their runs; the end of the process stops everything left', () => {
   const log = new EventLog(T0);
   log.start(); log.turnStart();
