@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createDemoEngine } from '../../server/demo-engine.mjs';
 import { createDashboardServer } from '../../server/http.mjs';
 import { PANELS, fitPanels, overlapProblems } from '../../ui/cockpit-fit.mjs';
+import { STORE_KEY } from '../../ui/cockpit-quality.mjs';
 import { REST, extremePoses } from '../../ui/cockpit-space.mjs';
 import { auditScript, luminance } from './page-audit.mjs';
 import { analyseFrame, sceneProblems } from './cockpit-scene.mjs';
@@ -502,6 +503,82 @@ async function checkLinks({ page, browser, urls, engine, stdout, stderr }) {
   return problems.length;
 }
 
+/** Native pointer clicks in the real 3D layout must reach the quality switch and persist across reloads. */
+async function checkQuality({ page, browser, urls, stdout, stderr }) {
+  if (!urls.example) {
+    stdout.write('Cockpit quality: checked on the synthetic example swarm.\n');
+    return 0;
+  }
+  const problems = [];
+  page.errors.length = 0;
+  const url = `${urls.example}cockpit?debug=1`;
+  const key = JSON.stringify(STORE_KEY);
+  const evaluate = expression => bounded(page.evaluate(expression), 5000, 'The quality check');
+  const go = async target => {
+    await bounded(page.goto(target, 1440, 900), 10000, 'The quality check navigation');
+    await bounded(page.waitFor(`location.href === ${JSON.stringify(target)} && document.documentElement.dataset.ready === '1'${target === url ? " && document.documentElement.dataset.fit === 'ok'" : ''}`, 8000), 10000, 'The quality check readiness');
+  };
+  const state = `({
+    high: document.querySelector('[data-quality="high"]')?.getAttribute('aria-pressed'),
+    balanced: document.querySelector('[data-quality="balanced"]')?.getAttribute('aria-pressed'),
+    saved: JSON.parse(localStorage.getItem(${key}) ?? 'null')?.quality ?? null
+  })`;
+  const expectQuality = async (quality, when, stored = true) => {
+    const want = { high: String(quality === 'high'), balanced: String(quality === 'balanced'), saved: stored ? quality : null };
+    const matches = `(() => { const got = ${state}; return ${Object.entries(want).map(([name, value]) => `got.${name} === ${JSON.stringify(value)}`).join(' && ')}; })()`;
+    await bounded(page.waitFor(matches, 2000), 4000, 'The quality check state').catch(() => {});
+    const got = await evaluate(state);
+    for (const [name, value] of Object.entries(want)) {
+      if (got[name] !== value) problems.push(`${when}: ${name === 'saved' ? 'stored quality' : `${name} aria-pressed`} is ${JSON.stringify(got[name])}, expected ${JSON.stringify(value)}`);
+    }
+  };
+  const clickQuality = async quality => {
+    const { x, y } = await evaluate(`(() => {
+      const r = document.querySelector('[data-quality="${quality}"]').getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    })()`);
+    if (page.send) {
+      for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) {
+        await bounded(page.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 }), 5000, 'The quality check pointer');
+      }
+    } else {
+      await bounded(browser.playwright.contexts().at(-1).pages().at(-1).mouse.click(x, y), 5000, 'The quality check pointer');
+    }
+  };
+  try {
+    // Storage belongs to the origin: clear it there before loading a fresh cockpit without a quality override.
+    await go(`${urls.example}?host=browser`);
+    await evaluate(`localStorage.removeItem(${key})`);
+    await go(url);
+    await expectQuality('high', 'at first load', false);
+    const hits = await evaluate(`(() => {
+      const targets = [...document.querySelectorAll('[data-quality]'), ...['.ck-tile', '#ck-cost', '.ck-need'].map(selector => document.querySelector(selector))];
+      return targets.map((element, index) => {
+        const label = index < targets.length - 3 ? element.dataset.quality + ' button' : ['console tile', 'Cost panel', 'Needs-you item'][index - (targets.length - 3)];
+        if (!element) return { label, reachable: false, hit: 'missing element' };
+        const r = element.getBoundingClientRect();
+        const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return { label, reachable: element.contains(hit), hit: hit ? (hit.id ? '#' + hit.id : hit.tagName.toLowerCase() + '.' + [...hit.classList].join('.')) : 'nothing' };
+      });
+    })()`);
+    for (const hit of hits) if (!hit.reachable) problems.push(`${hit.label}'s centre hits ${hit.hit}, not the element or a descendant`);
+    for (const quality of ['balanced', 'high']) {
+      await clickQuality(quality);
+      await expectQuality(quality, `after clicking ${quality}`);
+      await go(url);
+      await expectQuality(quality, `after reloading ${quality}`);
+    }
+  } catch (error) {
+    problems.push(error.message);
+  } finally {
+    await evaluate(`localStorage.removeItem(${key})`).catch(error => problems.push(`clearing the stored choice: ${error.message}`));
+  }
+  problems.push(...page.errors.map(message => `console: ${message}`));
+  stdout.write(`Cockpit quality: ${problems.length ? `${problems.length} problems` : 'the High and Balanced buttons take pointer clicks in the 3D layout, and the choice is saved and kept after a reload'}.\n`);
+  for (const problem of problems) stderr.write(`quality: ${problem}\n`);
+  return problems.length;
+}
+
 const median = values => {
   const sorted = [...values].sort((a, b) => a - b);
   const middle = sorted.length / 2;
@@ -655,7 +732,7 @@ async function checkSlowdown({ page, browser, urls, engine, stdout, stderr }) {
 }
 
 /** The cockpit's checks in the order they run. */
-export const CHECKS = new Map([['scene', checkScene], ['layout', checkLayout], ['motion', checkMotion], ['links', checkLinks], ['slowdown', checkSlowdown]]);
+export const CHECKS = new Map([['scene', checkScene], ['layout', checkLayout], ['motion', checkMotion], ['links', checkLinks], ['quality', checkQuality], ['slowdown', checkSlowdown]]);
 
 export async function runCockpitChecks(context) {
   let issues = 0;
