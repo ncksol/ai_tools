@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, baseSearch, coalesced, historyReloadWanted, isNarrow, lifecycleKey, reloadDecision, reloadSearch, renderApp, staleChoice, startSwarm } from '../ui/app.mjs';
+import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, historyReloadWanted, isNarrow, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, staleChoice, staleShown, startSwarm, startsShown } from '../ui/app.mjs';
 import { NOW, deepFreeze, exampleSnapshot, fixture } from './helpers/ui.mjs';
 
 const view = (overrides = {}) => ({
@@ -241,6 +241,47 @@ test('a page starts on an addressed swarm, then a pick restored after a self-rel
   assert.equal(startSwarm({ urlSwarm: null, restoredPick: null, session: 's-1', savedSwarm: 'ws-saved' }), null);
   assert.equal(startSwarm({ urlSwarm: null, restoredPick: null, session: null, savedSwarm: 'ws-saved' }), 'ws-saved');
   assert.equal(startSwarm({ urlSwarm: null, restoredPick: null, session: null, savedSwarm: null }), null);
+});
+
+test('a page starts on a swarm it showed by default before a self-reload, unless an address, a pick or a session decides', () => {
+  assert.equal(SHOWN_KEY, 'swarm-dashboard:shown-swarm');
+  const cases = [
+    [{ urlSwarm: null, restoredPick: null, restoredShown: 'ws-shown', session: null, savedSwarm: null }, 'ws-shown', true],
+    [{ urlSwarm: null, restoredPick: null, restoredShown: 'ws-shown', session: null, savedSwarm: 'ws-saved' }, 'ws-shown', true],
+    [{ urlSwarm: null, restoredPick: null, restoredShown: 'ws-shown', session: 's-1', savedSwarm: 'ws-saved' }, null, false],
+    [{ urlSwarm: 'ws-url', restoredPick: null, restoredShown: 'ws-shown', session: null, savedSwarm: null }, 'ws-url', false],
+    [{ urlSwarm: null, restoredPick: 'ws-picked', restoredShown: 'ws-shown', session: null, savedSwarm: null }, 'ws-picked', false],
+    [{ urlSwarm: null, restoredPick: null, restoredShown: null, session: null, savedSwarm: 'ws-saved' }, 'ws-saved', false],
+  ];
+  for (const [input, swarm, shown] of cases) {
+    assert.equal(startSwarm(input), swarm, JSON.stringify(input));
+    assert.equal(startsShown(input), shown, JSON.stringify(input));
+  }
+});
+
+test('a swarm shown by default gives way once it is no longer live while another swarm is', () => {
+  const swarms = fixture('example-swarms.json');
+  const none = swarms.map(swarm => ({ ...swarm, lifecycle: 'finished' }));
+  assert.equal(staleShown('ws-0000-root', swarms), false, 'live');
+  assert.equal(staleShown('ws-1000-root', swarms), true, 'finished while another is live');
+  assert.equal(staleShown('ws-0000-root', none), false, 'finished and nothing live');
+  assert.equal(staleShown('ws-gone', swarms), true, 'gone while another is live');
+  assert.equal(staleShown(null, swarms), false);
+});
+
+test('a self-reload carries a picked swarm as a pick and the swarm on screen of a default page as shown', () => {
+  const swarms = fixture('example-swarms.json');
+  const none = swarms.map(swarm => ({ ...swarm, lifecycle: 'finished' }));
+  const base = { swarm: null, fromUrl: false, shown: false, session: null, onScreen: 'ws-0000-root', swarms };
+  const nothing = { pick: null, shown: null };
+  assert.deepEqual(reloadCarry({ ...base, swarm: 'ws-0000-root', fromUrl: true }), nothing, 'addressed');
+  assert.deepEqual(reloadCarry({ ...base, swarm: 'ws-0000-root' }), { pick: 'ws-0000-root', shown: null }, 'picked');
+  assert.deepEqual(reloadCarry(base), { pick: null, shown: 'ws-0000-root' }, 'default page, live');
+  assert.deepEqual(reloadCarry({ ...base, onScreen: 'ws-1000-root' }), nothing, 'default page, no longer live while another is');
+  assert.deepEqual(reloadCarry({ ...base, swarms: none }), { pick: null, shown: 'ws-0000-root' }, 'default page, nothing live');
+  assert.deepEqual(reloadCarry({ ...base, session: 's-1' }), nothing, 'opened for a session');
+  assert.deepEqual(reloadCarry({ ...base, swarm: 'ws-0000-root', shown: true }), { pick: null, shown: 'ws-0000-root' }, 'restored shown');
+  assert.deepEqual(reloadCarry({ ...base, onScreen: null }), nothing, 'no snapshot');
 });
 
 test('after a self-reload the address goes back to the host, the session and an addressed swarm', () => {

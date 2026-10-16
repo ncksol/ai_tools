@@ -1,4 +1,4 @@
-import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, baseSearch, coalesced, historyReloadWanted, isNarrow, lifecycleKey, reloadDecision, reloadSearch, renderApp, staleChoice, startSwarm } from './app.mjs';
+import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, historyReloadWanted, isNarrow, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, staleChoice, staleShown, startSwarm, startsShown } from './app.mjs';
 import { tickText } from './format.mjs';
 import { morph } from './morph.mjs';
 import { nextCardChange, runEnd, unitEnd } from './model.mjs';
@@ -26,13 +26,16 @@ function readSaved() {
 }
 const saved = readSaved();
 const urlSwarm = params.get('swarm');
-/** After a self-reload: the swarm picked before it, and whether the address still carries the reload's state. */
+/** After a self-reload: the swarm picked or shown by default before it, and whether the address still carries the reload's state. */
 let restoredPick = null;
+let restoredShown = null;
 let restored = false;
 try {
   restoredPick = sessionStorage.getItem(PICK_KEY);
+  restoredShown = sessionStorage.getItem(SHOWN_KEY);
   restored = sessionStorage.getItem(RESTORED_KEY) === '1';
   sessionStorage.removeItem(PICK_KEY);
+  sessionStorage.removeItem(SHOWN_KEY);
   sessionStorage.removeItem(RESTORED_KEY);
 } catch {
   // Without sessionStorage there was no self-reload to restore.
@@ -45,7 +48,7 @@ const view = {
   span: choose(params.get('span') ?? saved.span, SPANS, '12h'),
   detail: params.get('detail'),
   runId: params.get('run'),
-  swarm: startSwarm({ urlSwarm, restoredPick, session: params.get('session'), savedSwarm: saved.swarm }),
+  swarm: startSwarm({ urlSwarm, restoredPick, restoredShown, session: params.get('session'), savedSwarm: saved.swarm }),
   session: params.get('session'),
   narrow: false,
   loaded: false,
@@ -63,6 +66,8 @@ if (restored) history.replaceState(null, '', `${location.pathname}${baseSearch(p
 
 // A swarm named in the address always applies; a picked or remembered one only while it is live.
 let swarmFromUrl = Boolean(urlSwarm);
+// A swarm shown by default before a self-reload is temporary: never remembered, and it gives way as a default page does on the server.
+let swarmIsShown = startsShown({ urlSwarm, restoredPick, restoredShown, session: params.get('session') });
 let offset = 0;
 let source = null;
 let reconnectTimer = null;
@@ -85,7 +90,7 @@ const now = () => Date.now() + offset;
 
 function save() {
   try {
-    localStorage.setItem(STORE, JSON.stringify({ tab: view.tab, span: view.span, swarm: view.swarm }));
+    localStorage.setItem(STORE, JSON.stringify({ tab: view.tab, span: view.span, swarm: swarmIsShown ? null : view.swarm }));
   } catch {
     // Storage can be unavailable; the dashboard works without it.
   }
@@ -128,8 +133,9 @@ function connect() {
     const key = lifecycleKey(view.swarms);
     if (historyReloadWanted({ asked: historyAsked, previousKey: lifecycle, key })) reloadHistory();
     lifecycle = key;
-    if (staleChoice(view.swarm, swarmFromUrl, view.swarms)) {
+    if (swarmIsShown ? staleShown(view.swarm, view.swarms) : staleChoice(view.swarm, swarmFromUrl, view.swarms)) {
       view.swarm = null;
+      swarmIsShown = false;
       view.snapshot = null;
       view.loaded = false;
       view.detail = null;
@@ -160,9 +166,13 @@ function considerReload() {
   if (reloadDecision({ own: ownUi, served: servedUi, attempted, hidden: document.visibilityState === 'hidden' }) !== 'reload') return;
   try {
     sessionStorage.setItem(RELOAD_KEY, servedUi);
-    // A picked swarm is not written to the address, so carry it in this tab's storage; each tab restores its own.
-    if (view.swarm && !swarmFromUrl) sessionStorage.setItem(PICK_KEY, view.swarm);
+    // A picked swarm, or the swarm a default page shows, is not written to the address, so carry it in this tab's
+    // storage; each tab restores its own. The shown one travels apart, so the reloaded page keeps it temporary.
+    const carry = reloadCarry({ swarm: view.swarm, fromUrl: swarmFromUrl, shown: swarmIsShown, session: view.session, onScreen: view.snapshot?.run.id ?? null, swarms: view.swarms });
+    if (carry.pick) sessionStorage.setItem(PICK_KEY, carry.pick);
     else sessionStorage.removeItem(PICK_KEY);
+    if (carry.shown) sessionStorage.setItem(SHOWN_KEY, carry.shown);
+    else sessionStorage.removeItem(SHOWN_KEY);
     sessionStorage.setItem(RESTORED_KEY, '1');
   } catch {
     return;
@@ -423,6 +433,7 @@ dash.addEventListener('change', event => {
   if (!event.target.matches('select[data-swarm]')) return;
   view.swarm = event.target.value;
   swarmFromUrl = false;
+  swarmIsShown = false;
   view.snapshot = null;
   view.loaded = false;
   view.detail = null;

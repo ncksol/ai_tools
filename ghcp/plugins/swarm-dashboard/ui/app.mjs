@@ -23,6 +23,28 @@ export const RELOAD_KEY = 'swarm-dashboard:reloaded-for';
 export const PICK_KEY = 'swarm-dashboard:picked-swarm';
 /** sessionStorage key: set just before a self-reload, so the reloaded page cleans its address. */
 export const RESTORED_KEY = 'swarm-dashboard:restored';
+/** sessionStorage key: a swarm the page showed by default, carried through a self-reload in this tab only. */
+export const SHOWN_KEY = 'swarm-dashboard:shown-swarm';
+
+/**
+ * A swarm the page showed by default gives way as a default page does on the server: once it is no longer live while
+ * another swarm is. Picked, remembered and addressed swarms keep their own rules (see staleChoice).
+ */
+export const staleShown = (swarm, swarms) => Boolean(swarm)
+  && !swarms.some(item => item.id === swarm && item.lifecycle === 'live')
+  && swarms.some(item => item.lifecycle === 'live');
+
+/**
+ * What a self-reload carries in this tab's storage. An addressed swarm travels in the address. A picked or remembered
+ * swarm travels as a pick. Otherwise, on a page not opened for a session, the swarm on screen travels as shown, unless it
+ * would give way anyway, so the reloaded page opens on it even when the server's default has moved to another swarm.
+ */
+export function reloadCarry({ swarm, fromUrl, shown, session, onScreen, swarms }) {
+  if (swarm && fromUrl) return { pick: null, shown: null };
+  if (swarm && !shown) return { pick: swarm, shown: null };
+  const candidate = swarm ?? (session ? null : onScreen);
+  return { pick: null, shown: candidate && !staleShown(candidate, swarms) ? candidate : null };
+}
 /**
  * What to do once the server's UI fingerprint is known: 'stay', 'wait' (hidden: decide again when visible) or 'reload'.
  * A tab reloads at most once for each new fingerprint, so files that still do not match after a reload cause no loop.
@@ -52,12 +74,16 @@ export function baseSearch(params) {
 }
 /**
  * The swarm a page starts on: one named in the address, else one picked before a self-reload, else none for a page opened
- * for a session (the server picks that session's swarm), else the one remembered from an earlier visit.
- * Only the first counts as addressed; the others keep the picker's "only while live" rule.
+ * for a session (the server picks that session's swarm), else one the page showed by default before a self-reload, else
+ * the one remembered from an earlier visit.
+ * Only the first counts as addressed. A swarm shown by default stays temporary and gives way as on the server (see
+ * staleShown); the others keep the picker's "only while live" rule.
  */
-export function startSwarm({ urlSwarm, restoredPick, session, savedSwarm }) {
-  return urlSwarm ?? restoredPick ?? (session ? null : savedSwarm ?? null);
+export function startSwarm({ urlSwarm, restoredPick, restoredShown = null, session, savedSwarm }) {
+  return urlSwarm ?? restoredPick ?? (session ? null : restoredShown ?? savedSwarm ?? null);
 }
+/** Whether startSwarm chose a swarm the page showed by default before a self-reload; it stays temporary (see reloadCarry). */
+export const startsShown = ({ urlSwarm, restoredPick, restoredShown, session }) => !urlSwarm && !restoredPick && !session && Boolean(restoredShown);
 
 /** Wrap load so that calls never overlap: a call made while one runs makes it run once more afterwards, even if that run failed. */
 export function coalesced(load) {

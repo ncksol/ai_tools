@@ -74,6 +74,8 @@ test('the reload records its attempt first, needs an open connection, and gives 
   assert.ok(at('readyState !== EventSource.OPEN) return;') < at('sessionStorage.setItem(RELOAD_KEY'), 'the open-connection guard comes first');
   assert.ok(at('sessionStorage.setItem(RELOAD_KEY') < at('location.reload('), 'the attempt is written before the reload');
   assert.ok(at('PICK_KEY') < at('location.reload('));
+  assert.ok(at('reloadCarry(') < at('sessionStorage.setItem(SHOWN_KEY'), 'what to carry is decided before it is written');
+  assert.ok(at('sessionStorage.setItem(SHOWN_KEY') < at('location.reload('), 'a swarm shown by default is carried before the reload');
   assert.ok(at('sessionStorage.setItem(RESTORED_KEY') < at('location.reload('));
   const catches = body.match(/catch \{/g) ?? [];
   assert.ok(catches.length >= 2);
@@ -86,6 +88,25 @@ test('at start-up the page restores a picked swarm and cleans the address only a
   const main = readFileSync(file('main.mjs'), 'utf8');
   for (const needle of ['startSwarm(', 'baseSearch(', 'sessionStorage.removeItem(PICK_KEY)', 'sessionStorage.removeItem(RESTORED_KEY)']) assert.ok(main.includes(needle), needle);
   assert.match(main, /if \(restored\) history\.replaceState\(/);
+});
+
+test('at start-up the page restores a swarm it showed by default, and keeps it temporary', () => {
+  const main = readFileSync(file('main.mjs'), 'utf8');
+  for (const needle of ['sessionStorage.getItem(SHOWN_KEY)', 'sessionStorage.removeItem(SHOWN_KEY)', 'startsShown({ urlSwarm, restoredPick, restoredShown, session: params.get(\'session\') })']) assert.ok(main.includes(needle), needle);
+  assert.match(main, /startSwarm\(\{ urlSwarm, restoredPick, restoredShown, session: params\.get\('session'\), savedSwarm: saved\.swarm \}\)/);
+  const save = main.slice(main.indexOf('function save()'), main.indexOf('\n}\n', main.indexOf('function save()')));
+  assert.ok(save.includes('swarm: swarmIsShown ? null : view.swarm'), 'a swarm shown by default is never remembered');
+});
+
+test('a swarm shown by default gives way as on the server, and picking a swarm makes it an ordinary pick', () => {
+  const main = readFileSync(file('main.mjs'), 'utf8');
+  const handler = main.slice(main.indexOf("addEventListener('swarms'"));
+  const swarms = handler.slice(0, handler.indexOf('});'));
+  assert.ok(swarms.includes('swarmIsShown ? staleShown(view.swarm, view.swarms) : staleChoice(view.swarm, swarmFromUrl, view.swarms)'));
+  assert.match(swarms, /swarmIsShown = false;/);
+  const picker = main.slice(main.indexOf("addEventListener('change'"));
+  const change = picker.slice(0, picker.indexOf('});'));
+  assert.match(change, /swarmFromUrl = false;\s*swarmIsShown = false;/);
 });
 
 test('the swarms handler reloads History through historyReloadWanted, so the first event after load reloads it too', () => {
