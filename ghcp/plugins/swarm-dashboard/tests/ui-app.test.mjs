@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { isNarrow, renderApp, staleChoice } from '../ui/app.mjs';
+import { coalesced, isNarrow, lifecycleKey, renderApp, staleChoice } from '../ui/app.mjs';
 import { NOW, deepFreeze, exampleSnapshot, fixture } from './helpers/ui.mjs';
 
 const view = (overrides = {}) => ({
@@ -14,6 +14,54 @@ const tabs = html => [...html.matchAll(/data-tab="(\w+)" aria-selected="(true|fa
 test('narrow mode starts below 900 px of inner width', () => {
   assert.equal(isNarrow(932), false);
   assert.equal(isNarrow(931), true);
+});
+
+test('lifecycleKey changes when a swarm starts, finishes or goes away, and not for other changes', () => {
+  const a = { id: 'a', lifecycle: 'live', name: 'x' };
+  const b = { id: 'b', lifecycle: 'finished' };
+  const key = lifecycleKey([a, b]);
+  assert.equal(lifecycleKey([b, a]), key);
+  assert.notEqual(lifecycleKey([{ ...a, lifecycle: 'finished' }, b]), key);
+  assert.notEqual(lifecycleKey([a]), key);
+  assert.notEqual(lifecycleKey([a, b, { id: 'c', lifecycle: 'live' }]), key);
+  assert.equal(lifecycleKey([{ ...a, name: 'y', lastActivityAt: 5 }, { ...b, lastActivityAt: 6 }]), key);
+  assert.equal(typeof lifecycleKey([]), 'string');
+});
+
+test('coalesced runs one load at a time and once more if asked again meanwhile', async () => {
+  const pending = [];
+  let fail = false;
+  const load = () => {
+    if (fail) return Promise.reject(new Error('down'));
+    return new Promise(resolve => pending.push(resolve));
+  };
+  let calls = 0;
+  const run = coalesced(() => {
+    calls += 1;
+    return load();
+  });
+  const tick = () => new Promise(resolve => setImmediate(resolve));
+  const done = [run(), run(), run()];
+  assert.equal(calls, 1);
+  pending[0]();
+  await tick();
+  assert.equal(calls, 2);
+  pending[1]();
+  await Promise.all(done);
+  assert.equal(calls, 2);
+  const later = run();
+  assert.equal(calls, 3);
+  pending[2]();
+  await later;
+  // A failed load rejects the promise its run() returned, and later runs still load.
+  fail = true;
+  await assert.rejects(run(), /down/);
+  assert.equal(calls, 4);
+  fail = false;
+  const after = run();
+  assert.equal(calls, 5);
+  pending[3]();
+  await after;
 });
 
 test('the wide Live page has the header, Needs you, four tabs and the activity rail', () => {

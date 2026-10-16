@@ -1,4 +1,4 @@
-import { isNarrow, renderApp, staleChoice } from './app.mjs';
+import { coalesced, isNarrow, lifecycleKey, renderApp, staleChoice } from './app.mjs';
 import { tickText } from './format.mjs';
 import { morph } from './morph.mjs';
 import { shortLabel } from './parts.mjs';
@@ -59,6 +59,8 @@ let ticks = 0;
 let freshUntil = 0;
 let parseMs = null;
 let measured = 0;
+let lifecycle = null;
+let wasOpen = false;
 const now = () => Date.now() + offset;
 
 function save() {
@@ -80,6 +82,9 @@ function connect() {
   source.addEventListener('open', () => {
     justConnected = true;
     view.connection = 'open';
+    // After a reconnect the server may know runs that finished meanwhile.
+    if (wasOpen && view.runs !== null) loadHistory();
+    wasOpen = true;
     scheduleRender();
   });
   source.addEventListener('error', () => {
@@ -94,6 +99,10 @@ function connect() {
   });
   source.addEventListener('swarms', event => {
     view.swarms = JSON.parse(event.data);
+    // A run that finishes moves into History, so reload it in place when the swarms' lifecycles change.
+    const key = lifecycleKey(view.swarms);
+    if (lifecycle !== null && key !== lifecycle && view.runs !== null) loadHistory();
+    lifecycle = key;
     if (staleChoice(view.swarm, swarmFromUrl, view.swarms)) {
       view.swarm = null;
       view.snapshot = null;
@@ -239,17 +248,17 @@ function fitChips(box) {
   } while (box.scrollHeight > box.clientHeight + 1 && hidden < chips.length);
 }
 
-async function loadHistory() {
-  view.runs = null;
-  scheduleRender();
+/** Load finished runs. Only the first load shows the loading state; later loads replace the list in place. */
+const loadHistory = coalesced(async () => {
   try {
     const response = await fetch('/api/history');
-    view.runs = response.ok ? await response.json() : [];
+    if (response.ok) view.runs = await response.json();
+    else if (view.runs === null) view.runs = [];
   } catch {
-    view.runs = [];
+    if (view.runs === null) view.runs = [];
   }
   scheduleRender();
-}
+});
 
 async function loadRun(id) {
   try {

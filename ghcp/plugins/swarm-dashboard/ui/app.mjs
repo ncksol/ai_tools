@@ -11,6 +11,32 @@ export const isNarrow = dashWidth => dashWidth - 32 < NARROW_BELOW;
 /** A swarm picked in the picker or remembered from an earlier visit applies only while it is live; one named in the address always applies. */
 export const staleChoice = (swarm, fromUrl, swarms) => Boolean(swarm) && !fromUrl && !swarms.some(item => item.id === swarm && item.lifecycle === 'live');
 
+/** A key that changes when a swarm starts, finishes or goes away; History lists finished runs, so it may then be stale. */
+export const lifecycleKey = swarms => swarms.map(swarm => `${swarm.id}:${swarm.lifecycle}`).sort().join('|');
+
+/** Wrap load so that calls never overlap: a call made while one runs makes it run once more afterwards. */
+export function coalesced(load) {
+  let running = null;
+  let again = false;
+  return function run() {
+    if (running) {
+      again = true;
+      return running;
+    }
+    running = (async () => {
+      try {
+        do {
+          again = false;
+          await load();
+        } while (again);
+      } finally {
+        running = null;
+      }
+    })();
+    return running;
+  };
+}
+
 /** The whole dashboard for one PageView (see the Task 7 interface). */
 export function renderApp(view) {
   const top = topHtml(view);
