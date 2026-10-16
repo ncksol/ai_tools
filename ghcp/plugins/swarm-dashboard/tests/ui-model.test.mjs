@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  BOARD_STAGES, CARD_FADE_MS, STATE_LINES, SUBAGENT_CARD_GRACE_MS, UNIT_STAGES, archivedUnits, boardColumns, cardTimeLeft, cardUnits, closedNotMerged, feedText,
-  findByLabel, findPlanned, flattenPlan, isFinishedSubagent, isSubagent, needItems, nextCardChange, omittedSubagents, planForest, planLayout, progressPercent, reportTitle, runEnd, sharePercent, stateLine, unitEnd, withoutStatusPrefix,
+  BOARD_STAGES, CARD_FADE_MS, REPORT_CLASS, REPORT_LABELS, STATE_LINES, SUBAGENT_CARD_GRACE_MS, UNIT_STAGES, archivedUnits, boardColumns, cardTimeLeft, cardUnits, closedNotMerged, feedText,
+  findByLabel, findPlanned, flattenPlan, isFinishedSubagent, isSubagent, needItems, nextCardChange, omittedSubagents, planForest, planLayout, progressPercent, reportKind, reportTitle, runEnd, sharePercent, stateLine, unitEnd, withoutStatusPrefix,
 } from '../ui/model.mjs';
 import { createDemoEngine } from '../server/demo-engine.mjs';
 import { NOW, closedSnapshot, exampleSnapshot } from './helpers/ui.mjs';
@@ -288,5 +288,24 @@ test('every unit the Cards tab leaves out is on the Board', async () => {
     assert.ok(left.length > 0);
     const onBoard = new Set(boardColumns(snapshot).flatMap(column => column.nodes.map(node => node.unit)));
     for (const unit of left) assert.ok(onBoard.has(unit), unit.label);
+  }
+});
+
+test('a replied question or blocker reads as a neutral "question" or "blocker"; every other report reads as its status', () => {
+  const at = NOW - 60_000;
+  const cases = [
+    [{ status: 'needs_input', repliedAt: at }, 'replied_question', 'question', 'replied'],
+    [{ status: 'blocked', repliedAt: at }, 'replied_blocker', 'blocker', 'replied'],
+    [{ status: 'needs_input', repliedAt: null }, 'needs_input', 'needs input', 'needs'],
+    [{ status: 'blocked', repliedAt: null }, 'blocked', 'blocked', 'blocked'],
+    [{ status: 'needs_input' }, 'needs_input', 'needs input', 'needs'],
+    [{ status: 'complete', repliedAt: at }, 'complete', 'complete', 'complete'],
+    [{ status: 'progress', repliedAt: at }, 'progress', 'progress', 'progress'],
+  ];
+  for (const [report, kind, label, cls] of cases) {
+    const name = JSON.stringify(report);
+    assert.equal(reportKind(report), kind, name);
+    assert.equal(REPORT_LABELS[kind], label, name);
+    assert.equal(REPORT_CLASS[kind], cls, name);
   }
 });

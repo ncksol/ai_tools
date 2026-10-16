@@ -8,8 +8,8 @@ export const STAGE_NAMES = Object.freeze({ planned: 'Planned', coding: 'Coding',
 /** Board column headers: a stage name, but the column of sub-agents is plural. */
 export const COLUMN_NAMES = Object.freeze({ ...STAGE_NAMES, subagent: 'Sub-agents' });
 export const STAGE_CLASS = Object.freeze({ planned: 'planned', coding: 'coding', pr_open: 'pr', in_review: 'review', merged: 'merged', archived: 'archived', subagent: 'subagent' });
-export const REPORT_LABELS = Object.freeze({ complete: 'complete', progress: 'progress', needs_input: 'needs input', blocked: 'blocked' });
-export const REPORT_CLASS = Object.freeze({ complete: 'complete', progress: 'progress', needs_input: 'needs', blocked: 'blocked' });
+export const REPORT_LABELS = Object.freeze({ complete: 'complete', progress: 'progress', needs_input: 'needs input', blocked: 'blocked', replied_question: 'question', replied_blocker: 'blocker' });
+export const REPORT_CLASS = Object.freeze({ complete: 'complete', progress: 'progress', needs_input: 'needs', blocked: 'blocked', replied_question: 'replied', replied_blocker: 'replied' });
 export const NEED_LABELS = Object.freeze({ stalled: 'Swarm stalled', question: 'Question', plan: 'Plan to approve', pr: 'PR to approve' });
 export const NEED_CLASS = Object.freeze({ stalled: 'stuck', question: 'question', plan: 'plan', pr: 'pr' });
 /** Header tiles: the count bucket and the state colour of its dot. */
@@ -70,6 +70,17 @@ export function withoutStatusPrefix(text, status) {
 
 /** A report's title as plain text, or a placeholder when it is blank. */
 export const reportTitle = report => withoutStatusPrefix(plainText(report.title), report.status).trim() || 'Untitled report';
+
+/**
+ * How a report's badge reads. Once the parent has replied, a question or a blocker no longer waits on anyone, so its
+ * badge turns neutral and never contradicts the unit's state. Every other report reads as its status.
+ */
+export function reportKind(report) {
+  if (typeof report.repliedAt !== 'number') return report.status;
+  if (report.status === 'needs_input') return 'replied_question';
+  if (report.status === 'blocked') return 'replied_blocker';
+  return report.status;
+}
 
 /** One activity item's text as plain text, without the engine's repetitions. */
 export function feedText(item) {

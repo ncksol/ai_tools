@@ -1,7 +1,7 @@
 import { ago, costHtml, costText, dur, elapsed, esc, liveTime, plainText, runningFor } from './format.mjs';
 import {
   CARD_FADE_MS, COUNT_TILES, MODE_WORDS, NEED_CLASS, NEED_LABELS, STAGE_NAMES, cardTimeLeft, cardUnits, closedNotMerged, isSubagent, needItems,
-  omittedSubagents, progressPercent, reportTitle, runEnd, sharePercent, unitEnd,
+  omittedSubagents, progressPercent, reportKind, reportTitle, runEnd, sharePercent, unitEnd,
 } from './model.mjs';
 import { badge, bar, chipsHtml, closedBadge, feedList, meter, monitorHtml, reportClass, ring, stageTrack, stateLineHtml } from './parts.mjs';
 
@@ -35,7 +35,8 @@ export function needsHtml({ snapshot, now }) {
 function reportRow(unit, now, fresh) {
   const report = unit.report;
   if (!report) return '<div class="b-rep"><span class="b-rep-t muted">No report yet</span></div>';
-  return `<div class="b-rep ${reportClass(report.status)}${fresh.reports.has(unit.id) ? ' is-new' : ''}">${badge(report.status)}`
+  const kind = reportKind(report);
+  return `<div class="b-rep ${reportClass(kind)}${fresh.reports.has(unit.id) ? ' is-new' : ''}">${badge(kind)}`
     + `<span class="b-rep-t" title="${esc(reportTitle(report))}">${esc(reportTitle(report))}</span><span class="b-age">${ago(report.at, now)}</span></div>`;
 }
 
@@ -95,7 +96,8 @@ function reportHtml(report, now) {
   if (!report) return '<p class="small muted">No report yet.</p>';
   const list = entries => `<ul class="dt-list">${entries.map(entry => `<li>${esc(plainText(entry))}</li>`).join('')}</ul>`;
   const lead = report.summary ? plainText(report.summary) : report.body ? null : reportTitle(report);
-  return `<div class="dt-rep-h ${reportClass(report.status)}">${badge(report.status)}<span class="small muted">${ago(report.at, now)}</span></div>`
+  const kind = reportKind(report);
+  return `<div class="dt-rep-h ${reportClass(kind)}">${badge(kind)}<span class="small muted">${ago(report.at, now)}</span></div>`
     + (lead ? `<p class="dt-p">${esc(lead)}</p>` : '')
     + (report.body ? `<p class="dt-p dt-body">${esc(plainText(report.body))}</p>` : '')
     + (report.evidence.length ? `<span class="small muted">Evidence</span>${list(report.evidence)}` : '')

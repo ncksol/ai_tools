@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { activityHtml, detailHtml, railHtml } from '../ui/live.mjs';
-import { closedSnapshot, context, exampleSnapshot } from './helpers/ui.mjs';
+import { findByLabel } from '../ui/model.mjs';
+import { NOW, closedSnapshot, context, exampleSnapshot } from './helpers/ui.mjs';
 
 const text = html => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 const items = html => (html.match(/<li class="fi/g) ?? []).length;
@@ -90,4 +91,16 @@ test('the detail panel shows report summary, body, evidence and blockers as plai
   assert.match(report, /<li>npm test passes<\/li>/);
   assert.match(report, /<li>waiting on review<\/li>/);
   assert.doesNotMatch(report, /\*\*|`|- /);
+});
+
+test('the detail panel\'s latest report shows a replied question as "question" and a replied blocker as "blocker", in grey', () => {
+  const latest = html => html.slice(html.indexOf('<h4>Latest report</h4>'), html.indexOf('<h4>Sub-agents</h4>'));
+  const snapshot = exampleSnapshot();
+  const f1 = findByLabel(snapshot, 'F1');
+  assert.match(latest(detailHtml(f1.id, false, context(snapshot))), /<div class="dt-rep-h rp-needs"><span class="badge">needs input<\/span>/);
+  f1.report.repliedAt = NOW - 60_000;
+  assert.match(latest(detailHtml(f1.id, false, context(snapshot))), /<div class="dt-rep-h rp-replied"><span class="badge">question<\/span>/);
+  const b1 = findByLabel(snapshot, 'B1');
+  Object.assign(b1.report, { status: 'blocked', repliedAt: NOW - 60_000 });
+  assert.match(latest(detailHtml(b1.id, false, context(snapshot))), /<div class="dt-rep-h rp-replied"><span class="badge">blocker<\/span>/);
 });

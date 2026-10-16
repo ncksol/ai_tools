@@ -1,5 +1,5 @@
 import { HOUR, MIN, ago, costHtml, costText, dur, elapsed, esc, plainText, plural } from './format.mjs';
-import { REPORT_CLASS, TIMELINE_WORDS, isSubagent, reportTitle, runEnd, unitEnd, withoutStatusPrefix } from './model.mjs';
+import { REPORT_CLASS, TIMELINE_WORDS, isSubagent, reportKind, reportTitle, runEnd, unitEnd, withoutStatusPrefix } from './model.mjs';
 import { fill, phase } from './parts.mjs';
 
 export const SPANS = Object.freeze({ '3h': 3 * HOUR, '12h': 12 * HOUR, run: null });
@@ -162,7 +162,7 @@ function sumHtml(session, snapshot, now) {
   const words = TIMELINE_WORDS[session.status];
   const state = words ? `<span class="s">${fill(words, session.since, now)}</span>` : '';
   if (!session.report) return `<div class="c-rep muted">No report yet</div><div class="c-meta">${state || '&nbsp;'}</div>`;
-  return `<div class="c-rep rp-${REPORT_CLASS[session.report.status]}"><span class="dot"></span>${esc(reportTitle(session.report))}</div>`
+  return `<div class="c-rep rp-${REPORT_CLASS[reportKind(session.report)]}"><span class="dot"></span>${esc(reportTitle(session.report))}</div>`
     + `<div class="c-meta">${ago(session.report.at, now)}${state ? ` · ${state}` : ''}</div>`;
 }
 

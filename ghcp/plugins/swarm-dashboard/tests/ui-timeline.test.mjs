@@ -226,3 +226,14 @@ test('a sub-agent lane counts until its end: its own end, else now in a live run
   finished.run = exampleSnapshot().run;
   assert.deepEqual(subIds(timelineHtml(context(finished), '12h')), ['call-root-40', 'call-root-41'], 'the same sub-agents in a live run are in the window');
 });
+
+test('the Latest report column\'s dot turns grey for a replied question or blocker, and the lane\'s report marks keep their ink', () => {
+  const snapshot = exampleSnapshot();
+  assert.match(row(timelineHtml(context(snapshot), '12h'), 'ws-0006-f1'), /<div class="c-rep rp-needs"><span class="dot"><\/span>/);
+  findByLabel(snapshot, 'F1').report.repliedAt = NOW - 60_000;
+  Object.assign(findByLabel(snapshot, 'B1').report, { status: 'blocked', repliedAt: NOW - 60_000 });
+  const html = timelineHtml(context(snapshot), '12h');
+  assert.match(row(html, 'ws-0006-f1'), /<div class="c-rep rp-replied"><span class="dot"><\/span>/);
+  assert.match(row(html, 'ws-0003-b1'), /<div class="c-rep rp-replied"><span class="dot"><\/span>/);
+  assert.match(markSvg({ kind: 'report', status: 'needs_input', text: 'x' }, 10, 10), /fill="var\(--question-ink\)"/);
+});

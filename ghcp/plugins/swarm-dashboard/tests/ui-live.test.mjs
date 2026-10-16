@@ -305,3 +305,44 @@ test('a sub-agent unit without agent details reads "unknown" in the detail panel
   assert.match(html, /<h4>Sub-agent<\/h4><div class="dt-kv"><span class="k">Type<\/span><span>unknown<\/span><span class="k">Mode<\/span><span>Unknown<\/span><span class="k">Effort<\/span><span>not set<\/span><\/div>/);
   assert.match(text(card(cardsHtml(context(snapshot)), 'call-root-41')), /Type Sub-agent · unknown Mode Unknown/);
 });
+
+/** A card's report row: from its opening div to its closing div, which follows the age. */
+const reportRowOf = html => html.match(/<div class="b-rep[^"]*">[\s\S]*?<span class="b-age">[\s\S]*?<\/span><\/div>/)[0];
+const replied = (snapshot, label, status) => {
+  const unit = findByLabel(snapshot, label);
+  if (status) unit.report.status = status;
+  unit.report.repliedAt = NOW - 60_000;
+  return unit;
+};
+
+test('a card shows a replied question as a grey "question" badge, and an unanswered one as "needs input"', () => {
+  const open = reportRowOf(cardHtml(findByLabel(exampleSnapshot(), 'F1'), context(exampleSnapshot())));
+  assert.match(open, /^<div class="b-rep rp-needs"><span class="badge">needs input<\/span>/);
+  const snapshot = exampleSnapshot();
+  const row = reportRowOf(cardHtml(replied(snapshot, 'F1'), context(snapshot)));
+  assert.match(row, /^<div class="b-rep rp-replied"><span class="badge">question<\/span>/);
+  assert.doesNotMatch(row, /needs input/);
+});
+
+test('a card shows a replied blocker as a grey "blocker" badge, and an unanswered one as "blocked"', () => {
+  const unanswered = exampleSnapshot();
+  const b1 = findByLabel(unanswered, 'B1');
+  b1.report.status = 'blocked';
+  assert.match(reportRowOf(cardHtml(b1, context(unanswered))), /^<div class="b-rep rp-blocked"><span class="badge">blocked<\/span>/);
+  const snapshot = exampleSnapshot();
+  assert.match(reportRowOf(cardHtml(replied(snapshot, 'B1', 'blocked'), context(snapshot))), /^<div class="b-rep rp-replied"><span class="badge">blocker<\/span>/);
+});
+
+test('a replied report row has the same layout, title and age as an unanswered one', () => {
+  const mask = row => row.replace(/rp-\w+/, 'rp-X').replace(/<span class="badge">[^<]*<\/span>/, '<span class="badge">X</span>');
+  for (const [label, status] of [['F1', null], ['B1', 'blocked']]) {
+    const unanswered = exampleSnapshot();
+    const unit = findByLabel(unanswered, label);
+    if (status) unit.report.status = status;
+    const snapshot = exampleSnapshot();
+    const before = reportRowOf(cardHtml(unit, context(unanswered)));
+    const after = reportRowOf(cardHtml(replied(snapshot, label, status), context(snapshot)));
+    assert.notEqual(after, before, label);
+    assert.equal(mask(after), mask(before), label);
+  }
+});

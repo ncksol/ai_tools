@@ -78,6 +78,7 @@ a { color: var(--busy-ink); }
 .rp-progress { --r: var(--busy-ink); }
 .rp-needs { --r: var(--question-ink); }
 .rp-blocked { --r: var(--blocked-ink); }
+.rp-replied { --r: var(--idle-ink); }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--r, var(--c-ink)); flex: none; }
 .muted { color: var(--ink-2); }
 .small { font-size: 12px; line-height: 16px; }
