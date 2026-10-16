@@ -37,3 +37,13 @@ test('every 15 seconds the Timeline renders again, so its rows follow the moving
   assert.match(tick, /if \(ticks % 15 === 0 && view\.page === 'live' && view\.tab === 'timeline' && view\.snapshot\) scheduleRender\(\);/);
   assert.doesNotMatch(tick, /drawTimeline/);
 });
+
+test('a finished sub-agent\'s card fades and leaves on time, and the other cards glide unless motion is reduced', () => {
+  const main = readFileSync(file('main.mjs'), 'utf8');
+  for (const needle of ['nextCardChange(', 'cardTimer', 'clearTimeout(cardTimer)', '.animate(']) assert.ok(main.includes(needle), needle);
+  const glide = main.slice(main.indexOf('function glide'), main.indexOf('\n}\n', main.indexOf('function glide')));
+  assert.match(glide, /matchMedia\('\(prefers-reduced-motion: reduce\)'\)\.matches/);
+  assert.ok(glide.includes('.animate('));
+  const pagehide = main.slice(main.indexOf("addEventListener('pagehide'"));
+  assert.match(pagehide.slice(0, pagehide.indexOf('});')), /clearTimeout\(cardTimer\)/);
+});

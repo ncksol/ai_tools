@@ -23,7 +23,8 @@ const EXTRA = [
 
 /**
  * The orchestrator's one-off sub-agents for the stress scenario: every sub-agent status, a 32-character label, a long
- * name, crowded chips, an open tool call, no report, and finished ones inside and outside the 12-hour window.
+ * name, crowded chips, an open tool call, no report, finished ones inside and outside the 12-hour window, and two
+ * finished ones still in their card grace period (summarise-reviews and scan-test-names).
  * start and end are minutes before the snapshot time; end is null while the sub-agent runs.
  */
 const SUBAGENT_UNITS = [
@@ -39,11 +40,11 @@ const SUBAGENT_UNITS = [
   { label: 'list-dead-code', state: 'completed', type: 'explore', mode: 'background', effort: 'low', start: 400, end: 380, name: 'List the functions that nothing calls' },
   { label: 'old-schema-survey', state: 'completed', type: 'research', mode: 'background', effort: 'medium', start: 1500, end: 1450, name: 'Survey where the old schema is still read' },
   { label: 'old-fixture-scan', state: 'completed', type: 'explore', mode: 'background', effort: 'low', start: 900, end: 880, name: 'Scan the old fixtures for unused fields' },
-  { label: 'summarise-reviews', state: 'completed', type: 'code-review', mode: 'sync', effort: null, start: 60, end: 45, name: 'Summarise the open review comments' },
+  { label: 'summarise-reviews', state: 'completed', type: 'code-review', mode: 'sync', effort: null, start: 10, end: 2, name: 'Summarise the open review comments' },
   { label: 'write-migration-notes', state: 'completed', type: 'task', mode: 'background', effort: 'medium', start: 130, end: 100, name: 'Write the notes for the data migration' },
   { label: 'retry-model-call', state: 'failed', type: 'task', mode: 'background', effort: null, start: 300, end: 290, name: 'Retry the summary step', reason: 'Failed: the model request failed after 3 retries.' },
   { label: 'probe-cache-sizes', state: 'failed', type: 'explore', mode: 'background', effort: 'low', start: 800, end: 790, name: 'Probe the cache sizes on the sample data', reason: 'Failed: the tool call timed out.' },
-  { label: 'scan-test-names', state: 'cancelled', type: 'orchestrator-worker', mode: 'background', effort: 'medium', start: 90, end: 70, name: 'Scan the test names for duplicates', reason: 'Cancelled after 20 min.' },
+  { label: 'scan-test-names', state: 'cancelled', type: 'orchestrator-worker', mode: 'background', effort: 'medium', start: 24, end: 4, name: 'Scan the test names for duplicates', reason: 'Cancelled after 20 min.' },
   { label: 'map-old-endpoints', state: 'crashed', type: 'explore', mode: 'background', effort: 'low', start: 35, end: 20, name: 'Map the old endpoints to the new ones', reason: 'Ended rule: the orchestrator process ended while it ran.' },
   // Seven more finished ones, so the snapshot lists MAX_FINISHED_SUBAGENT_UNITS finished sub-agents, as the engine would.
   { label: 'tidy-css-tokens', state: 'completed', type: 'general-purpose', mode: 'background', effort: 'low', start: 160, end: 150, name: 'Tidy the CSS colour tokens' },

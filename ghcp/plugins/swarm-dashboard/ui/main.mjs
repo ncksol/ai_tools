@@ -1,7 +1,7 @@
 import { coalesced, isNarrow, lifecycleKey, renderApp, staleChoice } from './app.mjs';
 import { tickText } from './format.mjs';
 import { morph } from './morph.mjs';
-import { runEnd, unitEnd } from './model.mjs';
+import { nextCardChange, runEnd, unitEnd } from './model.mjs';
 import { shortLabel } from './parts.mjs';
 import { planFits, planGraphHtml, planListHtml } from './plan.mjs';
 import { axisSvg, costSvg, laneSource, laneSvg, timelineWindow } from './timeline.mjs';
@@ -53,6 +53,8 @@ let swarmFromUrl = Boolean(urlSwarm);
 let offset = 0;
 let source = null;
 let reconnectTimer = null;
+/** Renders when a finished sub-agent's card is due to start its fade or to leave, even if no snapshot arrives. */
+let cardTimer = null;
 let justConnected = true;
 let renderQueued = false;
 let lastWidth = 0;
@@ -180,11 +182,14 @@ function render() {
   if (!view.narrow && view.tab === 'activity') view.tab = 'cards';
   const focused = document.activeElement && dash.contains(document.activeElement) ? focusSelector(document.activeElement) : null;
   const { scrollX, scrollY } = window;
+  const cards = cardRects();
   morph(dash, renderApp({ ...view, now: now(), phaseMs: performance.now() }));
   lastWidth = width;
   afterRender();
   if (focused && !dash.contains(document.activeElement)) dash.querySelector(focused)?.focus({ preventScroll: true });
   if (window.scrollX !== scrollX || window.scrollY !== scrollY) window.scrollTo(scrollX, scrollY);
+  glide(cards);
+  scheduleCardChange();
   document.documentElement.dataset.narrow = view.narrow ? '1' : '0';
   document.documentElement.dataset.ready = isReady() ? '1' : '0';
   if (parseMs !== null) {
@@ -194,6 +199,44 @@ function render() {
     performance.measure('swarm-update', { start: started, duration: parseMs + performance.now() - started });
     parseMs = null;
   }
+}
+
+const gridCards = () => dash.querySelectorAll('.b-grid > .b-card[data-open]');
+
+/** Where each card in the grid is before a render, by its data-open key; empty when nothing will glide. */
+function cardRects() {
+  const rects = new Map();
+  if (view.page !== 'live' || matchMedia('(prefers-reduced-motion: reduce)').matches) return rects;
+  for (const el of gridCards()) rects.set(el.dataset.open, el.getBoundingClientRect());
+  return rects;
+}
+
+/**
+ * When a render removed cards from the grid, the cards that stay glide from their old places to their new ones. The Web
+ * Animations API sets no inline style, so morph() and later renders leave the glide alone.
+ */
+function glide(before) {
+  if (!before.size || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const after = new Map([...gridCards()].map(el => [el.dataset.open, el]));
+  // Only measure again when a card has gone, so a normal update stays cheap.
+  if ([...before.keys()].every(key => after.has(key))) return;
+  for (const [key, el] of after) {
+    const was = before.get(key);
+    if (!was) continue;
+    const rect = el.getBoundingClientRect();
+    const dx = was.left - rect.left;
+    const dy = was.top - rect.top;
+    if (dx || dy) el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { duration: 300, easing: 'ease-out' });
+  }
+}
+
+/** Render again when a finished sub-agent's card starts to fade or leaves, since no snapshot may arrive then. */
+function scheduleCardChange() {
+  clearTimeout(cardTimer);
+  cardTimer = null;
+  if (view.page !== 'live' || !view.snapshot) return;
+  const wait = nextCardChange(view.snapshot, now());
+  if (wait !== null) cardTimer = setTimeout(scheduleRender, wait + 50);
 }
 
 function afterRender() {
@@ -358,6 +401,7 @@ setInterval(() => {
 // Browsers allow few connections per host, so free the live connection when the page is unloaded or kept in the back-forward cache.
 window.addEventListener('pagehide', () => {
   clearTimeout(reconnectTimer);
+  clearTimeout(cardTimer);
   source?.close();
 });
 window.addEventListener('pageshow', event => {

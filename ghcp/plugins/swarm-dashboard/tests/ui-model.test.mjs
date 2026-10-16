@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  BOARD_STAGES, STATE_LINES, UNIT_STAGES, archivedUnits, boardColumns, cardUnits, closedNotMerged, feedText, findByLabel, findPlanned, flattenPlan, isSubagent,
-  needItems, omittedSubagents, planForest, planLayout, progressPercent, reportTitle, runEnd, sharePercent, stateLine, unitEnd, withoutStatusPrefix,
+  BOARD_STAGES, CARD_FADE_MS, STATE_LINES, SUBAGENT_CARD_GRACE_MS, UNIT_STAGES, archivedUnits, boardColumns, cardTimeLeft, cardUnits, closedNotMerged, feedText,
+  findByLabel, findPlanned, flattenPlan, isFinishedSubagent, isSubagent, needItems, nextCardChange, omittedSubagents, planForest, planLayout, progressPercent, reportTitle, runEnd, sharePercent, stateLine, unitEnd, withoutStatusPrefix,
 } from '../ui/model.mjs';
 import { createDemoEngine } from '../server/demo-engine.mjs';
 import { NOW, closedSnapshot, exampleSnapshot } from './helpers/ui.mjs';
@@ -11,7 +11,7 @@ const labels = units => units.map(unit => unit.label);
 
 test('cards sort stuck, question, plan, blocked, busy, idle, merged and hide archived units', () => {
   const snapshot = exampleSnapshot();
-  assert.deepEqual(labels(cardUnits(snapshot)), ['I1', 'table-research', 'B2', 'F1', 'B1', 'map-import-module', 'D5', 'F2a']);
+  assert.deepEqual(labels(cardUnits(snapshot, NOW)), ['I1', 'table-research', 'B2', 'F1', 'B1', 'map-import-module', 'D5', 'F2a']);
   assert.deepEqual(labels(archivedUnits(snapshot)), ['B0']);
 });
 
@@ -49,16 +49,96 @@ test('a finished run ends at finishedAt, else at its last activity, and a sessio
 test('cards put a status the view does not know last', () => {
   const snapshot = exampleSnapshot();
   findByLabel(snapshot, 'B1').status = 'something_new';
-  assert.deepEqual(labels(cardUnits(snapshot)), ['I1', 'table-research', 'B2', 'F1', 'map-import-module', 'D5', 'F2a', 'B1']);
+  assert.deepEqual(labels(cardUnits(snapshot, NOW)), ['I1', 'table-research', 'B2', 'F1', 'map-import-module', 'D5', 'F2a', 'B1']);
 });
 
-test('cards show sub-agent units only while they run or are stuck', () => {
+test('cards show sub-agent units while they run or are stuck, and finished ones only in their grace period', () => {
   const snapshot = exampleSnapshot();
-  const shown = labels(cardUnits(snapshot).filter(isSubagent));
+  const shown = labels(cardUnits(snapshot, NOW).filter(isSubagent));
   assert.deepEqual(shown, ['table-research', 'map-import-module']);
-  for (const label of ['audit-schema-usage', 'migrate-fixtures', 'scan-docs-links']) assert.ok(!labels(cardUnits(snapshot)).includes(label), label);
-  findByLabel(snapshot, 'map-import-module').status = 'done';
-  assert.deepEqual(labels(cardUnits(snapshot).filter(isSubagent)), ['table-research']);
+  for (const label of ['audit-schema-usage', 'migrate-fixtures', 'scan-docs-links']) assert.ok(!labels(cardUnits(snapshot, NOW)).includes(label), label);
+  Object.assign(findByLabel(snapshot, 'map-import-module'), { status: 'done', statusDetail: 'completed', endedAt: NOW - SUBAGENT_CARD_GRACE_MS - 1000, since: NOW - SUBAGENT_CARD_GRACE_MS - 1000 });
+  assert.deepEqual(labels(cardUnits(snapshot, NOW).filter(isSubagent)), ['table-research']);
+});
+
+/** The example with one sub-agent unit set to a finished state that ended `ago` ms before NOW. */
+function finishedAgo(label, status, statusDetail, ago) {
+  const snapshot = exampleSnapshot();
+  const unit = findByLabel(snapshot, label);
+  Object.assign(unit, { status, statusDetail, endedAt: NOW - ago, since: NOW - ago });
+  return { snapshot, unit };
+}
+const FINISHED = [['audit-schema-usage', 'done', 'completed'], ['migrate-fixtures', 'blocked', 'failed'], ['scan-docs-links', 'blocked', 'cancelled'], ['migrate-fixtures', 'blocked', 'crashed']];
+
+test('a finished sub-agent keeps its card for 10 minutes after it ended', () => {
+  assert.equal(SUBAGENT_CARD_GRACE_MS, 10 * 60 * 1000);
+  for (const [label, status, detail] of FINISHED) {
+    const inside = finishedAgo(label, status, detail, SUBAGENT_CARD_GRACE_MS - 1000);
+    assert.ok(cardUnits(inside.snapshot, NOW).includes(inside.unit), `${detail} inside the grace period`);
+    assert.equal(isFinishedSubagent(inside.unit), true, detail);
+    assert.equal(cardTimeLeft(inside.unit, NOW), 1000, detail);
+    const past = finishedAgo(label, status, detail, SUBAGENT_CARD_GRACE_MS + 1000);
+    assert.ok(!cardUnits(past.snapshot, NOW).includes(past.unit), `${detail} past the grace period`);
+  }
+});
+
+test('a crashed sub-agent with no endedAt counts its grace period from since', () => {
+  const { snapshot, unit } = finishedAgo('migrate-fixtures', 'blocked', 'crashed', 0);
+  Object.assign(unit, { endedAt: null, since: NOW - 60000 });
+  assert.equal(cardTimeLeft(unit, NOW), SUBAGENT_CARD_GRACE_MS - 60000);
+  assert.ok(cardUnits(snapshot, NOW).includes(unit));
+  unit.since = NOW - SUBAGENT_CARD_GRACE_MS - 60000;
+  assert.ok(!cardUnits(snapshot, NOW).includes(unit));
+});
+
+test('a follow-up that makes a finished sub-agent busy again brings its card back', () => {
+  const { snapshot, unit } = finishedAgo('audit-schema-usage', 'done', 'completed', SUBAGENT_CARD_GRACE_MS * 3);
+  assert.ok(!cardUnits(snapshot, NOW).includes(unit));
+  Object.assign(unit, { status: 'busy', statusDetail: 'busy', endedAt: null, since: NOW - 30000 });
+  assert.equal(isFinishedSubagent(unit), false);
+  assert.equal(cardTimeLeft(unit, NOW), null);
+  assert.ok(cardUnits(snapshot, NOW).includes(unit));
+});
+
+test('a finished sub-agent with no time at all has no card', () => {
+  const { snapshot, unit } = finishedAgo('audit-schema-usage', 'done', 'completed', 0);
+  Object.assign(unit, { endedAt: null, since: null, lastEventAt: null });
+  assert.equal(cardTimeLeft(unit, NOW), 0);
+  assert.ok(!cardUnits(snapshot, NOW).includes(unit));
+});
+
+test('only finished sub-agents have card time left', () => {
+  const snapshot = exampleSnapshot();
+  for (const label of ['B1', 'F2a', 'B0', 'table-research', 'map-import-module']) assert.equal(cardTimeLeft(findByLabel(snapshot, label), NOW), null, label);
+});
+
+/** The example with a done and a failed sub-agent in their grace period, and a cancelled one past it. */
+function graceSnapshot() {
+  const snapshot = exampleSnapshot();
+  Object.assign(findByLabel(snapshot, 'audit-schema-usage'), { endedAt: NOW - 3 * 60000, since: NOW - 3 * 60000 });
+  Object.assign(findByLabel(snapshot, 'migrate-fixtures'), { endedAt: NOW - 5 * 60000, since: NOW - 5 * 60000 });
+  Object.assign(findByLabel(snapshot, 'scan-docs-links'), { endedAt: NOW - SUBAGENT_CARD_GRACE_MS - 60000, since: NOW - SUBAGENT_CARD_GRACE_MS - 60000 });
+  return snapshot;
+}
+
+test('cards in the grace period keep the usual sort order', () => {
+  assert.deepEqual(labels(cardUnits(graceSnapshot(), NOW)), ['I1', 'table-research', 'B2', 'F1', 'migrate-fixtures', 'B1', 'map-import-module', 'D5', 'F2a', 'audit-schema-usage']);
+});
+
+test('the next change on the Cards tab is when a card starts to fade, or leaves once it fades', () => {
+  assert.equal(nextCardChange(exampleSnapshot(), NOW), null, 'every finished sub-agent is past its grace period');
+  const snapshot = graceSnapshot();
+  const audit = findByLabel(snapshot, 'audit-schema-usage');
+  const migrate = findByLabel(snapshot, 'migrate-fixtures');
+  const leftAudit = cardTimeLeft(audit, NOW);
+  assert.equal(leftAudit, 7 * 60000);
+  assert.equal(nextCardChange(snapshot, NOW), 5 * 60000 - CARD_FADE_MS, 'the smallest wait over several');
+  Object.assign(migrate, { endedAt: null, since: null, lastEventAt: null });
+  assert.equal(nextCardChange(snapshot, NOW), leftAudit - CARD_FADE_MS, 'not fading yet');
+  Object.assign(audit, { endedAt: NOW - SUBAGENT_CARD_GRACE_MS + 400 });
+  assert.equal(nextCardChange(snapshot, NOW), 400, 'fading');
+  audit.endedAt = NOW - SUBAGENT_CARD_GRACE_MS;
+  assert.equal(nextCardChange(snapshot, NOW), null, 'gone');
 });
 
 test('omitted sub-agents add up the finished ones the snapshot leaves out', () => {
@@ -202,8 +282,8 @@ test('every unit the Cards tab leaves out is on the Board', async () => {
   const stress = await createDemoEngine({ scenario: 'stress', now: () => NOW, simulate: false }).getSnapshot();
   const archivedMerged = exampleSnapshot();
   Object.assign(archivedMerged.units.find(unit => unit.label === 'F2a'), { status: 'archived', stage: 'merged' });
-  for (const snapshot of [exampleSnapshot(), stress, closedSnapshot(), archivedMerged]) {
-    const shown = new Set(cardUnits(snapshot));
+  for (const snapshot of [exampleSnapshot(), stress, closedSnapshot(), archivedMerged, graceSnapshot()]) {
+    const shown = new Set(cardUnits(snapshot, NOW));
     const left = snapshot.units.filter(unit => !shown.has(unit));
     assert.ok(left.length > 0);
     const onBoard = new Set(boardColumns(snapshot).flatMap(column => column.nodes.map(node => node.unit)));

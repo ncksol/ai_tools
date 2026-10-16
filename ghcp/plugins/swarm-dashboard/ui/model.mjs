@@ -91,14 +91,39 @@ export const closedNotMerged = unit => Boolean(unit.closedWithoutMerge && unit.p
 
 export const stateLine = session => STATE_LINES[session.statusDetail] ?? STATE_LINES[session.status] ?? '{t}';
 
+/** How long a finished sub-agent keeps its card on the Cards tab. */
+export const SUBAGENT_CARD_GRACE_MS = 10 * 60 * 1000;
+/** The last part of the grace period, in which the card fades out. */
+export const CARD_FADE_MS = 1200;
+/** A sub-agent unit that is no longer running or stuck: done, failed, cancelled or crashed. */
+export const isFinishedSubagent = unit => isSubagent(unit) && unit.status !== 'busy' && unit.status !== 'stuck';
+/** Milliseconds a finished sub-agent's card has left (0 or less once it has left); null for every other unit. */
+export function cardTimeLeft(unit, now) {
+  if (!isFinishedSubagent(unit)) return null;
+  const end = unit.endedAt ?? unit.since ?? unit.lastEventAt;
+  return end == null ? 0 : end + SUBAGENT_CARD_GRACE_MS - now;
+}
+/** Milliseconds until the Cards tab next changes by itself: a card starts to fade, or leaves. Null when nothing is due. */
+export function nextCardChange(snapshot, now) {
+  let next = null;
+  for (const unit of snapshot.units) {
+    const left = cardTimeLeft(unit, now);
+    if (left === null || left <= 0) continue;
+    const wait = left > CARD_FADE_MS ? left - CARD_FADE_MS : left;
+    next = next === null ? wait : Math.min(next, wait);
+  }
+  return next;
+}
+
 /**
- * Units shown as cards: attention first, then creation order. Archived units leave the Cards tab, and sub-agent units
- * stay on it only while they run or are stuck; the Board shows them all.
+ * Units shown as cards at `now`: attention first, then creation order. Archived units leave the Cards tab. Sub-agent
+ * units stay on it while they run or are stuck, and a finished one for SUBAGENT_CARD_GRACE_MS after it ended; the Board
+ * shows them all.
  */
-export function cardUnits(snapshot) {
+export function cardUnits(snapshot, now) {
   return snapshot.units
     .map((unit, index) => ({ unit, index }))
-    .filter(({ unit }) => unit.status !== 'archived' && (!isSubagent(unit) || unit.status === 'busy' || unit.status === 'stuck'))
+    .filter(({ unit }) => unit.status !== 'archived' && (!isFinishedSubagent(unit) || cardTimeLeft(unit, now) > 0))
     .sort((a, b) => (STATUS_ORDER[a.unit.status] ?? 9) - (STATUS_ORDER[b.unit.status] ?? 9) || a.index - b.index)
     .map(({ unit }) => unit);
 }

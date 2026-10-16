@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { dur, esc } from '../ui/format.mjs';
 import { cardHtml, cardsHtml, detailHtml, headerHtml, needsHtml } from '../ui/live.mjs';
-import { findByLabel } from '../ui/model.mjs';
+import { CARD_FADE_MS, SUBAGENT_CARD_GRACE_MS, findByLabel } from '../ui/model.mjs';
 import { NOW, closedSnapshot, context, exampleSnapshot } from './helpers/ui.mjs';
 
 const text = html => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -121,6 +121,51 @@ test('a sub-agent card shows its type and mode in place of stage and monitor', (
   const research = card(cardsHtml(context(sync)), 'call-root-40');
   assert.match(text(research), /Type Sub-agent · &lt;x&gt; Mode Sync/);
   assert.match(research, /class="b-card st-stuck"/);
+});
+
+/** The example with one finished sub-agent unit that ended `ago` ms before NOW, and its card on the Cards tab. */
+function finishedCard(label, ago) {
+  const snapshot = exampleSnapshot();
+  const unit = findByLabel(snapshot, label);
+  Object.assign(unit, { endedAt: NOW - ago, since: NOW - ago });
+  const html = cardsHtml(context(snapshot));
+  return { unit, html, card: card(html, unit.id) };
+}
+const ringArc = html => html.match(/<circle class="arc[^"]*"[^>]*\/>/)[0];
+
+test('a finished sub-agent keeps its card in its grace period, saying how and when it ended, with a still ring', () => {
+  for (const [label, line] of [['audit-schema-usage', 'Done · 3m ago'], ['migrate-fixtures', 'Failed · 3m ago'], ['scan-docs-links', 'Cancelled · 3m ago']]) {
+    const { unit, html, card: found } = finishedCard(label, 3 * 60000);
+    assert.ok(cardIds(html).includes(unit.id), label);
+    assert.equal(text(found.match(/<div class="b-state">(.*?)<\/div>/)[1]), line, label);
+    assert.equal(ringArc(found), '<circle class="arc" cx="20" cy="20" r="17"/>', label);
+    assert.doesNotMatch(found.slice(0, found.indexOf('>')), /is-leaving|data-phase|animation-delay/, label);
+    assert.match(text(found), /Ran \d/, label);
+  }
+});
+
+test('a finished sub-agent\'s card fades out in the last part of its grace period', () => {
+  const left = 400;
+  const { unit, card: found } = finishedCard('audit-schema-usage', SUBAGENT_CARD_GRACE_MS - left);
+  const start = found.slice(0, found.indexOf('>'));
+  assert.match(start, new RegExp(`^ class="b-card st-done is-leaving" data-open="${unit.id}" tabindex="0" role="button" aria-label="[^"]+" data-phase style="animation-delay:-0\\.80s"$`));
+  assert.equal(((CARD_FADE_MS - left) / 1000).toFixed(2), '0.80');
+  const early = finishedCard('audit-schema-usage', SUBAGENT_CARD_GRACE_MS - CARD_FADE_MS - 1).card;
+  assert.doesNotMatch(early.slice(0, early.indexOf('>')), /is-leaving/);
+});
+
+test('a finished sub-agent\'s card is gone after its grace period, and the Cards note points to the Board', () => {
+  // Only this sub-agent can be left out, so the note shows because its card has gone.
+  const snapshot = nothingHidden();
+  const unit = findByLabel(exampleSnapshot(), 'audit-schema-usage');
+  snapshot.units.push(unit);
+  Object.assign(unit, { endedAt: NOW - SUBAGENT_CARD_GRACE_MS + 1000, since: NOW - SUBAGENT_CARD_GRACE_MS + 1000 });
+  const before = cardsHtml(context(snapshot));
+  assert.ok(cardIds(before).includes(unit.id) && !before.includes('cards-note'), before);
+  Object.assign(unit, { endedAt: NOW - SUBAGENT_CARD_GRACE_MS, since: NOW - SUBAGENT_CARD_GRACE_MS });
+  const html = cardsHtml(context(snapshot));
+  assert.ok(!cardIds(html).includes(unit.id));
+  assert.ok(html.endsWith('<p class="cards-note">Archived and hidden sessions are on the <button type="button" class="link" data-tab="board">Board tab</button>.</p></div>'), html);
 });
 
 test('a session card still shows its stage and monitor rows', () => {

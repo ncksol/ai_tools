@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { CARD_FADE_MS } from '../ui/model.mjs';
 
 const css = readFileSync(new URL('../ui/styles.css', import.meta.url), 'utf8');
 const declarations = [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([a-z-]+)\s*:\s*([^;{}]+)[;}]/g)].map(([, prop, value]) => [prop, value.trim()]);
@@ -91,4 +92,12 @@ test('the row of sub-agents outside the window spans the whole row in both Timel
   assert.equal(block('.c-row.c-more').trim(), 'grid-template-areas: "who who";');
   const wide = css.slice(css.indexOf('@container main (min-width: 760px) {\n  .c-row {'));
   assert.match(wide.slice(0, wide.indexOf('\n}')), /\n  \.c-row\.c-more \{ grid-template-areas: "who who who"; \}/);
+});
+
+test('a leaving card fades to transparent over CARD_FADE_MS', () => {
+  const rule = block('.b-card.is-leaving').trim();
+  const match = rule.match(/^animation: card-leave ([\d.]+)s ease-in forwards;$/);
+  assert.ok(match, rule);
+  assert.equal(Number(match[1]) * 1000, CARD_FADE_MS);
+  assert.equal(block('@keyframes card-leave').trim(), 'to { opacity: 0;');
 });

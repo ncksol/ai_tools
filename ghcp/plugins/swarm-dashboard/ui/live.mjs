@@ -1,7 +1,7 @@
 import { ago, costHtml, costText, dur, elapsed, esc, liveTime, plainText, runningFor } from './format.mjs';
 import {
-  COUNT_TILES, MODE_WORDS, NEED_CLASS, NEED_LABELS, STAGE_NAMES, cardUnits, closedNotMerged, isSubagent, needItems, omittedSubagents, progressPercent, reportTitle,
-  runEnd, sharePercent, unitEnd,
+  CARD_FADE_MS, COUNT_TILES, MODE_WORDS, NEED_CLASS, NEED_LABELS, STAGE_NAMES, cardTimeLeft, cardUnits, closedNotMerged, isSubagent, needItems,
+  omittedSubagents, progressPercent, reportTitle, runEnd, sharePercent, unitEnd,
 } from './model.mjs';
 import { badge, bar, chipsHtml, closedBadge, feedList, meter, monitorHtml, reportClass, ring, stageTrack, stateLineHtml } from './parts.mjs';
 
@@ -52,7 +52,12 @@ export function cardHtml(unit, ctx) {
   const progressRow = progress === null
     ? '<span class="k">Progress</span><span class="none-r">No task list</span>'
     : `<span class="k">Progress</span>${bar(progress)}<span class="r">${progress}%</span>`;
-  return `<article class="b-card st-${unit.status}${detail === unit.id ? ' is-sel' : ''}" data-open="${esc(unit.id)}" tabindex="0" role="button" aria-label="Open details for ${esc(unit.label)} ${esc(unit.name)}">`
+  // A finished sub-agent's card fades out in the last CARD_FADE_MS of its grace period. The negative delay starts the fade
+  // where it should be now, and data-phase keeps that delay on later renders so the fade does not restart.
+  const left = cardTimeLeft(unit, now);
+  const leaving = left !== null && left <= CARD_FADE_MS;
+  const fade = leaving ? ` data-phase style="animation-delay:-${((CARD_FADE_MS - left) / 1000).toFixed(2)}s"` : '';
+  return `<article class="b-card st-${unit.status}${detail === unit.id ? ' is-sel' : ''}${leaving ? ' is-leaving' : ''}" data-open="${esc(unit.id)}" tabindex="0" role="button" aria-label="Open details for ${esc(unit.label)} ${esc(unit.name)}"${fade}>`
     + `<div class="b-head">${ring(unit.status, unit.label, phaseMs)}<div class="b-who st-${unit.status}"><div class="b-name">${esc(unit.name)}</div><div class="b-state">${stateLineHtml(unit, now)}</div></div>${unit.pr ? `<span class="b-pr">PR #${unit.pr.id}</span>` : ''}</div>`
     + `<div class="b-metrics"><span class="k">${end ? 'Ran' : 'Running'}</span><span class="v">${end ? dur(end - unit.startedAt, 'clock') : liveTime(unit.startedAt, now, 'clock')}</span>`
     + `<span class="k">Cost</span><span class="v">${costHtml(unit.cost.credits)}</span><span></span>${meter(sharePercent(unit.cost.credits, snapshot.cost.maxUnitCredits))}</div>`
@@ -62,9 +67,9 @@ export function cardHtml(unit, ctx) {
 }
 
 export function cardsHtml(ctx) {
-  const units = cardUnits(ctx.snapshot);
-  // The Cards tab leaves out archived units and finished sub-agents, and the snapshot itself leaves out older finished
-  // sub-agents; the Board shows every unit in its stage column and counts the sub-agents left out.
+  const units = cardUnits(ctx.snapshot, ctx.now);
+  // The Cards tab leaves out archived units and finished sub-agents past their grace period, and the snapshot itself
+  // leaves out older finished sub-agents; the Board shows every unit in its stage column and counts the sub-agents left out.
   const note = units.length < ctx.snapshot.units.length || omittedSubagents(ctx.snapshot) > 0 ? '<p class="cards-note">Archived and hidden sessions are on the <button type="button" class="link" data-tab="board">Board tab</button>.</p>' : '';
   if (!units.length) return `<p class="none">No active child sessions.</p>${note}`;
   // Inside the grid the note sits one card gap below the last row of cards.
