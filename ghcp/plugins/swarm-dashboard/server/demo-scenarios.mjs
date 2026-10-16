@@ -91,7 +91,7 @@ function subagentUnit(template, spec, index, t, parentId) {
     status: reportStatus, source: 'message', at: lastEventAt,
     title: spec.title ?? `${spec.name}: ${{ progress: 'work continues.', complete: 'finished.', blocked: 'stopped early.' }[reportStatus]}`,
     // A 'message' report has no parsed status line, so it names no unit.
-    summary: null, evidence: [], blockers: null, body: null, unit: null, commit: null,
+    summary: null, evidence: [], blockers: null, body: null, unit: null, commit: null, repliedAt: null,
   };
   unit.subagents = Array.from({ length: spec.crowd ?? 0 }, (_, k) => ({
     id: `${id}-${k + 1}`, name: `helper-${k + 1}`, type: TYPES[k % TYPES.length], model: 'gpt-5.4-mini', mode: 'background', status: 'running',
@@ -160,7 +160,7 @@ function stressUnit(template, spec, index, t, parentId) {
   unit.report = 'report' in spec ? spec.report : {
     status: spec.reportStatus ?? 'progress', source: 'contract', at: t - (3 + index) * MIN,
     title: `${spec.name}: a progress report long enough to need an ellipsis on a narrow card`, summary: `${spec.name}: work continues on the branch.`,
-    evidence: ['Unit tests pass'], blockers: spec.reportStatus === 'blocked' ? ['Waiting for the parent branch to merge'] : [], body: null, unit: spec.label, commit: null,
+    evidence: ['Unit tests pass'], blockers: spec.reportStatus === 'blocked' ? ['Waiting for the parent branch to merge'] : [], body: null, unit: spec.label, commit: null, repliedAt: null,
   };
   if ('progress' in spec) unit.progress = spec.progress;
   unit.subagents = subagentsFor(spec, n, t);
@@ -176,13 +176,34 @@ function stressUnit(template, spec, index, t, parentId) {
   return unit;
 }
 
+/** D5's blocker in the example demo: it asked for approval to publish its PR, and the orchestrator replied. */
+const D5_BLOCKER = 'PR #421 is ready; publishing it needs approval.';
+
 /**
- * A crowded synthetic swarm for layout checks, built from the example fixtures so it stays inside the schema: every
+ * The example swarm as the demos show it: the fixture plus one replied blocker, so the example has both grey badges
+ * (B1's replied question comes from the fixture). D5's latest report becomes a blocker that the orchestrator answered
+ * 30 minutes later, so D5 stays idle. The fixture file itself never changes.
+ */
+export function exampleScenario(fixtures) {
+  const snapshot = structuredClone(fixtures.snapshots[0]);
+  const d5 = snapshot.units.find(unit => unit.label === 'D5');
+  if (d5?.report) {
+    const { at } = d5.report;
+    d5.report = { ...d5.report, status: 'blocked', title: D5_BLOCKER, summary: D5_BLOCKER, blockers: ['Needs approval to publish PR #421'], repliedAt: Math.min(at + 30 * MIN, snapshot.generatedAt) };
+    for (const mark of d5.timeline.marks) if (mark.kind === 'report' && mark.at === at) Object.assign(mark, { text: D5_BLOCKER, status: 'blocked' });
+  }
+  return { ...fixtures, snapshots: [snapshot, ...fixtures.snapshots.slice(1)] };
+}
+
+/**
+ * A crowded synthetic swarm for layout checks, built from the example demo so it stays inside the schema: every
  * status and status detail, long names and labels, crowded chips, missing reports and task lists, an eight-level plan,
  * a stalled run, a data warning, many of the orchestrator's one-off sub-agents and a second live swarm for the picker.
+ * Its session cards show all four question and blocker looks: B1's replied question, F1's unanswered one, D5's replied
+ * blocker and R8's unanswered one.
  */
 export function stressScenario(fixtures) {
-  const example = fixtures.snapshots[0];
+  const example = exampleScenario(fixtures).snapshots[0];
   const snapshot = structuredClone(example);
   const t = snapshot.generatedAt;
   const template = snapshot.units.find(unit => unit.label === 'B1');

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { createFakeEngine } from '../engine/fake-engine.mjs';
-import { stressScenario } from './demo-scenarios.mjs';
+import { exampleScenario, stressScenario } from './demo-scenarios.mjs';
 
 const FIXTURES = new URL('../tests/fixtures/', import.meta.url);
 const TIME_KEY = /^(at|since|start|end)$|At$/;
@@ -84,7 +84,7 @@ function finishSubagent(snapshot, session, sub, credits, now) {
 }
 
 function addReport(snapshot, session, text, now) {
-  session.report = { status: 'progress', source: 'contract', at: now, title: text, summary: text, evidence: ['Tests pass on the branch'], blockers: [], body: null, unit: session.label, commit: null };
+  session.report = { status: 'progress', source: 'contract', at: now, title: text, summary: text, evidence: ['Tests pass on the branch'], blockers: [], body: null, unit: session.label, commit: null, repliedAt: null };
   if (session.progress && session.progress.done < session.progress.total) session.progress.done += 1;
   session.timeline.marks.push({ at: now, kind: 'report', text, status: 'progress' });
   addFeed(snapshot, session, 'report', `reported progress: ${text}`, now);
@@ -125,7 +125,7 @@ export function simulateStep(snapshot, now, random = Math.random) {
  */
 export function createDemoEngine({ scenario = 'example', now = Date.now, simulate = true, random = Math.random, stepMs = 4000, fixtures = loadFixtures() } = {}) {
   if (!SCENARIOS.includes(scenario)) throw new Error(`Unknown demo scenario: ${scenario}`);
-  const base = scenario === 'stress' ? stressScenario(fixtures) : fixtures;
+  const base = scenario === 'stress' ? stressScenario(fixtures) : exampleScenario(fixtures);
   const data = shiftTimes(base, now() - base.snapshots[0].generatedAt);
   const fake = createFakeEngine(data);
   let current = data.snapshots[0];

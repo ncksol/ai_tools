@@ -4,6 +4,7 @@ import { MAX_FINISHED_SUBAGENT_UNITS, validateRunListItem, validateRunSummary, v
 import { createDemoEngine, loadFixtures, shiftTimes, simulateStep } from '../server/demo-engine.mjs';
 import { createDefaultEngine } from '../server/engines.mjs';
 import { createSwarmEngine } from '../engine/engine.mjs';
+import { cardUnits, reportKind } from '../ui/model.mjs';
 
 const seeded = seed => () => {
   seed = (seed * 16807) % 2147483647;
@@ -161,6 +162,72 @@ test('every reference in a scenario swarm points inside that swarm', async () =>
       ];
       for (const ref of refs) assert.ok(ids.has(ref), `${scenario}, ${id}: ${ref}`);
     }
+  }
+});
+
+/** Session units on the Cards tab, by how their report badge reads, as [label, status] pairs. */
+function cardLooks(snapshot) {
+  const looks = { replied_question: [], needs_input: [], replied_blocker: [], blocked: [] };
+  for (const unit of cardUnits(snapshot, snapshot.generatedAt)) {
+    if (unit.kind === 'subagent' || !unit.report) continue;
+    looks[reportKind(unit.report)]?.push([unit.label, unit.status]);
+  }
+  return looks;
+}
+/** A replied report was answered after it was written and by the snapshot time, and its unit no longer waits on the orchestrator. */
+function assertReplied(snapshot, label) {
+  const unit = snapshot.units.find(item => item.label === label);
+  assert.ok(unit.report.repliedAt > unit.report.at && unit.report.repliedAt <= snapshot.generatedAt, `${label} was replied to after its report`);
+  assert.ok(['busy', 'idle'].includes(unit.status), `${label} is ${unit.status}`);
+  assert.notEqual(unit.statusDetail, 'blocked_on_orchestrator', label);
+}
+
+test('the example demo shows one replied question (B1) and one replied blocker (D5), and D5 stays idle', async () => {
+  const snapshot = await createDemoEngine({ now: () => T, simulate: false }).getSnapshot();
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  const looks = cardLooks(snapshot);
+  assert.deepEqual(looks.replied_question, [['B1', 'busy']]);
+  assert.deepEqual(looks.replied_blocker, [['D5', 'idle']]);
+  for (const label of ['B1', 'D5']) assertReplied(snapshot, label);
+  const d5 = snapshot.units.find(unit => unit.label === 'D5');
+  const mark = d5.timeline.marks.find(item => item.at === d5.report.at);
+  assert.deepEqual([mark.kind, mark.status], ['report', 'blocked'], 'D5\'s lane marks its blocked report');
+  const fixture = example().units.find(unit => unit.label === 'D5');
+  assert.deepEqual([fixture.report.status, fixture.report.repliedAt], ['complete', null], 'the fixture itself is unchanged');
+});
+
+test('the stress demo\'s Cards tab shows a replied and an unanswered question and blocker on session units', async () => {
+  const snapshot = await createDemoEngine({ scenario: 'stress', now: () => T, simulate: false }).getSnapshot();
+  const looks = cardLooks(snapshot);
+  for (const [kind, units] of Object.entries(looks)) assert.ok(units.length > 0, `no ${kind} card`);
+  for (const [label] of [...looks.replied_question, ...looks.replied_blocker]) assertReplied(snapshot, label);
+  for (const [label] of [...looks.needs_input, ...looks.blocked]) assert.equal(snapshot.units.find(unit => unit.label === label).report.repliedAt, null, label);
+});
+
+test('every demo report has repliedAt null or a time between its report and the snapshot, before and after simulated steps', async () => {
+  const check = (snapshot, where) => {
+    for (const unit of snapshot.units) {
+      if (!unit.report) continue;
+      const { at, repliedAt } = unit.report;
+      assert.ok(repliedAt === null || (Number.isInteger(repliedAt) && repliedAt >= at && repliedAt <= snapshot.generatedAt), `${where}: ${unit.label} has repliedAt ${repliedAt}`);
+    }
+  };
+  for (const scenario of ['example', 'stress']) {
+    const engine = createDemoEngine({ scenario, now: () => T, simulate: false });
+    for (const { id } of engine.listSwarms()) {
+      const snapshot = await engine.getSnapshot(id);
+      if (snapshot) check(snapshot, `${scenario}, ${id}`);
+    }
+    let snapshot = await engine.getSnapshot();
+    const random = seeded(11);
+    let written = 0;
+    for (let step = 1; step <= 60; step += 1) {
+      snapshot = simulateStep(snapshot, T + step * 5000, random);
+      assert.deepEqual(validateSnapshot(snapshot), [], `${scenario}, step ${step}`);
+      check(snapshot, `${scenario}, step ${step}`);
+      written += snapshot.units.filter(unit => unit.report?.at === snapshot.generatedAt).length;
+    }
+    assert.ok(written > 0, `${scenario}: some step writes a report`);
   }
 });
 
