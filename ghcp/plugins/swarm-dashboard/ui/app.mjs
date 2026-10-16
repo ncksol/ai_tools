@@ -120,7 +120,8 @@ function statusHtml(view) {
   const note = warnings.length
     ? `<span class="small muted" title="${esc(warnings.map(entry => `${entry.source}: ${entry.message}`).join('\n'))}">${warnings.length} data warning${warnings.length === 1 ? '' : 's'}</span>`
     : '';
-  return `${note}<span class="small muted">${view.demo ? 'Sample data · watch-only' : 'Watch-only'}</span>`;
+  // Sample data must never pass for real data, so demo mode says so; the dashboard is otherwise unlabelled.
+  return `${note}${view.demo ? '<span class="small muted">Sample data</span>' : ''}`;
 }
 
 function liveHtml(view) {

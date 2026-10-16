@@ -9,6 +9,7 @@ const view = (overrides = {}) => ({
   swarms: fixture('example-swarms.json'), swarm: null, runs: null, run: null, connection: 'open', demo: false,
   now: NOW, phaseMs: 0, fresh: { feed: new Set(), reports: new Set(), chips: new Set() }, ...overrides,
 });
+const topBar = html => html.match(/<div class="d-top">[\s\S]*?<div class="d-top-r">[\s\S]*?<\/div><\/div>/)?.[0] ?? '';
 const tabs = html => [...html.matchAll(/data-tab="(\w+)" aria-selected="(true|false)"/g)].map(match => `${match[1]}${match[2] === 'true' ? '*' : ''}`);
 
 test('narrow mode starts below 900 px of inner width', () => {
@@ -100,7 +101,8 @@ test('the wide Live page has the header, Needs you, four tabs and the activity r
   assert.deepEqual(tabs(html), ['cards*', 'timeline', 'plan', 'board']);
   assert.match(html, /<div class="d-body"><div class="d-main">/);
   assert.match(html, /<aside class="d-side"><section class="rail" aria-label="Activity">/);
-  assert.match(html, /<span class="small muted">Watch-only<\/span>/);
+  assert.doesNotMatch(topBar(html), /watch-only/i);
+  assert.match(topBar(html), /<div class="d-top-r">/);
 });
 
 test('narrow mode adds the Activity tab and drops the rail; the detail panel replaces the cards', () => {
@@ -153,10 +155,15 @@ test('the top bar shows a swarm picker, connection trouble, data warnings and sa
   assert.match(renderApp(view({ swarms })), /<select data-swarm aria-label="Swarm"><option value="ws-0000-root" selected>Sample story B<\/option><option value="ws-1000-root">Sample story A<\/option><\/select>/);
   assert.doesNotMatch(renderApp(view()), /data-swarm/);
   assert.match(renderApp(view({ connection: 'retrying' })), /<span class="small warn">Disconnected · retrying<\/span>/);
+  const retrying = topBar(renderApp(view({ connection: 'retrying' })));
+  assert.match(retrying, /Disconnected · retrying/);
+  assert.doesNotMatch(retrying, /Watch-only/i);
   const warned = exampleSnapshot();
   warned.diagnostics.push({ level: 'warn', source: 'pr-lookup', message: 'gh is not signed in.' });
   assert.match(renderApp(view({ snapshot: warned })), /<span class="small muted" title="pr-lookup: gh is not signed in\.">1 data warning<\/span>/);
-  assert.match(renderApp(view({ demo: true })), /Sample data · watch-only/);
+  const demo = renderApp(view({ demo: true }));
+  assert.match(demo, /<span class="small muted">Sample data<\/span>/);
+  assert.doesNotMatch(demo, /watch-only/i);
 });
 
 test('a picked or remembered swarm applies only while it is live; one in the address always applies', () => {
