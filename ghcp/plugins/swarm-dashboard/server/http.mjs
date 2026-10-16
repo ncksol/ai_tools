@@ -3,6 +3,7 @@ import { loadAssets } from './assets.mjs';
 import { createHub } from './hub.mjs';
 
 export const APP_ID = 'swarm-dashboard';
+// No frame-ancestors or X-Frame-Options: the app's canvas panel embeds this page, and a wrong value would break the canvas. The page only reads (GET and HEAD), so there is nothing to clickjack.
 const SECURITY = {
   'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'",
   'X-Content-Type-Options': 'nosniff',

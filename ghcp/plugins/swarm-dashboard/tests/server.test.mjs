@@ -37,6 +37,8 @@ test('the page, its assets and health answer only to the dashboard\'s own host',
     assert.equal(page.status, 200);
     assert.match(page.body, /id="dash"/);
     assert.match(page.headers['content-security-policy'], /default-src 'none'; script-src 'self'/);
+    assert.doesNotMatch(page.headers['content-security-policy'], /frame-ancestors/);
+    assert.equal(page.headers['x-frame-options'], undefined);
     assert.equal(page.headers['x-content-type-options'], 'nosniff');
     assert.equal((await get(server.port, '/ui/styles.css')).status, 200);
     assert.equal((await get(server.port, '/ui/../engine/schema.mjs')).status, 404);
