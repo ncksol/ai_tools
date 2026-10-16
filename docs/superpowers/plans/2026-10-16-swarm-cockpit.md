@@ -3321,6 +3321,14 @@ Expected: FAIL with `Timed out waiting for … dataset.ready === '1'` (the page 
 
 - [ ] **Step 6: Commit**
 
+Review amendments (16 October 2026), applied in a follow-up commit after this task's review:
+- A state that expects the note (the small window) fails when any panel is visible.
+- The scene is sampled around each rectangle by 32 × max(1, stage scale) px, because the camera's reach grows with the scale (38 px at 2560 × 1440).
+- The monospace rule reads the computed font family directly (no probe element); the extra rules skip hidden elements; the 40 px line height is the clock's alone.
+- The edge states first confirm that the 7-digit PR id and the five unit labels reached the page.
+- Backdrop pixels are ranked by linear luminance, and a state fails when the brightest scene pixel behind all its rectangles is nearly black (the frame was not drawn).
+- The usage text names `--screenshots` and both synthetic swarms plus the edge values.
+
 ```bash
 git add ghcp/plugins/swarm-dashboard/scripts/lib/cockpit-check.mjs ghcp/plugins/swarm-dashboard/scripts/check-cockpit.mjs ghcp/plugins/swarm-dashboard/tests/cockpit-check.test.mjs ghcp/plugins/swarm-dashboard/tests/cockpit-scene.test.mjs
 git commit -m "test(swarm-dashboard): check the cockpit's arrangement, type, spacing and contrast in the browser"
