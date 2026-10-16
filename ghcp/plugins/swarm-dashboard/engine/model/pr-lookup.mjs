@@ -145,8 +145,8 @@ export function createPrLookup({ run = runCommand, now = Date.now, ttlMs = 5 * M
     const key = prKey(pr, cwd);
     if (inflight.has(key) || !due(key)) return;
     inflight.add(key);
-    // The label goes into diagnostics, so it never holds the worktree path.
-    queue.push({ pr, key, label: `${pr.provider}:${pr.repo ?? 'worktree'}:${pr.id}`, cwd: target ? null : cwd });
+    // The label goes into diagnostics, so it never holds the worktree path, nor a repository value that is not a usable repository.
+    queue.push({ pr, key, label: `${pr.provider}:${target ? pr.repo : 'worktree'}:${pr.id}`, cwd: target ? null : cwd });
     pump();
   }
 

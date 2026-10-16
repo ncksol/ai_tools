@@ -227,6 +227,16 @@ test('lookup errors name the PR without the worktree path', async () => {
   assert.ok(errors.every(entry => !entry.key.includes('/synthetic')));
 });
 
+test('lookup errors show no repository value that is not a repository, such as a path', async () => {
+  const lookup = createPrLookup({ run: async () => { throw new Error('gh failed: not logged in'); }, exists: () => true });
+  lookup.request({ provider: 'github', id: 7, repo: '/synthetic/private/repo' }, { cwd: '/synthetic/private/worktree' });
+  lookup.request({ provider: 'ado', id: 8, repo: 'C:\\synthetic\\private\\repo' }, { cwd: '/synthetic/private/worktree' });
+  await lookup.settle();
+  const errors = lookup.errors();
+  assert.deepEqual(errors.map(entry => entry.key), ['github:worktree:7', 'ado:worktree:8']);
+  assert.ok(errors.every(entry => !entry.key.includes('/') && !entry.key.includes('\\') && !entry.key.includes('synthetic')));
+});
+
 test('a closed PR is checked again after the TTL, since it can be reopened, but a merged PR is final', async () => {
   const cases = [
     { provider: 'ado', repo: 'org/project/repo', closed: '{"status":"abandoned"}', reopened: '{"status":"active"}', merged: '{"status":"completed"}' },
