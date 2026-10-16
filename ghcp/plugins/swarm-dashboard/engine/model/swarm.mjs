@@ -207,7 +207,7 @@ function readRegistry(input, root) {
   return { present: units.size > 0, rows: units, byNode, invalid };
 }
 
-function assignLabels(root, nodes, registry, remembered = []) {
+function assignLabels(root, nodes, registry, remembered = [], planned = []) {
   const labels = new Map([[root.id, initials(root.name)]]);
   const derived = deriveLabels(nodes.map(node => node.name));
   const used = new Set();
@@ -219,10 +219,10 @@ function assignLabels(root, nodes, registry, remembered = []) {
   };
   for (const node of nodes) if (registry.byNode.has(node.id)) give(node, registry.byNode.get(node.id).unit);
   // The labels that retained sub-agents already show are reserved before the derived session labels are given, so a derived label
-  // that now collides takes the suffix instead. A remembered label equal to the orchestrator's or a registry label is not reserved:
-  // those labels always win, and the sub-agent gives its label up (see assignSubagentLabels).
-  const orchestrator = labels.get(root.id).toLowerCase();
-  for (const label of remembered) if (label.toLowerCase() !== orchestrator) used.add(label.toLowerCase());
+  // that now collides takes the suffix instead. A remembered label equal to the orchestrator's, a registry label or a planned label
+  // is not reserved: those labels always win, and the sub-agent gives its label up (see assignSubagentLabels).
+  const wins = new Set([labels.get(root.id), ...planned].map(label => label.toLowerCase()));
+  for (const label of remembered) if (!wins.has(label.toLowerCase())) used.add(label.toLowerCase());
   nodes.forEach((node, index) => {
     if (!registry.byNode.has(node.id)) give(node, derived[index]);
   });
@@ -640,7 +640,11 @@ export function buildSnapshot(input) {
   // The labels that the retained one-off sub-agents showed in earlier snapshots (the engine keeps them between snapshots of one run).
   const subagentLabels = input.subagentLabels ?? new Map();
   const remembered = [...rootContext.all.subagents.values()].filter(sub => sub.unit).map(sub => subagentLabels.get(sub.id)).filter(label => label !== undefined);
-  const labels = assignLabels(root, nodes, registry, remembered);
+  // The planned labels do not depend on the session labels: planFromTodos reads only each unit's id, todo id and CLI session ids.
+  const plannedLabels = [...planFromTodos(rootContext.sessionDb, nodes.map(node => ({
+    id: node.id, todoId: registry.byNode.get(node.id)?.todoId ?? null, cliSessionIds: node.cliSessionIds,
+  })), registry).planned.values()].map(todo => plannedLabel(todo.id));
+  const labels = assignLabels(root, nodes, registry, remembered, plannedLabels);
   const flags = { statusLines: false, questionTags: false };
   const extraFeed = [];
   const units = nodes.map(node => buildUnit(input, node, contexts, registry, labels, project, flags, extraFeed));

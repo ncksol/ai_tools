@@ -1211,21 +1211,60 @@ test('a planned label or a registry label that newly equals a remembered sub-age
   assert.equal(new Set(allLabels(after)).size, allLabels(after).length);
 });
 
-test('the launch numbers of older root CLI sessions come before those of the current one', () => {
-  const { data } = quietSwarm(root => {
+test('the launch numbers of older root CLI sessions come before those of the current one, in either order of the session list', () => {
+  // The node's list is ['cli-root-b', 'cli-root'] (the current session last), so by id it is the reverse. The session that started
+  // first by firstEventAt is the first of the list in one case and the first by id in the other: sorting by either would fail one.
+  for (const earlyId of ['cli-root-b', 'cli-root']) {
+    const { data } = quietSwarm(() => {}, at(120));
+    data.app.aliases.push({ sessionId: 'cli-root-b', workspaceId: 'ws-root', createdAt: T0 - MINUTE });
+    data.forest = buildForest(data.app);
+    assert.deepEqual(data.forest.nodes.get('ws-root').cliSessionIds, ['cli-root-b', 'cli-root']);
+    const session = (id, calls, start, launches) => {
+      const log = new EventLog(start);
+      log.calls = calls;
+      log.start();
+      for (const minute of launches) {
+        log.at(at(minute));
+        log.tool('task', { agent_type: 'explore', mode: 'background' });
+      }
+      data.states.set(id, fold(log, id, ROOT_STATE));
+      data.alive.set(id, true);
+    };
+    const lateId = earlyId === 'cli-root' ? 'cli-root-b' : 'cli-root';
+    session(earlyId, 200, T0 - MINUTE, [60, 61]);
+    session(lateId, 100, T0, [100]);
+    assert.ok(data.states.get(earlyId).firstEventAt < data.states.get(lateId).firstEventAt);
+    assert.deepEqual(subUnits(buildSnapshot(data)).map(unit => unit.label), ['explore-1', 'explore-2', 'explore-3'], `${earlyId} started first`);
+  }
+});
+
+test('a session label stays stable when a remembered sub-agent label meets a planned label and a derived session label together', () => {
+  const { data, ids } = withSubagents(root => {
     root.at(at(100));
-    root.tool('task', { agent_type: 'explore', mode: 'background' });
-  }, at(120));
-  data.app.aliases.push({ sessionId: 'cli-root-old', workspaceId: 'ws-root', createdAt: T0 - MINUTE });
-  data.forest = buildForest(data.app);
-  const old = new EventLog(T0 - MINUTE);
-  old.calls = 200;
-  old.start();
-  old.at(at(60)); old.tool('task', { agent_type: 'explore', mode: 'background' });
-  old.at(at(61)); old.tool('task', { agent_type: 'explore', mode: 'background' });
-  data.states.set('cli-root-old', fold(old, 'cli-root-old', ROOT_STATE));
-  data.alive.set('cli-root-old', true);
-  assert.deepEqual(subUnits(buildSnapshot(data)).map(unit => unit.label), ['explore-1', 'explore-2', 'explore-3']);
+    return { call: root.subagent({ name: 'a1', type: 'explore', mode: 'background', agentId: 'ag-a1' }) };
+  }, { contract: false });
+  const rename = name => {
+    data.app.workspaces.get('ws-api').name = name;
+    data.forest = buildForest(data.app);
+  };
+  const db = data.sessionDbs.get('cli-root');
+  const withPlanned = { ...db, todos: [...db.todos, { id: 'a1', title: 'A1', description: '', status: 'pending' }], deps: [...db.deps, { todoId: 'a1', dependsOn: 'todo-api' }] };
+  data.subagentLabels = new Map();
+  rename('Sample q9 api');
+  const first = buildSnapshot(data);
+  assert.deepEqual([labelsById(first)[ids.call], labelsById(first)['ws-api']], ['a1', 'q9']);
+  rename('Sample a1 api');
+  data.sessionDbs.set('cli-root', withPlanned);
+  const seen = [];
+  for (let i = 0; i < 3; i += 1) {
+    const snapshot = buildSnapshot(data);
+    assert.deepEqual(validateSnapshot(snapshot), []);
+    assert.ok(snapshot.planned.some(entry => entry.label === 'a1'), 'the planned label a1 is present');
+    seen.push([labelsById(snapshot)[ids.call], labelsById(snapshot)['ws-api']]);
+    const unplanned = [snapshot.orchestrator.label, ...snapshot.units.map(unit => unit.label)].map(label => label.toLowerCase());
+    assert.equal(new Set(unplanned).size, unplanned.length, 'every label is unique but a session and a planned one');
+  }
+  assert.deepEqual(seen, [['a1-2', 'a1'], ['a1-2', 'a1'], ['a1-2', 'a1']]);
 });
 
 // --- A unit with an open tool call is judged by that call's own limit ---
