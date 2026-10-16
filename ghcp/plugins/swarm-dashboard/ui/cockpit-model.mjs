@@ -40,8 +40,11 @@ export function tileGrid(snapshot) {
   const density = DENSITIES.find(entry => units.length <= entry.max) ?? DENSITIES[DENSITIES.length - 1];
   const overflow = units.length > density.max;
   const shown = overflow ? units.slice(0, density.max - 1) : units;
+  const slots = shown.length + Number(overflow);
+  const rowCount = Math.ceil(slots / 4);
   return {
     density: density.name,
+    rows: Array.from({ length: rowCount }, (_, i) => Math.floor(slots / rowCount) + Number(i < slots % rowCount)),
     tiles: shown.map(unit => ({ id: unit.id, label: unit.label, name: unit.name, status: unit.status, word: tileWord(unit.status), since: unit.since, attention: ATTENTION.has(unit.status), subagent: isSubagent(unit) })),
     more: overflow ? units.length - shown.length : 0,
   };

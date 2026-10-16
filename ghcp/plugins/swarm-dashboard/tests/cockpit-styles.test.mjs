@@ -36,6 +36,17 @@ test('spacing stays on the 4 px grid', () => {
   }
 });
 
+test('mission control uses twelve columns with quarter, third and half-width tile spans', () => {
+  const tiles = rules.find(([selector]) => selector === '.ck-tiles')[1];
+  assert.match(tiles, /grid-template-columns: repeat\(12, minmax\(0, 1fr\)\);/);
+  assert.match(tiles, /gap: 8px;/);
+  for (const span of [3, 4, 6]) {
+    const body = rules.find(([selector]) => selector === `.ck-w${span}`)?.[1];
+    assert.ok(body, `ck-w${span}`);
+    assert.match(body, new RegExp(`grid-column: span ${span};`));
+  }
+});
+
 test('the status colours are the approved pastels on dark glass, with idle and archived dimmed', () => {
   for (const [name, value] of Object.entries({ busy: '0.84 0.07 238', idle: '0.80 0.012 250', plan: '0.89 0.08 92', question: '0.85 0.07 300', stuck: '0.78 0.11 25', blocked: '0.85 0.085 62', merged: '0.86 0.07 160', archived: '0.70 0.008 250' })) {
     assert.ok(css.includes(`--${name}: oklch(${value});`), name);

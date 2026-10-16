@@ -6,6 +6,11 @@ import {
 import { NOW, deepFreeze, exampleSnapshot } from './helpers/ui.mjs';
 
 const example = () => deepFreeze(exampleSnapshot());
+const withSessions = n => {
+  const s = exampleSnapshot();
+  const template = s.units.find(unit => unit.label === 'B1');
+  return { ...s, units: Array.from({ length: n }, (_, i) => ({ ...template, id: `u${i}`, label: `U${i}` })) };
+};
 
 test('a state word is the regular state line without its time', () => {
   const s = example();
@@ -27,9 +32,6 @@ test('tiles are every child session and the running or stuck sub-agents, attenti
 });
 
 test('tile density follows the count, and past 16 the last slot counts the rest', () => {
-  const s = exampleSnapshot();
-  const template = s.units.find(unit => unit.label === 'B1');
-  const withSessions = n => ({ ...s, units: Array.from({ length: n }, (_, i) => ({ ...template, id: `u${i}`, label: `U${i}` })) });
   assert.deepEqual(DENSITIES.map(entry => entry.max), [8, 12, 16]);
   assert.equal(tileGrid(withSessions(8)).density, 'full');
   assert.equal(tileGrid(withSessions(12)).density, 'two');
@@ -37,6 +39,18 @@ test('tile density follows the count, and past 16 the last slot counts the rest'
   const crowded = tileGrid(withSessions(28));
   assert.deepEqual({ density: crowded.density, shown: crowded.tiles.length, more: crowded.more }, { density: 'one', shown: 15, more: 13 });
 });
+
+for (const [n, rows] of [
+  [0, []], [1, [1]], [2, [2]], [3, [3]], [4, [4]],
+  [5, [3, 2]], [6, [3, 3]], [7, [4, 3]], [8, [4, 4]],
+  [9, [3, 3, 3]], [10, [4, 3, 3]], [11, [4, 4, 3]], [12, [4, 4, 4]],
+  [13, [4, 3, 3, 3]], [14, [4, 4, 3, 3]], [15, [4, 4, 4, 3]], [16, [4, 4, 4, 4]],
+  [28, [4, 4, 4, 4]],
+]) {
+  test(`mission control balances ${n} sessions into fuller rows first`, () => {
+    assert.deepEqual(tileGrid(withSessions(n)).rows, rows);
+  });
+}
 
 test('the footer counts child sessions, running sub-agents and finished ones, including those the snapshot leaves out', () => {
   assert.deepEqual(unitCounts(example()), { sessions: 7, running: 2, finished: 3 });

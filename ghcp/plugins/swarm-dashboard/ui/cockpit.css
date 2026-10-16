@@ -140,7 +140,10 @@ html[data-gl="off"] body { background: radial-gradient(ellipse at 50% 38%, rgb(2
 button.ck-log-row:hover .ck-txt { color: var(--ink); }
 
 /* Mission control: tile density follows the count (cockpit-model.mjs). */
-.ck-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-content: start; gap: 8px; height: 168px; }
+.ck-tiles { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); align-content: start; gap: 8px; height: 168px; }
+.ck-w3 { grid-column: span 3; }
+.ck-w4 { grid-column: span 4; }
+.ck-w6 { grid-column: span 6; }
 .ck-tiles.d-full { grid-auto-rows: 80px; }
 .ck-tiles.d-two { grid-auto-rows: 48px; }
 .ck-tiles.d-one { grid-auto-rows: 32px; }

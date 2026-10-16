@@ -65,8 +65,8 @@ export function activityHtml(snapshot) {
   return head('Activity', 'cards', `<span class="ck-mono">${plural(snapshot.feed.length, 'recent event')}</span>`) + `<div class="ck-log-window" style="--lab:${width}ch"><ol class="ck-log">${items}</ol></div>`;
 }
 
-function tileHtml(tile, density, now, fresh) {
-  const cls = `ck-tile st-${tile.status}${tile.attention ? ' is-attn' : ''}${fresh ? ' is-new' : ''}`;
+function tileHtml(tile, density, span, now, fresh) {
+  const cls = `ck-tile ck-w${span} st-${tile.status}${tile.attention ? ' is-attn' : ''}${fresh ? ' is-new' : ''}`;
   const who = `${tile.label} ${tile.name}`;
   return `<button type="button" class="${cls}" data-detail="${esc(tile.id)}" data-key="${esc(tile.id)}" title="${esc(who)}" aria-label="${esc(`${who}, ${tile.word}`)}">`
     + `<span class="ck-id"><span class="ck-dot"></span><span class="ck-mono ck-lab">${esc(tile.label)}</span></span><span class="ck-mono ck-age">${liveTime(tile.since, now)}</span>`
@@ -80,8 +80,9 @@ export function unitsHtml(snapshot, now, fresh) {
   const orchestrator = snapshot.orchestrator;
   const side = `${esc(orchestrator.label)} orchestrator · ${esc(stateWord(orchestrator))} · ${liveTime(orchestrator.since, now)}`;
   const grid = tileGrid(snapshot);
-  const tiles = grid.tiles.map(tile => tileHtml(tile, grid.density, now, fresh.has(tile.id))).join('')
-    + (grid.more ? `<button type="button" class="ck-tile ck-more" data-tab="board" data-key="more" title="On the Board"><span>+${grid.more} more</span></button>` : '');
+  const spans = grid.rows.flatMap(size => Array(size).fill(grid.rows.length === 1 ? 3 : 12 / size));
+  const tiles = grid.tiles.map((tile, i) => tileHtml(tile, grid.density, spans[i], now, fresh.has(tile.id))).join('')
+    + (grid.more ? `<button type="button" class="ck-tile ck-w${spans[grid.tiles.length]} ck-more" data-tab="board" data-key="more" title="On the Board"><span>+${grid.more} more</span></button>` : '');
   const counts = unitCounts(snapshot);
   const foot = `${plural(counts.sessions, 'child session')} · ${plural(counts.running, 'sub-agent')} running · ${count(counts.finished)} finished`;
   return head('Mission control', 'cards', side)

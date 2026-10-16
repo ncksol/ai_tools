@@ -6,6 +6,7 @@ import { NOW, deepFreeze, exampleSnapshot } from './helpers/ui.mjs';
 const example = () => deepFreeze(exampleSnapshot());
 const all = s => [clockHtml(s, NOW), costHtml(s, NOW), needsHtml(s, NOW), statusHtml(s), activityHtml(s), unitsHtml(s, NOW, new Set()), prsHtml(s)].join('');
 const countOf = (html, pattern) => [...html.matchAll(pattern)].length;
+const tileWidths = html => [...html.matchAll(/class="ck-tile (ck-w[346])\b/g)].map(([, width]) => width);
 
 test('no panel uses bold, italic or inline type styles', () => {
   for (const html of [all(example()), all(null), hudHtml({ demo: true, connection: 'retrying', snapshot: example() }), noteHtml()]) {
@@ -63,7 +64,7 @@ test('mission control shows a tile per unit at the density its count needs, the 
   const html = unitsHtml(example(), NOW, new Set(['ws-0005-i1']));
   assert.match(html, /<div class="ck-tiles d-two">/);
   assert.equal(countOf(html, /<button type="button" class="ck-tile /g), 9);
-  assert.match(html, /<button type="button" class="ck-tile st-stuck is-attn is-new" data-detail="ws-0005-i1" data-key="ws-0005-i1" title="I1 integration" aria-label="I1 integration, Stuck">/);
+  assert.match(html, /<button type="button" class="ck-tile ck-w4 st-stuck is-attn is-new" data-detail="ws-0005-i1" data-key="ws-0005-i1" title="I1 integration" aria-label="I1 integration, Stuck">/);
   assert.doesNotMatch(html, /class="ck-name"/, 'two-line tiles leave the name to the title');
   assert.match(html, /<span class="ck-side">SB orchestrator · Waiting on question · <span data-t=/);
   assert.match(html, /<p class="ck-foot">7 child sessions · 2 sub-agents running · 3 finished<\/p>/);
@@ -72,7 +73,37 @@ test('mission control shows a tile per unit at the density its count needs, the 
   assert.match(unitsHtml(few, NOW, new Set()), /<div class="ck-tiles d-full">[\s\S]*<span class="ck-name">integration<\/span>/);
   const many = exampleSnapshot();
   many.units = Array.from({ length: 20 }, (_, i) => ({ ...few.units[2], id: `u${i}`, label: `U${i}` }));
-  assert.match(unitsHtml(many, NOW, new Set()), /<div class="ck-tiles d-one">[\s\S]*<button type="button" class="ck-tile ck-more" data-tab="board" data-key="more" title="On the Board"><span>\+5 more<\/span><\/button>/);
+  assert.match(unitsHtml(many, NOW, new Set()), /<div class="ck-tiles d-one">[\s\S]*<button type="button" class="ck-tile ck-w3 ck-more" data-tab="board" data-key="more" title="On the Board"><span>\+5 more<\/span><\/button>/);
+});
+
+test('the example has nine third-width tiles across three full rows', () => {
+  assert.deepEqual(tileWidths(unitsHtml(example(), NOW, new Set())), [
+    'ck-w4', 'ck-w4', 'ck-w4',
+    'ck-w4', 'ck-w4', 'ck-w4',
+    'ck-w4', 'ck-w4', 'ck-w4',
+  ]);
+});
+
+test('ten tiles give four quarter-width tiles before six third-width tiles', () => {
+  const s = exampleSnapshot();
+  s.units = Array.from({ length: 10 }, (_, i) => ({ ...s.units[2], id: `u${i}`, label: `U${i}` }));
+  assert.deepEqual(tileWidths(unitsHtml(s, NOW, new Set())), [
+    'ck-w3', 'ck-w3', 'ck-w3', 'ck-w3',
+    'ck-w4', 'ck-w4', 'ck-w4',
+    'ck-w4', 'ck-w4', 'ck-w4',
+  ]);
+});
+
+test('single rows keep quarter-width tiles and a two-tile final row uses half-width tiles', () => {
+  for (const [n, widths] of [
+    [1, ['ck-w3']], [2, ['ck-w3', 'ck-w3']], [3, ['ck-w3', 'ck-w3', 'ck-w3']],
+    [4, ['ck-w3', 'ck-w3', 'ck-w3', 'ck-w3']],
+    [5, ['ck-w4', 'ck-w4', 'ck-w4', 'ck-w6', 'ck-w6']],
+  ]) {
+    const s = exampleSnapshot();
+    s.units = Array.from({ length: n }, (_, i) => ({ ...s.units[2], id: `u${i}`, label: `U${i}` }));
+    assert.deepEqual(tileWidths(unitsHtml(s, NOW, new Set())), widths, `${n} tiles`);
+  }
 });
 
 test('pull requests list four rows and the opened and merged counts', () => {
