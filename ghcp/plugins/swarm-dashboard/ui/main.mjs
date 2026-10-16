@@ -1,6 +1,7 @@
 import { coalesced, isNarrow, lifecycleKey, renderApp, staleChoice } from './app.mjs';
 import { tickText } from './format.mjs';
 import { morph } from './morph.mjs';
+import { runEnd, unitEnd } from './model.mjs';
 import { shortLabel } from './parts.mjs';
 import { planFits, planGraphHtml, planListHtml } from './plan.mjs';
 import { axisSvg, costSvg, laneSvg, timelineWindow } from './timeline.mjs';
@@ -216,7 +217,10 @@ function drawTimeline(root) {
   morph(root.querySelector('.c-axis .c-trk'), axisSvg(width, t0, t1));
   for (const row of root.querySelectorAll('.c-row[data-id]')) {
     const session = sessions.get(row.dataset.id);
-    if (session) morph(row.querySelector('.c-trk'), laneSvg(session, width, t0, t1, t, phaseMs));
+    if (session) {
+      const end = session === view.snapshot.orchestrator ? runEnd(view.snapshot) : unitEnd(session, view.snapshot);
+      morph(row.querySelector('.c-trk'), laneSvg(session, width, t0, t1, t, phaseMs, end));
+    }
   }
   morph(root.querySelector('.c-cost .c-trk'), costSvg(view.snapshot.cost, width, t0, t1, t));
 }

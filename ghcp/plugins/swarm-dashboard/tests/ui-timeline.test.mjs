@@ -66,6 +66,34 @@ test('a busy lane has a live edge, running sub-agents, monitor ticks and thinned
   assert.doesNotMatch(svg, /<title>Opened PR #418 with 14 endpoints\.<\/title>/, 'a lower-priority mark within 12 px is dropped');
 });
 
+/** A session whose busy and stuck segments and one sub-agent bar are all still open, in a window that holds `end`. */
+const END = NOW - HOUR;
+const openLane = () => ({
+  timeline: {
+    segments: [{ start: END - 90 * MIN, end: null, state: 'busy' }, { start: END - 30 * MIN, end: null, state: 'stuck' }],
+    subagents: [{ id: 'call-open', start: END - 60 * MIN, end: null, type: 'task' }],
+    marks: [],
+  },
+});
+const subWidth = svg => Number(svg.match(/<rect class="t-sub[^"]*"[^>]* width="([\d.]+)"/)[1]);
+
+test('after its session ends, a lane stops growing and stops moving', () => {
+  const [t0, t1] = [END - 2 * HOUR, END + HOUR];
+  const svg = laneSvg(openLane(), 600, t0, t1, END + 600000, 0, END);
+  assert.equal(svg, laneSvg(openLane(), 600, t0, t1, END + 1200000, 0, END));
+  assert.doesNotMatch(svg, / live/);
+  assert.doesNotMatch(svg, /t-edge/);
+  assert.doesNotMatch(svg, /animation-delay/);
+});
+
+test('while its session runs, an open sub-agent bar is live and grows with now', () => {
+  const [t0, t1] = [END - 2 * HOUR, END + HOUR];
+  const earlier = laneSvg(openLane(), 600, t0, t1, END + 600000, 0, null);
+  const later = laneSvg(openLane(), 600, t0, t1, END + 1200000, 0, null);
+  assert.match(earlier, /<rect class="t-sub live"/);
+  assert.ok(subWidth(later) > subWidth(earlier), `${subWidth(later)} > ${subWidth(earlier)}`);
+});
+
 test('sub-agent bars use at most three tracks', () => {
   const b1 = findByLabel(exampleSnapshot(), 'B1');
   b1.timeline.subagents = Array.from({ length: 5 }, (_, index) => ({ id: `x${index}`, start: NOW - HOUR, end: null, type: 'task' }));

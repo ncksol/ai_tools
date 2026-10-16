@@ -38,8 +38,11 @@ export function markSvg(mark, x, y) {
   }
 }
 
-/** One session's lane: state spans, up to three sub-agent tracks, monitor ticks and thinned markers. */
-export function laneSvg(session, width, t0, t1, now, phaseMs = 0) {
+/**
+ * One session's lane: state spans, up to three sub-agent tracks, monitor ticks and thinned markers. `end` is the
+ * session's end (null while it runs); after it, open spans and bars stop there and nothing in the lane grows or moves.
+ */
+export function laneSvg(session, width, t0, t1, now, phaseMs = 0, end = null) {
   const X0 = 4;
   const X1 = width - 8;
   const k = (X1 - X0) / (t1 - t0);
@@ -47,28 +50,28 @@ export function laneSvg(session, width, t0, t1, now, phaseMs = 0) {
   const { segments, subagents, marks } = session.timeline;
   let spans = '';
   for (const segment of segments) {
-    const end = segment.end ?? now;
-    if (end <= t0 || segment.start >= t1) continue;
+    const stop = segment.end ?? end ?? now;
+    if (stop <= t0 || segment.start >= t1) continue;
     const x1 = X(Math.max(segment.start, t0));
-    const wide = Math.max(1, X(Math.min(end, t1)) - x1);
-    const live = segment.end === null;
+    const wide = Math.max(1, X(Math.min(stop, t1)) - x1);
+    const live = segment.end === null && end === null;
     if (segment.state === 'idle') spans += `<line class="t-idle" x1="${x1.toFixed(1)}" y1="10" x2="${(x1 + wide).toFixed(1)}" y2="10"/>`;
     else spans += `<rect class="t-${segment.state}${live && segment.state === 'stuck' ? ' live' : ''}" x="${x1.toFixed(1)}" y="5" width="${wide.toFixed(1)}" height="10" rx="2"${live && segment.state === 'stuck' ? ` ${phase(2.4, phaseMs)}` : ''}/>`;
     if (live && segment.state === 'busy') spans += `<rect class="t-edge" x="${(x1 + wide - 2).toFixed(1)}" y="5" width="2" height="10" ${phase(2, phaseMs)}/>`;
   }
   const tracks = [];
   let bars = '';
-  for (const bar of subagents.filter(item => (item.end ?? now) > t0 && item.start < t1).sort((a, b) => a.start - b.start)) {
+  for (const bar of subagents.filter(item => (item.end ?? end ?? now) > t0 && item.start < t1).sort((a, b) => a.start - b.start)) {
     const x1 = X(Math.max(bar.start, t0));
-    const x2 = Math.max(x1 + 2, X(Math.min(bar.end ?? now, t1)));
-    let track = tracks.findIndex(end => end + 2 <= x1);
+    const x2 = Math.max(x1 + 2, X(Math.min(bar.end ?? end ?? now, t1)));
+    let track = tracks.findIndex(right => right + 2 <= x1);
     if (track < 0) {
       if (tracks.length >= 3) continue;
       tracks.push(0);
       track = tracks.length - 1;
     }
     tracks[track] = x2;
-    bars += `<rect class="t-sub${bar.end === null ? ' live' : ''}" x="${x1.toFixed(1)}" y="${24 + track * 8}" width="${(x2 - x1).toFixed(1)}" height="4" rx="1"><title>${esc(bar.type)}</title></rect>`;
+    bars += `<rect class="t-sub${bar.end === null && end === null ? ' live' : ''}" x="${x1.toFixed(1)}" y="${24 + track * 8}" width="${(x2 - x1).toFixed(1)}" height="4" rx="1"><title>${esc(bar.type)}</title></rect>`;
   }
   let ticks = '';
   const kept = [];
