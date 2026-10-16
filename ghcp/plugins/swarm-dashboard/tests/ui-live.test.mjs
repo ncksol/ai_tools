@@ -148,7 +148,7 @@ test('a finished sub-agent\'s card fades out in the last part of its grace perio
   const left = 400;
   const { unit, card: found } = finishedCard('audit-schema-usage', SUBAGENT_CARD_GRACE_MS - left);
   const start = found.slice(0, found.indexOf('>'));
-  assert.match(start, new RegExp(`^ class="b-card st-done is-leaving" data-open="${unit.id}" tabindex="0" role="button" aria-label="[^"]+" data-phase style="animation-delay:-0\\.80s"$`));
+  assert.match(start, new RegExp(`^ class="b-card st-done is-leaving" data-open="${unit.id}" tabindex="0" role="button" aria-label="[^"]+" data-kind="subagent" data-phase style="animation-delay:-0\\.80s"$`));
   assert.equal(((CARD_FADE_MS - left) / 1000).toFixed(2), '0.80');
   const early = finishedCard('audit-schema-usage', SUBAGENT_CARD_GRACE_MS - CARD_FADE_MS - 1).card;
   assert.doesNotMatch(early.slice(0, early.indexOf('>')), /is-leaving/);
@@ -185,6 +185,17 @@ test('the detail panel shows a sub-agent\'s type, mode and effort in place of it
   assert.match(words, /Stage Sub-agent Model claude-sonnet-5/);
   assert.match(text(detailHtml('call-root-18', false, context(snapshot))), /Sub-agent Type task Mode Background Effort not set/);
   assert.match(text(detailHtml('ws-0005-i1', false, context(snapshot))), /PR and monitor/);
+});
+
+test('a card carries its unit\'s kind, so a child session and a one-off sub-agent can look different', () => {
+  const snapshot = exampleSnapshot();
+  findByLabel(snapshot, 'B2').kind = 'chat';
+  const html = cardsHtml(context(snapshot));
+  const start = id => card(html, id).slice(0, card(html, id).indexOf('>'));
+  assert.match(start('ws-0003-b1'), / data-kind="project"/);
+  assert.match(start('ws-0004-b2'), / data-kind="chat"/);
+  assert.match(start('call-root-41'), / data-kind="subagent"/);
+  for (const id of cardIds(html)) assert.equal(start(id).match(/ data-kind="([^"]*)"/)?.[1], snapshot.units.find(unit => unit.id === id).kind, id);
 });
 
 test('a card shows state, clock, cost bar, report, progress, stage, monitor and chips', () => {

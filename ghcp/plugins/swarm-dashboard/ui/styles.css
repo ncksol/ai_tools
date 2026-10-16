@@ -143,8 +143,11 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 /* cards */
 .b-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(296px, 1fr)); gap: 12px; }
 .b-card { display: flex; flex-direction: column; gap: 12px; padding: var(--card-pad); min-width: 0; border: var(--card-border) solid var(--line); border-radius: 8px; background: var(--surface); cursor: pointer; }
+.b-card.st-plan, .b-card.st-question, .b-card.st-stuck, .b-card.st-blocked { background: var(--c-soft); }
+/* The border says what a card is: a one-off sub-agent (blue) or a child session (green). Status shows through the ring, the state line and the tint. */
+.b-card[data-kind="subagent"], .mc[data-kind="subagent"] { border-color: var(--busy); }
+.b-card[data-kind="project"], .b-card[data-kind="chat"], .mc[data-kind="project"], .mc[data-kind="chat"] { border-color: var(--merged); }
 .b-card:hover { border-color: var(--ink-3); }
-.b-card.st-plan, .b-card.st-question, .b-card.st-stuck, .b-card.st-blocked { background: var(--c-soft); border-color: var(--c); }
 .b-card.is-sel { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
 /* A finished sub-agent's card fades out at the end of its grace period (CARD_FADE_MS in ui/model.mjs). */
 .b-card.is-leaving { animation: card-leave 1.2s ease-in forwards; }
@@ -265,7 +268,7 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 .mc { display: flex; flex-direction: column; padding: 12px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; background: var(--surface); }
 .mc[data-open] { cursor: pointer; }
 .mc[data-open]:hover { border-color: var(--ink-3); }
-.mc.st-plan, .mc.st-question, .mc.st-stuck, .mc.st-blocked { background: var(--c-soft); border-color: var(--c); }
+.mc.st-plan, .mc.st-question, .mc.st-stuck, .mc.st-blocked { background: var(--c-soft); }
 .mc.planned { border-style: dashed; border-color: var(--ink-3); }
 .mc.planned.can { border-style: solid; border-color: var(--busy-ink); }
 .mc-1 { display: flex; align-items: center; gap: 8px; font-weight: 500; white-space: nowrap; overflow: hidden; }

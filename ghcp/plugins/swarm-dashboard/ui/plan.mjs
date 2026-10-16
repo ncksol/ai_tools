@@ -82,7 +82,7 @@ function miniCard(node, now) {
   }
   const unit = node.unit;
   const words = isSubagent(unit) ? SUBAGENT_BOARD_WORDS[unit.statusDetail] ?? BOARD_WORDS[unit.status] : BOARD_WORDS[unit.status];
-  return `<div class="mc st-${unit.status}" data-open="${esc(unit.id)}" tabindex="0" role="button" aria-label="Open details for ${esc(unit.label)}">`
+  return `<div class="mc st-${unit.status}" data-open="${esc(unit.id)}" tabindex="0" role="button" aria-label="Open details for ${esc(unit.label)}" data-kind="${esc(unit.kind)}">`
     + `<div class="mc-1"><span class="dot"></span><span class="tx">${esc(unit.label)} ${esc(unit.name)}</span></div>`
     + `<div class="mc-2">${closedNotMerged(unit) ? closedBadge : fill(words ?? unit.status, unit.since, now)}</div><div class="mc-3">${costText(unit.cost.credits)}</div></div>`;
 }

@@ -57,7 +57,7 @@ export function cardHtml(unit, ctx) {
   const left = cardTimeLeft(unit, now);
   const leaving = left !== null && left <= CARD_FADE_MS;
   const fade = leaving ? ` data-phase style="animation-delay:-${((CARD_FADE_MS - left) / 1000).toFixed(2)}s"` : '';
-  return `<article class="b-card st-${unit.status}${detail === unit.id ? ' is-sel' : ''}${leaving ? ' is-leaving' : ''}" data-open="${esc(unit.id)}" tabindex="0" role="button" aria-label="Open details for ${esc(unit.label)} ${esc(unit.name)}"${fade}>`
+  return `<article class="b-card st-${unit.status}${detail === unit.id ? ' is-sel' : ''}${leaving ? ' is-leaving' : ''}" data-open="${esc(unit.id)}" tabindex="0" role="button" aria-label="Open details for ${esc(unit.label)} ${esc(unit.name)}" data-kind="${esc(unit.kind)}"${fade}>`
     + `<div class="b-head">${ring(unit.status, unit.label, phaseMs)}<div class="b-who st-${unit.status}"><div class="b-name">${esc(unit.name)}</div><div class="b-state">${stateLineHtml(unit, now)}</div></div>${unit.pr ? `<span class="b-pr">PR #${unit.pr.id}</span>` : ''}</div>`
     + `<div class="b-metrics"><span class="k">${end ? 'Ran' : 'Running'}</span><span class="v">${end ? dur(end - unit.startedAt, 'clock') : liveTime(unit.startedAt, now, 'clock')}</span>`
     + `<span class="k">Cost</span><span class="v">${costHtml(unit.cost.credits)}</span><span></span>${meter(sharePercent(unit.cost.credits, snapshot.cost.maxUnitCredits))}</div>`

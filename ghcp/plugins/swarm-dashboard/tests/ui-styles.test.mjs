@@ -94,6 +94,27 @@ test('the row of sub-agents outside the window spans the whole row in both Timel
   assert.match(wide.slice(0, wide.indexOf('\n}')), /\n  \.c-row\.c-more \{ grid-template-areas: "who who who"; \}/);
 });
 
+const SUBAGENT_BORDER = '.b-card[data-kind="subagent"], .mc[data-kind="subagent"]';
+const SESSION_BORDER = '.b-card[data-kind="project"], .b-card[data-kind="chat"], .mc[data-kind="project"], .mc[data-kind="chat"]';
+
+test('a card\'s border is blue for a one-off sub-agent and green for a child session, and status no longer sets it', () => {
+  assert.equal(block(SUBAGENT_BORDER).trim(), 'border-color: var(--busy);');
+  assert.equal(block(SESSION_BORDER).trim(), 'border-color: var(--merged);');
+  assert.equal(block('.b-card.st-plan, .b-card.st-question, .b-card.st-stuck, .b-card.st-blocked').trim(), 'background: var(--c-soft);');
+  assert.equal(block('.mc.st-plan, .mc.st-question, .mc.st-stuck, .mc.st-blocked').trim(), 'background: var(--c-soft);');
+});
+
+test('hover and the selected card still show over the kind colour', () => {
+  const at = selector => css.indexOf(`\n${selector} {`);
+  const hover = at('.b-card:hover');
+  for (const selector of ['.b-card:hover', SUBAGENT_BORDER, SESSION_BORDER, '.b-card.is-sel']) assert.notEqual(at(selector), -1, selector);
+  assert.ok(hover > at(SUBAGENT_BORDER) && hover > at(SESSION_BORDER), 'hover after the kind rules');
+  assert.ok(hover < at('.b-card.is-sel'), 'hover before the selected card');
+  assert.equal(block('.b-card:hover').trim(), 'border-color: var(--ink-3);');
+  assert.equal(block('.b-card.is-sel').trim(), 'border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink);');
+  assert.equal(block('.mc[data-open]:hover').trim(), 'border-color: var(--ink-3);');
+});
+
 test('a leaving card fades to transparent over CARD_FADE_MS', () => {
   const rule = block('.b-card.is-leaving').trim();
   const match = rule.match(/^animation: card-leave ([\d.]+)s ease-in forwards;$/);

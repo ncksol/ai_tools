@@ -83,6 +83,20 @@ test('the board has one column per stage with counts, attention first', () => {
   assert.match(boardHtml(context(snapshot)), /<b>Planned<\/b>0<\/div><span class="none">None<\/span>/);
 });
 
+test('the Board\'s unit cards carry their kind, and planned entries, which are not units, carry none', () => {
+  const html = boardHtml(context(exampleSnapshot()));
+  const starts = [...html.matchAll(/<div class="mc [^>]*>/g)].map(match => match[0]);
+  const units = starts.filter(start => start.includes('data-open='));
+  const planned = starts.filter(start => start.startsWith('<div class="mc planned'));
+  assert.equal(units.length + planned.length, starts.length);
+  assert.ok(planned.length > 0);
+  for (const start of planned) assert.doesNotMatch(start, /data-kind/);
+  const kinds = Object.fromEntries(units.map(start => [start.match(/data-open="([^"]+)"/)[1], start.match(/ data-kind="([^"]*)"/)?.[1]]));
+  assert.equal(kinds['ws-0003-b1'], 'project');
+  assert.equal(kinds['call-root-41'], 'subagent');
+  for (const kind of Object.values(kinds)) assert.ok(kind === 'project' || kind === 'subagent', kind);
+});
+
 test('the plan says a PR closed without merging, in the graph and in the list', () => {
   const snapshot = closedSnapshot();
   const graph = planGraphHtml(snapshot, NOW);
