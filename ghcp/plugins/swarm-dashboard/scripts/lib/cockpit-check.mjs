@@ -530,13 +530,20 @@ async function bounded(promise, ms, what) {
   }
 }
 
-/** Close every page target that was not there before, and wait (bounded) until they are gone. */
+/**
+ * Close every page target that was not there before and poll (bounded) until they have left Target.getTargets;
+ * close any that remain once more and poll again. Returns the new page targets still open (empty when all closed).
+ */
 async function closeNewPages(browser, known) {
   // List again rather than relying on the targets already observed: a popup may have opened late.
   const fresh = async () => (await bounded(browser.send('Target.getTargets'), 5000, 'Chrome')).targetInfos.filter(info => !known.has(info.targetId) && info.type === 'page');
-  for (const info of await fresh()) await bounded(browser.send('Target.closeTarget', { targetId: info.targetId }), 5000, 'Chrome').catch(() => {});
-  const deadline = Date.now() + 3000;
-  while (Date.now() < deadline && (await fresh()).length) await sleep(100);
+  let remaining = await fresh();
+  for (let round = 0; round < 2 && remaining.length; round += 1) {
+    for (const info of remaining) await bounded(browser.send('Target.closeTarget', { targetId: info.targetId }), 5000, 'Chrome').catch(() => {});
+    const deadline = Date.now() + 3000;
+    while ((remaining = await fresh()).length && Date.now() < deadline) await sleep(100);
+  }
+  return remaining;
 }
 
 const COCKPIT_STATE = `(() => {
@@ -595,6 +602,7 @@ async function checkSlowdown({ page, browser, urls, engine, stdout, stderr }) {
   const problems = [];
   let known = null;
   let line = null;
+  let skipped = false;
   try {
     const url = `${server.url}?host=browser`;
     await page.goto(url, 1440, 900);
@@ -610,7 +618,12 @@ async function checkSlowdown({ page, browser, urls, engine, stdout, stderr }) {
         break;
       }
       const beside = await updateTimes(page, 6, 20000);
-      await closeNewPages(browser, known);
+      // Measure "alone again" (and any second triple) only once the cockpit has really closed.
+      if ((await closeNewPages(browser, known)).length) {
+        problems.push('the cockpit window did not close, so the regular view was not measured alone again');
+        skipped = true;
+        break;
+      }
       const again = await updateTimes(page, 6, 20000);
       if (alone.length < 4 || beside.length < 4 || again.length < 4) {
         problems.push(`too few live updates arrived to compare (${alone.length}, ${beside.length} and ${again.length})`);
@@ -635,7 +648,8 @@ async function checkSlowdown({ page, browser, urls, engine, stdout, stderr }) {
     await page.goto('about:blank', 1440).then(() => page.waitFor("location.href === 'about:blank'")).catch(() => {});
     await server.close().catch(() => {});
   }
-  stdout.write(`Regular view with a cockpit open: ${problems.length ? `${problems.length} problems` : line}.\n`);
+  const summary = problems.length ? `${problems.length} problems` : line;
+  stdout.write(`Regular view with a cockpit open: ${skipped ? `not compared, because the cockpit window did not close (${summary})` : summary}.\n`);
   for (const problem of problems) stderr.write(`slowdown: ${problem}\n`);
   return problems.length;
 }
