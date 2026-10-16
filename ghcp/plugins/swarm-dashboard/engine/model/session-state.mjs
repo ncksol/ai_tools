@@ -271,6 +271,18 @@ function closeRun(unit, at) {
   if (last && last[1] === null) last[1] = Math.max(at, last[0]);
 }
 
+/** The source of the finish item of a unit's current run after the first: one item per run. */
+const runSource = (state, sub) => `${state.id}/${sub.id}/run-${sub.unit.runCount}`;
+
+/** Sets the finish item of a unit's current run (replacing one it already has) at `at`. */
+function setRunFinishItem(state, sub, at, status) {
+  const source = runSource(state, sub);
+  const { feed } = sub.unit;
+  const index = feed.findIndex(item => item.source === source);
+  if (index >= 0) feed.splice(index, 1);
+  addUnitFeed(state, sub, at, 'subagent-done', `${status} ${subLabel(sub)}`, source);
+}
+
 /** The task's `name` argument: the base of a unit's label. Fixed at launch; the display name that arrives with subagent.started never changes it. */
 function taskNameOf(args) {
   return (typeof args.name === 'string' ? oneLine(args.name, 80) : '') || null;
@@ -284,13 +296,17 @@ function agentTypeOf(args) {
 function newUnit(args, at) {
   return {
     taskName: taskNameOf(args), labelType: agentTypeOf(args), runs: [[at, null]], droppedBusyMs: 0, turnOpen: false, lastTurnEndAt: null,
+    // runCount: runs opened (the first, then one per follow-up). lastOutcome: how the last closed run ended; the chip's own outcome
+    // (the sub-agent's status) never changes after the first finish.
+    runCount: 1, lastOutcome: null,
     openTools: new Map(), lastMessage: null, error: null, feed: [], children: [], firstFinishAt: null,
   };
 }
 
-/** Adds a run to a unit. A run that leaves the bounded list adds its length to `droppedBusyMs`, so the busy total stays whole. */
+/** Adds a run to a unit (a follow-up). A run that leaves the bounded list adds its length to `droppedBusyMs`, so the busy total stays whole. */
 function pushRun(unit, run) {
   unit.runs.push(run);
+  unit.runCount += 1;
   while (unit.runs.length > LIMITS.subagentRuns) {
     const [start, end] = unit.runs.shift();
     unit.droppedBusyMs += (end ?? start) - start;
@@ -312,6 +328,7 @@ function finishSubagent(state, sub, at, status, durationMs, error = null) {
   if (sub.unit) {
     closeRun(sub.unit, sub.endedAt);
     sub.unit.firstFinishAt ??= sub.endedAt;
+    sub.unit.lastOutcome = status;
     sub.unit.openTools.clear();
     if (error) sub.unit.error = error;
     addUnitFeed(state, sub, sub.endedAt, 'subagent-done', `${status} ${subLabel(sub)}`, `${state.id}/${sub.id}`);
@@ -391,6 +408,20 @@ function endOpenWork(state, at, keepBackground) {
     if (sub.status !== 'running' || (keepBackground && sub.mode === 'background')) continue;
     finishSubagent(state, sub, at, status, null, error);
   }
+  // A sub-agent that finished and was then sent a follow-up (or whose run was reopened) has an open run of its own. The same rule
+  // ends it: an abort cancels it unless the sub-agent runs in the background, the end of the process fails it. The chip stays as it was.
+  for (const sub of state.subagents.values()) {
+    const { unit } = sub;
+    if (!unit || sub.status === 'running' || (keepBackground && sub.mode === 'background')) continue;
+    const last = unit.runs[unit.runs.length - 1];
+    if (!last || last[1] !== null) continue;
+    closeRun(unit, at);
+    unit.openTools.clear();
+    unit.turnOpen = false;
+    unit.lastOutcome = status;
+    if (error) unit.error = error;
+    setRunFinishItem(state, sub, at, status);
+  }
   // Sub-agents started by a sub-agent end with the process. An abort ends a sync one only when its top sub-agent has ended:
   // one that is running, runs in the background (also when evicted from the details), or was resumed (its last run is open) goes on.
   for (const [id, entry] of state.descendants) {
@@ -410,8 +441,8 @@ function endOpenWork(state, at, keepBackground) {
 
 function endProcess(state, at) {
   closeTurn(state, at);
+  // endOpenWork ends every open run of a sub-agent unit, a follow-up's included.
   endOpenWork(state, at, false);
-  for (const sub of state.subagents.values()) if (sub.unit) closeRun(sub.unit, at);
 }
 
 function toolArgs(name, args) {
@@ -669,7 +700,13 @@ function onOwnedEvent(state, event, data, owner, agentId, at) {
       if (!unit) break;
       unit.turnOpen = false;
       unit.lastTurnEndAt = at;
-      if (unit.firstFinishAt !== null) closeRun(unit, at);
+      if (unit.firstFinishAt !== null) {
+        const last = unit.runs[unit.runs.length - 1];
+        if (last && last[1] === null) {
+          closeRun(unit, at);
+          unit.lastOutcome = 'completed';
+        }
+      }
       break;
     case 'assistant.message':
       if (unit && typeof data.content === 'string' && data.content.trim()) unit.lastMessage = { at, text: ownString(clip(data.content, 4000)) };

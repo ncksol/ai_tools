@@ -110,7 +110,8 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  *                   'blocked'/'crashed'/'failed'
  *   since           start of its current run; when stuck, its last event; once finished, endedAt
  *   reason          stuck: the rule and its numbers; failed: the error; cancelled: when; crashed: why
- *   startedAt       when it started       endedAt: when it finished (after a follow-up: when its last turn ended);
+ *   startedAt       when it started       endedAt: when it finished (after a follow-up: when its last turn ended, or when an
+ *                                         abort or the end of the orchestrator's process stopped it);
  *                                         null while it runs
  *   busyMs          its own run time, follow-ups included      waitingOnUserMs: 0
  *   alive           the orchestrator's process liveness

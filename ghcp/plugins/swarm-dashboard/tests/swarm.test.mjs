@@ -887,3 +887,66 @@ test('a child session\'s sub-agents stay chips, with no units of their own', () 
   assert.deepEqual(snapshot.units.find(unit => unit.id === 'ws-api').subagents.map(sub => sub.name), ['reviewer']);
   assert.deepEqual(snapshot.omittedSubagents, { done: 0, failed: 0 });
 });
+
+// --- A follow-up run that the orchestrator's abort or shutdown stops ---
+
+/** A task that finishes at minute 61, gets a follow-up at 62 and starts its turn at 63; `end` then adds what stops it. */
+function followUpSwarm(mode, end, now, { nested = false } = {}) {
+  const ids = {};
+  const { data } = quietSwarm(root => {
+    root.at(at(55)); root.turnStart();
+    root.at(at(60)); ids.call = root.subagent({ name: 'late', type: 'explore', mode, agentId: 'ag-late' });
+    root.at(at(61)); ids.firstDone = root.subagentDone(ids.call, { durationMs: MINUTE, agentId: 'ag-late' });
+    root.at(at(62)); root.toAgent('ag-late', 'again');
+    root.at(at(63)); root.sub(ids.call, 'assistant.turn_start');
+    if (nested) ids.child = root.nested(ids.call, { name: 'kid', type: 'explore', mode: 'sync', agentId: 'ag-kid' });
+    root.at(at(64)); root.sub(ids.call, 'assistant.message', { content: 'Working on it' });
+    end(root);
+  }, now);
+  return { data, ids };
+}
+
+test('a shutdown fails the open follow-up of a finished sub-agent, and its chip keeps its first outcome', () => {
+  const { data, ids } = followUpSwarm('background', root => { root.at(at(70)); root.shutdown(); }, at(80));
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  const [unit] = subUnits(snapshot);
+  assert.deepEqual(
+    { status: unit.status, detail: unit.statusDetail, bucket: unit.bucket, reason: unit.reason, endedAt: unit.endedAt, report: unit.report.status },
+    { status: 'blocked', detail: 'failed', bucket: 'failed', reason: 'Failed: Stopped when the orchestrator\'s process ended.', endedAt: at(70), report: 'blocked' },
+  );
+  assert.deepEqual([unit.recent[0].kind, unit.recent[0].text, unit.recent[0].at], ['subagent-done', 'failed explore: late', at(70)]);
+  const firstDone = unit.recent.find(item => item.text === 'completed explore: late');
+  assert.ok(firstDone && firstDone.id !== unit.recent[0].id, 'the failure is its own item, not the first completion');
+  const chip = snapshot.orchestrator.subagents.find(sub => sub.id === ids.call);
+  assert.deepEqual([chip.status, chip.endedAt], ['completed', at(61)]);
+  assert.equal(snapshot.counts.failed, 1);
+});
+
+test('an abort cancels the open follow-up of a finished sync sub-agent, so the run can finish', () => {
+  const end = root => { root.at(at(65)); root.abort(); };
+  const { data } = followUpSwarm('sync', end, at(111 + 121));
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  const [unit] = subUnits(snapshot);
+  assert.deepEqual([unit.statusDetail, unit.bucket, unit.endedAt, unit.reason], ['cancelled', 'failed', at(65), 'Cancelled after 3 min.']);
+  assert.equal(unit.recent[0].text, 'cancelled explore: late');
+  assert.equal(snapshot.run.lifecycle, 'finished');
+});
+
+test('an abort leaves the follow-up of a background sub-agent running', () => {
+  const { data } = followUpSwarm('background', root => { root.at(at(65)); root.abort(); }, at(66));
+  const snapshot = buildSnapshot(data);
+  const [unit] = subUnits(snapshot);
+  assert.deepEqual([unit.statusDetail, unit.endedAt], ['busy', null]);
+  assert.equal(snapshot.run.lifecycle, 'live');
+});
+
+test('a cancelled sync follow-up takes its running sync child with it', () => {
+  const { data, ids } = followUpSwarm('sync', root => { root.at(at(65)); root.abort(); }, at(66), { nested: true });
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  const [unit] = subUnits(snapshot);
+  assert.equal(unit.statusDetail, 'cancelled');
+  assert.deepEqual(unit.subagents.map(sub => [sub.id, sub.status]), [[ids.child, 'cancelled']]);
+});

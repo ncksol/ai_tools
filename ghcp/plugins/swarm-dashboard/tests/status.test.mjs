@@ -312,7 +312,8 @@ test('a finished sub-agent unit is failed, cancelled or completed, at the end of
   log.wait(10 * MINUTE); log.toAgent('agent-c', 'again');
   log.wait(2 * MINUTE); log.sub(cancelled, 'assistant.turn_end');
   const resumed = evaluateSub(rootSub(log, cancelled), now);
-  assert.deepEqual([resumed.detail, resumed.since, resumed.endedAt, resumed.reason], ['cancelled', T0 + 15 * MINUTE, T0 + 15 * MINUTE, 'Cancelled after 3 min.']);
+  assert.deepEqual([resumed.detail, resumed.since, resumed.endedAt, resumed.reason], ['completed', T0 + 15 * MINUTE, T0 + 15 * MINUTE, null],
+    'the follow-up that ended normally is the last run: the unit is completed though its chip says cancelled');
 });
 
 test('a resumed sub-agent unit is busy from its follow-up, stuck when silent, and completed once its turn ends', () => {

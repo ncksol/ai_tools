@@ -220,9 +220,11 @@ export function evaluateSubagentUnit(sub, { alive, now, thresholds }) {
     return { detail: 'busy', since: Math.min(last[0], now), reason: null, endedAt: null };
   }
   const ended = { since: last[1], endedAt: last[1] };
-  if (sub.status === 'failed') return { detail: 'failed', reason: unit.error ? `Failed: ${unit.error}` : 'Failed.', ...ended };
-  if (sub.status === 'cancelled') {
-    return { detail: 'cancelled', reason: `Cancelled after ${formatDuration((unit.firstFinishAt ?? last[1]) - sub.launchedAt)}.`, ...ended };
+  // The outcome of the last run: a follow-up can end differently from the chip (cut off by an abort or the end of the process).
+  const outcome = unit.lastOutcome ?? sub.status;
+  if (outcome === 'failed') return { detail: 'failed', reason: unit.error ? `Failed: ${unit.error}` : 'Failed.', ...ended };
+  if (outcome === 'cancelled') {
+    return { detail: 'cancelled', reason: `Cancelled after ${formatDuration(last[1] - last[0])}.`, ...ended };
   }
   return { detail: 'completed', reason: null, ...ended };
 }

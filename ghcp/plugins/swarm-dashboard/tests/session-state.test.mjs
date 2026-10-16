@@ -664,8 +664,9 @@ test('an abort stops the sync sub-agents and their runs; the end of the process 
   assert.equal(ended.unit.feed.at(-1).text, 'failed explore: b');
   assert.deepEqual(state.subagents.get(done).unit.runs, [[T0, T0 + 1000], [T0 + 2000, T0 + 901_000]]);
   assert.equal(state.subagents.get(done).status, 'completed');
-  assert.equal(state.subagents.get(done).unit.error, null);
   assert.equal(state.descendants.get(leadChild).status, 'failed', 'the end of the process fails what it ends');
+  assert.equal(state.subagents.get(done).unit.lastOutcome, 'failed', 'its open follow-up run failed, though the chip is completed');
+  assert.equal(state.subagents.get(done).unit.error, 'Stopped when the orchestrator\'s process ended.');
   assert.equal(state.subagents.get(sync).status, 'cancelled');
   assert.equal(state.subagents.get(sync).unit.error, null);
   assert.deepEqual(state.subagentOutcomes, { completed: 1, failed: 2, cancelled: 1 });
@@ -868,4 +869,71 @@ test('merged states add up their descendants and outcomes', () => {
   assert.deepEqual(merged.subagentOutcomes, { completed: 2, failed: 0, cancelled: 0 });
   assert.equal(merged.subagentCount, 7);
   assert.equal(merged.subagents.get('call-101').unit.children.length, 2);
+});
+
+// --- A follow-up run ends on its own when the orchestrator aborts or stops (it never changes the chip) ---
+
+/** A task that finishes, is sent a follow-up message, and starts its turn: the run of the follow-up is open. */
+function withOpenFollowUp(mode, { nested = false } = {}) {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const call = log.subagent({ name: 'scout', type: 'explore', mode, agentId: 'agent-s' });
+  log.wait(60_000); log.subagentDone(call, { durationMs: 60_000, agentId: 'agent-s' });
+  log.wait(60_000); log.toAgent('agent-s', 'one more thing');
+  log.wait(1000); log.sub(call, 'assistant.turn_start');
+  const child = nested ? log.nested(call, { name: 'kid', type: 'explore', mode: 'sync', agentId: 'agent-k' }) : null;
+  return { log, call, child };
+}
+
+test('a unit counts its runs and records the outcome of its last closed run', () => {
+  const { log, call } = withOpenFollowUp('background');
+  let unit = unitOf(foldRoot(log), call);
+  assert.deepEqual([unit.runCount, unit.lastOutcome], [2, 'completed'], 'a follow-up opens the second run; the first finish gave the outcome');
+  log.wait(1000); log.sub(call, 'assistant.turn_end');
+  log.wait(1000); log.sub(call, 'assistant.turn_start');
+  unit = unitOf(foldRoot(log), call);
+  assert.equal(unit.runCount, 2, 'reopening a run does not count a run');
+  const failed = new EventLog(T0);
+  failed.start(); failed.turnStart();
+  const bad = failed.subagent({ name: 'bad', type: 'explore', mode: 'background', agentId: 'agent-b' });
+  failed.wait(1000); failed.subagentDone(bad, { failed: true, error: 'boom', agentId: 'agent-b' });
+  assert.deepEqual([unitOf(foldRoot(failed), bad).runCount, unitOf(foldRoot(failed), bad).lastOutcome], [1, 'failed']);
+});
+
+test('the end of the process fails an open follow-up run and leaves the chip as it was', () => {
+  const { log, call } = withOpenFollowUp('background');
+  const before = foldRoot(log).subagents.get(call);
+  const chip = { status: before.status, endedAt: before.endedAt, durationMs: before.durationMs };
+  log.wait(5000); log.sub(call, 'assistant.message', { content: 'partial' });
+  log.wait(5000); log.shutdown();
+  const state = foldRoot(log);
+  const sub = state.subagents.get(call);
+  const unit = sub.unit;
+  assert.deepEqual({ status: sub.status, endedAt: sub.endedAt, durationMs: sub.durationMs }, chip, 'the chip keeps its first outcome');
+  assert.deepEqual(state.subagentOutcomes, { completed: 1, failed: 0, cancelled: 0 });
+  assert.deepEqual(unit.runs, [[T0, T0 + 60_000], [T0 + 120_000, T0 + 131_000]]);
+  assert.deepEqual([unit.lastOutcome, unit.error, unit.openTools.size, unit.turnOpen], ['failed', 'Stopped when the orchestrator\'s process ended.', 0, false]);
+  assert.deepEqual(unit.feed.slice(-2).map(item => [item.kind, item.text]), [['subagent-start', 'resumed explore: scout'], ['subagent-done', 'failed explore: scout']]);
+  assert.equal(unit.feed.at(-1).source, `cli-1/${call}/run-2`);
+  assert.equal(unit.feed.filter(item => item.kind === 'subagent-done' && item.source === `cli-1/${call}`).length, 1, 'the first finish item stands');
+  assert.equal(unit.feed.at(-1).at, T0 + 131_000);
+});
+
+test('an abort cancels the open follow-up run of a sync sub-agent and its sync child, and keeps a background one', () => {
+  const sync = withOpenFollowUp('sync', { nested: true });
+  sync.log.wait(2000); sync.log.abort();
+  const state = foldRoot(sync.log);
+  const unit = unitOf(state, sync.call);
+  assert.equal(state.subagents.get(sync.call).status, 'completed', 'the chip is unchanged');
+  assert.deepEqual(unit.runs, [[T0, T0 + 60_000], [T0 + 120_000, T0 + 123_000]]);
+  assert.deepEqual([unit.lastOutcome, unit.error, unit.turnOpen], ['cancelled', null, false]);
+  assert.equal(unit.feed.find(item => item.source === `cli-1/${sync.call}/run-2`).text, 'cancelled explore: scout');
+  assert.equal(state.descendants.get(sync.child).status, 'cancelled');
+  assert.equal(unit.children[0].status, 'cancelled');
+  const background = withOpenFollowUp('background', { nested: true });
+  background.log.wait(2000); background.log.abort();
+  const kept = foldRoot(background.log);
+  assert.deepEqual(unitOf(kept, background.call).runs.at(-1), [T0 + 120_000, null]);
+  assert.equal(unitOf(kept, background.call).lastOutcome, 'completed');
+  assert.equal(kept.descendants.get(background.child).status, 'running');
 });
