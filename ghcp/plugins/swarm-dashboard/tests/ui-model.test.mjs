@@ -78,6 +78,7 @@ test('activity text is plain text without the engine\'s repetitions', () => {
   assert.equal(feedText({ kind: 'report', text: 'reported needs input: Status: needs_input. PR 2 is **done**' }), 'reported needs input: PR 2 is done');
   assert.equal(feedText({ kind: 'report', text: 'reported complete: Status: complete.' }), 'reported complete');
   assert.equal(feedText({ kind: 'question', text: 'asked: keep the **v1** format?' }), 'asked: keep the v1 format?');
+  assert.equal(feedText({ kind: 'report', text: 'reported complete: ## Summary' }), 'reported complete: Summary');
 });
 
 test('state lines follow statusDetail and fall back to status', () => {

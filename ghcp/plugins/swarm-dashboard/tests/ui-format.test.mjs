@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { Worker } from 'node:worker_threads';
 import assert from 'node:assert/strict';
 import { CREDIT_USD as ENGINE_CREDIT_USD } from '../engine/schema.mjs';
 import {
@@ -72,9 +73,40 @@ const PLAIN = [
   ['2 * 3 * 4', '2 * 3 * 4'], ['2*3*4', '2*3*4'], ['a * b', 'a * b'], ['5* rating', '5* rating'], ['Use the * key', 'Use the * key'], ['*args, **kwargs', '*args, **kwargs'],
   ['run `**/*.ts` here', 'run **/*.ts here'], ['`a_b_c`', 'a_b_c'], ['C:\\Users\\x_y_z', 'C:\\Users\\x_y_z'], ['x = y * (z + 1)', 'x = y * (z + 1)'],
   ['line one\n- **two**\n```\n**kept** in code\n```\nthree', 'line one\ntwo\n**kept** in code\nthree'],
+  ['**Updated `config.json`**', 'Updated config.json'], ['**a**...', 'a...'], ['**a**?!', 'a?!'], ['[a](b) [c](d)', 'a c'], ['[x](https://a.b/c_(d))', 'x'],
+  ['[x](u "t")', 'x'], ['`**not bold**` stays', '**not bold** stays'], ['see https://x.y/a_b_c', 'see https://x.y/a_b_c'],
 ];
 
 test('report text loses its Markdown markers and keeps its words', () => {
   for (const [input, expected] of PLAIN) assert.equal(plainText(input), expected, input);
   assert.equal(plainText(null), '');
+});
+
+// The engine cuts long titles and feed lines with "…", so links arrive unclosed.
+const CUT_OFF = [
+  'see [the PR](https://github.com/o/r/pull/1…',
+  '[w](https://e.org/wiki/Foo_bar_baz_(b_(c)))',
+  'see [the PR](https://github.com/' + 'a'.repeat(180) + '…',
+];
+// A backtracking regex blocks its thread, so the timing runs in a worker that the test can stop when it times out.
+const TIMING = `
+const { parentPort, workerData } = require('node:worker_threads');
+import(workerData.url).then(({ plainText }) => {
+  parentPort.postMessage(workerData.inputs.map(input => {
+    const start = performance.now();
+    const out = plainText(input);
+    return { input, type: typeof out, ms: performance.now() - start };
+  }));
+});`;
+
+test('a cut-off link does not stall the page', { timeout: 5000 }, async t => {
+  const worker = new Worker(TIMING, { eval: true, workerData: { url: new URL('../ui/format.mjs', import.meta.url).href, inputs: CUT_OFF } });
+  worker.unref();
+  t.signal.addEventListener('abort', () => worker.terminate());
+  const results = await new Promise((resolve, reject) => worker.once('message', resolve).once('error', reject));
+  await worker.terminate();
+  for (const { input, type, ms } of results) {
+    assert.equal(type, 'string', input);
+    assert.ok(ms < 50, `${input} took ${ms.toFixed(1)} ms`);
+  }
 });

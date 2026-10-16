@@ -61,17 +61,14 @@ export const reportTitle = report => withoutStatusPrefix(plainText(report.title)
 
 /** One activity item's text as plain text, without the engine's repetitions. */
 export function feedText(item) {
-  let text = plainText(item.text);
-  // A sub-agent whose name equals its type would read "explore explore finished".
-  if (item.kind === 'subagent-done') text = text.replace(/^(\S+) \1(?= )/, '$1');
-  if (item.kind === 'report') {
-    const match = text.match(/^(reported ([^:]+): )([\s\S]*)$/);
-    if (match) {
-      const rest = withoutStatusPrefix(match[3], match[2]).trim();
-      text = rest ? `${match[1]}${rest}` : match[1].replace(/: $/, '');
-    }
+  const match = item.kind === 'report' ? item.text.match(/^(reported ([^:]+): )([\s\S]*)$/) : null;
+  if (match) {
+    const rest = withoutStatusPrefix(plainText(match[3]), match[2]).trim();
+    return rest ? `${match[1]}${rest}` : match[1].replace(/: $/, '');
   }
-  return text;
+  const text = plainText(item.text);
+  // A sub-agent whose name equals its type would read "explore explore finished".
+  return item.kind === 'subagent-done' ? text.replace(/^(\S+) \1(?= )/, '$1') : text;
 }
 
 /** Its PR closed without merging and it is not archived: it stays in its PR stage, with a badge (approved decision 5). */

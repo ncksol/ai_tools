@@ -66,33 +66,28 @@ export const plural = (n, one, many = `${one}s`) => `${count(n)} ${n === 1 ? one
 // and the words stay. A marker counts only at a word boundary, so snake_case, paths such as pkg/__init__.py, globs such
 // as src/**/*.mjs, arithmetic such as 2 * 3 and unpaired asterisks stay as they are; code spans keep their content.
 const BEFORE = String.raw`(^|[\s([{"'“‘])`;
-const AFTER = String.raw`(?=$|[\s)\]}"'”’]|[.,:;!?](?:$|[\s)\]}"'”’]))`;
+const AFTER = String.raw`(?=$|[\s)\]}"'”’]|[.,:;!?]+(?:$|[\s)\]}"'”’]))`;
 const STRONG = new RegExp(String.raw`${BEFORE}(\*\*|__)(?=\S)(.+?)(?<=\S)\2${AFTER}`, 'g');
 const EMPHASIS = new RegExp(String.raw`${BEFORE}([*_])(?=[^\s*_])(.+?)(?<=[^\s*_])\2${AFTER}`, 'g');
-const LINK = /!?\[([^\]]+)\]\((?:[^()\s]+|\([^()\s]*\))+(?:\s+"[^"]*")?\)/g;
+const LINK = /!?\[([^\]]+)\]\((?:[^()\s]|\([^()\s]*\))+(?:\s+"[^"]*")?\)/g;
 const CODE_SPAN = /(`+)(.+?)\1(?!`)/g;
 const FENCE = /^\s{0,3}(```|~~~)/;
 
-function plainProse(text) {
-  let out = text.replace(LINK, '$1');
-  // Nested markers (***both***, **_x_**) take more than one pass.
-  for (let pass = 0; pass < 3; pass += 1) {
-    const next = out.replace(STRONG, '$1$3').replace(EMPHASIS, '$1$3');
-    if (next === out) break;
-    out = next;
-  }
-  return out;
-}
+const HOLD = /\uE000(\d+)\uE001/g;
 
 function plainLine(line) {
-  const text = line.replace(/^\s{0,3}#{1,6}\s+/, '').replace(/^\s*(?:>\s?)+/, '').replace(/^\s*[-*+]\s+/, '');
-  let out = '';
-  let last = 0;
-  for (const match of text.matchAll(CODE_SPAN)) {
-    out += plainProse(text.slice(last, match.index)) + match[2];
-    last = match.index + match[0].length;
+  const kept = [];
+  let text = line.replace(/^\s{0,3}#{1,6}\s+/, '').replace(/^\s*(?:>\s?)+/, '').replace(/^\s*[-*+]\s+/, '');
+  // Code spans keep their content as written: hold them out while the markers around them go.
+  text = text.replace(CODE_SPAN, (match, ticks, code) => `\uE000${kept.push(code) - 1}\uE001`);
+  text = text.replace(LINK, '$1');
+  // Nested markers (***both***, **_x_**) take more than one pass.
+  for (let pass = 0; pass < 3; pass += 1) {
+    const next = text.replace(STRONG, '$1$3').replace(EMPHASIS, '$1$3');
+    if (next === text) break;
+    text = next;
   }
-  return out + plainProse(text.slice(last));
+  return text.replace(HOLD, (match, index) => kept[Number(index)]);
 }
 
 /** Text without Markdown formatting; fenced code blocks keep their lines as written. */
