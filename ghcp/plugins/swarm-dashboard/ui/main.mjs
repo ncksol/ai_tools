@@ -62,6 +62,7 @@ let parseMs = null;
 let measured = 0;
 let lifecycle = null;
 let wasOpen = false;
+let historyAsked = false;
 const now = () => Date.now() + offset;
 
 function save() {
@@ -84,7 +85,7 @@ function connect() {
     justConnected = true;
     view.connection = 'open';
     // After a reconnect the server may know runs that finished meanwhile.
-    if (wasOpen && view.runs !== null) loadHistory();
+    if (wasOpen && historyAsked) reloadHistory();
     wasOpen = true;
     scheduleRender();
   });
@@ -102,7 +103,7 @@ function connect() {
     view.swarms = JSON.parse(event.data);
     // A run that finishes moves into History, so reload it in place when the swarms' lifecycles change.
     const key = lifecycleKey(view.swarms);
-    if (lifecycle !== null && key !== lifecycle && view.runs !== null) loadHistory();
+    if (lifecycle !== null && key !== lifecycle && historyAsked) reloadHistory();
     lifecycle = key;
     if (staleChoice(view.swarm, swarmFromUrl, view.swarms)) {
       view.swarm = null;
@@ -264,6 +265,12 @@ const loadHistory = coalesced(async () => {
   scheduleRender();
 });
 
+/** Ask for History. Once asked, later triggers reload it, queued behind a first load still in flight. */
+function reloadHistory() {
+  historyAsked = true;
+  loadHistory();
+}
+
 async function loadRun(id) {
   try {
     const response = await fetch(`/api/runs/${encodeURIComponent(id)}`);
@@ -282,7 +289,7 @@ function act(target) {
   if (el.dataset.page) {
     view.page = el.dataset.page;
     view.detail = null;
-    if (view.page === 'history') loadHistory();
+    if (view.page === 'history') reloadHistory();
   } else if (el.dataset.tab) {
     view.tab = el.dataset.tab;
   } else if (el.dataset.span) {
@@ -359,7 +366,7 @@ window.addEventListener('pageshow', event => {
   if (event.persisted) connect();
 });
 
-if (view.page === 'history') loadHistory();
+if (view.page === 'history') reloadHistory();
 if (view.page === 'run') loadRun(view.runId);
 connect();
 render();

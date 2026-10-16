@@ -14,7 +14,7 @@ export const staleChoice = (swarm, fromUrl, swarms) => Boolean(swarm) && !fromUr
 /** A key that changes when a swarm starts, finishes or goes away; History lists finished runs, so it may then be stale. */
 export const lifecycleKey = swarms => swarms.map(swarm => `${swarm.id}:${swarm.lifecycle}`).sort().join('|');
 
-/** Wrap load so that calls never overlap: a call made while one runs makes it run once more afterwards. */
+/** Wrap load so that calls never overlap: a call made while one runs makes it run once more afterwards, even if that run failed. */
 export function coalesced(load) {
   let running = null;
   let again = false;
@@ -27,7 +27,12 @@ export function coalesced(load) {
       try {
         do {
           again = false;
-          await load();
+          try {
+            await load();
+          } catch (error) {
+            // A call queued meanwhile still runs; only a failure with nothing queued ends the loop.
+            if (!again) throw error;
+          }
         } while (again);
       } finally {
         running = null;

@@ -315,6 +315,16 @@ async function watchHistory(page, servers) {
     const before = await page.evaluate("document.querySelectorAll('.h-row[data-run]').length");
     await page.evaluate(`(${watchLoading})()`);
 
+    // History is ready before the live connection opens; a push the page never hears of would fail the wait by mistake.
+    const connected = Date.now() + 5000;
+    while (server.clientCount() < 1 && Date.now() < connected) await new Promise(resolve => setTimeout(resolve, 100));
+    if (server.clientCount() < 1) {
+      issues.push('the page did not open its live connection within 5 s');
+      return { issues, requests: 0 };
+    }
+    // Let the page handle its first swarms event, so it knows the lifecycles before one changes.
+    await new Promise(resolve => setTimeout(resolve, 300));
+
     const snapshot = await engine.getSnapshot();
     snapshot.run.lifecycle = 'finished';
     snapshot.run.finishedAt = Date.now();

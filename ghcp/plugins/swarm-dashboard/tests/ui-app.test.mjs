@@ -64,6 +64,25 @@ test('coalesced runs one load at a time and once more if asked again meanwhile',
   await after;
 });
 
+test('coalesced still runs a call queued behind a load that rejects', async () => {
+  const pending = [];
+  let calls = 0;
+  const run = coalesced(() => {
+    calls += 1;
+    return new Promise((resolve, reject) => pending.push({ resolve, reject }));
+  });
+  const first = run();
+  const second = run();
+  assert.equal(calls, 1);
+  pending[0].reject(new Error('down'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls, 2);
+  pending[1].resolve();
+  await second;
+  await first;
+  assert.equal(calls, 2);
+});
+
 test('the wide Live page has the header, Needs you, four tabs and the activity rail', () => {
   const html = renderApp(view());
   assert.match(html, /<button type="button" data-page="live" aria-pressed="true">Live<\/button>/);
