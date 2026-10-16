@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createFakeEngine } from '../engine/fake-engine.mjs';
 import { validateSnapshot } from '../engine/schema.mjs';
-import { loadAssets } from '../server/assets.mjs';
+import { assetsFingerprint, loadAssets } from '../server/assets.mjs';
 import { createDashboardServer } from '../server/http.mjs';
 import { get, openEvents } from './helpers/http.mjs';
 import { deepFreeze, exampleSnapshot, fixture } from './helpers/ui.mjs';
@@ -341,6 +341,50 @@ test('a paused reader leaves at most one frame queued in the server, and gets th
     assert.ok(events.some(newest), `no snapshot of revision 80 in ${events.length} events`);
   } finally {
     req.destroy();
+    await server.close();
+  }
+});
+
+test('the UI fingerprint changes when any served file changes', () => {
+  const files = (styles) => new Map([
+    ['/ui/styles.css', { type: 'text/css', body: Buffer.from(styles) }],
+    ['/index.html', { type: 'text/html', body: Buffer.from('<p>page</p>') }],
+  ]);
+  assert.equal(assetsFingerprint(files('a{}')), assetsFingerprint(files('a{}')));
+  assert.match(assetsFingerprint(files('a{}')), /^[0-9a-f]{16}$/);
+  assert.notEqual(assetsFingerprint(files('a{}')), assetsFingerprint(files('b{}')));
+  assert.equal(assetsFingerprint(loadAssets()), assetsFingerprint(loadAssets()));
+});
+
+const pageFingerprint = body => /<meta name="swarm-ui" content="([^"]*)">/.exec(body)?.[1];
+
+test('the page and its hello carry the same UI fingerprint, and every UI file is served no-store', async () => {
+  const { createEngine } = spyEngine();
+  const server = await started(createEngine);
+  const page = openEvents(server.port, '/api/events');
+  try {
+    const shell = await get(server.port, '/');
+    const own = pageFingerprint(shell.body);
+    assert.match(own, /^[0-9a-f]{16}$/);
+    assert.equal(own, assetsFingerprint(loadAssets()));
+    assert.equal((await page.waitFor(entry => entry.event === 'hello')).data.ui, own);
+    for (const path of ['/', ...loadAssets().keys()]) assert.equal((await get(server.port, path)).headers['cache-control'], 'no-store', path);
+  } finally {
+    page.close();
+    await server.close();
+  }
+});
+
+test('a forced UI fingerprint reaches both the page and hello', async () => {
+  const { createEngine } = spyEngine();
+  const server = await started(createEngine, { uiFingerprint: 'forced' });
+  const page = openEvents(server.port, '/api/events');
+  try {
+    assert.equal(pageFingerprint((await get(server.port, '/')).body), 'forced');
+    assert.equal((await get(server.port, '/index.html')).body, (await get(server.port, '/')).body);
+    assert.equal((await page.waitFor(entry => entry.event === 'hello')).data.ui, 'forced');
+  } finally {
+    page.close();
     await server.close();
   }
 });

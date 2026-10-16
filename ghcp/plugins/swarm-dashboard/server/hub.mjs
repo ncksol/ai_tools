@@ -5,7 +5,7 @@
  * socket stays backed up for stallMs is dropped, so a page that stops reading never holds more than one frame here.
  * Never writes to stdout.
  */
-export function createHub({ createEngine, now = Date.now, intervalMs = 3000, engineIdleMs = 300000, heartbeatMs = 15000, maxClients = 32, stallMs = 30000, log = () => {}, onIdle = () => {} }) {
+export function createHub({ createEngine, now = Date.now, intervalMs = 3000, engineIdleMs = 300000, heartbeatMs = 15000, maxClients = 32, stallMs = 30000, log = () => {}, onIdle = () => {}, ui = null }) {
   const clients = new Set();
   let engine = null;
   let ready = null;
@@ -192,7 +192,7 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
     write(client, 'retry: 2000\n\n');
     const current = await acquire();
     if (client.closed) return;
-    send(client, 'hello', () => ({ serverNow: now(), demo: Boolean(current.isDemo) }));
+    send(client, 'hello', () => ({ serverNow: now(), demo: Boolean(current.isDemo), ui }));
     client.greeted = true;
     startPolling();
     sendSwarms(true, client);

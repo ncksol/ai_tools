@@ -1,4 +1,4 @@
-import { coalesced, isNarrow, lifecycleKey, renderApp, staleChoice } from './app.mjs';
+import { RELOAD_KEY, coalesced, isNarrow, lifecycleKey, reloadDecision, reloadSearch, renderApp, staleChoice } from './app.mjs';
 import { tickText } from './format.mjs';
 import { morph } from './morph.mjs';
 import { nextCardChange, runEnd, unitEnd } from './model.mjs';
@@ -65,6 +65,9 @@ let measured = 0;
 let lifecycle = null;
 let wasOpen = false;
 let historyAsked = false;
+/** The UI fingerprint this page was served with, and the one the server now has (from hello). */
+const ownUi = document.querySelector('meta[name="swarm-ui"]')?.content || null;
+let servedUi = null;
 const now = () => Date.now() + offset;
 
 function save() {
@@ -100,6 +103,8 @@ function connect() {
     const data = JSON.parse(event.data);
     offset = data.serverNow - Date.now();
     view.demo = Boolean(data.demo);
+    servedUi = data.ui ?? null;
+    considerReload();
   });
   source.addEventListener('swarms', event => {
     view.swarms = JSON.parse(event.data);
@@ -125,6 +130,28 @@ function connect() {
     applySnapshot(data.snapshot);
   });
 }
+
+/** Reload once into the new dashboard files, keeping what is on screen; see reloadDecision. */
+function considerReload() {
+  let attempted;
+  try {
+    attempted = sessionStorage.getItem(RELOAD_KEY);
+  } catch {
+    return; // Without sessionStorage the attempt cannot be remembered, so never reload.
+  }
+  if (reloadDecision({ own: ownUi, served: servedUi, attempted, hidden: document.visibilityState === 'hidden' }) !== 'reload') return;
+  try {
+    sessionStorage.setItem(RELOAD_KEY, servedUi);
+  } catch {
+    return;
+  }
+  save();
+  history.replaceState(null, '', `${location.pathname}?${reloadSearch(view, params, swarmFromUrl)}`);
+  location.reload();
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') considerReload();
+});
 
 function freshKeys(prev, next) {
   const fresh = emptyFresh();

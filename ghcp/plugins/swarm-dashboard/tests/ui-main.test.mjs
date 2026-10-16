@@ -47,3 +47,12 @@ test('a finished sub-agent\'s card fades and leaves on time, and the other cards
   const pagehide = main.slice(main.indexOf("addEventListener('pagehide'"));
   assert.match(pagehide.slice(0, pagehide.indexOf('});')), /clearTimeout\(cardTimer\)/);
 });
+
+test('an open page reloads once into new dashboard files, remembering the attempt and waiting while hidden', () => {
+  const main = readFileSync(file('main.mjs'), 'utf8');
+  for (const needle of ['function considerReload', 'sessionStorage', 'RELOAD_KEY', 'reloadDecision(', 'reloadSearch(', "'visibilitychange'", 'history.replaceState(', 'location.reload(', 'meta[name="swarm-ui"]']) {
+    assert.ok(main.includes(needle), needle);
+  }
+  const hello = main.slice(main.indexOf("addEventListener('hello'"));
+  assert.match(hello.slice(0, hello.indexOf('});')), /considerReload\(\)/);
+});

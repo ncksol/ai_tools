@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { coalesced, isNarrow, lifecycleKey, renderApp, staleChoice } from '../ui/app.mjs';
+import { RELOAD_KEY, coalesced, isNarrow, lifecycleKey, reloadDecision, reloadSearch, renderApp, staleChoice } from '../ui/app.mjs';
 import { NOW, deepFreeze, exampleSnapshot, fixture } from './helpers/ui.mjs';
 
 const view = (overrides = {}) => ({
@@ -190,4 +190,29 @@ test('the page shell loads only its own stylesheet and module', () => {
   assert.match(html, /<script type="module" src="\/ui\/main\.mjs"><\/script>/);
   assert.match(html, /<main class="dash" id="dash">/);
   assert.doesNotMatch(html, /https?:\/\//);
+});
+
+test('a page reloads once for new dashboard files, waits while hidden, and never loops', () => {
+  assert.equal(RELOAD_KEY, 'swarm-dashboard:reloaded-for');
+  assert.equal(reloadDecision({ own: 'a', served: 'a', attempted: null, hidden: false }), 'stay');
+  // A page served before this feature has no fingerprint of its own; a server without one sends none.
+  assert.equal(reloadDecision({ own: null, served: 'b', attempted: null, hidden: false }), 'stay');
+  assert.equal(reloadDecision({ own: 'a', served: null, attempted: null, hidden: false }), 'stay');
+  assert.equal(reloadDecision({ own: 'a', served: 'b', attempted: null, hidden: false }), 'reload');
+  assert.equal(reloadDecision({ own: 'a', served: 'b', attempted: null, hidden: true }), 'wait');
+  // A reload that did not take: the page still has the old files and has already tried the new fingerprint.
+  assert.equal(reloadDecision({ own: 'a', served: 'b', attempted: 'b', hidden: false }), 'stay');
+  assert.equal(reloadDecision({ own: 'a', served: 'b', attempted: 'b', hidden: true }), 'stay');
+  // An attempt for an older fingerprint does not block a newer one.
+  assert.equal(reloadDecision({ own: 'a', served: 'c', attempted: 'b', hidden: false }), 'reload');
+});
+
+test('the reload address keeps the host, session, page, run, tab, time window, open detail and an addressed swarm', () => {
+  const base = { page: 'live', tab: 'board', span: '3h', detail: null, runId: null, swarm: 'ws-1' };
+  const read = search => Object.fromEntries(new URLSearchParams(search));
+  assert.deepEqual(read(reloadSearch(base, new URLSearchParams(''), false)), { tab: 'board', span: '3h' });
+  assert.deepEqual(read(reloadSearch({ ...base, detail: 'u-1' }, new URLSearchParams('host=canvas&session=s-1&other=x'), true)), { host: 'canvas', session: 's-1', swarm: 'ws-1', tab: 'board', span: '3h', detail: 'u-1' });
+  assert.deepEqual(read(reloadSearch({ ...base, page: 'history' }, new URLSearchParams('host=browser'), false)), { host: 'browser', page: 'history', tab: 'board', span: '3h' });
+  assert.deepEqual(read(reloadSearch({ ...base, page: 'run', runId: 'ws-old' }, new URLSearchParams(''), false)), { page: 'run', run: 'ws-old', tab: 'board', span: '3h' });
+  assert.equal(new URLSearchParams(reloadSearch({ ...base, swarm: null }, new URLSearchParams(''), true)).has('swarm'), false);
 });

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 
 const UI = new URL('../ui/', import.meta.url);
@@ -12,4 +13,11 @@ export function loadAssets(dir = UI) {
     assets.set(name === 'index.html' ? '/index.html' : `/ui/${name}`, { type, body: readFileSync(new URL(name, dir)) });
   }
   return assets;
+}
+
+/** A short fingerprint of the served UI files: it changes when any file changes. */
+export function assetsFingerprint(assets) {
+  const hash = createHash('sha256');
+  for (const [path, { body }] of [...assets].sort(([a], [b]) => (a < b ? -1 : 1))) hash.update(path).update('\0').update(body).update('\0');
+  return hash.digest('hex').slice(0, 16);
 }

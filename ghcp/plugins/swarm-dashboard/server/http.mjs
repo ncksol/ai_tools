@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { loadAssets } from './assets.mjs';
+import { assetsFingerprint, loadAssets } from './assets.mjs';
 import { createHub } from './hub.mjs';
 
 export const APP_ID = 'swarm-dashboard';
@@ -11,6 +11,7 @@ const SECURITY = {
   'Cross-Origin-Resource-Policy': 'same-origin',
 };
 const TEXT = 'text/plain; charset=utf-8';
+const UI_META = '<meta name="swarm-ui" content="">';
 
 /** A browser request that another website started: Sec-Fetch-Site says so, or it carries a foreign Origin. */
 function fromOtherSite(req, origins) {
@@ -25,9 +26,15 @@ function fromOtherSite(req, origins) {
  * only, and only for requests addressed to its own host and port; the API and event stream also refuse requests that
  * another website starts. Writes nothing to stdout or disk.
  */
-export function createDashboardServer({ createEngine, host = '127.0.0.1', port = 0, version = '0.0.0', now = Date.now, log = () => {}, hub: hubOptions = {}, onIdle = () => {}, demo = null }) {
+export function createDashboardServer({ createEngine, host = '127.0.0.1', port = 0, version = '0.0.0', uiFingerprint = null, now = Date.now, log = () => {}, hub: hubOptions = {}, onIdle = () => {}, demo = null }) {
   const assets = loadAssets();
-  const hub = createHub({ createEngine, now, log, onIdle, ...hubOptions });
+  // The page carries the fingerprint of the files it came with; hello sends the current one, so an open page can tell it is out of date.
+  const fingerprint = uiFingerprint ?? assetsFingerprint(assets);
+  const shell = assets.get('/index.html');
+  const shellText = shell.body.toString('utf8');
+  if (!shellText.includes(UI_META)) throw new Error(`ui/index.html must contain ${UI_META}, the placeholder for the UI fingerprint`);
+  assets.set('/index.html', { ...shell, body: Buffer.from(shellText.replace(UI_META, `<meta name="swarm-ui" content="${fingerprint}">`)) });
+  const hub = createHub({ createEngine, now, log, onIdle, ...hubOptions, ui: fingerprint });
   const startedAt = now();
   let boundPort = null;
 
@@ -67,7 +74,7 @@ export function createDashboardServer({ createEngine, host = '127.0.0.1', port =
       return summary ? json(res, summary) : reply(res, 404, TEXT, 'Not found');
     }
     const asset = assets.get(path === '/' ? '/index.html' : path);
-    if (asset) return reply(res, 200, asset.type, asset.body, { 'Cache-Control': 'no-cache' });
+    if (asset) return reply(res, 200, asset.type, asset.body, { 'Cache-Control': 'no-store' });
     return reply(res, 404, TEXT, 'Not found');
   }
 

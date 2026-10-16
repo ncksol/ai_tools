@@ -14,6 +14,29 @@ export const staleChoice = (swarm, fromUrl, swarms) => Boolean(swarm) && !fromUr
 /** A key that changes when a swarm starts, finishes or goes away; History lists finished runs, so it may then be stale. */
 export const lifecycleKey = swarms => swarms.map(swarm => `${swarm.id}:${swarm.lifecycle}`).sort().join('|');
 
+/** sessionStorage key: the server UI fingerprint this tab last reloaded for. */
+export const RELOAD_KEY = 'swarm-dashboard:reloaded-for';
+/**
+ * What to do once the server's UI fingerprint is known: 'stay', 'wait' (hidden: decide again when visible) or 'reload'.
+ * A tab reloads at most once for each new fingerprint, so files that still do not match after a reload cause no loop.
+ */
+export function reloadDecision({ own, served, attempted, hidden }) {
+  if (!own || !served || own === served || attempted === served) return 'stay';
+  return hidden ? 'wait' : 'reload';
+}
+/** The address to reload at: it keeps the host, the session, an addressed swarm, the page, the run, the tab, the time window and the open detail. */
+export function reloadSearch(view, params, swarmFromUrl) {
+  const next = new URLSearchParams();
+  for (const name of ['host', 'session']) if (params.get(name)) next.set(name, params.get(name));
+  if (swarmFromUrl && view.swarm) next.set('swarm', view.swarm);
+  if (view.page !== 'live') next.set('page', view.page);
+  if (view.page === 'run' && view.runId) next.set('run', view.runId);
+  next.set('tab', view.tab);
+  next.set('span', view.span);
+  if (view.detail) next.set('detail', view.detail);
+  return next.toString();
+}
+
 /** Wrap load so that calls never overlap: a call made while one runs makes it run once more afterwards, even if that run failed. */
 export function coalesced(load) {
   let running = null;
