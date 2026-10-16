@@ -240,7 +240,9 @@ function cardRects() {
 
 /**
  * When a render removed cards from the grid, the cards that stay glide from their old places to their new ones. The Web
- * Animations API sets no inline style, so morph() and later renders leave the glide alone.
+ * Animations API sets no inline style, so morph() and later renders leave the glide alone. Both rects include a glide
+ * that still runs, so dx and dy hold only the layout change; composite 'add' adds the new glide to the running one
+ * instead of replacing it, so the card keeps moving smoothly.
  */
 function glide(before) {
   if (!before.size || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
@@ -253,7 +255,7 @@ function glide(before) {
     const rect = el.getBoundingClientRect();
     const dx = was.left - rect.left;
     const dy = was.top - rect.top;
-    if (dx || dy) el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { duration: 300, easing: 'ease-out' });
+    if (dx || dy) el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }], { duration: 300, easing: 'ease-out', composite: 'add' });
   }
 }
 

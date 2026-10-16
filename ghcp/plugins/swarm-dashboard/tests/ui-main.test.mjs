@@ -44,6 +44,12 @@ test('a finished sub-agent\'s card fades and leaves on time, and the other cards
   const glide = main.slice(main.indexOf('function glide'), main.indexOf('\n}\n', main.indexOf('function glide')));
   assert.match(glide, /matchMedia\('\(prefers-reduced-motion: reduce\)'\)\.matches/);
   assert.ok(glide.includes('.animate('));
+  assert.match(glide, /composite: 'add'/, 'a glide adds to one that still runs, so the card does not jump');
+  // The helpers only act if render() calls them: its body runs up to the next top-level function.
+  const start = main.indexOf('\nfunction render() {');
+  const next = main.slice(start + 1).search(/\n(?:async )?function /);
+  const render = main.slice(start, next === -1 ? undefined : start + 1 + next);
+  for (const call of ['glide(cards);', 'scheduleCardChange();']) assert.ok(render.includes(call), `render() calls ${call}`);
   const pagehide = main.slice(main.indexOf("addEventListener('pagehide'"));
   assert.match(pagehide.slice(0, pagehide.indexOf('});')), /clearTimeout\(cardTimer\)/);
 });
