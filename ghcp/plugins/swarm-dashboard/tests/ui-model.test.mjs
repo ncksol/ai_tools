@@ -4,6 +4,7 @@ import {
   BOARD_STAGES, STATE_LINES, archivedUnits, boardColumns, cardUnits, closedNotMerged, feedText, findByLabel, findPlanned, flattenPlan, needItems,
   planForest, planLayout, progressPercent, reportTitle, runEnd, sharePercent, stateLine, unitEnd, withoutStatusPrefix,
 } from '../ui/model.mjs';
+import { createDemoEngine } from '../server/demo-engine.mjs';
 import { NOW, closedSnapshot, exampleSnapshot } from './helpers/ui.mjs';
 
 const labels = units => units.map(unit => unit.label);
@@ -154,4 +155,17 @@ test('the board has one column per stage, attention first', () => {
   assert.deepEqual(at('in_review'), ['B1']);
   assert.deepEqual(at('merged'), ['F2a']);
   assert.deepEqual(at('archived'), ['B0']);
+});
+
+test('every unit the Cards tab leaves out is on the Board', async () => {
+  const stress = await createDemoEngine({ scenario: 'stress', now: () => NOW, simulate: false }).getSnapshot();
+  const archivedMerged = exampleSnapshot();
+  Object.assign(archivedMerged.units.find(unit => unit.label === 'F2a'), { status: 'archived', stage: 'merged' });
+  for (const snapshot of [exampleSnapshot(), stress, closedSnapshot(), archivedMerged]) {
+    const shown = new Set(cardUnits(snapshot));
+    const left = snapshot.units.filter(unit => !shown.has(unit));
+    assert.ok(left.length > 0);
+    const onBoard = new Set(boardColumns(snapshot).flatMap(column => column.nodes.map(node => node.unit)));
+    for (const unit of left) assert.ok(onBoard.has(unit), unit.label);
+  }
 });

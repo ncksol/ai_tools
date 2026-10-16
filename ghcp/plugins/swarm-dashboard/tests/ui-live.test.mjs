@@ -83,10 +83,18 @@ test('a stalled swarm is the first Needs you item, in stuck colours', () => {
   assert.match(text(html), /Swarm stalled Swarm rule: the orchestrator .* Sample story B · stalled 10m/);
 });
 
-test('cards sort by attention, hide archived units and name them in a note', () => {
+test('cards sort by attention, hide archived units and point to the Board for them', () => {
   const html = cardsHtml(context(exampleSnapshot()));
   assert.deepEqual(cardIds(html), ['ws-0005-i1', 'ws-0004-b2', 'ws-0006-f1', 'ws-0003-b1', 'ws-0007-d5', 'ws-0002-f2a']);
-  assert.match(text(html), /Archived and hidden here: B0 schema\. The Board tab shows them\./);
+  const note = '<p class="cards-note">Archived and hidden sessions are on the <button type="button" class="link" data-tab="board">Board tab</button>.</p>';
+  assert.ok(html.includes(note), html);
+  assert.doesNotMatch(note, /B0|schema/);
+});
+
+test('cards show no Board note when nothing is hidden', () => {
+  const snapshot = exampleSnapshot();
+  snapshot.units = snapshot.units.filter(unit => unit.status !== 'archived');
+  assert.ok(!cardsHtml(context(snapshot)).includes('cards-note'));
 });
 
 test('a card shows state, clock, cost bar, report, progress, stage, monitor and chips', () => {

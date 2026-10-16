@@ -183,6 +183,7 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 .mon-ended .dot, .mon-none .dot { background: var(--line); }
 .b-card .chips { height: 24px; overflow: hidden; }
 .cards-note { font-size: 12px; line-height: 16px; color: var(--ink-2); }
+.cards-note .link { text-decoration: underline; text-underline-offset: 2px; }
 
 /* activity rail and feed */
 .rail { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }

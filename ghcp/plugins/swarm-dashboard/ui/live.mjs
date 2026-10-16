@@ -1,6 +1,6 @@
 import { ago, costHtml, costText, dur, elapsed, esc, liveTime, plainText } from './format.mjs';
 import {
-  COUNT_TILES, NEED_CLASS, NEED_LABELS, STAGE_NAMES, archivedUnits, cardUnits, closedNotMerged, needItems, progressPercent, reportTitle, runEnd, sharePercent, unitEnd,
+  COUNT_TILES, NEED_CLASS, NEED_LABELS, STAGE_NAMES, cardUnits, closedNotMerged, needItems, progressPercent, reportTitle, runEnd, sharePercent, unitEnd,
 } from './model.mjs';
 import { badge, bar, chipsHtml, closedBadge, feedList, meter, monitorHtml, reportClass, ring, stageTrack, stateLineHtml } from './parts.mjs';
 
@@ -57,9 +57,9 @@ export function cardHtml(unit, ctx) {
 
 export function cardsHtml(ctx) {
   const units = cardUnits(ctx.snapshot);
-  const archived = archivedUnits(ctx.snapshot);
   const grid = units.length ? `<div class="b-grid">${units.map(unit => cardHtml(unit, ctx)).join('')}</div>` : '<p class="none">No active child sessions.</p>';
-  const note = archived.length ? `<p class="cards-note">Archived and hidden here: ${archived.map(unit => `${esc(unit.label)} ${esc(unit.name)}`).join(', ')}. The Board tab shows them.</p>` : '';
+  // The Cards tab leaves out archived units; the Board shows every unit in its stage column.
+  const note = units.length < ctx.snapshot.units.length ? '<p class="cards-note">Archived and hidden sessions are on the <button type="button" class="link" data-tab="board">Board tab</button>.</p>' : '';
   return grid + note;
 }
 
