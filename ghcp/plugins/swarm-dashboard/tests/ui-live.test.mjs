@@ -199,11 +199,13 @@ test('a card carries its unit\'s kind, so a child session and a one-off sub-agen
 });
 
 test('a card shows state, clock, cost bar, report, progress, stage, monitor and chips', () => {
-  const html = card(cardsHtml(context(exampleSnapshot())), 'ws-0003-b1');
+  const cards = cardsHtml(context(exampleSnapshot()));
+  const html = card(cards, 'ws-0003-b1');
   assert.match(html, /class="b-card st-busy" data-open="ws-0003-b1" tabindex="0" role="button" aria-label="Open details for B1 API"/);
   assert.match(text(html), /API Busy · 35m PR #418 Running 1d 20h 03m 00s Cost 24,016 cr · ≈\$240\.16/);
   assert.match(html, /<span class="meter"><i style="width:100%"><\/i><\/span>/);
-  assert.match(html, /<div class="b-rep rp-complete"><span class="badge">complete<\/span><span class="b-rep-t" title="Opened PR #418/);
+  assert.match(html, /<div class="b-rep rp-replied"><span class="badge">question<\/span><span class="b-rep-t" title="PR #418 is open with 14 endpoints\. Should list endpoints page by cursor or by offset\?"/);
+  assert.match(card(cards, 'ws-0005-i1'), /<div class="b-rep rp-complete"><span class="badge">complete<\/span><span class="b-rep-t" title="Contract tests are wired and pass locally\./);
   assert.match(text(html), /Progress 70% Stage In review Monitor missing · no check for 42m code-review 6m/);
 });
 
@@ -226,7 +228,7 @@ test('selection, fresh reports and fresh chips are marked; names are escaped', (
   const html = cardsHtml(context(snapshot, { detail: 'ws-0003-b1', fresh: { feed: new Set(), reports: new Set(['ws-0003-b1']), chips: new Set(['call-b1-8']) } }));
   const b1 = card(html, 'ws-0003-b1');
   assert.match(b1, /class="b-card st-busy is-sel"/);
-  assert.match(b1, /class="b-rep rp-complete is-new"/);
+  assert.match(b1, /class="b-rep rp-replied is-new"/);
   assert.match(b1, /class="chip st-busy is-new"/);
   assert.match(b1, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
   assert.doesNotMatch(html, /<script>/);
@@ -308,41 +310,37 @@ test('a sub-agent unit without agent details reads "unknown" in the detail panel
 
 /** A card's report row: from its opening div to its closing div, which follows the age. */
 const reportRowOf = html => html.match(/<div class="b-rep[^"]*">[\s\S]*?<span class="b-age">[\s\S]*?<\/span><\/div>/)[0];
-const replied = (snapshot, label, status) => {
-  const unit = findByLabel(snapshot, label);
-  if (status) unit.report.status = status;
-  unit.report.repliedAt = NOW - 60_000;
-  return unit;
-};
+/** The report row of the unit with this label, rendered from that snapshot. */
+const rowFor = (snapshot, label) => reportRowOf(cardHtml(findByLabel(snapshot, label), context(snapshot)));
 
 test('a card shows a replied question as a grey "question" badge, and an unanswered one as "needs input"', () => {
-  const open = reportRowOf(cardHtml(findByLabel(exampleSnapshot(), 'F1'), context(exampleSnapshot())));
-  assert.match(open, /^<div class="b-rep rp-needs"><span class="badge">needs input<\/span>/);
   const snapshot = exampleSnapshot();
-  const row = reportRowOf(cardHtml(replied(snapshot, 'F1'), context(snapshot)));
+  assert.equal(findByLabel(snapshot, 'F1').report.repliedAt, null, 'the example\'s F1 question is unanswered');
+  assert.equal(typeof findByLabel(snapshot, 'B1').report.repliedAt, 'number', 'the example\'s B1 question is replied');
+  assert.match(rowFor(snapshot, 'F1'), /^<div class="b-rep rp-needs"><span class="badge">needs input<\/span>/);
+  const row = rowFor(snapshot, 'B1');
   assert.match(row, /^<div class="b-rep rp-replied"><span class="badge">question<\/span>/);
   assert.doesNotMatch(row, /needs input/);
 });
 
 test('a card shows a replied blocker as a grey "blocker" badge, and an unanswered one as "blocked"', () => {
-  const unanswered = exampleSnapshot();
-  const b1 = findByLabel(unanswered, 'B1');
-  b1.report.status = 'blocked';
-  assert.match(reportRowOf(cardHtml(b1, context(unanswered))), /^<div class="b-rep rp-blocked"><span class="badge">blocked<\/span>/);
   const snapshot = exampleSnapshot();
-  assert.match(reportRowOf(cardHtml(replied(snapshot, 'B1', 'blocked'), context(snapshot))), /^<div class="b-rep rp-replied"><span class="badge">blocker<\/span>/);
+  findByLabel(snapshot, 'F1').report.status = 'blocked';
+  findByLabel(snapshot, 'B1').report.status = 'blocked';
+  assert.match(rowFor(snapshot, 'F1'), /^<div class="b-rep rp-blocked"><span class="badge">blocked<\/span>/);
+  assert.match(rowFor(snapshot, 'B1'), /^<div class="b-rep rp-replied"><span class="badge">blocker<\/span>/);
 });
 
 test('a replied report row has the same layout, title and age as an unanswered one', () => {
   const mask = row => row.replace(/rp-\w+/, 'rp-X').replace(/<span class="badge">[^<]*<\/span>/, '<span class="badge">X</span>');
-  for (const [label, status] of [['F1', null], ['B1', 'blocked']]) {
-    const unanswered = exampleSnapshot();
-    const unit = findByLabel(unanswered, label);
-    if (status) unit.report.status = status;
+  for (const status of ['needs_input', 'blocked']) {
     const snapshot = exampleSnapshot();
-    const before = reportRowOf(cardHtml(unit, context(unanswered)));
-    const after = reportRowOf(cardHtml(replied(snapshot, label, status), context(snapshot)));
-    assert.notEqual(after, before, label);
-    assert.equal(mask(after), mask(before), label);
+    const b1 = findByLabel(snapshot, 'B1');
+    b1.report.status = status;
+    const after = rowFor(snapshot, 'B1');
+    b1.report.repliedAt = null;
+    const before = rowFor(snapshot, 'B1');
+    assert.notEqual(after, before, status);
+    assert.equal(mask(after), mask(before), status);
   }
 });

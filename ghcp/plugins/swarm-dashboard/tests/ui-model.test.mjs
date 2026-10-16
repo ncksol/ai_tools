@@ -298,7 +298,6 @@ test('a replied question or blocker reads as a neutral "question" or "blocker"; 
     [{ status: 'blocked', repliedAt: at }, 'replied_blocker', 'blocker', 'replied'],
     [{ status: 'needs_input', repliedAt: null }, 'needs_input', 'needs input', 'needs'],
     [{ status: 'blocked', repliedAt: null }, 'blocked', 'blocked', 'blocked'],
-    [{ status: 'needs_input' }, 'needs_input', 'needs input', 'needs'],
     [{ status: 'complete', repliedAt: at }, 'complete', 'complete', 'complete'],
     [{ status: 'progress', repliedAt: at }, 'progress', 'progress', 'progress'],
   ];

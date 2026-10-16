@@ -63,12 +63,15 @@ test('a lane draws busy spans, idle lines, a blinking live stuck span and the to
 
 test('a busy lane has a live edge, running sub-agents, monitor ticks and thinned marks', () => {
   const b1 = findByLabel(exampleSnapshot(), 'B1');
+  const question = b1.timeline.marks.find(mark => mark.kind === 'question');
+  b1.timeline.marks.push({ at: question.at + MIN, kind: 'report', text: 'A later progress note.', status: 'progress' });
   const svg = laneSvg(b1, 600, NOW - 3 * HOUR, NOW, NOW, 0);
   assert.match(svg, /<rect class="t-edge"/);
   assert.match(svg, /<rect class="t-sub live"/);
   assert.match(svg, /<line class="t-mon"/);
-  assert.match(svg, /<title>PR opened<\/title>/);
-  assert.doesNotMatch(svg, /<title>Opened PR #418 with 14 endpoints\.<\/title>/, 'a lower-priority mark within 12 px is dropped');
+  assert.match(svg, /<title>PR #418 is open with 14 endpoints\. Should list endpoints page by cursor or by offset\?<\/title>/);
+  assert.doesNotMatch(svg, /<title>PR opened<\/title>/, 'a lower-priority mark 2 minutes earlier, within 12 px, gives way');
+  assert.doesNotMatch(svg, /<title>A later progress note\.<\/title>/, 'a lower-priority mark 1 minute later, within 12 px, is dropped');
 });
 
 /** A session whose busy and stuck segments and one sub-agent bar are all still open, in a window that holds `end`. */
@@ -229,11 +232,13 @@ test('a sub-agent lane counts until its end: its own end, else now in a live run
 
 test('the Latest report column\'s dot turns grey for a replied question or blocker, and the lane\'s report marks keep their ink', () => {
   const snapshot = exampleSnapshot();
-  assert.match(row(timelineHtml(context(snapshot), '12h'), 'ws-0006-f1'), /<div class="c-rep rp-needs"><span class="dot"><\/span>/);
-  findByLabel(snapshot, 'F1').report.repliedAt = NOW - 60_000;
-  Object.assign(findByLabel(snapshot, 'B1').report, { status: 'blocked', repliedAt: NOW - 60_000 });
-  const html = timelineHtml(context(snapshot), '12h');
-  assert.match(row(html, 'ws-0006-f1'), /<div class="c-rep rp-replied"><span class="dot"><\/span>/);
-  assert.match(row(html, 'ws-0003-b1'), /<div class="c-rep rp-replied"><span class="dot"><\/span>/);
+  const questions = timelineHtml(context(snapshot), '12h');
+  assert.match(row(questions, 'ws-0006-f1'), /<div class="c-rep rp-needs"><span class="dot"><\/span>/, 'F1\'s unanswered question');
+  assert.match(row(questions, 'ws-0003-b1'), /<div class="c-rep rp-replied"><span class="dot"><\/span>/, 'B1\'s replied question');
+  findByLabel(snapshot, 'F1').report.status = 'blocked';
+  findByLabel(snapshot, 'B1').report.status = 'blocked';
+  const blockers = timelineHtml(context(snapshot), '12h');
+  assert.match(row(blockers, 'ws-0006-f1'), /<div class="c-rep rp-blocked"><span class="dot"><\/span>/, 'an unanswered blocker');
+  assert.match(row(blockers, 'ws-0003-b1'), /<div class="c-rep rp-replied"><span class="dot"><\/span>/, 'a replied blocker');
   assert.match(markSvg({ kind: 'report', status: 'needs_input', text: 'x' }, 10, 10), /fill="var\(--question-ink\)"/);
 });

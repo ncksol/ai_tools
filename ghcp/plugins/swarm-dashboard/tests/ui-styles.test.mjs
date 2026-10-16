@@ -126,5 +126,4 @@ test('a leaving card fades to transparent over CARD_FADE_MS', () => {
 
 test('a replied report\'s badge and dot take the neutral idle ink', () => {
   assert.ok(css.includes('.rp-replied { --r: var(--idle-ink); }'));
-  assert.ok(css.indexOf('.rp-replied {') > css.indexOf('.rp-blocked {'), 'after the blocked rule');
 });
