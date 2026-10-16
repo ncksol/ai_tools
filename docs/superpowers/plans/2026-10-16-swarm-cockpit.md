@@ -4032,7 +4032,7 @@ In `scripts/check-layout.mjs`:
     return failures.length || updateIssues.length || historyIssues.length || reloadIssues.length || cockpit.issues ? 1 : 0;
 ```
 
-After the rebase onto PR 2's 4ec2e1b, `main` also runs PR 2's reconnect check (`reconnectIssues`) before the cockpit's checks; the return line ends `|| reloadIssues.length || reconnectIssues.length || cockpit.issues ? 1 : 0`, and the source test matches `reconnectIssues\.length \|\| cockpit\.issues \? 1 : 0`.
+After the rebase onto PR 2's 4ec2e1b, `main` also runs PR 2's reconnect check (`reconnectIssues`) before the cockpit's checks; the return line ends `|| reloadIssues.length || reconnectIssues.length || cockpit.issues ? 1 : 0`, and the source test matches `reconnectIssues\.length \|\| cockpit\.issues \? 1 : 0`. After the rebase onto 73da049, PR 2's "nothing live" check (`nothingIssues`) also runs before the cockpit's checks, and the return line and the source test end `|| nothingIssues.length || cockpit.issues ? 1 : 0`.
 
 - [ ] **Step 5: Run the tests and both checks**
 
