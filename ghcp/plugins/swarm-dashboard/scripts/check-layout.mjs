@@ -410,8 +410,9 @@ async function watchReload(page, servers) {
     }
     await page.evaluate(`document.querySelector('[data-tab="board"]').click()`);
     await page.waitFor(`document.querySelector('.board .mc[data-open]') !== null`, 5000);
-    const unit = await page.evaluate(`(() => { const card = document.querySelector('.board .mc[data-open]'); card.click(); return card.dataset.open; })()`);
-    await page.waitFor(`document.querySelector('.detail') !== null`, 5000);
+    await page.evaluate(`document.querySelector('.board .mc[data-open]').click()`);
+    await page.waitFor(`document.querySelector('.detail .b-name') !== null`, 5000);
+    const shown = await page.evaluate(`document.querySelector('.detail .b-name').textContent`);
     await page.evaluate("window.swarmMark = 'a'");
 
     // New dashboard files: the page reloads once into them, keeping what was on screen.
@@ -426,12 +427,14 @@ async function watchReload(page, servers) {
     const after = await page.evaluate(`({
       own: document.querySelector('meta[name="swarm-ui"]')?.content,
       board: document.querySelector('[data-tab="board"]')?.getAttribute('aria-selected') === 'true',
-      detail: document.querySelector('.detail') !== null ? new URLSearchParams(location.search).get('detail') : null,
+      detail: document.querySelector('.detail .b-name')?.textContent ?? null,
+      search: location.search,
       attempted: sessionStorage.getItem('swarm-dashboard:reloaded-for'),
     })`);
     if (after.own !== 'layout-check-b') issues.push(`the reloaded page has the dashboard files ${after.own}, not layout-check-b`);
     if (!after.board) issues.push('the reload lost the Board tab');
-    if (after.detail !== unit) issues.push('the reload closed the detail panel');
+    if (after.detail !== shown) issues.push('the reload closed the detail panel');
+    if (after.search !== '?host=browser') issues.push(`the reloaded page kept its state in the address: ${after.search}`);
     if (after.attempted !== 'layout-check-b') issues.push(`the page remembered the attempt as ${after.attempted}, not layout-check-b`);
     if (!await waitForClient(second, 5000)) {
       issues.push('the reloaded page did not open its live connection within 5 s');

@@ -1,4 +1,4 @@
-import { RELOAD_KEY, coalesced, isNarrow, lifecycleKey, reloadDecision, reloadSearch, renderApp, staleChoice } from './app.mjs';
+import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, baseSearch, coalesced, isNarrow, lifecycleKey, reloadDecision, reloadSearch, renderApp, staleChoice, startSwarm } from './app.mjs';
 import { tickText } from './format.mjs';
 import { morph } from './morph.mjs';
 import { nextCardChange, runEnd, unitEnd } from './model.mjs';
@@ -26,6 +26,17 @@ function readSaved() {
 }
 const saved = readSaved();
 const urlSwarm = params.get('swarm');
+/** After a self-reload: the swarm picked before it, and whether the address still carries the reload's state. */
+let restoredPick = null;
+let restored = false;
+try {
+  restoredPick = sessionStorage.getItem(PICK_KEY);
+  restored = sessionStorage.getItem(RESTORED_KEY) === '1';
+  sessionStorage.removeItem(PICK_KEY);
+  sessionStorage.removeItem(RESTORED_KEY);
+} catch {
+  // Without sessionStorage there was no self-reload to restore.
+}
 document.documentElement.dataset.host = params.get('host') === 'canvas' ? 'canvas' : 'browser';
 
 const view = {
@@ -34,7 +45,7 @@ const view = {
   span: choose(params.get('span') ?? saved.span, SPANS, '12h'),
   detail: params.get('detail'),
   runId: params.get('run'),
-  swarm: urlSwarm ?? (params.get('session') ? null : saved.swarm ?? null),
+  swarm: startSwarm({ urlSwarm, restoredPick, session: params.get('session'), savedSwarm: saved.swarm }),
   session: params.get('session'),
   narrow: false,
   loaded: false,
@@ -47,6 +58,8 @@ const view = {
   fresh: emptyFresh(),
 };
 if (view.page === 'run' && !view.runId) view.page = 'history';
+// The self-reload carried the page's state in the address; drop it now, so a later manual reload shows the saved state.
+if (restored) history.replaceState(null, '', `${location.pathname}${baseSearch(params) ? `?${baseSearch(params)}` : ''}`);
 
 // A swarm named in the address always applies; a picked or remembered one only while it is live.
 let swarmFromUrl = Boolean(urlSwarm);
@@ -96,6 +109,8 @@ function connect() {
   });
   source.addEventListener('error', () => {
     view.connection = 'retrying';
+    // The server may be down or replaced; wait for the next hello before deciding to reload.
+    servedUi = null;
     scheduleRender();
     if (source.readyState === EventSource.CLOSED) reconnectTimer = setTimeout(connect, 2000);
   });
@@ -133,6 +148,8 @@ function connect() {
 
 /** Reload once into the new dashboard files, keeping what is on screen; see reloadDecision. */
 function considerReload() {
+  // Only into a server that is there: a tab that becomes visible while disconnected waits for the next hello.
+  if (source?.readyState !== EventSource.OPEN) return;
   let attempted;
   try {
     attempted = sessionStorage.getItem(RELOAD_KEY);
@@ -142,6 +159,10 @@ function considerReload() {
   if (reloadDecision({ own: ownUi, served: servedUi, attempted, hidden: document.visibilityState === 'hidden' }) !== 'reload') return;
   try {
     sessionStorage.setItem(RELOAD_KEY, servedUi);
+    // A picked swarm is not written to the address, so carry it in this tab's storage; each tab restores its own.
+    if (view.swarm && !swarmFromUrl) sessionStorage.setItem(PICK_KEY, view.swarm);
+    else sessionStorage.removeItem(PICK_KEY);
+    sessionStorage.setItem(RESTORED_KEY, '1');
   } catch {
     return;
   }

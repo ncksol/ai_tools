@@ -62,3 +62,28 @@ test('an open page reloads once into new dashboard files, remembering the attemp
   const hello = main.slice(main.indexOf("addEventListener('hello'"));
   assert.match(hello.slice(0, hello.indexOf('});')), /considerReload\(\)/);
 });
+
+test('the reload records its attempt first, needs an open connection, and gives up whenever storage fails', () => {
+  const main = readFileSync(file('main.mjs'), 'utf8');
+  const start = main.indexOf('function considerReload');
+  const body = main.slice(start, main.indexOf('\n}\n', start));
+  const at = needle => {
+    assert.ok(body.includes(needle), needle);
+    return body.indexOf(needle);
+  };
+  assert.ok(at('readyState !== EventSource.OPEN) return;') < at('sessionStorage.setItem(RELOAD_KEY'), 'the open-connection guard comes first');
+  assert.ok(at('sessionStorage.setItem(RELOAD_KEY') < at('location.reload('), 'the attempt is written before the reload');
+  assert.ok(at('PICK_KEY') < at('location.reload('));
+  assert.ok(at('sessionStorage.setItem(RESTORED_KEY') < at('location.reload('));
+  const catches = body.match(/catch \{/g) ?? [];
+  assert.ok(catches.length >= 2);
+  assert.equal((body.match(/catch \{\s*return\b/g) ?? []).length, catches.length, 'every catch returns');
+  const error = main.slice(main.indexOf("addEventListener('error'"));
+  assert.match(error.slice(0, error.indexOf('});')), /servedUi = null/);
+});
+
+test('at start-up the page restores a picked swarm and cleans the address only after a self-reload', () => {
+  const main = readFileSync(file('main.mjs'), 'utf8');
+  for (const needle of ['startSwarm(', 'baseSearch(', 'sessionStorage.removeItem(PICK_KEY)', 'sessionStorage.removeItem(RESTORED_KEY)']) assert.ok(main.includes(needle), needle);
+  assert.match(main, /if \(restored\) history\.replaceState\(/);
+});

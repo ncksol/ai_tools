@@ -16,6 +16,10 @@ export const lifecycleKey = swarms => swarms.map(swarm => `${swarm.id}:${swarm.l
 
 /** sessionStorage key: the server UI fingerprint this tab last reloaded for. */
 export const RELOAD_KEY = 'swarm-dashboard:reloaded-for';
+/** sessionStorage key: a swarm picked in the picker, carried through a self-reload in this tab only. */
+export const PICK_KEY = 'swarm-dashboard:picked-swarm';
+/** sessionStorage key: set just before a self-reload, so the reloaded page cleans its address. */
+export const RESTORED_KEY = 'swarm-dashboard:restored';
 /**
  * What to do once the server's UI fingerprint is known: 'stay', 'wait' (hidden: decide again when visible) or 'reload'.
  * A tab reloads at most once for each new fingerprint, so files that still do not match after a reload cause no loop.
@@ -35,6 +39,21 @@ export function reloadSearch(view, params, swarmFromUrl) {
   next.set('span', view.span);
   if (view.detail) next.set('detail', view.detail);
   return next.toString();
+}
+
+/** The address after a self-reload: only the host, the session and an addressed swarm, so a later manual reload shows the saved state. */
+export function baseSearch(params) {
+  const next = new URLSearchParams();
+  for (const name of ['host', 'session', 'swarm']) if (params.get(name)) next.set(name, params.get(name));
+  return next.toString();
+}
+/**
+ * The swarm a page starts on: one named in the address, else one picked before a self-reload, else none for a page opened
+ * for a session (the server picks that session's swarm), else the one remembered from an earlier visit.
+ * Only the first counts as addressed; the others keep the picker's "only while live" rule.
+ */
+export function startSwarm({ urlSwarm, restoredPick, session, savedSwarm }) {
+  return urlSwarm ?? restoredPick ?? (session ? null : savedSwarm ?? null);
 }
 
 /** Wrap load so that calls never overlap: a call made while one runs makes it run once more afterwards, even if that run failed. */

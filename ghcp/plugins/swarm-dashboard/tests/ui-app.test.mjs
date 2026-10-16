@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { RELOAD_KEY, coalesced, isNarrow, lifecycleKey, reloadDecision, reloadSearch, renderApp, staleChoice } from '../ui/app.mjs';
+import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, baseSearch, coalesced, isNarrow, lifecycleKey, reloadDecision, reloadSearch, renderApp, staleChoice, startSwarm } from '../ui/app.mjs';
 import { NOW, deepFreeze, exampleSnapshot, fixture } from './helpers/ui.mjs';
 
 const view = (overrides = {}) => ({
@@ -215,4 +215,22 @@ test('the reload address keeps the host, session, page, run, tab, time window, o
   assert.deepEqual(read(reloadSearch({ ...base, page: 'history' }, new URLSearchParams('host=browser'), false)), { host: 'browser', page: 'history', tab: 'board', span: '3h' });
   assert.deepEqual(read(reloadSearch({ ...base, page: 'run', runId: 'ws-old' }, new URLSearchParams(''), false)), { page: 'run', run: 'ws-old', tab: 'board', span: '3h' });
   assert.equal(new URLSearchParams(reloadSearch({ ...base, swarm: null }, new URLSearchParams(''), true)).has('swarm'), false);
+});
+
+test('a page starts on an addressed swarm, then a pick restored after a self-reload, then the session or the remembered swarm', () => {
+  assert.equal(PICK_KEY, 'swarm-dashboard:picked-swarm');
+  // A canvas opened for a session, whose user picked another live swarm before the reload.
+  assert.equal(startSwarm({ urlSwarm: null, restoredPick: 'ws-picked', session: 's-1', savedSwarm: 'ws-saved' }), 'ws-picked');
+  assert.equal(startSwarm({ urlSwarm: 'ws-url', restoredPick: 'ws-picked', session: 's-1', savedSwarm: 'ws-saved' }), 'ws-url');
+  assert.equal(startSwarm({ urlSwarm: null, restoredPick: null, session: 's-1', savedSwarm: 'ws-saved' }), null);
+  assert.equal(startSwarm({ urlSwarm: null, restoredPick: null, session: null, savedSwarm: 'ws-saved' }), 'ws-saved');
+  assert.equal(startSwarm({ urlSwarm: null, restoredPick: null, session: null, savedSwarm: null }), null);
+});
+
+test('after a self-reload the address goes back to the host, the session and an addressed swarm', () => {
+  assert.equal(RESTORED_KEY, 'swarm-dashboard:restored');
+  const read = search => Object.fromEntries(new URLSearchParams(search));
+  assert.deepEqual(read(baseSearch(new URLSearchParams('host=canvas&session=s-1&tab=board&span=3h&detail=u-1&page=run&run=ws-old'))), { host: 'canvas', session: 's-1' });
+  assert.deepEqual(read(baseSearch(new URLSearchParams('host=browser&swarm=ws-1&tab=plan'))), { host: 'browser', swarm: 'ws-1' });
+  assert.equal(baseSearch(new URLSearchParams('tab=board')), '');
 });

@@ -21,3 +21,10 @@ export function assetsFingerprint(assets) {
   for (const [path, { body }] of [...assets].sort(([a], [b]) => (a < b ? -1 : 1))) hash.update(path).update('\0').update(body).update('\0');
   return hash.digest('hex').slice(0, 16);
 }
+
+const UI_META = '<meta name="swarm-ui" content="">';
+/** The page shell with the UI fingerprint filled in; throws when index.html lacks the placeholder, so a broken page fails loudly. */
+export function withFingerprint(html, fingerprint) {
+  if (!html.includes(UI_META)) throw new Error(`ui/index.html must contain ${UI_META}, the placeholder for the UI fingerprint`);
+  return html.replace(UI_META, `<meta name="swarm-ui" content="${fingerprint}">`);
+}

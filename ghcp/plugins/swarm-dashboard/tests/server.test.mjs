@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createFakeEngine } from '../engine/fake-engine.mjs';
 import { validateSnapshot } from '../engine/schema.mjs';
-import { assetsFingerprint, loadAssets } from '../server/assets.mjs';
+import { assetsFingerprint, loadAssets, withFingerprint } from '../server/assets.mjs';
 import { createDashboardServer } from '../server/http.mjs';
 import { get, openEvents } from './helpers/http.mjs';
 import { deepFreeze, exampleSnapshot, fixture } from './helpers/ui.mjs';
@@ -387,4 +387,9 @@ test('a forced UI fingerprint reaches both the page and hello', async () => {
     page.close();
     await server.close();
   }
+});
+
+test('the page shell gets its fingerprint, and a shell without the placeholder fails loudly', () => {
+  assert.equal(withFingerprint('<head><meta name="swarm-ui" content=""></head>', 'abc'), '<head><meta name="swarm-ui" content="abc"></head>');
+  assert.throws(() => withFingerprint('<head></head>', 'abc'), /ui\/index\.html must contain <meta name="swarm-ui" content="">, the placeholder for the UI fingerprint/);
 });

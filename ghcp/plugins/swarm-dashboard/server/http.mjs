@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { assetsFingerprint, loadAssets } from './assets.mjs';
+import { assetsFingerprint, loadAssets, withFingerprint } from './assets.mjs';
 import { createHub } from './hub.mjs';
 
 export const APP_ID = 'swarm-dashboard';
@@ -11,7 +11,6 @@ const SECURITY = {
   'Cross-Origin-Resource-Policy': 'same-origin',
 };
 const TEXT = 'text/plain; charset=utf-8';
-const UI_META = '<meta name="swarm-ui" content="">';
 
 /** A browser request that another website started: Sec-Fetch-Site says so, or it carries a foreign Origin. */
 function fromOtherSite(req, origins) {
@@ -31,9 +30,7 @@ export function createDashboardServer({ createEngine, host = '127.0.0.1', port =
   // The page carries the fingerprint of the files it came with; hello sends the current one, so an open page can tell it is out of date.
   const fingerprint = uiFingerprint ?? assetsFingerprint(assets);
   const shell = assets.get('/index.html');
-  const shellText = shell.body.toString('utf8');
-  if (!shellText.includes(UI_META)) throw new Error(`ui/index.html must contain ${UI_META}, the placeholder for the UI fingerprint`);
-  assets.set('/index.html', { ...shell, body: Buffer.from(shellText.replace(UI_META, `<meta name="swarm-ui" content="${fingerprint}">`)) });
+  assets.set('/index.html', { ...shell, body: Buffer.from(withFingerprint(shell.body.toString('utf8'), fingerprint)) });
   const hub = createHub({ createEngine, now, log, onIdle, ...hubOptions, ui: fingerprint });
   const startedAt = now();
   let boundPort = null;
