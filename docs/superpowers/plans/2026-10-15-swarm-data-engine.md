@@ -14,9 +14,9 @@
 
 - Plugin folder `ghcp/plugins/swarm-dashboard/`, name `swarm-dashboard`, version `0.1.0` in `plugin.json`, `package.json` and its root `.github/plugin/marketplace.json` entry.
 - `package.json`: private, `"type": "module"`, `"engines": {"node": ">=18"}`, `npm test` = `node --test tests/*.test.mjs`, `npm run validate` = `node scripts/validate-plugin.mjs`; no `dependencies` or `devDependencies`.
-- No `marketplace.json` inside the plugin. The validator checks the plugin's entry in the root manifest, reusing only pr-review-graph's manifest checks.
+- No `marketplace.json` inside the plugin. The validator checks the plugin's entry in the root manifest, modelled on the manifest checks of the now-retired pr-review-graph plugin.
 - Engine and test code run on Node 18.0+: no `Object.groupBy`, `Array.prototype.toSorted`, `Promise.withResolvers`, `fs.glob`, `t.after()` or `mock` from `node:test`. `node:sqlite` is loaded only by `engine/sqlite.mjs`.
-- Data access is strictly read-only. Never write to `~/.copilot/data.db`, `~/.copilot/session-store.db` or anything under `~/.copilot/session-state/`. Open SQLite with `readOnly: true` plus `PRAGMA query_only = 1`, or `sqlite3 -readonly`. Open a WAL database whose `-shm` file is missing with the `immutable=1` URI, so the read creates no side files.
+- Data access is strictly read-only. Never write to `~/.copilot/data.db`, `~/.copilot/session-store.db` or anything under `~/.copilot/session-state/`. Open SQLite with `readOnly: true` plus `PRAGMA query_only = 1`, or `sqlite3 -readonly`. Open WAL databases by the decision table in "SQLite from the extension runtime".
 - From `data.db` read only named columns; no `SELECT *`; never touch its settings or token columns. Never print or store tokens.
 - The engine writes only to its history folder (default `~/.copilot/swarm-dashboard/history/`), and only run summaries without free text (no report bodies, questions, prompts or tool arguments).
 - The engine never writes to stdout (a canvas extension's stdout carries JSON-RPC). Only `scripts/swarm-snapshot.mjs` prints JSON to stdout.
@@ -26,7 +26,7 @@
 - Snapshot times are epoch milliseconds (UTC); durations are milliseconds; credits = sum of `total_nano_aiu` / 1e9; dollars = credits × 0.01.
 - Parsers accept missing keys and string-typed tool arguments.
 - Stuck thresholds are configurable; defaults are design call 3 verbatim: model call 5 min warn, 10 min stuck; bash `initial_wait` + 5 min (10 min without one); `read_bash` delay + 2 min; `read_agent` timeout + 2 min; app, file and search tools 2 min; sub-agent 10 min without events (15 for general-purpose on Opus at max effort); silent busy 10 min; stalled child 30 min; spinning within 30 busy minutes: 5+ failed tool calls, the same tool and arguments 3+ times, 2+ compactions, or a permission denial with `decisionSource: "unattended_fallback"` (builder decision 2 narrows the repeat and compaction checks, pending the coordinator's OK); a run is finished after 2 hours without activity.
-- After any change under the plugin folder or to the root manifest, run `npm test && npm run validate` from `ghcp/plugins/swarm-dashboard`. After changing the root manifest, run the same in `ghcp/plugins/pr-review-graph` and `ghcp/plugins/adr-authoring`.
+- After any change under the plugin folder or to the root manifest, run `npm test && npm run validate` from `ghcp/plugins/swarm-dashboard`. After changing the root manifest, run the same in `ghcp/plugins/adr-authoring`.
 - Conventional commit messages; no `Co-authored-by` trailer or other AI attribution.
 
 ## Decisions settled before implementation
@@ -47,7 +47,16 @@ Evidence gathered on this machine, read-only, on 15 October 2026:
 - A plain read-only open of a WAL database whose writer has closed (no `-wal`/`-shm` files) creates `-wal` and `-shm` beside it. The `file:...?immutable=1` URI reads it without creating any file, in every runtime above and in the CLI. The CLI cannot open such a file without `immutable=1` (error 14).
 - All 85 recent per-session `session.db` files are rollback-journal databases, so read-only opens of them never need side files.
 
-Decision: `engine/sqlite.mjs` uses `node:sqlite` when it loads, otherwise the `sqlite3` CLI (`-readonly -json`, parameters bound as escaped literals). Both open a WAL database without `-shm` through `immutable=1`. This keeps `engines.node` at `>=18` as the spec requires, and `/usr/local/bin/node` on this machine is v18.11.0. Task 17 runs the suite on Node 18 (CLI backend) and Node 24 (`node:sqlite`).
+Decision: `engine/sqlite.mjs` uses `node:sqlite` when it loads, otherwise the `sqlite3` CLI (`-readonly -json`, parameters bound as escaped literals). Both open a database by the rules below. This keeps `engines.node` at `>=18` as the spec requires, and `/usr/local/bin/node` on this machine is v18.11.0. Task 17 runs the suite on Node 18 (CLI backend) and Node 24 (`node:sqlite`).
+
+How a database is opened (`openTarget` in `engine/sqlite.mjs`):
+
+- **Rollback journal:** a plain read-only open.
+- **WAL with no `-wal` file:** `immutable=1`, because the main file holds every committed row.
+- **WAL with a `-wal` (any size) and a `-shm`:** a writer or reader holds the database. It is read with a plain read-only open. With `node:sqlite`, the engine keeps one long-lived read-only connection. It is opened only when both side files exist, checked again just before the first read, reopened when the file's inode changes or a read fails, and closed when the engine stops.
+- **WAL with an empty `-wal` and no `-shm`:** `immutable=1`.
+- **WAL with data in `-wal` and no `-shm`** (a writer crashed): the read is refused (`UnsafeReadError`). The data is reported unavailable in diagnostics and the last good data is kept, because immutable mode would silently drop the rows in the `-wal`.
+- **The remaining window:** if the last writer finishes closing between the check and SQLite's read lock, SQLite can create an empty `-wal` and `-shm`. No data changes.
 
 ### Other facts that shape the readers
 
@@ -103,6 +112,8 @@ Recorded so the plan matches what was built; each amendment was reviewed like a 
 - Contract additions for PR 2, approved by the coordinator after Task 2: `FeedItem.id` and `NeedItem.id` (unique within each list, the same item keeps the same id in every list); `SessionView.recent` (a session's latest 6 feed items, taken before the 200-item cut); unit `endedAt` is the outcome time once a unit has an outcome (registry `ended_at`, else the PR's `mergedAt` or `closedAt`), else the archive time, else the last event once the process is gone; and `findSwarm(sessionId)` on the engine API. Tasks 9, 10, 13 and 15 below produce them.
 - Task 3: `node:sqlite` opens `file:` URIs only from Node 22.15 and 23.10, so on older runtimes immutable reads use the sqlite3 CLI (`nodeSqliteSupportsUri`, `openReadOnly` option `nodeVersion`).
 - Task 4: the app reader selects only the allowlisted columns that exist (`APP_TABLES`, `SCHEMA_SQL`) and degrades to diagnostics when tables or columns are missing; the session tree ignores aliases whose workspace is gone.
+- After review: a WAL database is opened by the decision table above, not with immutable mode whenever `-shm` is missing; a `-wal` with data and no `-shm` is refused and reported, never read in immutable mode; live WAL databases use one long-lived read-only connection.
+- After merging main: the pr-review-graph plugin was retired, so the verification steps run the swarm-dashboard and adr-authoring plugins only.
 
 ## File Structure
 
@@ -411,8 +422,8 @@ In `.github/plugin/marketplace.json`, append this object after the `adr-authorin
 Run: `cd ghcp/plugins/swarm-dashboard && npm test && npm run validate`
 Expected: 4 tests pass; `Plugin validation passed: manifests, root marketplace entry and required files.`
 
-Run: `cd ghcp/plugins/pr-review-graph && npm test && npm run validate && cd ../adr-authoring && npm test && npm run validate`
-Expected: both plugins pass unchanged.
+Run: `cd ghcp/plugins/adr-authoring && npm test && npm run validate`
+Expected: the plugin passes unchanged.
 
 - [ ] **Step 5: Commit**
 
@@ -7020,12 +7031,12 @@ The real-data check reads the owner's live Copilot data on this machine, read-on
 - [ ] **Step 1: Run every plugin's checks on the default Node**
 
 ```bash
-for plugin in swarm-dashboard pr-review-graph adr-authoring; do
+for plugin in swarm-dashboard adr-authoring; do
   (cd ghcp/plugins/$plugin && node --version && npm test && npm run validate) || exit 1
 done
 ```
 
-Expected: all three pass; `swarm-dashboard` runs its reader tests against both the `node` and `cli` SQLite backends.
+Expected: both pass; `swarm-dashboard` runs its reader tests against both the `node` and `cli` SQLite backends.
 
 - [ ] **Step 2: Run the suite on Node 18 (sqlite3 CLI backend)**
 
