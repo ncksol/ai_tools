@@ -4032,6 +4032,8 @@ In `scripts/check-layout.mjs`:
     return failures.length || updateIssues.length || historyIssues.length || reloadIssues.length || cockpit.issues ? 1 : 0;
 ```
 
+After the rebase onto PR 2's 4ec2e1b, `main` also runs PR 2's reconnect check (`reconnectIssues`) before the cockpit's checks; the return line ends `|| reloadIssues.length || reconnectIssues.length || cockpit.issues ? 1 : 0`, and the source test matches `reconnectIssues\.length \|\| cockpit\.issues \? 1 : 0`.
+
 - [ ] **Step 5: Run the tests and both checks**
 
 Run: `node --test tests/cockpit-check.test.mjs tests/check-layout.test.mjs && npm run check:layout`
@@ -4301,7 +4303,7 @@ git commit -m "feat(swarm-dashboard): measure the cockpit's GPU time per frame"
 ```
 
 Review amendments (16 October 2026), applied in a follow-up commit after this task's review:
-- `main` handles SIGINT and SIGTERM as `check-layout.mjs` does (exit 130 through `process.exit`, so the browser's exit cleanup runs), and removes the handlers in `finally`. Stopping a run leaves no headless Chrome or profile behind.
+- `main` installs its SIGINT and SIGTERM handlers before the browser starts. A stop waits for a launch in progress, closes the browser the normal way (it waits for the browser to exit and deletes its profile), at most 8 s, then exits with 130. The handlers are removed in `finally`. Stopping a run leaves no headless Chrome behind; a stop during the final cleanup, after the results are printed, can leave an empty temp profile (see Known limits).
 - Every time in the output line has one decimal (`toFixed(1)`), so High, Balanced and the passes read alike.
 - In WebKit the command prints `WebKit rounds its timers to 1 ms, so these times are within ±1 ms and the pass breakdown is rough.` after the renderer line.
 - The 90th percentile stays `sorted[floor(0.9 × n)]`: slightly high, and on the safe side.
@@ -4397,3 +4399,10 @@ Validation while writing: on 16 October 2026 the code in Tasks 1 to 14 was appli
 - `npm run check:layout` in Chrome 155: 206 dashboard views with the Cockpit control, 284,086 checks, 0 issues; 18 cockpit states, 15,370 checks, 0 issues; 30 frames a second under motion and none under reduced motion; the links check passed; the regular view's updates took 2.2 ms median alone and 1.8 ms with a cockpit drawing beside it.
 - The same in WebKit 27.2: 206 views, 0 issues; 18 cockpit states, 0 issues.
 - `node scripts/cockpit-gpu.mjs`: High 7.35 ms (1440 × 900) and 10.55 ms (1920 × 1080) in Chrome, 7 and 10 ms in WebKit; Balanced about half.
+
+## Known limits
+
+- `scripts/cockpit-gpu.mjs`: a stop (Ctrl+C or SIGTERM) during the final cleanup, after the results are printed, can leave an empty temp profile folder (`swarm-layout-*` in the system temp folder). No browser is left running. The command is dev-only, so this is accepted.
+- The slowdown check catches gross slowdowns of the regular view (about +4 ms an update at a 7–8 ms baseline), not 1–2 ms ones.
+- The GPU test's WebKit times are within ±1 ms, because WebKit rounds its timers to 1 ms.
+- Headless browsers cannot show whether a window comes to the front; Task 12 Step 8 checks it by hand.
