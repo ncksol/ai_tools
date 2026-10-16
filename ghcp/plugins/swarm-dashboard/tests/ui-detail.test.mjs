@@ -78,3 +78,16 @@ test('long sub-agent lists are capped with a count of the rest', () => {
   assert.equal((html.match(/<li class="sa"/g) ?? []).length, 12);
   assert.match(text(html), /3 earlier sub-agents not shown/);
 });
+
+test('the detail panel shows report summary, body, evidence and blockers as plain text', () => {
+  const snapshot = exampleSnapshot();
+  const b1 = snapshot.units.find(unit => unit.id === 'ws-0003-b1');
+  Object.assign(b1.report, { summary: '**Short** summary', body: '- **one**\n- `two`', evidence: ['`npm test` passes'], blockers: ['- waiting on **review**'] });
+  const html = detailHtml(b1.id, false, context(snapshot));
+  const report = html.slice(html.indexOf('<h4>Latest report</h4>'), html.indexOf('<h4>Sub-agents</h4>'));
+  assert.match(report, /<p class="dt-p">Short summary<\/p>/);
+  assert.match(report, /<p class="dt-p dt-body">one\ntwo<\/p>/);
+  assert.match(report, /<li>npm test passes<\/li>/);
+  assert.match(report, /<li>waiting on review<\/li>/);
+  assert.doesNotMatch(report, /\*\*|`|- /);
+});

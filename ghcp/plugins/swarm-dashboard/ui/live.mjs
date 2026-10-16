@@ -1,4 +1,4 @@
-import { ago, costHtml, costText, dur, elapsed, esc, liveTime } from './format.mjs';
+import { ago, costHtml, costText, dur, elapsed, esc, liveTime, plainText } from './format.mjs';
 import {
   COUNT_TILES, NEED_CLASS, NEED_LABELS, STAGE_NAMES, archivedUnits, cardUnits, closedNotMerged, needItems, progressPercent, reportTitle, runEnd, sharePercent, unitEnd,
 } from './model.mjs';
@@ -26,7 +26,7 @@ export function needsHtml({ snapshot, now }) {
   const head = `<div class="sec-h"><h3>Needs you</h3><span class="small muted">${items.length ? `${items.length} waiting, longest first` : 'Nothing waiting'}</span></div>`;
   if (!items.length) return `<section class="needs" aria-label="Needs you">${head}</section>`;
   const list = items.map(item => `<div class="need st-${NEED_CLASS[item.kind]}" data-key="${esc(item.id)}"><span class="small need-k"><span class="dot"></span>${NEED_LABELS[item.kind]}</span>`
-    + `<span class="need-t" title="${esc(item.text)}">${esc(item.text)}</span>`
+    + `<span class="need-t" title="${esc(plainText(item.text))}">${esc(plainText(item.text))}</span>`
     + `<span class="small muted">${esc(item.from)} · ${item.verb} ${elapsed(item.since, now)}</span></div>`).join('');
   return `<section class="needs" aria-label="Needs you">${head}<div class="needs-list">${list}</div></section>`;
 }
@@ -80,11 +80,11 @@ function whyHtml(unit) {
 
 function reportHtml(report, now) {
   if (!report) return '<p class="small muted">No report yet.</p>';
-  const list = entries => `<ul class="dt-list">${entries.map(entry => `<li>${esc(entry)}</li>`).join('')}</ul>`;
-  const lead = report.summary ?? (report.body ? null : reportTitle(report));
+  const list = entries => `<ul class="dt-list">${entries.map(entry => `<li>${esc(plainText(entry))}</li>`).join('')}</ul>`;
+  const lead = report.summary ? plainText(report.summary) : report.body ? null : reportTitle(report);
   return `<div class="dt-rep-h ${reportClass(report.status)}">${badge(report.status)}<span class="small muted">${ago(report.at, now)}</span></div>`
     + (lead ? `<p class="dt-p">${esc(lead)}</p>` : '')
-    + (report.body ? `<p class="dt-p dt-body">${esc(report.body)}</p>` : '')
+    + (report.body ? `<p class="dt-p dt-body">${esc(plainText(report.body))}</p>` : '')
     + (report.evidence.length ? `<span class="small muted">Evidence</span>${list(report.evidence)}` : '')
     + (report.blockers === null ? '' : `<span class="small muted">Blockers</span>${report.blockers.length ? list(report.blockers) : '<p class="small">None reported</p>'}`);
 }

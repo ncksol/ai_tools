@@ -49,6 +49,18 @@ test('a card names a report with a blank title "Untitled report"', () => {
   assert.match(card(cardsHtml(context(snapshot)), 'ws-0003-b1'), /<span class="b-rep-t" title="Untitled report">Untitled report<\/span>/);
 });
 
+test('cards and Needs you show report and question text as plain text, without a repeated status', () => {
+  const snapshot = exampleSnapshot();
+  Object.assign(findByLabel(snapshot, 'B1').report, { title: 'Status: progress. Wired **all** routes', status: 'progress' });
+  snapshot.needs[0].text = 'Keep the **v1** format?';
+  const b1 = card(cardsHtml(context(snapshot)), 'ws-0003-b1');
+  assert.match(b1, /<span class="b-rep-t" title="Wired all routes">Wired all routes<\/span>/);
+  assert.doesNotMatch(b1, /\*\*/);
+  const needs = needsHtml(context(snapshot));
+  assert.match(needs, /<span class="need-t" title="Keep the v1 format\?">Keep the v1 format\?<\/span>/);
+  assert.doesNotMatch(needs, /\*\*/);
+});
+
 test('Needs you lists each item with its unit and wait time, or says nothing is waiting', () => {
   const snapshot = exampleSnapshot();
   const html = needsHtml(context(snapshot));

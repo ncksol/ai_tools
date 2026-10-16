@@ -1,4 +1,6 @@
 /** Data derivations for the views: no HTML and no DOM. Words and orders follow the approved mockup. */
+import { plainText } from './format.mjs';
+
 export const STATUS_ORDER = Object.freeze({ stuck: 0, question: 1, plan: 2, blocked: 3, busy: 4, idle: 5, merged: 6, archived: 7 });
 export const UNIT_STAGES = Object.freeze(['coding', 'pr_open', 'in_review', 'merged', 'archived']);
 export const BOARD_STAGES = Object.freeze(['planned', ...UNIT_STAGES]);
@@ -47,8 +49,30 @@ export const runEnd = snapshot => (snapshot.run.lifecycle === 'finished' ? snaps
  * at its own end, or at the run's end once the run has finished.
  */
 export const unitEnd = (session, snapshot = null) => session.endedAt ?? (snapshot ? runEnd(snapshot) : null);
-/** A report's title, or a placeholder when it is blank. */
-export const reportTitle = report => report.title.trim() || 'Untitled report';
+/** A report title without a leading "Status: <status>" that only repeats the status badge shown beside it. */
+export function withoutStatusPrefix(text, status) {
+  const words = String(status ?? '').split(/[\s_-]+/).filter(Boolean).map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (!words.length) return text;
+  return text.replace(new RegExp(String.raw`^\s*status\s*:\s*${words.join(String.raw`[\s_-]+`)}(?![\w-])\s*[.:;,!—–-]*\s*`, 'i'), '');
+}
+
+/** A report's title as plain text, or a placeholder when it is blank. */
+export const reportTitle = report => withoutStatusPrefix(plainText(report.title), report.status).trim() || 'Untitled report';
+
+/** One activity item's text as plain text, without the engine's repetitions. */
+export function feedText(item) {
+  let text = plainText(item.text);
+  // A sub-agent whose name equals its type would read "explore explore finished".
+  if (item.kind === 'subagent-done') text = text.replace(/^(\S+) \1(?= )/, '$1');
+  if (item.kind === 'report') {
+    const match = text.match(/^(reported ([^:]+): )([\s\S]*)$/);
+    if (match) {
+      const rest = withoutStatusPrefix(match[3], match[2]).trim();
+      text = rest ? `${match[1]}${rest}` : match[1].replace(/: $/, '');
+    }
+  }
+  return text;
+}
 
 /** Its PR closed without merging and it is not archived: it stays in its PR stage, with a badge (approved decision 5). */
 export const closedNotMerged = unit => Boolean(unit.closedWithoutMerge && unit.pr && unit.stage !== 'archived' && (unit.pr.state === 'closed' || unit.outcome === 'closed'));

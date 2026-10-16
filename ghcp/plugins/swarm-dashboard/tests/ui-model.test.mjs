@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  BOARD_STAGES, STATE_LINES, archivedUnits, boardColumns, cardUnits, closedNotMerged, findByLabel, findPlanned, flattenPlan, needItems,
-  planForest, planLayout, progressPercent, reportTitle, runEnd, sharePercent, stateLine, unitEnd,
+  BOARD_STAGES, STATE_LINES, archivedUnits, boardColumns, cardUnits, closedNotMerged, feedText, findByLabel, findPlanned, flattenPlan, needItems,
+  planForest, planLayout, progressPercent, reportTitle, runEnd, sharePercent, stateLine, unitEnd, withoutStatusPrefix,
 } from '../ui/model.mjs';
 import { NOW, closedSnapshot, exampleSnapshot } from './helpers/ui.mjs';
 
@@ -54,6 +54,30 @@ test('cards put a status the view does not know last', () => {
 test('a blank report title reads "Untitled report"', () => {
   assert.equal(reportTitle({ title: '  ' }), 'Untitled report');
   assert.equal(reportTitle({ title: 'Done' }), 'Done');
+});
+
+test('a report title drops a leading "Status: <status>" only when it repeats the report\'s own status', () => {
+  assert.equal(withoutStatusPrefix('Status: complete. All done', 'complete'), 'All done');
+  assert.equal(withoutStatusPrefix('status: Needs input — please look', 'needs_input'), 'please look');
+  assert.equal(withoutStatusPrefix('Status: needs-input: next', 'needs_input'), 'next');
+  assert.equal(withoutStatusPrefix('Status: completed the move', 'complete'), 'Status: completed the move');
+  assert.equal(withoutStatusPrefix('Status: blocked. X', 'complete'), 'Status: blocked. X');
+  assert.equal(withoutStatusPrefix('No prefix here', 'complete'), 'No prefix here');
+});
+
+test('a report title is plain text without the repeated status', () => {
+  assert.equal(reportTitle({ title: '**Status:** complete. All **five** done', status: 'complete' }), 'All five done');
+  assert.equal(reportTitle({ title: 'Status: complete.', status: 'complete' }), 'Untitled report');
+  assert.equal(reportTitle({ title: '  ', status: 'progress' }), 'Untitled report');
+});
+
+test('activity text is plain text without the engine\'s repetitions', () => {
+  assert.equal(feedText({ kind: 'subagent-done', text: 'orchestrator-worker orchestrator-worker finished' }), 'orchestrator-worker finished');
+  assert.equal(feedText({ kind: 'subagent-done', text: 'explore map-module finished' }), 'explore map-module finished');
+  assert.equal(feedText({ kind: 'subagent-done', text: 'task task failed' }), 'task failed');
+  assert.equal(feedText({ kind: 'report', text: 'reported needs input: Status: needs_input. PR 2 is **done**' }), 'reported needs input: PR 2 is done');
+  assert.equal(feedText({ kind: 'report', text: 'reported complete: Status: complete.' }), 'reported complete');
+  assert.equal(feedText({ kind: 'question', text: 'asked: keep the **v1** format?' }), 'asked: keep the v1 format?');
 });
 
 test('state lines follow statusDetail and fall back to status', () => {

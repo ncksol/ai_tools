@@ -81,3 +81,8 @@ test('feed lists escape text, cap their length and mark new items', () => {
   assert.match(feedList([{ ...snapshot.feed[0], text: '<img onerror=x>' }], 1, NOW), /&lt;img onerror=x&gt;/);
   assert.equal(feedList([], 6, NOW, new Set(), 'No recent activity'), '<p class="none">No recent activity</p>');
 });
+
+test('a finished sub-agent whose name equals its type is named once in the feed', () => {
+  const item = { id: 'x:subagent-done:call-1', at: NOW - 60000, unitId: 'x', label: 'SB', kind: 'subagent-done', text: 'explore explore finished' };
+  assert.match(feedList([item], 1, NOW), /<span class="fi-u">SB<\/span> explore finished<\/span>/);
+});

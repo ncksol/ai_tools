@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { CREDIT_USD as ENGINE_CREDIT_USD } from '../engine/schema.mjs';
 import {
   CREDIT_USD, DAY, HOUR, MIN, ago, costHtml, costText, countdown, credits, dateRange, dateTime, dur, elapsed, esc, liveTime,
-  plural, tickText, usd, usdRounded,
+  plainText, plural, tickText, usd, usdRounded,
 } from '../ui/format.mjs';
 
 const span = (days, hours, minutes, seconds = 0) => ((days * 24 + hours) * 60 + minutes) * MIN + seconds * 1000;
@@ -60,4 +60,21 @@ test('dates use local time in the mockup format', () => {
   assert.equal(plural(1, 'run'), '1 run');
   assert.equal(plural(16, 'child', 'children'), '16 children');
   assert.equal(plural(1240, 'sub-agent'), '1,240 sub-agents');
+});
+
+const PLAIN = [
+  ['**sha** abc123', 'sha abc123'], ['__bold__ text', 'bold text'], ['an *italic* word', 'an italic word'], ['an _italic_ word', 'an italic word'],
+  ['**Status:** done.', 'Status: done.'], ['***both***', 'both'], ['Use `npm test` now', 'Use npm test now'], ['see [the PR](https://github.com/o/r/pull/1) now', 'see the PR now'],
+  ['## Summary', 'Summary'], ['> quoted', 'quoted'], ['> > nested', 'nested'], ['- item', 'item'], ['* item', 'item'], ['+ item', 'item'], ['  - nested item', 'nested item'], ['1. step one', '1. step one'],
+  ['(**bold**)', '(bold)'], ['"*quoted*"', '"quoted"'], ['**done**, then', 'done, then'],
+  ['snake_case_name', 'snake_case_name'], ['my_var and other_var', 'my_var and other_var'], ['pkg/__init__.py', 'pkg/__init__.py'], ['__init__.py', '__init__.py'], ['edit __init__.py now', 'edit __init__.py now'],
+  ['src/**/*.mjs', 'src/**/*.mjs'], ['**/*.ts', '**/*.ts'], ['*.test.mjs', '*.test.mjs'], ['match *.js and *.mjs files', 'match *.js and *.mjs files'],
+  ['2 * 3 * 4', '2 * 3 * 4'], ['2*3*4', '2*3*4'], ['a * b', 'a * b'], ['5* rating', '5* rating'], ['Use the * key', 'Use the * key'], ['*args, **kwargs', '*args, **kwargs'],
+  ['run `**/*.ts` here', 'run **/*.ts here'], ['`a_b_c`', 'a_b_c'], ['C:\\Users\\x_y_z', 'C:\\Users\\x_y_z'], ['x = y * (z + 1)', 'x = y * (z + 1)'],
+  ['line one\n- **two**\n```\n**kept** in code\n```\nthree', 'line one\ntwo\n**kept** in code\nthree'],
+];
+
+test('report text loses its Markdown markers and keeps its words', () => {
+  for (const [input, expected] of PLAIN) assert.equal(plainText(input), expected, input);
+  assert.equal(plainText(null), '');
 });

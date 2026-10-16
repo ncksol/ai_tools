@@ -105,3 +105,12 @@ test('the axis labels "now" and spaced ticks; the cost line runs up to the swarm
   assert.match(cost, /<circle cx="592" cy="4\.0" r="3"/);
   assert.match(costSvg({ ...snapshot.cost, series: [] }, 600, NOW - HOUR, NOW, NOW), /d="M4\.0 36\.0L592\.0 36\.0"/);
 });
+
+test('report marks and the summary column show the report title as plain text, without a repeated status', () => {
+  assert.match(markSvg({ kind: 'report', status: 'complete', text: 'Status: complete. **Done**' }, 10, 10), /<title>Done<\/title>/);
+  const snapshot = exampleSnapshot();
+  Object.assign(findByLabel(snapshot, 'B1').report, { title: 'Status: complete. **Done**', status: 'complete' });
+  const b1 = row(timelineHtml(context(snapshot), '12h'), 'ws-0003-b1');
+  assert.match(b1, /<div class="c-rep rp-complete"><span class="dot"><\/span>Done<\/div>/);
+  assert.doesNotMatch(b1, /\*\*|Status:/);
+});

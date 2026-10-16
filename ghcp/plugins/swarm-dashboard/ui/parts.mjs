@@ -1,5 +1,5 @@
 import { ago, countdown, elapsed, esc } from './format.mjs';
-import { REPORT_CLASS, REPORT_LABELS, STAGE_NAMES, UNIT_STAGES, stateLine } from './model.mjs';
+import { REPORT_CLASS, REPORT_LABELS, STAGE_NAMES, UNIT_STAGES, feedText, stateLine } from './model.mjs';
 
 const RING = 2 * Math.PI * 17;
 
@@ -79,6 +79,6 @@ export function chipsHtml(session, now, freshChips = new Set()) {
 /** Activity list, latest first. */
 export function feedList(items, limit, now, freshFeed = new Set(), empty = 'No activity yet') {
   if (!items.length) return `<p class="none">${esc(empty)}</p>`;
-  const rows = items.slice(0, limit).map(item => `<li class="fi${freshFeed.has(item.id) ? ' is-new' : ''}" data-key="${esc(item.id)}"><span class="fi-t">${ago(item.at, now)}</span><span><span class="fi-u">${esc(item.label)}</span> ${esc(item.text)}</span></li>`);
+  const rows = items.slice(0, limit).map(item => `<li class="fi${freshFeed.has(item.id) ? ' is-new' : ''}" data-key="${esc(item.id)}"><span class="fi-t">${ago(item.at, now)}</span><span><span class="fi-u">${esc(item.label)}</span> ${esc(feedText(item))}</span></li>`);
   return `<ol class="feed2">${rows.join('')}</ol>`;
 }

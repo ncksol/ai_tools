@@ -1,5 +1,5 @@
-import { HOUR, MIN, ago, costHtml, costText, dur, elapsed, esc } from './format.mjs';
-import { REPORT_CLASS, TIMELINE_WORDS, reportTitle, runEnd, unitEnd } from './model.mjs';
+import { HOUR, MIN, ago, costHtml, costText, dur, elapsed, esc, plainText } from './format.mjs';
+import { REPORT_CLASS, TIMELINE_WORDS, reportTitle, runEnd, unitEnd, withoutStatusPrefix } from './model.mjs';
 import { fill, phase } from './parts.mjs';
 
 export const SPANS = Object.freeze({ '3h': 3 * HOUR, '12h': 12 * HOUR, run: null });
@@ -18,7 +18,9 @@ export function timelineWindow(snapshot, span, now) {
 
 /** One timeline marker centred on (x, y), with the mockup's shapes. */
 export function markSvg(mark, x, y) {
-  const title = `<title>${esc(mark.text)}</title>`;
+  const text = plainText(mark.text);
+  const shown = (mark.status ? withoutStatusPrefix(text, mark.status) : text).trim() || text;
+  const title = `<title>${esc(shown)}</title>`;
   const at = (dx, dy) => `${r1(x + dx)} ${r1(y + dy)}`;
   switch (mark.kind) {
     case 'report': return `<circle cx="${r1(x)}" cy="${r1(y)}" r="4" fill="var(${REPORT_INK[mark.status] ?? '--merged-ink'})" stroke="var(--surface)" stroke-width="1.5">${title}</circle>`;
