@@ -17,6 +17,17 @@ test('the history list shows each finished run with time and cost first', () => 
   assert.match(text(historyHtml([])), /No finished runs yet A run moves here once nothing has happened in it for 2 hours\./);
 });
 
+test('a failed History load says so instead of showing no runs, and earlier rows stay as they were', () => {
+  const failed = historyHtml(null, true);
+  assert.equal(failed, '<p class="none">Finished runs couldn\'t be loaded.</p>');
+  assert.ok(!text(failed).includes('No finished runs yet'));
+  assert.equal(historyHtml(null), '<p class="none">Loading finished runs…</p>');
+  assert.match(text(historyHtml([])), /^No finished runs yet /);
+  const runs = fixture('example-history.json');
+  assert.equal(historyHtml(runs, true), historyHtml(runs));
+  assert.ok(!historyHtml(runs, true).includes('couldn\'t be loaded'));
+});
+
 test('the run summary answers how long it took and what it cost', () => {
   const summary = fixture('example-run-summary.json');
   const html = runHtml(summary);

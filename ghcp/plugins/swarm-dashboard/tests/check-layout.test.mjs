@@ -20,7 +20,10 @@ test('every view is checked at the nine widths in the browser layout and three i
   const example = buildStates({ scenarios: ['example'], widths: WIDTHS, canvasWidths: CANVAS_WIDTHS });
   assert.equal(example.length, 120);
   const stress = buildStates({ scenarios: ['stress'], widths: WIDTHS, canvasWidths: CANVAS_WIDTHS });
-  assert.equal(stress.length, 96, 'history views are checked with the example only');
+  assert.equal(stress.length, 108, 'the stress scenario has no finished run, so only its History list is checked, with History failing');
+  assert.deepEqual(stress.filter(state => state.view === 'history').length, 12);
+  assert.equal(stress.some(state => state.view === 'run'), false);
+  assert.deepEqual(stress.find(state => state.view === 'history' && state.host === 'canvas' && state.width === 480).params, { host: 'canvas', page: 'history' });
   const detail = example.find(state => state.view === 'detail' && state.host === 'canvas' && state.width === 560);
   assert.deepEqual(detail.params, { host: 'canvas', detail: 'ws-0005-i1' });
   const subagent = example.find(state => state.view === 'detail-subagent' && state.host === 'canvas' && state.width === 560);

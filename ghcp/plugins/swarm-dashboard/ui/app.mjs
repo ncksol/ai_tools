@@ -130,7 +130,7 @@ export function coalesced(load) {
 /** The whole dashboard for one PageView (see the Task 7 interface). */
 export function renderApp(view) {
   const top = topHtml(view);
-  if (view.page === 'history') return top + historyHtml(view.runs);
+  if (view.page === 'history') return top + historyHtml(view.runs, view.historyError);
   if (view.page === 'run') return top + runHtml(view.run);
   return top + liveHtml(view);
 }

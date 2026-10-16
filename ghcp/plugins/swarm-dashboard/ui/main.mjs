@@ -58,6 +58,8 @@ const view = {
   snapshot: null,
   swarms: [],
   runs: null,
+  /** The latest History load failed; runs keeps the last list that loaded, or null if none has. */
+  historyError: false,
   run: null,
   connection: 'connecting',
   demo: false,
@@ -245,7 +247,7 @@ function focusSelector(el) {
 }
 
 function isReady() {
-  if (view.page === 'history') return view.runs !== null;
+  if (view.page === 'history') return view.runs !== null || view.historyError;
   if (view.page === 'run') return view.run !== null;
   return view.loaded;
 }
@@ -374,21 +376,53 @@ function fitChips(box) {
   } while (box.scrollHeight > box.clientHeight + 1 && hidden < chips.length);
 }
 
-/** Load finished runs. Only the first load shows the loading state; later loads replace the list in place. */
+/** After a failed History load, try again after HISTORY_RETRY_MS, at most HISTORY_RETRIES times per success or trigger. */
+const HISTORY_RETRY_MS = 3000;
+const HISTORY_RETRIES = 3;
+let historyRetries = 0;
+let historyRetryTimer = null;
+
+/**
+ * Load finished runs. Only the first load shows the loading state; later loads replace the list in place. A failed load
+ * keeps the last list (or none), marks History as failed and retries a bounded number of times.
+ */
 const loadHistory = coalesced(async () => {
+  let runs = null;
+  let loaded = false;
   try {
     const response = await fetch('/api/history');
-    if (response.ok) view.runs = await response.json();
-    else if (view.runs === null) view.runs = [];
+    if (response.ok) {
+      runs = await response.json();
+      loaded = true;
+    }
   } catch {
-    if (view.runs === null) view.runs = [];
+    // A network or JSON error is a failed load, as is a non-OK answer.
+  }
+  if (loaded) {
+    clearTimeout(historyRetryTimer);
+    view.runs = runs;
+    view.historyError = false;
+    historyRetries = 0;
+  } else {
+    view.historyError = true;
+    retryHistory();
   }
   scheduleRender();
 });
 
-/** Ask for History. Once asked, later triggers reload it, queued behind a first load still in flight. */
+/** Schedule one more History load after a failure, unless this success or trigger has used up its retries. */
+function retryHistory() {
+  clearTimeout(historyRetryTimer);
+  historyRetryTimer = null;
+  if (historyRetries >= HISTORY_RETRIES) return;
+  historyRetries += 1;
+  historyRetryTimer = setTimeout(loadHistory, HISTORY_RETRY_MS);
+}
+
+/** Ask for History. Once asked, later triggers reload it, queued behind a first load still in flight, with fresh retries. */
 function reloadHistory() {
   historyAsked = true;
+  historyRetries = 0;
   loadHistory();
 }
 
@@ -481,6 +515,7 @@ setInterval(() => {
 window.addEventListener('pagehide', () => {
   clearTimeout(reconnectTimer);
   clearTimeout(cardTimer);
+  clearTimeout(historyRetryTimer);
   source?.close();
 });
 window.addEventListener('pageshow', event => {

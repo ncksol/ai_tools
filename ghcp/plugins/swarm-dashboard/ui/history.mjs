@@ -15,8 +15,8 @@ function barRows(rows) {
   return rows.map(row => `<div class="hb-row"><span class="hb-l">${esc(row.label)}</span><span class="hb-v">${row.text}</span><span class="bar"><i style="width:${pct(row.value, max)}%"></i></span></div>`).join('');
 }
 
-export function historyHtml(runs) {
-  if (runs === null) return '<p class="none">Loading finished runs…</p>';
+export function historyHtml(runs, failed = false) {
+  if (runs === null) return failed ? '<p class="none">Finished runs couldn\'t be loaded.</p>' : '<p class="none">Loading finished runs…</p>';
   if (!runs.length) return '<div class="empty"><h3>No finished runs yet</h3><p class="small muted">A run moves here once nothing has happened in it for 2 hours.</p></div>';
   const rows = runs.map(run => `<div class="h-row" data-run="${esc(run.id)}" tabindex="0" role="button" aria-label="Open the ${esc(run.name)} summary">`
     + `<span class="h-run"><span class="h-name">${esc(run.name)}</span><span class="small muted">${esc(run.project?.name ?? 'no project')}</span></span>`

@@ -11,12 +11,18 @@ import { findPlaywright, launchWebKit, openWebKitPage } from './lib/webkit.mjs';
 
 export const WIDTHS = [480, 560, 640, 800, 1024, 1280, 1440, 1600, 1920];
 export const CANVAS_WIDTHS = [480, 560, 640];
-/** What each scenario shows in the detail, sub-agent detail and run views; the stress scenario has no history. */
+/**
+ * What each scenario shows in the detail, sub-agent detail and run views. The stress scenario has no finished run; the
+ * check serves it with History failing (historyError), so its History list audits the line that says so.
+ */
 const SCENARIOS = {
   example: { detail: 'ws-0005-i1', subagent: 'call-root-24', run: 'ws-1000-root' },
-  stress: { detail: 'ws-9001-stress', subagent: 'call-9101-sub', run: null },
+  stress: { detail: 'ws-9001-stress', subagent: 'call-9101-sub', run: null, historyError: true },
 };
-/** Every dashboard view as URL parameters. Activity exists only in narrow mode; history views need a finished run. */
+/**
+ * Every dashboard view as URL parameters. Activity exists only in narrow mode; history views need a finished run,
+ * except the History list of a scenario served with History failing.
+ */
 export const VIEWS = [
   { name: 'cards', params: {} },
   { name: 'detail', params: { detail: 'DETAIL' } },
@@ -85,7 +91,10 @@ export function parseArguments(argv) {
   return options;
 }
 
-/** targets: per scenario, the swarm to pin (optional), the units for the detail views and the finished run, or null. */
+/**
+ * targets: per scenario, the swarm to pin (optional), the units for the detail views and the finished run, or null,
+ * and historyError when the scenario is served with History failing, which checks its History list without a run.
+ */
 export function buildStates({ scenarios, widths, canvasWidths, targets = SCENARIOS }) {
   const states = [];
   for (const scenario of scenarios) {
@@ -93,7 +102,8 @@ export function buildStates({ scenarios, widths, canvasWidths, targets = SCENARI
     for (const [host, list] of [['browser', widths], ['canvas', canvasWidths]]) {
       for (const width of list) {
         for (const view of VIEWS) {
-          if ((view.history && !target.run) || (view.name === 'detail' && !target.detail) || (view.name === 'detail-subagent' && !target.subagent)) continue;
+          const history = view.name === 'history' ? target.run || target.historyError : target.run;
+          if ((view.history && !history) || (view.name === 'detail' && !target.detail) || (view.name === 'detail-subagent' && !target.subagent)) continue;
           const params = { host, ...(target.swarm ? { swarm: target.swarm } : {}), ...view.params };
           if (params.detail === 'DETAIL') params.detail = target.detail;
           if (params.detail === 'SUBAGENT') params.detail = target.subagent;
@@ -696,6 +706,61 @@ async function watchNothingLive(page, servers) {
   }
 }
 
+/** The demo with listHistory rejecting for its first `failures` calls, then answering; the server answers 500 for each rejection. */
+function failingHistory(demo, failures = Infinity) {
+  let calls = 0;
+  return {
+    ...demo,
+    listHistory: (...args) => {
+      calls += 1;
+      return calls <= failures ? Promise.reject(new Error('History is unavailable in the layout check')) : demo.listHistory(...args);
+    },
+  };
+}
+
+/** The line History shows when it could not be loaded. */
+const HISTORY_ERROR = 'Finished runs couldn\'t be loaded.';
+/** The browser's own console line for the History request that failed on purpose. */
+const HISTORY_500 = /^Failed to load resource: the server responded with a status of 500\b/;
+/** What History shows: its text and how many run rows it lists. */
+const HISTORY_STATE = `({
+  text: document.getElementById('dash').textContent,
+  rows: document.querySelectorAll('.h-row[data-run]').length,
+})`;
+
+/**
+ * Open History on the example demo while its first 2 History requests fail. The page must say that History could not
+ * be loaded, not that there are no finished runs, and then show the rows by itself once History answers.
+ */
+async function watchHistoryUnavailable(page, servers) {
+  const issues = [];
+  const phase = phaseServers(servers, issues);
+  try {
+    const engine = failingHistory(createDemoEngine({ scenario: 'example', simulate: false }), 2);
+    const server = await phase.serve('layout-check-a', () => engine);
+    const url = `${server.url}?host=browser&page=history`;
+    await page.goto(url, 1280);
+    try {
+      await page.waitFor(`location.href === ${JSON.stringify(url)} && document.documentElement.dataset.ready === '1'`);
+    } catch {
+      issues.push('History was not ready within 8 s');
+      return { issues };
+    }
+    const failed = await page.evaluate(HISTORY_STATE);
+    if (failed.text.includes('No finished runs yet')) issues.push('a failed History load showed "No finished runs yet"');
+    if (!failed.text.includes(HISTORY_ERROR)) issues.push(`a failed History load did not say "${HISTORY_ERROR}"`);
+    if (!await waitForRows(page, 1, 15000)) {
+      issues.push('the rows did not appear by themselves within 15 s once History answered');
+      return { issues };
+    }
+    const recovered = await page.evaluate(HISTORY_STATE);
+    if (recovered.text.includes(HISTORY_ERROR)) issues.push(`the page still said "${HISTORY_ERROR}" after the rows appeared`);
+    return { issues };
+  } finally {
+    await phase.close();
+  }
+}
+
 async function selfTest(page) {
   const problems = [];
   for (const [name, broken] of [['layout-bad.html', true], ['layout-good.html', false]]) {
@@ -774,7 +839,11 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
       stdout.write(`Live dashboard: ${live.summary}\n`);
     }
     for (const scenario of options.scenarios.filter(name => SCENARIOS[name])) {
-      const server = createDashboardServer({ createEngine: () => createDemoEngine({ scenario, simulate: false }), port: 0, version: 'layout-check', hub: { engineIdleMs: 600000 } });
+      // A scenario with historyError is served with History failing, so its History list shows the line that says so.
+      const createEngine = SCENARIOS[scenario].historyError
+        ? () => failingHistory(createDemoEngine({ scenario, simulate: false }))
+        : () => createDemoEngine({ scenario, simulate: false });
+      const server = createDashboardServer({ createEngine, port: 0, version: 'layout-check', hub: { engineIdleMs: 600000 } });
       await server.listen();
       servers.push(server);
       urls[scenario] = server.url;
@@ -803,7 +872,10 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
       const result = await page.evaluate(auditScript(AUDIT_DEFAULTS));
       views += 1;
       checks += result.checks + 1;
-      const issues = [...result.issues, ...page.errors.map(message => ({ rule: 'console', target: 'page', detail: message }))];
+      // On a History list served with History failing, the browser logs each 500 it was sent on purpose; only that is expected.
+      const failing = state.view === 'history' && targets[state.scenario]?.historyError;
+      const errors = failing ? page.errors.filter(message => !HISTORY_500.test(message)) : page.errors;
+      const issues = [...result.issues, ...errors.map(message => ({ rule: 'console', target: 'page', detail: message }))];
       if (issues.length) failures.push({ state, issues });
       if (options.screenshots) writeFileSync(path.join(options.screenshots, `${state.scenario}-${state.host}-${state.width}-${state.view}.png`), await page.screenshot());
     }
@@ -857,7 +929,13 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
       if (!nothingIssues.length) stdout.write('Nothing live (example): a reconnect and a self-reload both kept "No live swarm" instead of the finished run\'s dashboard.\n');
       for (const issue of nothingIssues) stderr.write(`nothing-live: ${issue}\n`);
     }
-    return failures.length || updateIssues.length || historyIssues.length || reloadIssues.length || reconnectIssues.length || nothingIssues.length ? 1 : 0;
+    let historyErrorIssues = [];
+    if (!options.live) {
+      historyErrorIssues = (await watchHistoryUnavailable(page, servers)).issues;
+      if (!historyErrorIssues.length) stdout.write('History unavailable (example): a failed History load said so instead of showing no runs, and the rows appeared by themselves once History answered.\n');
+      for (const issue of historyErrorIssues) stderr.write(`history-error: ${issue}\n`);
+    }
+    return failures.length || updateIssues.length || historyIssues.length || reloadIssues.length || reconnectIssues.length || nothingIssues.length || historyErrorIssues.length ? 1 : 0;
   } finally {
     process.off('SIGINT', interrupt);
     process.off('SIGTERM', interrupt);

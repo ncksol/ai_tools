@@ -169,3 +169,34 @@ test('every error reconnects through connect(), and only for the EventSource tha
   assert.ok(at('clearTimeout(reconnectTimer)') < at('setTimeout(connect, 2000)'), 'a pending timer is cleared');
   assert.ok(at('servedUi = null') > -1);
 });
+
+test('a failed History load is an error, not an empty History, and is retried a bounded number of times', () => {
+  const main = readFileSync(file('main.mjs'), 'utf8');
+  const block = (start, end = '\n}\n') => {
+    const at = main.indexOf(start);
+    assert.ok(at > -1, start);
+    return main.slice(at, main.indexOf(end, at));
+  };
+  assert.doesNotMatch(main, /view\.runs\s*=\s*\[\]/, 'a failure never reads as no finished runs');
+  assert.ok(block('const view = {', '\n};\n').includes('historyError: false,'), 'the page starts with no History error');
+  const load = block('const loadHistory = coalesced(', '\n});\n');
+  assert.ok(load.includes('view.historyError = true;'), 'a failed load is an error');
+  assert.ok(load.includes('view.historyError = false;'), 'a successful load clears the error');
+  assert.ok(load.indexOf('view.historyError = false;') < load.indexOf('view.historyError = true;'), 'success and failure are separate branches');
+  assert.ok(load.includes('historyRetries = 0;'), 'a successful load resets the retry budget');
+  assert.ok(load.includes('retryHistory()'), 'a failed load schedules a retry');
+  assert.ok(load.includes('scheduleRender()'));
+  assert.ok(main.includes('const HISTORY_RETRY_MS = 3000;'));
+  assert.ok(main.includes('const HISTORY_RETRIES = 3;'));
+  const retry = block('function retryHistory()');
+  assert.ok(retry.indexOf('clearTimeout(historyRetryTimer)') < retry.indexOf('setTimeout('), 'one timer: cleared before scheduling');
+  assert.ok(retry.includes('if (historyRetries >= HISTORY_RETRIES) return;'), 'the retries are bounded');
+  assert.ok(retry.includes('historyRetryTimer = setTimeout(loadHistory, HISTORY_RETRY_MS);'));
+  const reload = block('function reloadHistory()');
+  assert.ok(reload.includes('historyRetries = 0;'), 'each trigger gets fresh retries');
+  assert.ok(block('function isReady()').includes("if (view.page === 'history') return view.runs !== null || view.historyError;"));
+  const pagehide = block("window.addEventListener('pagehide'", '});');
+  assert.ok(pagehide.includes('clearTimeout(historyRetryTimer)'), 'leaving the page stops the retries');
+  const app = readFileSync(file('app.mjs'), 'utf8');
+  assert.ok(app.includes('historyHtml(view.runs, view.historyError)'), 'the renderer is told about the error');
+});
