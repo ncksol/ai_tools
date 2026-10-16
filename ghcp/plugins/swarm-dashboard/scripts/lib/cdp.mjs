@@ -33,15 +33,23 @@ export function findBrowser(env = process.env) {
 }
 
 /**
+ * The headless browser's arguments for a temporary profile. A mock keychain keeps the first navigation from waiting on
+ * the macOS keychain, which can hang when HOME is isolated.
+ */
+export function browserArguments(profile) {
+  return [
+    '--headless=new', '--remote-debugging-pipe', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
+    '--disable-extensions', '--hide-scrollbars', '--mute-audio', '--use-mock-keychain', 'about:blank',
+  ];
+}
+
+/**
  * Start the browser headless and speak the DevTools protocol over a pipe (file descriptors 3 and 4), so no WebSocket
  * client or npm package is needed. close() ends the browser and deletes its temporary profile.
  */
 export async function launchBrowser(executable) {
   const profile = mkdtempSync(path.join(tmpdir(), 'swarm-layout-'));
-  const child = spawn(executable, [
-    '--headless=new', '--remote-debugging-pipe', `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check',
-    '--disable-extensions', '--hide-scrollbars', '--mute-audio', 'about:blank',
-  ], { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
+  const child = spawn(executable, browserArguments(profile), { stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'] });
   const input = child.stdio[3];
   const output = child.stdio[4];
   const pending = new Map();

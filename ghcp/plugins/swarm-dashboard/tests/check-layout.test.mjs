@@ -4,7 +4,7 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CANVAS_WIDTHS, VIEWS, WIDTHS, buildStates, describeKept, describeTimes, main, parseArguments } from '../scripts/check-layout.mjs';
-import { findBrowser } from '../scripts/lib/cdp.mjs';
+import { browserArguments, findBrowser } from '../scripts/lib/cdp.mjs';
 import { findPlaywright } from '../scripts/lib/webkit.mjs';
 import { tempDir } from './helpers/temp.mjs';
 
@@ -69,6 +69,13 @@ test('update times are reported as a count, a median and a maximum', () => {
 test('the browser comes from CHROME_PATH when it is set', () => {
   assert.equal(findBrowser({ CHROME_PATH: process.execPath }), process.execPath);
   assert.equal(findBrowser({ CHROME_PATH: '/no/such/browser' }), null);
+});
+
+test('headless Chrome starts with a mock keychain, so the first navigation cannot wait on the macOS keychain', () => {
+  const args = browserArguments('/tmp/profile');
+  assert.ok(args.includes('--use-mock-keychain'));
+  assert.ok(args.includes('--headless=new'));
+  assert.ok(args.includes('--user-data-dir=/tmp/profile'));
 });
 
 test('the live-update line names the checks it measured and those it could not', () => {
