@@ -240,6 +240,7 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 .pn-1 { display: flex; align-items: center; gap: 8px; font-weight: 500; white-space: nowrap; overflow: hidden; }
 .pn-2 { font-size: 12px; line-height: 16px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pn-2 .s { color: var(--c-ink); }
+.pn-2 .pr-closed { color: var(--blocked-ink); }
 .pn .dot, .pl-row .dot { background: var(--c-ink); }
 .pl { display: flex; flex-direction: column; gap: 8px; }
 .pl-row { display: flex; flex-direction: column; padding: 12px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; }

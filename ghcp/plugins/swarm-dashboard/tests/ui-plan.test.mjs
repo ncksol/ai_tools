@@ -82,3 +82,13 @@ test('the board has one column per stage with counts, attention first', () => {
   snapshot.planned = [];
   assert.match(boardHtml(context(snapshot)), /<b>Planned<\/b>0<\/div><span class="none">None<\/span>/);
 });
+
+test('the plan says a PR closed without merging, in the graph and in the list', () => {
+  const snapshot = closedSnapshot();
+  const graph = planGraphHtml(snapshot, NOW);
+  assert.match(node(graph, 'D5'), /<div class="pn-2"><span class="pr-closed">PR closed, not merged<\/span><\/div>/);
+  assert.match(text(node(graph, 'B1')), /B1 API In review · busy/);
+  const list = planListHtml(snapshot, NOW);
+  assert.match(node(list, 'D5'), /<span class="pr-closed">PR closed, not merged<\/span> · on B0/);
+  assert.match(text(node(list, 'B1')), /B1 API In review · busy/);
+});
