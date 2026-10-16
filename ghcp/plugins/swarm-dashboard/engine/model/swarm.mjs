@@ -521,12 +521,8 @@ function buildSubagentUnits(input, rootContext, root, takenLabels, extraFeed) {
   const kept = new Set(latest.map(entry => entry.sub.id));
   const listed = entries.filter(entry => !isFinished(entry) || kept.has(entry.sub.id))
     .sort((a, b) => startOf(a.sub) - startOf(b.sub) || (a.sub.id < b.sub.id ? -1 : 1));
-  // Sub-agents that left the details (so no unit) are counted from the outcome totals; the rest from the units that are not listed.
-  const withStatus = status => subs.filter(sub => sub.status === status).length;
-  const omitted = {
-    done: Math.max(0, all.subagentOutcomes.completed - withStatus('completed')),
-    failed: Math.max(0, all.subagentOutcomes.failed + all.subagentOutcomes.cancelled - withStatus('failed') - withStatus('cancelled')),
-  };
+  // Closed units that left the details were counted when they were dropped, by their outcome then; the retained ones that are not listed are added here.
+  const omitted = { done: all.unitsEvicted.done, failed: all.unitsEvicted.failed };
   for (const entry of entries) {
     if (isFinished(entry) && !kept.has(entry.sub.id)) omitted[entry.bucket] += 1;
   }

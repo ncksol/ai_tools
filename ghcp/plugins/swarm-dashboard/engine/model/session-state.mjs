@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { MAX_FINISHED_SUBAGENT_UNITS } from '../schema.mjs';
 import { clip, oneLine, ownString } from '../text.mjs';
 import { maxTime, minTime, parseTime } from '../time.mjs';
 import { recordTaskComplete, recordToolComplete, recordToolStart, recordUserMessage } from './messages.mjs';
@@ -40,6 +41,8 @@ export function createSessionState(id, { subagentUnits = false } = {}) {
     turn: null, busySince: null, lastTurnEndAt: null, busySpans: [], busyMs: 0,
     openTools: new Map(), waits: new Map(), waitSpans: [], waitingMs: 0,
     subagents: new Map(), agentToTask: new Map(),
+    // Root states only: closed units that left `subagents` (see evictSubagent), by the bucket their current outcome gives.
+    unitsEvicted: { done: 0, failed: 0 },
     // Whole-session sub-agent totals that the capped detail list never changes: launches, per type runs and finished
     // duration, and each task tool-call id's type (to attribute ledger credits by type).
     subagentCount: 0, subagentStats: new Map(), subagentIndex: new Map(), evictedRunning: new Map(),
@@ -464,11 +467,25 @@ function callKey(name, raw) {
 }
 
 /**
- * Drops the oldest finished sub-agent from the detail list, or the oldest running one when none has finished. A running
+ * The root orchestrator's sub-agents are kept by their units (a unit's last run decides, not the first one's status). A unit is
+ * open while its last run is open; a sub-agent without a unit is open while it is running. `lastFinish` is when a closed one last ended.
+ */
+const isOpen = sub => (sub.unit ? sub.unit.runs[sub.unit.runs.length - 1][1] === null : sub.status === 'running');
+const lastFinish = sub => (sub.unit ? sub.unit.runs[sub.unit.runs.length - 1][1] : sub.endedAt ?? sub.launchedAt);
+/** The bucket a closed sub-agent is counted in once it is no longer listed: its current outcome decides. */
+const closedBucket = sub => ((sub.unit?.lastOutcome ?? sub.status) === 'completed' ? 'done' : 'failed');
+
+/**
+ * Drops a sub-agent from the detail list; returns false when it dropped none.
+ * A root state (units) never drops an open unit, nor any of the MAX_FINISHED_SUBAGENT_UNITS closed ones that finished last: it drops
+ * the closed one that finished longest ago (the earliest in the map on a tie) and counts it in `unitsEvicted` by its outcome.
+ * With nothing left to drop the list may pass LIMITS.subagents, by open units only.
+ * Any other state drops the oldest finished sub-agent, or the oldest running one when none has finished. A running
  * one leaves a minimal record behind (bounded like the type index), so its runtime still reaches the per-type totals when it
  * finishes. Its details are never restored.
  */
 function evictSubagent(state) {
+  if (state.subagentUnits) return evictUnit(state);
   let victim = null;
   for (const sub of state.subagents.values()) {
     if (sub.status !== 'running') {
@@ -483,6 +500,23 @@ function evictSubagent(state) {
     state.evictedRunning.set(victim.id, { id: victim.id, launchedAt: victim.launchedAt, startedAt: victim.startedAt, bucket: victim.bucket, mode: victim.mode });
     while (state.evictedRunning.size > LIMITS.subagentIndex) state.evictedRunning.delete(state.evictedRunning.keys().next().value);
   }
+  return true;
+}
+
+function evictUnit(state) {
+  let closed = 0;
+  let victim = null;
+  for (const sub of state.subagents.values()) {
+    if (isOpen(sub)) continue;
+    closed += 1;
+    if (victim === null || lastFinish(sub) < lastFinish(victim)) victim = sub;
+  }
+  // The victim is the first of the closed ones by finish time, so it is protected only when it is among the latest MAX_FINISHED_SUBAGENT_UNITS.
+  if (victim === null || closed <= MAX_FINISHED_SUBAGENT_UNITS) return false;
+  state.subagents.delete(victim.id);
+  if (victim.agentId) state.agentToTask.delete(victim.agentId);
+  state.unitsEvicted[closedBucket(victim)] += 1;
+  return true;
 }
 
 /** The fields a task call gives a sub-agent. */
@@ -528,7 +562,7 @@ function newSubagent(state, id, at, args) {
   const sub = countSubagent(state, id, at, fields);
   if (state.subagentUnits) sub.unit = newUnit(args, at);
   state.subagents.set(id, sub);
-  while (state.subagents.size > LIMITS.subagents) evictSubagent(state);
+  while (state.subagents.size > LIMITS.subagents) if (!evictSubagent(state)) break;
   return sub;
 }
 
@@ -798,12 +832,26 @@ function touchSubagent(state, owner, at) {
 }
 
 /**
- * Keeps at most LIMITS.subagents details in a merged state, in the order eviction uses: running sub-agents first (the newest
- * when there are too many), then the most recently finished. The totals (count, per-type stats, index) are not touched.
+ * Keeps at most LIMITS.subagents details in a merged state. A root state's units: every open one, then the
+ * MAX_FINISHED_SUBAGENT_UNITS that finished last, then the most recently finished up to the limit, never dropping a protected one
+ * (so the list can pass the limit by open units). Each closed unit it drops is counted in `unitsEvicted` by its outcome.
+ * Any other state: running sub-agents first (the newest when there are too many), then the most recently finished.
+ * The totals (count, per-type stats, index) are not touched.
  */
 function capSubagents(merged) {
   if (merged.subagents.size <= LIMITS.subagents) return;
   const all = [...merged.subagents.values()];
+  if (merged.subagentUnits) {
+    const open = all.filter(isOpen);
+    // Latest finish last; the sort is stable, so a tie keeps the map order.
+    const closed = all.filter(sub => !isOpen(sub)).sort((a, b) => lastFinish(a) - lastFinish(b));
+    const kept = Math.max(MAX_FINISHED_SUBAGENT_UNITS, LIMITS.subagents - open.length);
+    const dropped = closed.slice(0, Math.max(0, closed.length - kept));
+    for (const sub of dropped) merged.unitsEvicted[closedBucket(sub)] += 1;
+    const gone = new Set(dropped);
+    merged.subagents = new Map(all.filter(sub => !gone.has(sub)).sort((a, b) => a.launchedAt - b.launchedAt).map(sub => [sub.id, sub]));
+    return;
+  }
   const running = all.filter(sub => sub.status === 'running').sort((a, b) => a.launchedAt - b.launchedAt).slice(-LIMITS.subagents);
   const room = LIMITS.subagents - running.length;
   const finished = room > 0
@@ -833,6 +881,7 @@ export function mergeStates(states) {
     for (const [id, entry] of state.descendants) merged.descendants.set(id, entry);
     for (const key of Object.keys(merged.subagentOutcomes)) merged.subagentOutcomes[key] += state.subagentOutcomes[key];
     merged.subagentUnits ||= state.subagentUnits;
+    for (const key of Object.keys(merged.unitsEvicted)) merged.unitsEvicted[key] += state.unitsEvicted[key];
     merged.subagentCount += state.subagentCount;
     for (const [type, entry] of state.subagentStats) {
       const target = statsEntry(merged.subagentStats, typeBucket(merged.subagentStats, type));

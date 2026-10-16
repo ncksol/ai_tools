@@ -812,7 +812,7 @@ test('an abort ends a sync child of an evicted sync top sub-agent with it, and k
     for (let i = 0; i < 500; i += 1) log.subagent({ name: `filler-${i}`, type: 'filler', mode: 'background' });
     log.wait(60_000);
     log.abort();
-    const state = foldRoot(log);
+    const state = fold(log);
     assert.equal(state.subagents.has(top), false, 'the top sub-agent was evicted while running');
     return { state, child, top };
   };
@@ -912,7 +912,8 @@ test('outcomes count sub-agents that were evicted from the details when they fin
     else if (i === 3) log.subagentDone(calls[i], { failed: true });
     else log.subagentDone(calls[i]);
   }
-  const state = foldRoot(log);
+  // A non-root state still evicts running sub-agents; a root state keeps its open units (see the unit retention tests).
+  const state = fold(log);
   assert.equal(state.subagents.size, 500);
   assert.deepEqual(state.subagentOutcomes, { completed: 501, failed: 1, cancelled: 3 });
 });
@@ -1003,4 +1004,117 @@ test('an abort cancels the open follow-up run of a sync sub-agent and its sync c
   assert.deepEqual(unitOf(kept, background.call).runs.at(-1), [T0 + 120_000, null]);
   assert.equal(unitOf(kept, background.call).lastOutcome, 'completed');
   assert.equal(kept.descendants.get(background.child).status, 'running');
+});
+
+// --- A root state keeps its open units and the latest finished ones when it hits the detail limit ---
+
+/** Launches a background task and returns its call id. */
+const launch = (log, name) => log.subagent({ name, type: 'explore', mode: 'background', agentId: `ag-${name}` });
+
+test('a root state evicts by finish time, never an open unit, and counts each evicted unit by its current outcome', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const finishedOrder = [];
+  const open = [];
+  let failedTotal = 0;
+  const finish = index => {
+    const [call, agentId] = open.splice(index, 1)[0];
+    const failed = finishedOrder.length % 7 === 0;
+    if (failed) failedTotal += 1;
+    log.wait(10);
+    log.subagentDone(call, { failed, agentId });
+    finishedOrder.push(call);
+  };
+  for (let i = 0; i < 530; i += 1) {
+    log.wait(10);
+    open.push([launch(log, `s-${i}`), `ag-s-${i}`]);
+    // The first task is slow: it finishes after its 100th follower, so launch order and finish order differ.
+    if (i === 100) finish(0);
+    else if (open.length > 4) finish(i < 100 ? 1 : 0);
+  }
+  while (open.length) finish(open.length - 1);
+  const state = foldRoot(log);
+  assert.equal(state.subagents.size, 500);
+  assert.deepEqual([...state.subagents.keys()].sort(), finishedOrder.slice(30).sort(), 'the 500 latest finishes stay, whatever their launch order');
+  const retainedFailed = [...state.subagents.values()].filter(sub => sub.unit.lastOutcome === 'failed').length;
+  assert.deepEqual(state.unitsEvicted, { done: 30 - (failedTotal - retainedFailed), failed: failedTotal - retainedFailed });
+  assert.equal(state.subagentCount, 530);
+});
+
+test('a root state never evicts a resumed unit, and may exceed the limit by open units only', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const first = launch(log, 'first');
+  log.wait(10); log.subagentDone(first, { agentId: 'ag-first' });
+  log.wait(10); log.toAgent('ag-first', 'again');
+  log.wait(10); log.sub(first, 'assistant.turn_start');
+  for (let i = 0; i < 520; i += 1) {
+    log.wait(10);
+    const call = launch(log, `s-${i}`);
+    log.wait(10); log.subagentDone(call, { agentId: `ag-s-${i}` });
+  }
+  let state = foldRoot(log);
+  assert.equal(state.subagents.has(first), true, 'the resumed unit is kept');
+  assert.equal(state.subagents.size, 500);
+  assert.deepEqual(unitOf(state, first).runs.at(-1)[1], null, 'the resumed unit is kept with its run open');
+  assert.deepEqual(state.unitsEvicted, { done: 21, failed: 0 });
+  const open = new EventLog(T0);
+  open.start(); open.turnStart();
+  for (let i = 0; i < 502; i += 1) {
+    open.wait(10);
+    launch(open, `o-${i}`);
+  }
+  state = foldRoot(open);
+  assert.equal(state.subagents.size, 502, 'nothing but open units is left to evict');
+  assert.deepEqual(state.unitsEvicted, { done: 0, failed: 0 });
+  assert.equal(state.evictedRunning.size, 0);
+});
+
+test('a unit whose follow-up was cancelled counts as failed when it is evicted', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const old = log.subagent({ name: 'old', type: 'explore', mode: 'sync', agentId: 'ag-old' });
+  log.wait(10); log.subagentDone(old, { agentId: 'ag-old' });
+  log.wait(10); log.toAgent('ag-old', 'again');
+  log.wait(10); log.sub(old, 'assistant.turn_start');
+  log.wait(10); log.abort();
+  for (let i = 0; i < 520; i += 1) {
+    log.wait(10);
+    const call = launch(log, `s-${i}`);
+    log.wait(10); log.subagentDone(call, { agentId: `ag-s-${i}` });
+  }
+  const state = foldRoot(log);
+  assert.equal(state.subagents.has(old), false);
+  assert.deepEqual(state.unitsEvicted, { done: 20, failed: 1 });
+  assert.deepEqual(state.subagentOutcomes, { completed: 521, failed: 0, cancelled: 0 }, 'the outcome totals keep the chip outcomes');
+});
+
+test('merged root states keep every open unit and the 20 latest finishes, and count the units they drop', () => {
+  const make = (id, start, calls, count) => {
+    const log = new EventLog(start);
+    log.calls = calls;
+    log.start(); log.turnStart();
+    const closed = [];
+    for (let i = 0; i < count; i += 1) {
+      log.wait(10);
+      const call = launch(log, `${id}-${i}`);
+      if (i < 3) continue;
+      log.wait(10);
+      log.subagentDone(call, { failed: i % 4 === 0, agentId: `ag-${id}-${i}` });
+      closed.push(call);
+    }
+    return { state: fold(log, id, ROOT), closed, open: [`call-${calls + 1}`, `call-${calls + 2}`, `call-${calls + 3}`] };
+  };
+  const a = make('cli-a', T0, 0, 300);
+  const b = make('cli-b', T0 + 1_000_000, 1000, 300);
+  const merged = mergeStates([a.state, b.state]);
+  assert.equal(merged.subagents.size, 500);
+  for (const call of [...a.open, ...b.open]) assert.ok(merged.subagents.has(call), 'open units survive');
+  for (const call of b.closed.slice(-20)) assert.ok(merged.subagents.has(call), 'the 20 latest finishes survive');
+  const dropped = a.closed.filter(call => !merged.subagents.has(call));
+  assert.equal(dropped.length, 100);
+  assert.deepEqual(dropped, a.closed.slice(0, 100), 'the oldest finishes go first');
+  const failed = dropped.filter(call => a.state.subagents.get(call).unit.lastOutcome === 'failed').length;
+  assert.deepEqual(merged.unitsEvicted, { done: 100 - failed, failed });
+  assert.ok(failed > 0 && failed < 100);
 });

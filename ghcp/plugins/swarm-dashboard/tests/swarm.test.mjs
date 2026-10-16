@@ -1052,3 +1052,82 @@ test('a running nested sub-agent in an older root CLI session counts only while 
   assert.equal(swarm(false).run.lifecycle, 'finished');
   assert.equal(swarm(true).run.lifecycle, 'live');
 });
+
+// --- Unit retention at the detail limit ---
+
+/** The bucket counts of the sub-agent units alone: the snapshot's counts without its session units. */
+function subCounts(snapshot) {
+  const counts = { ...snapshot.counts };
+  for (const unit of snapshot.units.filter(item => item.kind !== 'subagent')) counts[unit.bucket] -= 1;
+  return counts;
+}
+
+const bgTask = (root, name) => root.subagent({ name, type: 'explore', mode: 'background', agentId: `ag-${name}` });
+
+test('a resumed unit stays listed and keeps the run live after 500 other sub-agents come and go', () => {
+  const ids = {};
+  const { data } = quietSwarm(root => {
+    root.at(at(115));
+    ids.first = bgTask(root, 'first');
+    root.wait(1000); root.subagentDone(ids.first, { agentId: 'ag-first' });
+    root.wait(1000); root.toAgent('ag-first', 'again');
+    root.wait(1000); root.sub(ids.first, 'assistant.turn_start');
+    for (let i = 0; i < 500; i += 1) {
+      root.wait(1000);
+      const call = bgTask(root, `s-${i}`);
+      root.wait(1000); root.subagentDone(call, { agentId: `ag-s-${i}` });
+    }
+  }, at(115 + 17 + 125));
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  const resumed = subUnits(snapshot).find(unit => unit.id === ids.first);
+  assert.ok(resumed, 'the resumed unit is still listed');
+  assert.equal(resumed.statusDetail, 'stuck_subagent');
+  assert.equal(snapshot.run.lifecycle, 'live');
+  const counts = subCounts(snapshot);
+  assert.deepEqual([counts.working + counts.stuck, counts.done, counts.failed], [1, 500, 0]);
+  assert.deepEqual(snapshot.omittedSubagents, { done: 480, failed: 0 });
+  assert.equal(subUnits(snapshot).length, 21);
+});
+
+test('the latest finished unit stays listed when 500 are open and one more starts, and nothing is counted twice', () => {
+  const ids = {};
+  const { data } = quietSwarm(root => {
+    root.at(at(115));
+    ids.first = bgTask(root, 'first');
+    for (let i = 0; i < 499; i += 1) {
+      root.wait(10);
+      bgTask(root, `o-${i}`);
+    }
+    root.wait(10); root.subagentDone(ids.first, { agentId: 'ag-first' });
+    root.wait(10); bgTask(root, 'last');
+  }, at(118));
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  const listed = subUnits(snapshot);
+  assert.equal(listed.length, 501);
+  assert.equal(listed.find(unit => unit.id === ids.first).statusDetail, 'completed');
+  assert.deepEqual(snapshot.omittedSubagents, { done: 0, failed: 0 });
+  const counts = subCounts(snapshot);
+  assert.deepEqual([counts.working + counts.stuck, counts.done, counts.failed], [500, 1, 0]);
+});
+
+test('an evicted unit whose follow-up was cancelled is omitted as failed', () => {
+  const { data } = quietSwarm(root => {
+    root.at(at(115));
+    const old = root.subagent({ name: 'old', type: 'explore', mode: 'sync', agentId: 'ag-old' });
+    root.wait(10); root.subagentDone(old, { agentId: 'ag-old' });
+    root.wait(10); root.toAgent('ag-old', 'again');
+    root.wait(10); root.sub(old, 'assistant.turn_start');
+    root.wait(10); root.abort();
+    for (let i = 0; i < 520; i += 1) {
+      root.wait(10);
+      const call = bgTask(root, `s-${i}`);
+      root.wait(10); root.subagentDone(call, { agentId: `ag-s-${i}` });
+    }
+  }, at(120));
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  assert.deepEqual(snapshot.omittedSubagents, { done: 500, failed: 1 });
+  assert.deepEqual(subCounts(snapshot), { working: 0, stuck: 0, waiting: 0, idle: 0, done: 520, failed: 1 });
+});
