@@ -451,3 +451,39 @@ test('failed lines are all counted, and the last error is clipped to 200 charact
   assert.equal(result.lastError, 'x'.repeat(200));
   assert.equal(result.lines, 4);
 });
+
+test('an oversized line counts as failed once, whether its scanner, its handler or both threw', async () => {
+  const always = () => { throw new Error('handler threw'); };
+  // A real scanner and a handler that always throws.
+  const real = await readThrowing([bigLine(complete()), markedLine('fine')], { onLine: applyUnlessMarked, onOversized: always });
+  const first = await real.read();
+  assert.equal(first.skipped, 1);
+  assert.equal(first.failed, 1);
+  assert.equal(first.lastError, 'handler threw');
+  assert.equal(first.lines, 1);
+  // No input makes the scanner throw, so the tail is seeded as if an oversized line were already streaming, with a
+  // scanner that throws; the file holds the rest of that line and one more line.
+  for (const broken of ['write', 'finish']) {
+    const file = path.join(dir, `scanner-${counter += 1}.jsonl`);
+    const rest = 'rest of a long line';
+    writeFileSync(file, `${rest}\n${markedLine('fine')}\n`);
+    const tail = createTail(file);
+    tail.skipping = true;
+    tail.skipBytes = 10;
+    tail.scanner = {
+      write() { if (broken === 'write') throw new Error('scanner threw'); },
+      finish() { throw new Error('scanner threw'); },
+    };
+    const calls = [];
+    const delivered = [];
+    const result = await readNewLines(tail, line => delivered.push(line), {
+      maxLineBytes: LIMIT, onOversized: (event, bytes) => { calls.push([event, bytes]); throw new Error('handler threw'); },
+    });
+    assert.deepEqual(calls, [[null, 10 + rest.length + 1]], broken);
+    assert.equal(result.skipped, 1, broken);
+    assert.equal(result.failed, 1, broken);
+    assert.equal(result.lastError, 'scanner threw', broken);
+    assert.equal(delivered.length, 1, broken);
+    assert.equal(tail.offset, statSync(file).size, broken);
+  }
+});

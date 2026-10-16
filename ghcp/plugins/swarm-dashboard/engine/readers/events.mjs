@@ -37,10 +37,12 @@ export function createTail(file) {
  * end in place of onLine: event holds the line's type, timestamp and other depth-1 keys and its data's primitive keys, or
  * is null when none could be recovered.
  *
- * Every line is applied or counted before its chunk's bytes count as read: onLine and onOversized are called inside a
- * per-line try/catch, so a line that throws is counted as failed and the lines after it in the chunk are still delivered.
- * The result reports failed (a count) and lastError (the last message, at most 200 characters), both present only when
- * a line failed. A scanner that throws makes its oversized line unrecoverable: onOversized(null, bytes), counted as failed.
+ * Every line is applied or counted before its chunk's bytes count as read: tail.offset and the result's bytes move past a
+ * chunk only after its whole line loop has run (each read still starts at tail.offset). onLine and onOversized are called
+ * inside a per-line try/catch, so a line that throws is counted as failed, once, and the lines after it in the chunk are
+ * still delivered. The result reports failed (a count) and lastError (the first error of the last failed line, at most 200
+ * characters), both present only when a line failed. A scanner that throws makes its oversized line unrecoverable:
+ * onOversized(null, bytes), counted as failed.
  */
 export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onReset = null, onOversized = null, maxLineBytes = MAX_LINE_BYTES } = {}) {
   let info;
@@ -96,8 +98,6 @@ export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onRes
       const length = Math.min(buffer.length, info.size - tail.offset);
       const { bytesRead } = await handle.read(buffer, 0, length, tail.offset);
       if (bytesRead <= 0) break;
-      tail.offset += bytesRead;
-      bytes += bytesRead;
       const chunk = buffer.subarray(0, bytesRead);
       let start = 0;
       while (start < chunk.length) {
@@ -119,13 +119,12 @@ export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onRes
             skipped += 1;
             skippedBytes += tail.skipBytes + 1;
             let recovered = null;
-            if (tail.scanError) {
-              fail(tail.scanError);
-            } else {
+            let lineError = tail.scanError;
+            if (!lineError) {
               try {
                 recovered = tail.scanner.finish();
               } catch (error) {
-                fail(error);
+                lineError = error;
               }
             }
             const lineBytes = tail.skipBytes + 1;
@@ -134,9 +133,11 @@ export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onRes
               try {
                 onOversized(recovered, lineBytes);
               } catch (error) {
-                fail(error);
+                if (!lineError) lineError = error;
               }
             }
+            // A line counts as failed once, whichever of the scanner and the handler threw.
+            if (lineError) fail(lineError);
           }
         } else if (newline === -1) {
           tail.pending.push(Buffer.from(chunk.subarray(start, end)));
@@ -146,6 +147,9 @@ export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onRes
         }
         start = end + 1;
       }
+      // Only now are all of the chunk's lines applied or counted, so only now does the offset move past it.
+      tail.offset += bytesRead;
+      bytes += bytesRead;
     }
   } finally {
     await handle.close();
