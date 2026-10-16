@@ -4310,6 +4310,35 @@ Review amendments (16 October 2026), applied in a follow-up commit after this ta
 
 ---
 
+### Task 14b: Balanced tile rows
+
+The coordinator's decision of 16 October 2026, after the owner saw the preview: Mission control's rows differ by at most one tile, fuller rows first, at every count. The console's size and B1's density bands stay as they are, and label and age stay together, with long labels cut and shown in full on hover.
+
+**Files:**
+- Modify: `ui/cockpit-model.mjs` (`tileGrid` returns `rows`)
+- Modify: `ui/cockpit-panels.mjs` (`unitsHtml` gives each tile its width class)
+- Modify: `ui/cockpit.css` (a 12-column tile grid and three width rules)
+- Modify: `tests/cockpit-model.test.mjs`, `tests/cockpit-panels.test.mjs`, `tests/cockpit-styles.test.mjs`
+
+The rule, for `n` slots (the tiles shown plus the "+N more" tile, if any):
+- `n` ≤ 4: one row; every tile keeps a quarter of the width, as now.
+- Otherwise `r = ceil(n / 4)` rows (2 for 5–8, 3 for 9–12, 4 for 13–16, matching B1's bands); each row holds `floor(n / r)` tiles, and the first `n % r` rows one more. 5 → 3/2, 6 → 3/3, 7 → 4/3, 8 → 4/4, 9 → 3/3/3, 10 → 4/3/3, 11 → 4/4/3, 12 → 4/4/4, 13 → 4/3/3/3, 14 → 4/4/3/3, 15 → 4/4/4/3, 16 and more → 4/4/4/4.
+- `tileGrid(snapshot).rows` is that list (`[n]` when `n` ≤ 4, empty with no tiles).
+- The grid has 12 equal columns with the same 8 px gap. A tile in a row of 4 spans 3 columns, in a row of 3 spans 4, in a row of 2 spans 6, so every row of two or more rows fills the console's width with even gaps. A row of 4 is the same size as before. The classes are `ck-w3`, `ck-w4` and `ck-w6`; the "+N more" tile gets one too.
+
+- [ ] **Step 1: Write the failing tests**: `tileGrid(withSessions(k)).rows` for k = 1 to 16 and 28 (exact lists above); the panels test checks that the example's 9 tiles all have `ck-w4`, and that 10 tiles give four `ck-w3` and then six `ck-w4`; the styles test pins `grid-template-columns: repeat(12, minmax(0, 1fr))` and the three span rules.
+- [ ] **Step 2: Run them to make sure they fail.**
+- [ ] **Step 3: Implement** in the three files.
+- [ ] **Step 4: Check**: `npm test && npm run validate`; `node scripts/check-cockpit.mjs` in Chrome (0 issues) and with `--engine webkit` (wanted, but a WebKit-only issue does not block); look at the example's 1440 × 900 and 1920 × 1080 screenshots and the stress swarm's.
+- [ ] **Step 5: Commit**
+
+```bash
+git add ghcp/plugins/swarm-dashboard/ui/cockpit-model.mjs ghcp/plugins/swarm-dashboard/ui/cockpit-panels.mjs ghcp/plugins/swarm-dashboard/ui/cockpit.css ghcp/plugins/swarm-dashboard/tests/cockpit-model.test.mjs ghcp/plugins/swarm-dashboard/tests/cockpit-panels.test.mjs ghcp/plugins/swarm-dashboard/tests/cockpit-styles.test.mjs
+git commit -m "feat(swarm-dashboard): balance the cockpit's tile rows"
+```
+
+---
+
 ### Task 15: Documentation and the final checks
 
 **Files:**
