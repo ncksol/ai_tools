@@ -767,3 +767,36 @@ test('a background sub-agent of the root orchestrator is a unit: busy, done with
   assert.equal(unit.report.title, 'Final answer');
   assert.deepEqual(unit.recent.map(item => item.text), ['resumed explore: scout', 'completed explore: scout', 'started explore: scout']);
 });
+
+test('a sub-agent unit keeps its label across refreshes when a session\'s derived label would otherwise collide with it', async () => {
+  const home = new CopilotHome();
+  home.project({ id: 'project-1', name: 'sample-project' });
+  home.workspace({ id: 'ws-root', projectId: 'project-1', name: 'Sample story', createdAt: T0, sessionId: 'cli-root' });
+  home.workspace({ id: 'ws-kid', projectId: 'project-1', name: 'Sample q9 kid', createdAt: at(1), sessionId: 'cli-kid', parentId: 'ws-root', creatorSessionId: 'cli-root' });
+  const root = new EventLog(T0);
+  root.start(); root.at(at(1));
+  const call = root.subagent({ name: 'a1', type: 'explore', mode: 'background', agentId: 'ag-a1' });
+  home.writeEvents('cli-root', root.events);
+  const kid = new EventLog(at(1));
+  kid.start(); kid.turnStart();
+  home.writeEvents('cli-kid', kid.events);
+  home.lock('cli-root', NO_SUCH_PID + 40, T0);
+  home.lock('cli-kid', NO_SUCH_PID + 41, at(1));
+  let clock = at(3);
+  const engine = createSwarmEngine({ copilotHome: home.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => clock, processProbe: alwaysAlive, prLookup: 'off' });
+  const labels = snapshot => Object.fromEntries(snapshot.units.map(unit => [unit.id, unit.label]));
+  let snapshot = await engine.getSnapshot('ws-root');
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  assert.deepEqual([labels(snapshot)[call], labels(snapshot)['ws-kid']], ['a1', 'q9']);
+
+  home.workspace({ id: 'ws-new', projectId: 'project-1', name: 'Sample a1 new', createdAt: at(4), sessionId: 'cli-new', parentId: 'ws-root', creatorSessionId: 'cli-root' });
+  const fresh = new EventLog(at(4));
+  fresh.start(); fresh.turnStart();
+  home.writeEvents('cli-new', fresh.events);
+  home.lock('cli-new', NO_SUCH_PID + 42, at(4));
+  clock = at(5);
+  await engine.refresh();
+  snapshot = await engine.getSnapshot('ws-root');
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  assert.deepEqual([labels(snapshot)[call], labels(snapshot)['ws-kid'], labels(snapshot)['ws-new']], ['a1', 'q9', 'a1-2'], 'the task keeps its label; the new session takes the suffix');
+});

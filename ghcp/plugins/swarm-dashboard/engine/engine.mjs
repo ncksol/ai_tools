@@ -81,6 +81,8 @@ export function createSwarmEngine(options = {}) {
   const sessions = new Map();
   const liveness = new Map();
   const snapshots = new Map();
+  // Per root id: the labels its sub-agent units showed in earlier snapshots (see assignSubagentLabels). Dropped with the root's snapshot.
+  const subagentLabels = new Map();
   const revisions = new Map();
   const cheapLast = new Map();
   const knownFinished = new Map();
@@ -261,8 +263,10 @@ export function createSwarmEngine(options = {}) {
       }
     }
     let sawPending = false;
+    if (!subagentLabels.has(rootId)) subagentLabels.set(rootId, new Map());
     const snapshot = buildSnapshot({
       forest, rootId, app, states, alive, workspaceFiles, ledger, sessionDbs, now: at, thresholds, revision: 0, diagnostics: [...diag],
+      subagentLabels: subagentLabels.get(rootId),
       prInfo: (pr, { cwd }) => {
         if (!lookup) return null;
         lookup.request(pr, { cwd });
@@ -372,7 +376,9 @@ export function createSwarmEngine(options = {}) {
     const keep = new Set();
     for (const rootId of tracked) for (const node of treeNodes(forest, rootId)) for (const cliId of node.cliSessionIds) keep.add(cliId);
     for (const cliId of [...sessions.keys()]) if (!keep.has(cliId)) sessions.delete(cliId);
-    for (const rootId of [...snapshots.keys()]) if (!tracked.has(rootId) && !failed.has(rootId)) snapshots.delete(rootId);
+    const dropped = rootId => !tracked.has(rootId) && !failed.has(rootId);
+    for (const rootId of [...snapshots.keys()]) if (dropped(rootId)) snapshots.delete(rootId);
+    for (const rootId of [...subagentLabels.keys()]) if (dropped(rootId)) subagentLabels.delete(rootId);
     const current = new Set(forest.roots.map(root => root.id));
     for (const rootId of [...revisions.keys()]) if (!current.has(rootId)) revisions.delete(rootId);
     for (const rootId of [...cheapLast.keys()]) if (!current.has(rootId)) cheapLast.delete(rootId);

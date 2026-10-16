@@ -207,7 +207,7 @@ function readRegistry(input, root) {
   return { present: units.size > 0, rows: units, byNode, invalid };
 }
 
-function assignLabels(root, nodes, registry) {
+function assignLabels(root, nodes, registry, remembered = []) {
   const labels = new Map([[root.id, initials(root.name)]]);
   const derived = deriveLabels(nodes.map(node => node.name));
   const used = new Set();
@@ -218,6 +218,11 @@ function assignLabels(root, nodes, registry) {
     labels.set(node.id, label);
   };
   for (const node of nodes) if (registry.byNode.has(node.id)) give(node, registry.byNode.get(node.id).unit);
+  // The labels that retained sub-agents already show are reserved before the derived session labels are given, so a derived label
+  // that now collides takes the suffix instead. A remembered label equal to the orchestrator's or a registry label is not reserved:
+  // those labels always win, and the sub-agent gives its label up (see assignSubagentLabels).
+  const orchestrator = labels.get(root.id).toLowerCase();
+  for (const label of remembered) if (label.toLowerCase() !== orchestrator) used.add(label.toLowerCase());
   nodes.forEach((node, index) => {
     if (!registry.byNode.has(node.id)) give(node, derived[index]);
   });
@@ -400,19 +405,33 @@ const LABEL_MAX = 32;
 const safeLabel = text => String(text ?? '').replace(/[^A-Za-z0-9._-]/g, '-').replace(/^-+|-+$/g, '').slice(0, LABEL_MAX);
 
 /**
- * Labels for the root's one-off sub-agents, given in start order over every one of them (listed or not), so a label does not change
- * when the listed set does: the task's name made safe, else `<type>-<position>`; unique, ignoring case, against `taken` and each other.
+ * Labels for the root's one-off sub-agents, given in launch order over every one of them (listed or not), so a label does not change
+ * when the listed set does. `taken` holds the labels that always win: the orchestrator's, the sessions' (registry labels first)
+ * and the planned ones; labels are unique against it and each other, ignoring case.
+ * `memory` (sub-agent id -> label) is the engine's record of the labels already shown; it is read and updated here.
+ *   1. A remembered label is kept while it is still free, so a derived session label that newly equals it does not take it.
+ *   2. Any other sub-agent gets the task's name made safe, else `<type>-<number>` (`number` gives its launch number), made unique.
+ *   3. The new labels are stored, and the entries of sub-agents that are no longer retained are dropped, so the memory stays bounded.
  */
-function assignSubagentLabels(subs, taken) {
+function assignSubagentLabels(subs, taken, memory, number) {
   const used = new Set([...taken].map(label => label.toLowerCase()));
   const labels = new Map();
-  subs.forEach((sub, index) => {
-    const base = safeLabel(sub.unit.taskName) || `${safeLabel(sub.unit.labelType).slice(0, 28) || 'agent'}-${index + 1}`;
+  for (const sub of subs) {
+    const known = memory.get(sub.id);
+    if (known === undefined || used.has(known.toLowerCase())) continue;
+    used.add(known.toLowerCase());
+    labels.set(sub.id, known);
+  }
+  for (const sub of subs) {
+    if (labels.has(sub.id)) continue;
+    const base = safeLabel(sub.unit.taskName) || `${safeLabel(sub.unit.labelType).slice(0, 28) || 'agent'}-${number(sub)}`;
     let label = base;
     for (let n = 2; used.has(label.toLowerCase()); n += 1) label = `${base.slice(0, LABEL_MAX - `-${n}`.length)}-${n}`;
     used.add(label.toLowerCase());
     labels.set(sub.id, label);
-  });
+  }
+  for (const [id, label] of labels) memory.set(id, label);
+  for (const id of [...memory.keys()]) if (!labels.has(id)) memory.delete(id);
   return labels;
 }
 
@@ -497,15 +516,22 @@ function nestedWorkRuns(input, contexts) {
  * The root orchestrator's one-off sub-agents as units: every one that has not finished, plus the MAX_FINISHED_SUBAGENT_UNITS that
  * finished last, oldest start first. The others are only counted (`omitted`). Their feed items go to `extraFeed` for every one of them.
  */
-function buildSubagentUnits(input, rootContext, root, takenLabels, extraFeed) {
+function buildSubagentUnits(input, rootContext, root, takenLabels, extraFeed, memory) {
   const all = rootContext.all;
   const subs = [...all.subagents.values()].filter(sub => sub.unit).sort((a, b) => a.launchedAt - b.launchedAt);
-  const labels = assignSubagentLabels(subs, takenLabels);
+  const holder = new Map();
+  for (const state of rootContext.states) for (const id of state.subagents.keys()) holder.set(id, state.id);
+  // A fallback label's number is the unit's launch number in its CLI session plus the launches of the root's CLI sessions that started earlier.
+  const offsets = new Map();
+  let launched = 0;
+  for (const state of [...rootContext.states].sort((a, b) => (a.firstEventAt ?? Infinity) - (b.firstEventAt ?? Infinity) || (a.id < b.id ? -1 : 1))) {
+    offsets.set(state.id, launched);
+    launched += state.unitLaunches;
+  }
+  const labels = assignSubagentLabels(subs, takenLabels, memory, sub => (sub.unit.ordinal ?? 0) + (offsets.get(holder.get(sub.id)) ?? 0));
   const rollup = rollupCost(rootContext.cost.byParentToolCall, all.descendants);
   const startOf = sub => sub.startedAt ?? sub.launchedAt;
   // A sub-agent is judged by the liveness of the CLI session whose log holds it.
-  const holder = new Map();
-  for (const state of rootContext.states) for (const id of state.subagents.keys()) holder.set(id, state.id);
   const aliveFor = sub => cliAlive(input, rootContext, holder.get(sub.id));
   const entries = subs.map(sub => {
     const evaluation = evaluateSubagentUnit(sub, { alive: aliveFor(sub), now: input.now, thresholds: input.thresholds });
@@ -610,7 +636,10 @@ export function buildSnapshot(input) {
   const contexts = new Map([root, ...nodes].map(node => [node.id, nodeContext(input, node)]));
   const rootContext = contexts.get(root.id);
   const registry = readRegistry(input, root);
-  const labels = assignLabels(root, nodes, registry);
+  // The labels that the retained one-off sub-agents showed in earlier snapshots (the engine keeps them between snapshots of one run).
+  const subagentLabels = input.subagentLabels ?? new Map();
+  const remembered = [...rootContext.all.subagents.values()].filter(sub => sub.unit).map(sub => subagentLabels.get(sub.id)).filter(label => label !== undefined);
+  const labels = assignLabels(root, nodes, registry, remembered);
   const flags = { statusLines: false, questionTags: false };
   const extraFeed = [];
   const units = nodes.map(node => buildUnit(input, node, contexts, registry, labels, project, flags, extraFeed));
@@ -626,7 +655,7 @@ export function buildSnapshot(input) {
   const orchestrator = sessionView(input, rootContext, labels.get(root.id), evaluation, null, null, []);
   const needs = buildNeeds(contexts, root.id, labels, flags);
   const planned = plannedEntries(plan);
-  const subagents = buildSubagentUnits(input, rootContext, root, [...labels.values(), ...planned.map(entry => entry.label)], extraFeed);
+  const subagents = buildSubagentUnits(input, rootContext, root, [...labels.values(), ...planned.map(entry => entry.label)], extraFeed, subagentLabels);
   const everyUnit = [...units, ...subagents.units];
   const { summary: cost, lastAt: lastCostAt } = costSummary(input.ledger, [root, ...nodes].flatMap(node => node.cliSessionIds), everyUnit);
   const counts = { working: 0, stuck: 0, waiting: 0, idle: 0, done: 0, failed: 0 };

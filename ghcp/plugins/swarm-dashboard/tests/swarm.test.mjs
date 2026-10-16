@@ -397,8 +397,8 @@ const subUnits = snapshot => snapshot.units.filter(unit => unit.kind === 'subage
 const NO_MONITOR = { state: 'none', lastCheckAt: null, nextCheckAt: null, everyMinutes: null, since: null };
 
 /** The contract swarm with the orchestrator's log replaced by one that `build` fills in; it follows sub-agents in detail, as the engine's root sessions do. */
-function withSubagents(build, { alive = true, now = at(120), ledger = [] } = {}) {
-  const data = input(true);
+function withSubagents(build, { alive = true, now = at(120), ledger = [], contract = true } = {}) {
+  const data = input(contract);
   const root = new EventLog(T0);
   root.calls = 100;
   root.start();
@@ -1130,4 +1130,100 @@ test('an evicted unit whose follow-up was cancelled is omitted as failed', () =>
   assert.deepEqual(validateSnapshot(snapshot), []);
   assert.deepEqual(snapshot.omittedSubagents, { done: 500, failed: 1 });
   assert.deepEqual(subCounts(snapshot), { working: 0, stuck: 0, waiting: 0, idle: 0, done: 520, failed: 1 });
+});
+
+// --- Sub-agent unit labels and launch numbers stay stable across snapshots ---
+
+const labelsById = snapshot => Object.fromEntries(snapshot.units.map(unit => [unit.id, unit.label]));
+const allLabels = snapshot => [snapshot.orchestrator.label, ...snapshot.units.map(unit => unit.label), ...snapshot.planned.map(entry => entry.label)].map(label => label.toLowerCase());
+
+test('a task keeps its label when a session\'s derived label later becomes the same, and the session takes the suffix', () => {
+  const { data, ids } = withSubagents(root => {
+    root.at(at(100));
+    return { call: root.subagent({ name: 'a1', type: 'explore', mode: 'background', agentId: 'ag-a1' }) };
+  }, { contract: false });
+  const rename = name => {
+    data.app.workspaces.get('ws-api').name = name;
+    data.forest = buildForest(data.app);
+  };
+  data.subagentLabels = new Map();
+  rename('Sample q9 api');
+  const before = buildSnapshot(data);
+  assert.deepEqual([labelsById(before)[ids.call], labelsById(before)['ws-api']], ['a1', 'q9']);
+  rename('Sample a1 api');
+  const after = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(after), []);
+  assert.deepEqual([labelsById(after)[ids.call], labelsById(after)['ws-api']], ['a1', 'a1-2'], 'the task keeps a1; the session yields');
+  assert.equal(new Set(allLabels(after)).size, allLabels(after).length);
+  assert.equal(data.subagentLabels.get(ids.call), 'a1');
+  const fresh = buildSnapshot({ ...data, subagentLabels: new Map() });
+  assert.deepEqual([labelsById(fresh)[ids.call], labelsById(fresh)['ws-api']], ['a1-2', 'a1'], 'with no memory the labels are worked out afresh, as before');
+});
+
+/** Unnamed background tasks that start and finish one after another: their labels are `explore-<launch number>`. */
+const unnamedTasks = count => root => {
+  root.at(at(115));
+  const calls = [];
+  for (let i = 0; i < count; i += 1) {
+    root.wait(10);
+    const call = root.tool('task', { agent_type: 'explore', mode: 'background', description: `work ${i}` });
+    root.wait(10);
+    root.subagentDone(call, { durationMs: 1000 });
+    calls.push(call);
+  }
+  return calls;
+};
+
+test('an unnamed task keeps its launch number when older sub-agents leave the details, with or without memory', () => {
+  const small = withSubagents(unnamedTasks(500), { now: at(120) });
+  const large = withSubagents(unnamedTasks(505), { now: at(120) });
+  const memory = new Map();
+  const first = buildSnapshot({ ...small.data, subagentLabels: memory });
+  const target = large.ids[499];
+  assert.equal(target, small.ids[499]);
+  assert.equal(labelsById(first)[target], 'explore-500');
+  assert.equal(memory.size, 500);
+  const remembered = buildSnapshot({ ...large.data, subagentLabels: memory });
+  assert.deepEqual(validateSnapshot(remembered), []);
+  assert.equal(labelsById(remembered)[target], 'explore-500');
+  assert.equal(memory.size, 500, 'the memory forgets the sub-agents that left the details');
+  assert.equal(memory.has(small.ids[0]), false);
+  assert.equal(labelsById(buildSnapshot(large.data))[target], 'explore-500', 'without memory it is the same');
+});
+
+test('a planned label or a registry label that newly equals a remembered sub-agent label takes it', () => {
+  const { data, ids } = withSubagents(root => {
+    root.at(at(100));
+    return { exportCall: root.subagent({ name: 'export', type: 'explore', mode: 'background', agentId: 'ag-export' }), apiCall: root.subagent({ name: 'api', type: 'explore', mode: 'background', agentId: 'ag-api' }) };
+  });
+  const db = data.sessionDbs.get('cli-root');
+  const { todos, deps, children } = db;
+  data.sessionDbs.set('cli-root', { todos: todos.filter(todo => todo.id !== 'export'), deps: deps.filter(dep => dep.todoId !== 'export'), children: null });
+  data.subagentLabels = new Map();
+  const before = buildSnapshot(data);
+  assert.deepEqual([labelsById(before)[ids.exportCall], labelsById(before)[ids.apiCall]], ['export', 'api']);
+  data.sessionDbs.set('cli-root', { todos, deps, children });
+  const after = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(after), []);
+  assert.deepEqual(after.planned.map(entry => entry.label), ['export']);
+  assert.equal(labelsById(after)['ws-api'], 'api', 'the registry label is unchanged');
+  assert.deepEqual([labelsById(after)[ids.exportCall], labelsById(after)[ids.apiCall]], ['export-2', 'api-2']);
+  assert.equal(new Set(allLabels(after)).size, allLabels(after).length);
+});
+
+test('the launch numbers of older root CLI sessions come before those of the current one', () => {
+  const { data } = quietSwarm(root => {
+    root.at(at(100));
+    root.tool('task', { agent_type: 'explore', mode: 'background' });
+  }, at(120));
+  data.app.aliases.push({ sessionId: 'cli-root-old', workspaceId: 'ws-root', createdAt: T0 - MINUTE });
+  data.forest = buildForest(data.app);
+  const old = new EventLog(T0 - MINUTE);
+  old.calls = 200;
+  old.start();
+  old.at(at(60)); old.tool('task', { agent_type: 'explore', mode: 'background' });
+  old.at(at(61)); old.tool('task', { agent_type: 'explore', mode: 'background' });
+  data.states.set('cli-root-old', fold(old, 'cli-root-old', ROOT_STATE));
+  data.alive.set('cli-root-old', true);
+  assert.deepEqual(subUnits(buildSnapshot(data)).map(unit => unit.label), ['explore-1', 'explore-2', 'explore-3']);
 });

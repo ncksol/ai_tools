@@ -43,6 +43,9 @@ export function createSessionState(id, { subagentUnits = false } = {}) {
     subagents: new Map(), agentToTask: new Map(),
     // Root states only: closed units that left `subagents` (see evictSubagent), by the bucket their current outcome gives.
     unitsEvicted: { done: 0, failed: 0 },
+    // Root states only: top-level sub-agent launches so far. Each unit stores the count at its launch (`unit.ordinal`), so the number
+    // in a fallback label never changes when older units leave the details.
+    unitLaunches: 0,
     // Whole-session sub-agent totals that the capped detail list never changes: launches, per type runs and finished
     // duration, and each task tool-call id's type (to attribute ledger credits by type).
     subagentCount: 0, subagentStats: new Map(), subagentIndex: new Map(), evictedRunning: new Map(),
@@ -560,7 +563,11 @@ function newSubagent(state, id, at, args) {
     return known;
   }
   const sub = countSubagent(state, id, at, fields);
-  if (state.subagentUnits) sub.unit = newUnit(args, at);
+  if (state.subagentUnits) {
+    state.unitLaunches += 1;
+    sub.unit = newUnit(args, at);
+    sub.unit.ordinal = state.unitLaunches;
+  }
   state.subagents.set(id, sub);
   while (state.subagents.size > LIMITS.subagents) if (!evictSubagent(state)) break;
   return sub;

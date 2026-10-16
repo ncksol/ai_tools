@@ -387,6 +387,31 @@ const foldRoot = (log, id = 'cli-1') => fold(log, id, ROOT);
 const unitOf = (state, id) => state.subagents.get(id).unit;
 const subagentItems = state => state.feed.filter(item => item.kind.startsWith('subagent'));
 
+// --- Launch numbers: every top-level sub-agent of a root state gets the next number, and retention never changes it ---
+
+test('a root state numbers its sub-agent launches once each, and an eviction does not renumber them', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const first = log.tool('task', { agent_type: 'explore', mode: 'background' });
+  log.wait(10); log.push('tool.execution_start', { toolCallId: first, toolName: 'task', arguments: { agent_type: 'explore', mode: 'background' } });
+  const second = log.subagent({ name: 'two', type: 'explore', mode: 'background', agentId: 'ag-two' });
+  log.nested(second, { name: 'kid', type: 'explore', mode: 'background' });
+  let state = foldRoot(log);
+  assert.equal(state.unitLaunches, 2, 'a repeated start and a nested sub-agent are not launches');
+  assert.deepEqual([unitOf(state, first).ordinal, unitOf(state, second).ordinal], [1, 2]);
+  assert.equal(fold(log).unitLaunches, 0, 'a non-root state keeps no units');
+  log.wait(10); log.subagentDone(first);
+  for (let i = 0; i < 510; i += 1) {
+    log.wait(10);
+    const call = log.subagent({ name: `f-${i}`, type: 'explore', mode: 'background', agentId: `ag-f-${i}` });
+    log.wait(10); log.subagentDone(call, { agentId: `ag-f-${i}` });
+  }
+  state = foldRoot(log);
+  assert.equal(state.unitLaunches, 512);
+  assert.equal(state.subagents.has(first), false, 'the first one was evicted');
+  assert.deepEqual([...state.subagents.values()].slice(-2).map(sub => sub.unit.ordinal), [511, 512]);
+});
+
 test('the new sub-agent limits are fixed', () => {
   assert.deepEqual(
     { runs: LIMITS.subagentRuns, feed: LIMITS.subagentFeed, openTools: LIMITS.subagentOpenTools, children: LIMITS.subagentChildren },
