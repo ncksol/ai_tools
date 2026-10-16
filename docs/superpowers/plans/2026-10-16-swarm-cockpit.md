@@ -4300,6 +4300,12 @@ git add ghcp/plugins/swarm-dashboard/scripts/cockpit-gpu.mjs ghcp/plugins/swarm-
 git commit -m "feat(swarm-dashboard): measure the cockpit's GPU time per frame"
 ```
 
+Review amendments (16 October 2026), applied in a follow-up commit after this task's review:
+- `main` handles SIGINT and SIGTERM as `check-layout.mjs` does (exit 130 through `process.exit`, so the browser's exit cleanup runs), and removes the handlers in `finally`. Stopping a run leaves no headless Chrome or profile behind.
+- Every time in the output line has one decimal (`toFixed(1)`), so High, Balanced and the passes read alike.
+- In WebKit the command prints `WebKit rounds its timers to 1 ms, so these times are within ±1 ms and the pass breakdown is rough.` after the renderer line.
+- The 90th percentile stays `sorted[floor(0.9 × n)]`: slightly high, and on the safe side.
+
 ---
 
 ### Task 15: Documentation and the final checks
