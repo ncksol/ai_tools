@@ -2,10 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { appendFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { SESSION_DB_QUERIES, createSessionDbCache, listLocks, readSessionDb, readWorkspaceYaml } from '../engine/readers/session-files.mjs';
+import { SESSION_DB_QUERIES, SESSION_DB_TABLES, createSessionDbCache, listLocks, readSessionDb, readWorkspaceYaml } from '../engine/readers/session-files.mjs';
 import { createProcessProbe, parsePsOutput } from '../engine/readers/process-probe.mjs';
+import { createSqliteReader, withReadOnly } from '../engine/sqlite.mjs';
 import { CopilotHome } from './helpers/copilot-home.mjs';
-import { TEST_BACKENDS, canWriteWithNode, holdExclusiveLock } from './helpers/sqlite-writer.mjs';
+import { TEST_BACKENDS, canWriteWithNode, execSql, holdExclusiveLock, openWriter } from './helpers/sqlite-writer.mjs';
+import { tempDir } from './helpers/temp.mjs';
 
 const home = new CopilotHome();
 
@@ -60,9 +62,68 @@ for (const backend of TEST_BACKENDS) {
     }
     assert.equal((await readSessionDb(file, { backend })).todos.length, 1);
   });
+
+  test(`${backend}: a children table of another shape is ignored with a note, and no query fails`, async () => {
+    const file = home.sessionDb(`cli-foreign-children-${backend}`, { todos: [{ id: 'a', status: 'done' }, { id: 'b' }] });
+    // Another orchestrator version's registry: a table named children without the data-contract columns.
+    execSql(file, "CREATE TABLE children (name TEXT, status TEXT, session_id TEXT); INSERT INTO children VALUES ('api', 'running', 'ws-123')");
+    const failures = [];
+    const counting = db => ({
+      async all(sql) {
+        try {
+          return await db.all(sql);
+        } catch (error) {
+          failures.push(error.message);
+          throw error;
+        }
+      },
+    });
+    const source = { read: (target, fn) => withReadOnly(target, { backend }, db => fn(counting(db))) };
+    const result = await readSessionDb(file, source);
+    assert.deepEqual(result.todos.map(todo => [todo.id, todo.status]), [['a', 'done'], ['b', 'pending']]);
+    assert.deepEqual(result.deps, []);
+    assert.equal(result.children, null);
+    assert.deepEqual(result.notes, ['its children table is not in the data-contract format, so it is ignored']);
+    assert.deepEqual(failures, []);
+  });
+
+  test(`${backend}: a todos table without a column that the read selects is ignored with a note`, async () => {
+    const file = path.join(home.dir(`cli-foreign-todos-${backend}`), 'session.db');
+    execSql(file, `CREATE TABLE todos (id TEXT PRIMARY KEY, title TEXT, status TEXT); INSERT INTO todos VALUES ('a', 'First', 'done');
+      CREATE TABLE todo_deps (todo_id TEXT, depends_on TEXT); INSERT INTO todo_deps VALUES ('b', 'a')`);
+    assert.deepEqual(await readSessionDb(file, { backend }), {
+      todos: [], deps: [{ todoId: 'b', dependsOn: 'a' }], children: null,
+      notes: ['its todos table is not in the data-contract format, so it is ignored'],
+    });
+  });
 }
 
-/** A session.db source whose query for `failing` fails, as a busy or locked database does; the other queries see `tables`. */
+test('a live session.db with a children table of another shape is read twice on one connection', { skip: !canWriteWithNode }, async () => {
+  const file = path.join(tempDir('swarm-foreign-children-'), 'session.db');
+  const writer = openWriter(file);
+  const reader = createSqliteReader({ backend: 'node' });
+  try {
+    writer.exec(`PRAGMA journal_mode = WAL; CREATE TABLE todos (id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT, status TEXT);
+      INSERT INTO todos (id, title, status) VALUES ('a', 'First', 'done');
+      CREATE TABLE children (name TEXT, owns TEXT, last_report TEXT); INSERT INTO children VALUES ('api', 'src/api', 'done');`);
+    for (let i = 0; i < 2; i += 1) {
+      const result = await readSessionDb(file, reader);
+      assert.deepEqual(result.todos.map(todo => [todo.id, todo.status]), [['a', 'done']]);
+      assert.equal(result.children, null);
+      assert.equal(result.notes.length, 1);
+      assert.equal(reader.opened, 1, 'no statement failed, so the connection was not discarded');
+      assert.equal(reader.openConnections, 1);
+    }
+  } finally {
+    reader.close();
+    writer.close();
+  }
+});
+
+/**
+ * A session.db source whose query for `failing` fails, as a busy or locked database does; the other queries see `tables`,
+ * each in the data-contract shape.
+ */
 function failingSource(failing, tables = ['todos', 'todo_deps', 'children']) {
   const rows = {
     tables: tables.map(name => ({ name })),
@@ -70,6 +131,7 @@ function failingSource(failing, tables = ['todos', 'todo_deps', 'children']) {
     deps: [],
     children: [],
   };
+  for (const [name, { columns }] of Object.entries(SESSION_DB_TABLES)) rows[`${name}Columns`] = columns.map(column => ({ name: column }));
   const db = {
     async all(sql) {
       const name = Object.keys(SESSION_DB_QUERIES).find(key => SESSION_DB_QUERIES[key] === sql);
@@ -84,6 +146,9 @@ test('a failed session.db query rejects with the query name instead of giving em
   await assert.rejects(readSessionDb('session.db', failingSource('todos')), /^Error: session\.db todos: database is locked$/);
   await assert.rejects(readSessionDb('session.db', failingSource('tables')), /^Error: session\.db tables: database is locked$/);
   await assert.rejects(readSessionDb('session.db', failingSource('children')), /^Error: session\.db children: database is locked$/);
+  // Asking a present table for its columns can only fail as the database does, and that failure propagates too.
+  await assert.rejects(readSessionDb('session.db', failingSource('todosColumns')), /^Error: session\.db todosColumns: database is locked$/);
+  await assert.rejects(readSessionDb('session.db', failingSource('childrenColumns')), /^Error: session\.db childrenColumns: database is locked$/);
 });
 
 test('a missing optional session.db table is not an error', async () => {

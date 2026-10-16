@@ -733,6 +733,20 @@ test('a locked session.db keeps the last good todos with a warning, and the next
   assert.deepEqual(warnings(), []);
 });
 
+test('a session.db children table of another shape is ignored with a note, and the session keeps its todo progress', async () => {
+  const home = scenario();
+  // Another orchestrator version's registry: a table named children without the data-contract columns.
+  execSql(path.join(home.stateDir, 'cli-api', 'session.db'), "CREATE TABLE children (name TEXT, status TEXT, session_id TEXT); INSERT INTO children VALUES ('api', 'running', 'ws-123')");
+  const engine = createSwarmEngine({ copilotHome: home.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => at(60), processProbe: alwaysAlive, prLookup: 'off' });
+  const snapshot = await engine.getSnapshot('ws-root');
+  assert.deepEqual(snapshot.units.find(unit => unit.label === 'a1').progress, { done: 1, total: 2 });
+  const notes = () => engine.diagnostics().filter(item => item.source === 'session.db');
+  const expected = [{ level: 'info', source: 'session.db', message: 'cli-api: its children table is not in the data-contract format, so it is ignored' }];
+  assert.deepEqual(notes(), expected);
+  await engine.refresh();
+  assert.deepEqual(notes(), expected, 'the note shows on every refresh while the file is unchanged');
+});
+
 test('stop() closes the reader connections, so a closing writer can remove its side files', { skip: !canWriteWithNode }, async () => {
   const kept = scenario();
   const engine = createSwarmEngine({ copilotHome: kept.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => at(60), processProbe: alwaysAlive, prLookup: 'off' });

@@ -40,18 +40,37 @@ export function listLocks(dir) {
   return locks;
 }
 
+/** Each data query's table and the columns it selects (the data contract's shape of session.db). */
+export const SESSION_DB_TABLES = Object.freeze({
+  todos: Object.freeze({ table: 'todos', columns: Object.freeze(['id', 'title', 'description', 'status']) }),
+  deps: Object.freeze({ table: 'todo_deps', columns: Object.freeze(['todo_id', 'depends_on']) }),
+  children: Object.freeze({
+    table: 'children',
+    columns: Object.freeze(['unit', 'session_id', 'title', 'todo_id', 'branch', 'base_branch', 'pr_provider', 'pr_repo', 'pr_id', 'pr_url',
+      'outcome', 'created_at', 'updated_at', 'ended_at']),
+  }),
+});
+
+const selectFrom = ({ table, columns }) => `SELECT ${columns.join(', ')} FROM ${table}`;
+// The table names are constants, never data, so they can be written into the statement.
+const columnsOf = ({ table }) => `SELECT name FROM pragma_table_info('${table}')`;
+
 export const SESSION_DB_QUERIES = Object.freeze({
-  todos: 'SELECT id, title, description, status FROM todos',
-  deps: 'SELECT todo_id, depends_on FROM todo_deps',
+  todos: selectFrom(SESSION_DB_TABLES.todos),
+  deps: selectFrom(SESSION_DB_TABLES.deps),
   tables: "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('todos', 'todo_deps', 'children')",
-  children: `SELECT unit, session_id, title, todo_id, branch, base_branch, pr_provider, pr_repo, pr_id, pr_url, outcome,
-    created_at, updated_at, ended_at FROM children`,
+  children: selectFrom(SESSION_DB_TABLES.children),
+  todosColumns: columnsOf(SESSION_DB_TABLES.todos),
+  depsColumns: columnsOf(SESSION_DB_TABLES.deps),
+  childrenColumns: columnsOf(SESSION_DB_TABLES.children),
 });
 
 /**
  * `source` is either openReadOnly's options or a reader from createSqliteReader (which holds live WAL connections).
- * A table that is absent gives its empty value (`[]`, or `null` for children). A query that fails, such as one that finds the
- * database busy or locked, rejects with an Error naming the query, so a caller never takes a failed read for empty tables.
+ * A table that is absent gives its empty value (`[]`, or `null` for children). So does a table that lacks a column its query
+ * selects, such as a children table that another orchestrator version wrote; the result then has a `notes` array that names
+ * each ignored table (`notes` is present only when there is a note). A query that fails, such as one that finds the database
+ * busy or locked, rejects with an Error naming the query, so a caller never takes a failed read for empty tables.
  */
 export async function readSessionDb(file, source = {}) {
   const run = typeof source.read === 'function' ? fn => source.read(file, fn) : fn => withReadOnly(file, source, fn);
@@ -63,18 +82,31 @@ export async function readSessionDb(file, source = {}) {
         throw new Error(`session.db ${name}: ${error?.message ?? error}`, { cause: error });
       }
     };
-    // Ask which tables exist first, so a normal read never runs a statement that fails (a failed statement discards a pooled connection).
+    const notes = [];
+    // Ask which tables exist, and then which columns each present table has, so a normal read never runs a statement that
+    // fails (a failed statement discards a pooled connection). Asking for the columns of a present table cannot fail.
     const present = new Set((await query('tables')).map(row => row.name));
-    const todos = present.has('todos') ? await query('todos') : [];
-    const deps = present.has('todo_deps') ? await query('deps') : [];
-    const hasChildren = present.has('children');
+    const read = async (name, empty) => {
+      const { table, columns } = SESSION_DB_TABLES[name];
+      if (!present.has(table)) return empty;
+      const has = new Set((await query(`${name}Columns`)).map(row => row.name));
+      if (!columns.every(column => has.has(column))) {
+        notes.push(`its ${table} table is not in the data-contract format, so it is ignored`);
+        return empty;
+      }
+      return query(name);
+    };
+    const todos = await read('todos', []);
+    const deps = await read('deps', []);
+    const children = await read('children', null);
     return {
       todos: todos.map(todo => ({
         id: String(todo.id), title: String(todo.title ?? ''), description: typeof todo.description === 'string' ? todo.description : '',
         status: String(todo.status ?? 'pending'),
       })),
       deps: deps.map(dep => ({ todoId: String(dep.todo_id), dependsOn: String(dep.depends_on) })),
-      children: hasChildren ? await query('children') : null,
+      children,
+      ...(notes.length ? { notes } : {}),
     };
   });
 }

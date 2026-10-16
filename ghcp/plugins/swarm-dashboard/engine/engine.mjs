@@ -269,7 +269,10 @@ export function createSwarmEngine(options = {}) {
       const dbFile = path.join(paths.stateDir, cliId, 'session.db');
       dbFiles.add(dbFile);
       try {
-        sessionDbs.set(cliId, await readDb(dbFile, reader));
+        const value = await readDb(dbFile, reader);
+        sessionDbs.set(cliId, value);
+        // A table that is not in the data-contract shape is ignored; the cached value keeps its notes, so they show on every refresh.
+        for (const note of value?.notes ?? []) diag.push({ level: 'info', source: 'session.db', message: `${shortId(cliId)}: ${note}` });
       } catch (error) {
         const lastGood = readDb.last(dbFile);
         if (lastGood) sessionDbs.set(cliId, lastGood);
