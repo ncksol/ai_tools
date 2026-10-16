@@ -2660,6 +2660,13 @@ With the spike served read-only (its folder is outside the repository), take a s
 Run: `npm test && npm run validate`
 Expected: PASS.
 
+Review amendments (16 October 2026), applied in a follow-up commit after this task's review:
+- Stars are counted only in rows 12% to 45% of the height (below the ceiling's light line) and only as point peaks: a pixel over 0.25 whose eight neighbours are all under 0.8 times its brightness. A synthetic frame without stars must fail the stars check. `SCENE_LIMITS.stars` is half the newly measured count.
+- The scene check counts browser errors recorded while it runs.
+- The renderer caps both dimensions to the device's texture and viewport limits (and 4096), keeping the aspect ratio; checks each render target's framebuffer status; falls back once from half-float to 8-bit targets; and otherwise throws a clear error.
+- Shader curves with reversed edges use `1.0 - smoothstep(low, high, x)`, which GLSL ES defines; the result is the same, and the spike comparison is repeated.
+- The reused frame gets the same structural check as the still frame.
+
 ```bash
 git add ghcp/plugins/swarm-dashboard/ui/cockpit-shaders.mjs ghcp/plugins/swarm-dashboard/ui/cockpit-gl.mjs ghcp/plugins/swarm-dashboard/scripts/lib/cockpit-scene.mjs ghcp/plugins/swarm-dashboard/scripts/lib/cockpit-check.mjs ghcp/plugins/swarm-dashboard/scripts/check-cockpit.mjs ghcp/plugins/swarm-dashboard/tests/cockpit-scene.test.mjs
 git commit -m "feat(swarm-dashboard): draw the cockpit's black hole and room with WebGL2"
@@ -3450,7 +3457,14 @@ function layout() {
   $('ck-note').hidden = fit.fits;
   if (fit.fits) for (const [id, placement] of Object.entries(fit.placements)) $(id).style.transform = panelCss(placement);
   else morph($('ck-note'), noteHtml());
-  renderer?.resize(innerWidth, innerHeight, devicePixelRatio || 1, adaptive.scale);
+  try {
+    renderer?.resize(innerWidth, innerHeight, devicePixelRatio || 1, adaptive.scale);
+  } catch (error) {
+    // The device refused the render targets: keep the panels on the plain backdrop.
+    renderer = null;
+    root.dataset.gl = 'off';
+    console.warn(`The cockpit shows its panels without the black hole: ${error.message}`);
+  }
   if (!running()) drawStill();
 }
 
