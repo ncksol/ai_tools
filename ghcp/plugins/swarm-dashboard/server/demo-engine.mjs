@@ -44,6 +44,12 @@ function addFeed(snapshot, session, kind, text, now) {
 function addCost(snapshot, session, amount, now) {
   session.cost.credits = round1(session.cost.credits + amount);
   session.cost.calls += 1;
+  if (session.kind === 'subagent') {
+    // The contract counts a sub-agent unit's cost inside the orchestrator's, never on top of the total.
+    const orchestrator = snapshot.orchestrator.cost;
+    orchestrator.credits = round1(orchestrator.credits + amount);
+    orchestrator.calls += 1;
+  }
   const cost = snapshot.cost;
   cost.credits = round1(cost.credits + amount);
   cost.usd = Math.round(cost.credits) / 100;

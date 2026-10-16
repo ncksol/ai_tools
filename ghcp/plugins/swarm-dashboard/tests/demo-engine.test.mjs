@@ -50,10 +50,16 @@ test('simulated steps stay valid, add cost and keep feed ids unique', () => {
   const base = example();
   let snapshot = shiftTimes(base, T - base.generatedAt);
   const random = seeded(7);
+  const subagentCredits = current => new Map(current.units.filter(unit => unit.kind === 'subagent').map(unit => [unit.id, unit.cost.credits]));
+  let subagentSteps = 0;
   for (let step = 1; step <= 40; step += 1) {
+    const before = subagentCredits(snapshot);
     snapshot = simulateStep(snapshot, T + step * 5000, random);
     assert.deepEqual(validateSnapshot(snapshot), [], `step ${step}`);
+    assert.equal(snapshot.cost.credits, sessionTotal(snapshot), `step ${step}: the total is the orchestrator plus the session units`);
+    if ([...subagentCredits(snapshot)].some(([id, credits]) => credits > (before.get(id) ?? 0))) subagentSteps += 1;
   }
+  assert.ok(subagentSteps > 0, 'some step adds cost to a sub-agent unit');
   assert.ok(snapshot.cost.credits > base.cost.credits);
   assert.equal(snapshot.revision, base.revision + 40);
   assert.equal(new Set(snapshot.feed.map(item => item.id)).size, snapshot.feed.length);
