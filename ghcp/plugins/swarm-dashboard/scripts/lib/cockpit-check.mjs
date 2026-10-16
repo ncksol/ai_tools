@@ -465,20 +465,20 @@ async function checkLinks({ page, browser, urls, engine, stdout, stderr }) {
     await pick('ws-0000-root');
     if (await page.evaluate("document.querySelector('.ck-addr') !== null")) problems.push('in the canvas picking another swarm kept the old cockpit address');
 
-    // A real lifecycle event changes the shown swarm without the picker; its old address must disappear too.
+    // With no picked swarm, the hub moves the page to another live swarm when the shown one finishes.
     const demo = createDemoEngine({ scenario: 'stress', simulate: false });
     changing = createDashboardServer({ createEngine: () => demo, port: 0, version: 'cockpit-check', hub: { engineIdleMs: 600000 } });
     await changing.listen();
     await goRegular(`${changing.url}?host=canvas`, 480);
-    await pick('ws-8000-root');
+    await page.waitFor("document.querySelector('[data-open=\"ws-0005-i1\"]') !== null");
     await clickControl();
-    await page.waitFor("(document.querySelector('.ck-addr-url')?.textContent ?? '').endsWith('/cockpit?swarm=ws-8000-root')");
-    const finished = await demo.getSnapshot('ws-8000-root');
+    await page.waitFor("(document.querySelector('.ck-addr-url')?.textContent ?? '').endsWith('/cockpit?swarm=ws-0000-root')");
+    const finished = await demo.getSnapshot('ws-0000-root');
     finished.run.lifecycle = 'finished';
     finished.run.finishedAt = Date.now();
     finished.revision += 1;
     demo.push(finished);
-    await page.waitFor("document.querySelector('[data-open=\"ws-0005-i1\"]') !== null");
+    await page.waitFor("document.querySelector('[data-open=\"ws-8005-i1\"]') !== null");
     try {
       await page.waitFor("document.querySelector('.ck-addr') === null", 3000);
     } catch {
@@ -487,20 +487,17 @@ async function checkLinks({ page, browser, urls, engine, stdout, stderr }) {
   } catch (error) {
     problems.push(error.message);
   } finally {
-    try {
-      // List again rather than relying on the targets already observed: a popup may have opened late.
-      const { targetInfos } = await browser.send('Target.getTargets');
-      for (const info of targetInfos) if (!known.has(info.targetId) && cockpitTarget(info)) await browser.send('Target.closeTarget', { targetId: info.targetId });
-    } finally {
-      try {
-        await page.evaluate("window.name = ''");
-      } finally {
-        await changing?.close();
-      }
+    // List again rather than relying on the targets already observed: a popup may have opened late.
+    const { targetInfos } = await browser.send('Target.getTargets').catch(() => ({ targetInfos: [] }));
+    for (const info of targetInfos) {
+      if (!known.has(info.targetId) && info.type === 'page') await browser.send('Target.closeTarget', { targetId: info.targetId }).catch(() => {});
     }
+    await page.evaluate("window.name = ''").catch(() => {});
+    await page.goto('about:blank', 1440).then(() => page.waitFor("location.href === 'about:blank'")).catch(() => {});
+    await changing?.close().catch(() => {});
   }
   problems.push(...page.errors.map(message => `console: ${message}`));
-  stdout.write(`Cockpit links: ${problems.length ? `${problems.length} problems` : 'the control opens the cockpit on the picked swarm, a tile opens its details in place, unknown units do not navigate, and canvas addresses follow picker and automatic swarm changes'}.\n`);
+  stdout.write(`Cockpit links: ${problems.length ? `${problems.length} problems` : 'the control opens the cockpit on the picked swarm, a tile opens its details in place, unknown units do not navigate, and in the canvas the address names the shown swarm and clears when it changes'}.\n`);
   for (const problem of problems) stderr.write(`links: ${problem}\n`);
   return problems.length;
 }
