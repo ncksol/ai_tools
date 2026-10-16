@@ -565,7 +565,7 @@ test('a sub-agent that starts sub-agents registers them, counts them once, and i
   let state = foldRoot(log);
   assert.deepEqual([...state.descendants].map(([id, entry]) => [id, entry.root, entry.parent]), [[child, parent, parent], [grand, parent, child]]);
   assert.deepEqual(state.descendants.get(grand), {
-    root: parent, parent: child, bucket: 'explore', status: 'running', mode: 'background', agentId: 'agent-g', launchedAt: T0 + 120_000, startedAt: T0 + 120_000, durationMs: null,
+    root: parent, parent: child, bucket: 'explore', status: 'running', mode: 'background', agentId: 'agent-g', agentIds: ['agent-g'], launchedAt: T0 + 120_000, startedAt: T0 + 120_000, durationMs: null,
   }, 'a descendant entry keeps only what it needs: no task text, no full record');
   assert.equal(state.subagents.size, 1);
   assert.equal(state.subagentCount, 3);
@@ -1070,6 +1070,91 @@ test('known nested sub-agents are bounded by the task index, and a dropped one l
   assert.equal(state.agentToTask.has('agent-5'), true);
   assert.equal(state.agentToTask.size, LIMITS.subagentIndex + 1);
   assert.equal(state.subagentCount, LIMITS.subagentIndex + 6);
+});
+
+const telemetryOf = agentId => ({ restrictedProperties: { agent_id: agentId } });
+
+/**
+ * A background explore sub-agent whose lifecycle events carry the agent id `lifecycle` and whose task completion's telemetry
+ * carries `telemetry`, as in real logs where the two differ. `finish` adds its subagent.completed.
+ */
+function aliasedSubagent(log, lifecycle, telemetry, { finish = true } = {}) {
+  log.wait(1000);
+  const id = log.tool('task', { name: 'aliased', agent_type: 'explore', mode: 'background', description: 'aliased work', prompt: 'synthetic prompt' });
+  log.push('subagent.started', { toolCallId: id, agentName: 'explore', agentDisplayName: 'aliased', agentType: 'explore', executionMode: 'background' }, { agentId: lifecycle });
+  log.done(id, { result: 'Agent started in background', telemetry: telemetryOf(telemetry) });
+  if (finish) log.subagentDone(id, { agentId: lifecycle });
+  return id;
+}
+
+test('evicted sub-agents leave no agent id behind, whichever of their ids came last', () => {
+  for (const options of [undefined, ROOT]) {
+    const label = options ? 'root state' : 'plain state';
+    const log = new EventLog(T0);
+    log.start(); log.turnStart();
+    for (let i = 0; i < 1000; i += 1) aliasedSubagent(log, `L-${i}`, `T-${i}`);
+    const state = fold(log, 'cli-1', options);
+    assert.equal(state.subagents.size, LIMITS.subagents, `${label}: the details are bounded`);
+    assert.equal(state.subagentCount, 1000, label);
+    const dangling = [...state.agentToTask].filter(([, id]) => !state.subagents.has(id) && !state.descendants.has(id));
+    assert.deepEqual(dangling, [], `${label}: every agent id names a kept record`);
+    assert.ok(state.agentToTask.size <= 2 * state.subagents.size, `${label}: ${state.agentToTask.size} agent ids for ${state.subagents.size} details`);
+  }
+});
+
+test('a kept sub-agent whose telemetry id differs still gets its follow-up through its lifecycle id', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const call = aliasedSubagent(log, 'L-kept', 'T-kept');
+  log.wait(60_000); log.toAgent('L-kept', 'one more thing');
+  const state = foldRoot(log);
+  assert.equal(state.agentToTask.get('L-kept'), call);
+  assert.equal(state.agentToTask.get('T-kept'), call);
+  const unit = unitOf(state, call);
+  assert.equal(unit.runs.length, 2, 'the follow-up opens a new run');
+  assert.equal(unit.runs.at(-1)[1], null);
+});
+
+test('a dropped nested sub-agent loses its lifecycle and its telemetry agent ids', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const call = log.subagent({ name: 'lead', type: 'explore', mode: 'background', agentId: 'agent-lead' });
+  for (let i = 0; i < LIMITS.subagentIndex + 5; i += 1) {
+    const kid = log.nested(call, { name: 'kid', type: 'explore', mode: 'background', agentId: `L-${i}` });
+    log.sub(call, 'tool.execution_complete', { toolCallId: kid, success: true, result: { content: 'Agent started in background' }, toolTelemetry: telemetryOf(`T-${i}`) });
+  }
+  const state = foldRoot(log);
+  assert.equal(state.descendants.size, LIMITS.subagentIndex);
+  for (let i = 0; i < 5; i += 1) {
+    assert.equal(state.agentToTask.has(`L-${i}`), false, `L-${i}`);
+    assert.equal(state.agentToTask.has(`T-${i}`), false, `T-${i}`);
+  }
+  assert.equal(state.agentToTask.has('L-5'), true);
+  assert.equal(state.agentToTask.has('T-5'), true);
+  assert.equal(state.agentToTask.size, 2 * LIMITS.subagentIndex + 1);
+  const dangling = [...state.agentToTask].filter(([, id]) => !state.subagents.has(id) && !state.descendants.has(id));
+  assert.deepEqual(dangling, []);
+});
+
+test('a sub-agent seen with more than four agent ids keeps the newest four, and forgets the mapping of the one it drops', () => {
+  for (const nested of [false, true]) {
+    const log = new EventLog(T0);
+    log.start(); log.turnStart();
+    const lead = log.subagent({ name: 'lead', type: 'explore', mode: 'background', agentId: 'agent-lead' });
+    const call = nested ? log.nested(lead, { name: 'kid', type: 'explore', mode: 'background', agentId: 'A-1' }) : aliasedSubagent(log, 'A-1', 'A-2', { finish: false });
+    if (nested) log.sub(lead, 'tool.execution_complete', { toolCallId: call, success: true, result: { content: 'ok' }, toolTelemetry: telemetryOf('A-2') });
+    // Seeing a known id again makes it the newest, without adding it twice.
+    log.push('subagent.configured', { toolCallId: call, reasoningEffort: 'high' }, { agentId: 'A-1' });
+    for (const id of ['A-3', 'A-4', 'A-5']) log.push('subagent.configured', { toolCallId: call, reasoningEffort: 'high' }, { agentId: id });
+    const state = foldRoot(log);
+    const owner = nested ? state.descendants.get(call) : state.subagents.get(call);
+    const label = nested ? 'nested' : 'top level';
+    assert.deepEqual(owner.agentIds, ['A-1', 'A-3', 'A-4', 'A-5'], label);
+    assert.equal(owner.agentId, 'A-5', label);
+    assert.equal(state.agentToTask.has('A-2'), false, `${label}: the dropped alias has no mapping`);
+    for (const id of owner.agentIds) assert.equal(state.agentToTask.get(id), call, `${label}: ${id}`);
+    if (nested) assert.equal(unitOf(state, lead).children.find(child => child.id === call).agentId, 'A-5', 'the kept child record follows the latest id');
+  }
 });
 
 test('outcomes count sub-agents that were evicted from the details when they finish', () => {

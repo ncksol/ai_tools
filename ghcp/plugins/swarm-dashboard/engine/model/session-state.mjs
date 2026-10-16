@@ -16,6 +16,8 @@ const WAIT_TOOLS = new Map([['ask_user', 'question'], ['exit_plan_mode', 'plan']
 const BUSY_JOIN_MS = 5000;
 /** Most levels of nested sub-agents followed when a sub-agent's clock moves its ancestors' (a guard against a cycle). */
 const MAX_NESTING = 64;
+/** Most agent ids one sub-agent keeps mapped (its lifecycle id, its task telemetry id, and room for more). */
+const MAX_AGENT_ALIASES = 4;
 
 function argsOf(value) {
   if (value && typeof value === 'object' && !Array.isArray(value)) return value;
@@ -42,6 +44,7 @@ export function createSessionState(id, { subagentUnits = false } = {}) {
     openTools: new Map(), waits: new Map(), waitSpans: [], waitingMs: 0,
     // Total length of the closed waits that waitSpans no longer holds (it keeps the latest LIMITS.spans).
     waitDroppedMs: 0,
+    // Every agent id a kept sub-agent was seen with -> its task id (see mapAgent); an id leaves when its sub-agent does.
     subagents: new Map(), agentToTask: new Map(),
     // Root states only: closed units that left `subagents` (see evictSubagent), by the bucket their current outcome gives.
     unitsEvicted: { done: 0, failed: 0 },
@@ -52,7 +55,7 @@ export function createSessionState(id, { subagentUnits = false } = {}) {
     // duration, and each task tool-call id's type (to attribute ledger credits by type).
     subagentCount: 0, subagentStats: new Map(), subagentIndex: new Map(), evictedRunning: new Map(),
     // Sub-agents started by a sub-agent: task id -> { root: the top sub-agent's id, parent: its direct parent's id, bucket, status,
-    // mode, agentId, launchedAt, startedAt }, enough to count them and end them once. Bounded like subagentIndex. A direct child of a
+    // mode, agentId, agentIds, launchedAt, startedAt }, enough to count them and end them once. Bounded like subagentIndex. A direct child of a
     // root sub-agent also has a full record in that sub-agent's unit. Outcomes count the details and their evicted records the
     // first time each leaves running.
     descendants: new Map(), subagentOutcomes: { completed: 0, failed: 0, cancelled: 0 },
@@ -511,6 +514,30 @@ const lastFinish = sub => (sub.unit ? sub.unit.runs[sub.unit.runs.length - 1][1]
 const closedBucket = sub => ((sub.unit?.lastOutcome ?? sub.status) === 'completed' ? 'done' : 'failed');
 
 /**
+ * The single place an agent id is mapped to a sub-agent. `record` is the sub-agent's owner record: its detail for a sub-agent of
+ * the session, its descendants entry for a nested one. A sub-agent can be seen with more than one id (its lifecycle events and its
+ * own events carry one, its task completion's telemetry often another), and every one stays mapped, so that eviction can forget
+ * them all. `record.agentIds` keeps them, the most recently seen last, up to MAX_AGENT_ALIASES; the one seen longest ago is
+ * dropped first, with its mapping when that still names this sub-agent. `record.agentId` is the latest.
+ */
+function mapAgent(state, record, agentId, taskId) {
+  const index = record.agentIds.indexOf(agentId);
+  if (index >= 0) record.agentIds.splice(index, 1);
+  record.agentIds.push(agentId);
+  while (record.agentIds.length > MAX_AGENT_ALIASES) {
+    const dropped = record.agentIds.shift();
+    if (state.agentToTask.get(dropped) === taskId) state.agentToTask.delete(dropped);
+  }
+  record.agentId = agentId;
+  state.agentToTask.set(agentId, taskId);
+}
+
+/** Forgets every agent id of a sub-agent that leaves the details or the descendants, unless another sub-agent has taken it since. */
+function forgetAgents(state, record, taskId) {
+  for (const agentId of record.agentIds) if (state.agentToTask.get(agentId) === taskId) state.agentToTask.delete(agentId);
+}
+
+/**
  * Drops a sub-agent from the detail list; returns false when it dropped none.
  * A root state (units) never drops an open unit, nor any of the MAX_FINISHED_SUBAGENT_UNITS closed ones that finished last: it drops
  * the closed one that finished longest ago (the earliest in the map on a tie) and counts it in `unitsEvicted` by its outcome.
@@ -530,7 +557,7 @@ function evictSubagent(state) {
     victim ??= sub;
   }
   state.subagents.delete(victim.id);
-  if (victim.agentId) state.agentToTask.delete(victim.agentId);
+  forgetAgents(state, victim, victim.id);
   if (victim.status === 'running') {
     state.evictedRunning.set(victim.id, { id: victim.id, launchedAt: victim.launchedAt, startedAt: victim.startedAt, bucket: victim.bucket, mode: victim.mode });
     while (state.evictedRunning.size > LIMITS.subagentIndex) state.evictedRunning.delete(state.evictedRunning.keys().next().value);
@@ -549,7 +576,7 @@ function evictUnit(state) {
   // The victim is the first of the closed ones by finish time, so it is protected only when it is among the latest MAX_FINISHED_SUBAGENT_UNITS.
   if (victim === null || closed <= MAX_FINISHED_SUBAGENT_UNITS) return false;
   state.subagents.delete(victim.id);
-  if (victim.agentId) state.agentToTask.delete(victim.agentId);
+  forgetAgents(state, victim, victim.id);
   state.unitsEvicted[closedBucket(victim)] += 1;
   return true;
 }
@@ -599,6 +626,7 @@ function newSubagent(state, id, at, args) {
     return known;
   }
   const sub = countSubagent(state, id, at, fields);
+  sub.agentIds = [];
   if (state.subagentUnits) {
     state.unitLaunches += 1;
     sub.unit = newUnit(args, at);
@@ -609,11 +637,11 @@ function newSubagent(state, id, at, args) {
   return sub;
 }
 
-/** Forgets the oldest nested sub-agent, and the agent id that mapped to it. */
+/** Forgets the oldest nested sub-agent, and every agent id that mapped to it. */
 function dropDescendant(state) {
   const [id, entry] = state.descendants.entries().next().value;
   state.descendants.delete(id);
-  if (entry.agentId && state.agentToTask.get(entry.agentId) === id) state.agentToTask.delete(entry.agentId);
+  forgetAgents(state, entry, id);
 }
 
 /**
@@ -640,7 +668,7 @@ function onNestedTaskStart(state, id, parentId, args, at) {
   const sub = countSubagent(state, id, at, fields);
   state.descendants.set(id, {
     root: state.descendants.get(parentId)?.root ?? parentId, parent: parentId, bucket: sub.bucket, status: 'running', mode: sub.mode,
-    agentId: null, launchedAt: at, startedAt: null, durationMs: null,
+    agentId: null, agentIds: [], launchedAt: at, startedAt: null, durationMs: null,
   });
   while (state.descendants.size > LIMITS.subagentIndex) dropDescendant(state);
   const parent = state.subagents.get(parentId);
@@ -707,10 +735,7 @@ function onToolComplete(state, data, at) {
   const sub = state.subagents.get(id);
   if (sub) {
     const agentId = data.toolTelemetry?.restrictedProperties?.agent_id;
-    if (typeof agentId === 'string') {
-      sub.agentId = agentId;
-      state.agentToTask.set(agentId, id);
-    }
+    if (typeof agentId === 'string') mapAgent(state, sub, agentId, id);
     if (sub.status === 'running' && (data.success === false || (sub.mode === 'sync' && sub.startedAt === null))) {
       finishSubagent(state, sub, at, data.success === false ? 'failed' : 'completed', null);
     }
@@ -729,10 +754,9 @@ function onNestedTaskComplete(state, id, data, at) {
   if (!entry) return;
   const agentId = data.toolTelemetry?.restrictedProperties?.agent_id;
   if (typeof agentId === 'string') {
-    entry.agentId = agentId;
+    mapAgent(state, entry, agentId, id);
     const child = childOf(state, id, entry);
     if (child) child.agentId = agentId;
-    state.agentToTask.set(agentId, id);
   }
   if (entry.status === 'running' && (data.success === false || (entry.mode === 'sync' && entry.startedAt === null))) {
     finishNested(state, id, entry, at, data.success === false ? 'failed' : 'completed', null);
@@ -838,9 +862,8 @@ function onSubagentLifecycle(state, event, data, at) {
   // The record that carries the fields: the detail, or a direct child's kept detail. A deeper nested sub-agent has only its entry.
   const target = sub ?? childOf(state, key, entry);
   if (agentId !== null) {
-    (sub ?? entry).agentId = agentId;
+    mapAgent(state, sub ?? entry, agentId, key);
     if (target) target.agentId = agentId;
-    state.agentToTask.set(agentId, key);
   }
   touchSubagent(state, key, at);
   if (event.type === 'subagent.configured') {
