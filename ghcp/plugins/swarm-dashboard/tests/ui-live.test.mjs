@@ -233,3 +233,19 @@ test('a running unit\'s sub-agent and tool clocks keep ticking', () => {
   const { row, tool, chip } = nestedClocks(exampleSnapshot());
   for (const html of [row, tool, chip]) assert.match(html, /<span data-t="\d+" data-f="short">/);
 });
+
+test('the detail panel\'s sub-agent list shows a cancelled sub-agent in blocked colours', () => {
+  const snapshot = exampleSnapshot();
+  const b1 = findByLabel(snapshot, 'B1');
+  b1.subagents.find(sub => sub.id === 'call-b1-7').status = 'cancelled';
+  const row = detailHtml(b1.id, false, context(snapshot)).split('<li class="sa"').find(part => part.includes('<span>task (sync)</span>'));
+  assert.match(row, /<span class="pill st-blocked">cancelled<\/span>/);
+});
+
+test('a sub-agent unit without agent details reads "unknown" in the detail panel, as on its card', () => {
+  const snapshot = exampleSnapshot();
+  findByLabel(snapshot, 'map-import-module').agent = null;
+  const html = detailHtml('call-root-41', false, context(snapshot));
+  assert.match(html, /<h4>Sub-agent<\/h4><div class="dt-kv"><span class="k">Type<\/span><span>unknown<\/span><span class="k">Mode<\/span><span>Unknown<\/span><span class="k">Effort<\/span><span>not set<\/span><\/div>/);
+  assert.match(text(card(cardsHtml(context(snapshot)), 'call-root-41')), /Type Sub-agent · unknown Mode Unknown/);
+});

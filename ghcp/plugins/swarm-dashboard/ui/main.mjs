@@ -351,10 +351,8 @@ setInterval(() => {
     if (el.textContent !== text) el.textContent = text;
   }
   ticks += 1;
-  if (ticks % 15 === 0 && view.page === 'live' && view.tab === 'timeline' && view.snapshot) {
-    const timeline = dash.querySelector('[data-timeline]');
-    if (timeline) drawTimeline(timeline);
-  }
+  // A full render, not only a redraw of the lanes: which sub-agent rows exist depends on the window, which moves with now.
+  if (ticks % 15 === 0 && view.page === 'live' && view.tab === 'timeline' && view.snapshot) scheduleRender();
 }, 1000);
 
 // Browsers allow few connections per host, so free the live connection when the page is unloaded or kept in the back-forward cache.

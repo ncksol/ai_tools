@@ -134,7 +134,7 @@ function prHtml(unit, now) {
 function agentHtml(unit) {
   const agent = unit.agent ?? { type: 'unknown', mode: null, effort: null };
   return `<div class="dt-sec"><h4>Sub-agent</h4><div class="dt-kv"><span class="k">Type</span><span>${esc(agent.type)}</span>`
-    + `<span class="k">Mode</span><span>${MODE_WORDS[agent.mode] ?? esc(agent.mode)}</span>`
+    + `<span class="k">Mode</span><span>${MODE_WORDS[agent.mode] ?? 'Unknown'}</span>`
     + `<span class="k">Effort</span><span>${agent.effort ? esc(agent.effort) : 'not set'}</span></div></div>`;
 }
 

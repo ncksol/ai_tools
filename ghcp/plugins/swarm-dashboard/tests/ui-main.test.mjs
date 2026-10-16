@@ -30,3 +30,10 @@ test('updates patch the page in place instead of replacing it', () => {
   const morph = readFileSync(file('morph.mjs'), 'utf8');
   for (const needle of ["'data-key'", "'data-drawn'", "'data-phase'"]) assert.ok(morph.includes(needle), needle);
 });
+
+test('every 15 seconds the Timeline renders again, so its rows follow the moving window', () => {
+  const main = readFileSync(file('main.mjs'), 'utf8');
+  const tick = main.slice(main.indexOf('setInterval('), main.indexOf('}, 1000);'));
+  assert.match(tick, /if \(ticks % 15 === 0 && view\.page === 'live' && view\.tab === 'timeline' && view\.snapshot\) scheduleRender\(\);/);
+  assert.doesNotMatch(tick, /drawTimeline/);
+});

@@ -282,9 +282,11 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 .c-row.c-axis { grid-template-areas: "trk trk"; padding: 0 0 4px; }
 .c-row.c-axis .c-who, .c-row.c-axis .c-sum { display: none; }
 .c-row.c-cost { border-bottom: 0; }
+.c-row.c-more { grid-template-areas: "who who"; }
 @container main (min-width: 760px) {
   .c-row { grid-template-columns: 200px minmax(0, 1fr) 176px; grid-template-areas: "who trk sum"; row-gap: 0; }
   .c-row.c-axis { grid-template-areas: "who trk sum"; }
+  .c-row.c-more { grid-template-areas: "who who who"; }
   .c-row.c-axis .c-who, .c-row.c-axis .c-sum { display: block; }
 }
 .c-who { grid-area: who; min-width: 0; display: flex; flex-direction: column; }

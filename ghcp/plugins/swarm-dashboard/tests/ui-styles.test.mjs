@@ -86,3 +86,9 @@ test('finished sub-agents use the merged mint, and the Sub-agents column a neutr
   assert.equal(block('.c-row.is-sub .c-who').trim(), 'padding-left: 16px;');
   assert.equal(block('.bcol-more').trim(), 'font-size: 12px; line-height: 16px; color: var(--ink-2);');
 });
+
+test('the row of sub-agents outside the window spans the whole row in both Timeline layouts', () => {
+  assert.equal(block('.c-row.c-more').trim(), 'grid-template-areas: "who who";');
+  const wide = css.slice(css.indexOf('@container main (min-width: 760px) {\n  .c-row {'));
+  assert.match(wide.slice(0, wide.indexOf('\n}')), /\n  \.c-row\.c-more \{ grid-template-areas: "who who who"; \}/);
+});

@@ -161,7 +161,7 @@ test('sub-agent lanes sit under the orchestrator, oldest first, before the child
 
 test('only sub-agent lanes that overlap the window are shown; one muted row counts the rest', () => {
   const snapshot = exampleSnapshot();
-  const more = '<div class="c-row c-more is-sub"><div class="c-who"><span class="c-meta">+3 sub-agents outside this window</span></div><div class="c-trk"></div><div class="c-sum"></div></div>';
+  const more = '<div class="c-row c-more is-sub" data-key="subagents-outside"><div class="c-who"><span class="c-meta">+3 sub-agents outside this window</span></div></div>';
   for (const span of ['3h', '12h']) {
     const html = timelineHtml(context(snapshot), span);
     assert.deepEqual(subIds(html), ['call-root-40', 'call-root-41'], span);
@@ -203,4 +203,26 @@ test('the orchestrator\'s lane is unchanged when none of its bars has a lane of 
   const snapshot = exampleSnapshot();
   snapshot.units = snapshot.units.filter(unit => unit.kind !== 'subagent');
   assert.equal(laneSource(snapshot.orchestrator, snapshot), snapshot.orchestrator);
+});
+
+test('the row of sub-agents outside the window has its own key and only its text cell, so nothing draws in it', () => {
+  const html = timelineHtml(context(exampleSnapshot()), '12h');
+  const more = html.split('<div class="c-row').find(part => part.includes('c-more'));
+  assert.match(more, /^ c-more is-sub" data-key="subagents-outside"><div class="c-who"><span class="c-meta">\+3 sub-agents outside this window<\/span><\/div><\/div>$/);
+  assert.doesNotMatch(more, /data-id|c-trk|c-sum/);
+});
+
+test('a sub-agent lane counts until its end: its own end, else now in a live run, else the run\'s end', () => {
+  const live = exampleSnapshot();
+  Object.assign(findByLabel(live, 'map-import-module'), { startedAt: NOW - 13 * HOUR, endedAt: null });
+  assert.deepEqual(subIds(timelineHtml(context(live), '12h')), ['call-root-40', 'call-root-41'], 'a busy sub-agent that started before the window is in it');
+  const finished = exampleSnapshot();
+  Object.assign(finished.run, { lifecycle: 'finished', finishedAt: NOW - 13 * HOUR });
+  Object.assign(findByLabel(finished, 'map-import-module'), { startedAt: NOW - 14 * HOUR, endedAt: null });
+  Object.assign(findByLabel(finished, 'table-research'), { startedAt: NOW - 14 * HOUR, endedAt: null });
+  const html = timelineHtml(context(finished), '12h');
+  assert.deepEqual(subIds(html), [], 'in a finished run, a sub-agent without an end ends with the run');
+  assert.match(html, /\+5 sub-agents outside this window/);
+  finished.run = exampleSnapshot().run;
+  assert.deepEqual(subIds(timelineHtml(context(finished), '12h')), ['call-root-40', 'call-root-41'], 'the same sub-agents in a live run are in the window');
 });

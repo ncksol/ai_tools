@@ -180,8 +180,9 @@ export function timelineHtml(ctx, span) {
   const buttons = Object.keys(SPANS).map(key => `<button type="button" data-span="${key}" aria-pressed="${key === span}">${SPAN_LABELS[key]}</button>`).join('');
   const keys = KEYS.map(([kind, label]) => `<span><svg width="10" height="10" viewBox="-5 -5 10 10" aria-hidden="true">${markSvg({ kind, status: 'complete', text: label }, 0, 0)}</svg>${label}</span>`).join('');
   const axis = '<div class="c-row c-axis"><div class="c-who"><span class="c-head">Session</span></div><div class="c-trk" data-drawn></div><div class="c-sum"><span class="c-head">Latest report</span></div></div>';
-  // The muted row has no data-id, so nothing draws in its track.
-  const more = hidden ? `<div class="c-row c-more is-sub"><div class="c-who"><span class="c-meta">+${plural(hidden, 'sub-agent')} outside this window</span></div><div class="c-trk"></div><div class="c-sum"></div></div>` : '';
+  // The muted row holds only its line, across the whole row. Its key keeps the rows after it in place when it comes or
+  // goes; it has no data-id, so nothing draws in it.
+  const more = hidden ? `<div class="c-row c-more is-sub" data-key="subagents-outside"><div class="c-who"><span class="c-meta">+${plural(hidden, 'sub-agent')} outside this window</span></div></div>` : '';
   const rows = sessionRow(snapshot.orchestrator) + more + shown.map(unit => sessionRow(unit, ' is-sub')).join('')
     + snapshot.units.filter(unit => !isSubagent(unit)).map(unit => sessionRow(unit)).join('');
   const cost = `<div class="c-row c-cost"><div class="c-who"><div class="c-name">Swarm cost</div><div class="c-meta">all sessions</div></div><div class="c-trk" data-drawn></div><div class="c-sum"><span class="c-total">${costHtml(snapshot.cost.credits, true)}</span></div></div>`;
