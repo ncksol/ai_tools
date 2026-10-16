@@ -64,3 +64,14 @@ test('the dashboard audit holds the Cards note to the cards\' gap and text edge'
   assert.deepEqual(AUDIT_DEFAULTS.follows, [{ item: '.cards-note', ref: '.b-card', gapOf: '.b-grid' }]);
   assert.ok(auditScript(AUDIT_DEFAULTS).includes('.cards-note'));
 });
+
+test('the dashboard audit holds each card\'s border to the colour of its kind, except on the selected card', () => {
+  assert.deepEqual(AUDIT_DEFAULTS.kindBorders, {
+    selector: '.b-card[data-kind], .mc[data-kind]',
+    skip: '.is-sel',
+    colours: { subagent: 'var(--busy)', project: 'var(--merged)', chat: 'var(--merged)' },
+  });
+  const script = auditScript(AUDIT_DEFAULTS);
+  assert.ok(script.includes('"kindBorders":{"selector":".b-card[data-kind], .mc[data-kind]"'));
+  assert.ok(script.includes("'kind-border'"));
+});

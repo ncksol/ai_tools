@@ -233,6 +233,36 @@ export function auditPage(options) {
     }
   }
 
+  // A card's border says what it is. The browser resolves each expected colour on a probe, so the check needs no colour maths.
+  const kindBorders = options.kindBorders;
+  if (kindBorders) {
+    const resolved = new Map();
+    const resolve = value => {
+      if (!resolved.has(value)) {
+        const probe = document.createElement('div');
+        probe.style.borderTopStyle = 'solid';
+        probe.style.borderTopColor = value;
+        document.body.appendChild(probe);
+        resolved.set(value, getComputedStyle(probe).borderTopColor);
+        probe.remove();
+      }
+      return resolved.get(value);
+    };
+    for (const el of root.querySelectorAll(kindBorders.selector)) {
+      if (!shown.has(el) || el.matches(kindBorders.skip) || el.matches(':hover')) continue;
+      const kind = el.getAttribute('data-kind');
+      checks += 1;
+      if (!Object.prototype.hasOwnProperty.call(kindBorders.colours, kind)) {
+        report('kind-border', el, `no border colour for kind ${kind}`);
+        continue;
+      }
+      const want = resolve(kindBorders.colours[kind]);
+      const style = getComputedStyle(el);
+      const got = [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor].find(colour => colour !== want);
+      if (got !== undefined) report('kind-border', el, `border ${got} instead of ${want} for a ${kind} card`);
+    }
+  }
+
   checks += 1;
   if (document.documentElement.scrollWidth > window.innerWidth + 1) report('hscroll', document.documentElement, `${document.documentElement.scrollWidth}px wide in a ${window.innerWidth}px window`);
 
@@ -273,6 +303,7 @@ export const AUDIT_DEFAULTS = Object.freeze({
   atoms: '.chip,.badge,.pill,.ring,.meter,.bar,.stage,.sw,button,select,.need,.b-card,.mc,.pn,.pl-row,.tile,.kv,.fi,.h-row,.g-row,.g-track,.hb-row,.c-who,.c-trk,.c-sum,.tabs,.seg',
   containers: '.b-card,.need,.rail,.detail,.mc,.pn,.pl-row,.tile,.h-row,.run-answer,.empty,.dash',
   follows: [{ item: '.cards-note', ref: '.b-card', gapOf: '.b-grid' }],
+  kindBorders: { selector: '.b-card[data-kind], .mc[data-kind]', skip: '.is-sel', colours: { subagent: 'var(--busy)', project: 'var(--merged)', chat: 'var(--merged)' } },
   padding: { '.dash': 16, '.b-card': 16, '.rail': 16, '.detail': 16, '.need': 12, '.pn': 12, '.pl-row': 12, '.mc': 12 },
   heights: {
     '.chip': 24, '.badge': 20, '.pill': 20, '.d-top .seg > button': 28, '.c-bar .seg > button': 24, '.x': 28, '.pick select': 28,

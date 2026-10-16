@@ -29,7 +29,7 @@ export const VIEWS = [
   { name: 'history', params: { page: 'history' }, history: true },
   { name: 'run', params: { page: 'run', run: 'RUN' }, history: true },
 ];
-export const SELF_TEST_RULES = ['overlap', 'font-family', 'font-size', 'font-style', 'text-transform', 'font-weight', 'letter-spacing', 'line-height', 'contrast', 'colour', 'grid', 'padding', 'height', 'spill', 'clipped', 'hidden-lines', 'cut', 'outside', 'gap', 'align', 'hscroll'];
+export const SELF_TEST_RULES = ['overlap', 'font-family', 'font-size', 'font-style', 'text-transform', 'font-weight', 'letter-spacing', 'line-height', 'contrast', 'colour', 'grid', 'padding', 'height', 'spill', 'clipped', 'hidden-lines', 'cut', 'outside', 'gap', 'align', 'kind-border', 'hscroll'];
 export const USAGE = `Usage: check-layout [--scenario example|stress | --live <url>] [--width <px>] [--screenshots <dir>] [--engine chrome|webkit]
 
 Checks every dashboard view for overlap, clipped text, type, spacing, sizes, contrast and console errors in a

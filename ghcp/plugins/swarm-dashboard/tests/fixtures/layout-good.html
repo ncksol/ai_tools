@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <title>Layout check self-test: clean page</title>
 <style>
+:root { --busy: oklch(0.84 0.07 238); --merged: oklch(0.86 0.07 160); }
 * { box-sizing: border-box; }
 body { margin: 0; padding: 16px; font: 400 14px/20px system-ui, -apple-system, "Segoe UI", sans-serif; color: #222; background: #fff; }
 .dash { display: flex; flex-direction: column; gap: 16px; padding: 16px; border: 1px solid #ddd; }
@@ -23,6 +24,8 @@ body { margin: 0; padding: 16px; font: 400 14px/20px system-ui, -apple-system, "
   <article class="b-card"><span>Second card</span></article>
   <article class="b-card narrow"><div class="cell">A long label with <span>an inline part</span> that ends in an ellipsis</div></article>
   <article class="b-card narrow"><div class="row"><span class="dot"></span><span class="cell">A flex item that ends in an ellipsis</span></div></article>
+  <article class="b-card" data-kind="subagent" style="border-color: var(--busy)"><span>A sub-agent card with a blue border</span></article>
+  <article class="b-card" data-kind="project" style="border-color: var(--merged)"><span>A session card with a green border</span></article>
   <div class="b-grid"><article class="b-card"><span>A card in a grid</span></article><p class="cards-note">A note one gap below the cards, lined up with their text</p></div>
 </main>
 </body>
