@@ -302,14 +302,17 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
   if (options.engine === 'webkit') {
     const entry = findPlaywright(env);
     if (!entry) {
-      stdout.write('WebKit check skipped: Playwright is not available. Install playwright-core outside this repository and set PLAYWRIGHT_CORE (see the README).\n');
+      stdout.write(env.PLAYWRIGHT_CORE
+        ? `WebKit check skipped: PLAYWRIGHT_CORE (${env.PLAYWRIGHT_CORE}) has no index.mjs. Point it at the playwright-core package folder, …/node_modules/playwright-core.\n`
+        : 'WebKit check skipped: Playwright is not available. Install playwright-core outside this repository and set PLAYWRIGHT_CORE (see the README).\n');
       return 0;
     }
-    browser = await launchWebKit(entry);
-    if (!browser) {
-      stdout.write('WebKit check skipped: Playwright\'s WebKit browser is not downloaded. Run: node <playwright-core folder>/cli.js install webkit\n');
+    const launched = await launchWebKit(entry);
+    if (launched.skip) {
+      stdout.write(`WebKit check skipped: ${launched.skip}\n`);
       return 0;
     }
+    browser = launched.browser;
   } else {
     const executable = findBrowser(env);
     if (!executable) {

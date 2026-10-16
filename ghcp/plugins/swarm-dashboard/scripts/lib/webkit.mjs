@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 /**
  * Playwright, for the optional WebKit mode of the layout check. It is not a dependency of this plugin: point
@@ -19,13 +19,14 @@ export function findPlaywright(env = process.env) {
   }
 }
 
-/** Headless WebKit through Playwright, or null when its WebKit build is not downloaded. */
+/** Headless WebKit through Playwright, or why it cannot start: { browser } or { skip }. */
 export async function launchWebKit(entry) {
   const playwright = await import(entry);
   const webkit = playwright.webkit ?? playwright.default?.webkit;
-  if (!webkit || !existsSync(webkit.executablePath())) return null;
+  if (!webkit) return { skip: `${fileURLToPath(entry)} is not playwright-core.` };
+  if (!existsSync(webkit.executablePath())) return { skip: `Playwright's WebKit browser is not downloaded. Run: node ${fileURLToPath(new URL('./cli.js', entry))} install webkit` };
   const browser = await webkit.launch({ headless: true });
-  return { product: `WebKit/${browser.version()}`, playwright: browser, close: () => browser.close() };
+  return { browser: { product: `WebKit/${browser.version()}`, playwright: browser, close: () => browser.close() } };
 }
 
 /** One WebKit page with the same interface as the Chrome page in cdp.mjs. */

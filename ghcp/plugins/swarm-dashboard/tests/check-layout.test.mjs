@@ -79,11 +79,32 @@ test('Playwright is found only where PLAYWRIGHT_CORE points, or through normal r
   assert.equal(findPlaywright({ PLAYWRIGHT_CORE: folder }), pathToFileURL(path.join(folder, 'index.mjs')).href);
 });
 
-test('the WebKit mode skips with a message when Playwright is missing', async () => {
+const skipsWith = async (env, expected) => {
   const stdout = sink();
   const stderr = sink();
-  assert.equal(await main(['--engine', 'webkit'], { stdout, stderr, env: { PLAYWRIGHT_CORE: tempDir() } }), 0);
-  assert.ok(stdout.text.includes('WebKit check skipped: Playwright is not available'), stdout.text);
+  assert.equal(await main(['--engine', 'webkit'], { stdout, stderr, env }), 0);
+  assert.ok(stdout.text.includes(expected), stdout.text);
   assert.ok(!stdout.text.includes('Browser:'), stdout.text);
   assert.equal(stderr.text, '');
+};
+
+test('the WebKit mode skips with a message when Playwright is missing', async () => {
+  await skipsWith({}, 'WebKit check skipped: Playwright is not available');
+});
+
+test('the WebKit mode names the PLAYWRIGHT_CORE folder that has no index.mjs', async () => {
+  const folder = tempDir();
+  await skipsWith({ PLAYWRIGHT_CORE: folder }, `WebKit check skipped: PLAYWRIGHT_CORE (${folder}) has no index.mjs. Point it at the playwright-core package folder, …/node_modules/playwright-core.`);
+});
+
+test('the WebKit mode says when PLAYWRIGHT_CORE holds a module that is not playwright-core', async () => {
+  const folder = tempDir();
+  writeFileSync(path.join(folder, 'index.mjs'), 'export const something = 1;\n');
+  await skipsWith({ PLAYWRIGHT_CORE: folder }, `WebKit check skipped: ${path.join(folder, 'index.mjs')} is not playwright-core.`);
+});
+
+test('the WebKit mode gives the real install command when the WebKit browser is not downloaded', async () => {
+  const folder = tempDir();
+  writeFileSync(path.join(folder, 'index.mjs'), "export const webkit = { executablePath: () => '/no/such/webkit' };\n");
+  await skipsWith({ PLAYWRIGHT_CORE: folder }, `WebKit check skipped: Playwright's WebKit browser is not downloaded. Run: node ${path.join(folder, 'cli.js')} install webkit`);
 });
