@@ -26,7 +26,7 @@ test('type uses the approved sizes and weights; only the clock is larger; no ita
     assert.notEqual(prop, 'text-transform', selector);
     if (prop === 'font-style') assert.equal(value, 'normal', selector);
   }
-  assert.doesNotMatch(bare, /italic|uppercase|text-shadow/);
+  assert.doesNotMatch(bare, /italic|uppercase|text-shadow|filter|drop-shadow/);
 });
 
 test('spacing stays on the 4 px grid', () => {

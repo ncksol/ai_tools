@@ -106,8 +106,8 @@ html[data-gl="off"] body { background: radial-gradient(ellipse at 50% 38%, rgb(2
 .ck-light { width: 12px; height: 12px; border-radius: 50%; background-color: var(--question); box-shadow: 0 0 12px 2px color-mix(in oklch, var(--question) 55%, transparent); animation: ck-pulse 3.2s ease-in-out infinite; }
 .ck-light.is-off { background-color: var(--archived); box-shadow: none; opacity: 0.6; animation: none; }
 .ck-needs { display: flex; flex-direction: column; gap: 8px; }
-.ck-need { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: 16px 16px; row-gap: 4px; column-gap: 8px; width: 100%; padding: 8px; border-radius: 4px; background-color: rgb(255 255 255 / 0.035); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--c) 30%, transparent); font-size: 12px; line-height: 16px; }
-.ck-need .ck-lab { color: var(--c); }
+.ck-need { display: grid; grid-template-columns: fit-content(50%) minmax(0, 1fr) auto; grid-template-rows: 16px 16px; row-gap: 4px; column-gap: 8px; width: 100%; padding: 8px; border-radius: 4px; background-color: rgb(255 255 255 / 0.035); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--c) 30%, transparent); font-size: 12px; line-height: 16px; }
+.ck-need .ck-lab { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--c); }
 .ck-kind { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
 .ck-age { color: var(--ink-3); text-align: right; white-space: nowrap; }
 .ck-need .ck-txt { grid-column: 1 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
@@ -163,7 +163,7 @@ button.ck-log-row:hover .ck-txt { color: var(--ink); }
 
 /* Pull requests. */
 .ck-prs { display: flex; flex-direction: column; gap: 4px; }
-.ck-pr { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; column-gap: 8px; width: 100%; height: 40px; padding: 4px 8px; border-radius: 4px; background-color: rgb(255 255 255 / 0.025); font-size: 12px; line-height: 16px; }
+.ck-pr { display: grid; grid-template-columns: minmax(40px, max-content) minmax(0, 1fr) auto; align-items: center; column-gap: 8px; width: 100%; height: 40px; padding: 4px 8px; border-radius: 4px; background-color: rgb(255 255 255 / 0.025); font-size: 12px; line-height: 16px; }
 .ck-pr:hover, .ck-need:hover { background-color: rgb(255 255 255 / 0.06); }
 .ck-num { color: var(--ink); }
 .ck-pr-t { display: flex; flex-direction: column; min-width: 0; }
