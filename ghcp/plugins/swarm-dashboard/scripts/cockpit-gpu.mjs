@@ -113,28 +113,39 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
     stdout.write(USAGE);
     return 0;
   }
-  let browser;
-  if (options.engine === 'webkit') {
-    const entry = findPlaywright(env);
-    const launched = entry ? await launchWebKit(entry) : { skip: 'Playwright is not available; set PLAYWRIGHT_CORE (see the README).' };
-    if (launched.skip) {
-      stderr.write(`${launched.skip}\n`);
-      return 2;
-    }
-    browser = launched.browser;
-  } else {
-    const executable = findBrowser(env);
-    if (!executable) {
-      stderr.write('No local Chrome, Chromium or Edge was found. Install one or set CHROME_PATH.\n');
-      return 2;
-    }
-    browser = await launchBrowser(executable);
-  }
-  const server = createDashboardServer({ createEngine: () => createDemoEngine({ scenario: 'example', simulate: false }), port: 0, version: 'cockpit-gpu' });
-  const interrupt = () => process.exit(130);
+  let browser = null;
+  let launching = null;
+  let stop = null;
+  // A stop closes the browser the normal way (it waits for the browser to exit, then deletes its profile), waiting for
+  // a launch in progress first, and exits with 130. Playwright handles its own browser in WebKit.
+  const interrupt = () => {
+    stop ??= Promise.race([
+      Promise.resolve(browser ?? launching).then(open => open?.close()),
+      new Promise(resolve => setTimeout(resolve, 8000)),
+    ]).catch(() => {}).finally(() => process.exit(130));
+  };
   process.once('SIGINT', interrupt);
   process.once('SIGTERM', interrupt);
+  let server = null;
   try {
+    if (options.engine === 'webkit') {
+      const entry = findPlaywright(env);
+      const launched = entry ? await launchWebKit(entry) : { skip: 'Playwright is not available; set PLAYWRIGHT_CORE (see the README).' };
+      if (launched.skip) {
+        stderr.write(`${launched.skip}\n`);
+        return 2;
+      }
+      browser = launched.browser;
+    } else {
+      const executable = findBrowser(env);
+      if (!executable) {
+        stderr.write('No local Chrome, Chromium or Edge was found. Install one or set CHROME_PATH.\n');
+        return 2;
+      }
+      launching = launchBrowser(executable);
+      browser = await launching;
+    }
+    server = createDashboardServer({ createEngine: () => createDemoEngine({ scenario: 'example', simulate: false }), port: 0, version: 'cockpit-gpu' });
     await server.listen();
     const url = `${server.url}cockpit?debug=1&quality=high`;
     const results = [];
@@ -157,11 +168,15 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
     const problems = verdict(results);
     for (const problem of problems) stderr.write(`${problem}\n`);
     return problems.length ? 1 : 0;
+  } catch (error) {
+    if (stop) await stop;
+    throw error;
   } finally {
+    if (stop) await stop;
     process.off('SIGINT', interrupt);
     process.off('SIGTERM', interrupt);
-    await server.close();
-    await browser.close();
+    await server?.close();
+    await browser?.close();
   }
 }
 
