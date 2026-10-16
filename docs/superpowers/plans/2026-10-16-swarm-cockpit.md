@@ -78,7 +78,7 @@ These change what the owner sees. The coordinator confirmed B1 to B9 on 16 Octob
 - B4. The status panel shows the regular header's six count buckets (Working, Stuck, Waiting, Idle, Done, Failed) from `snapshot.counts`, instead of the spike's eight raw states, so both views show the same numbers. Tile state words are the Board's short words (Busy, Idle, Plan waiting, Question, Stuck, Blocked, Merged, Done, Archived).
 - B5. Times use the regular view's formats: the run timer as "2d 23h 12m 06s", ages as "48m", the next monitor check as a countdown such as "4m".
 - B6. Clicks (design call 4 and 9.11). A tile, a "needs you" item, an activity row or a PR row opens that unit's details in the regular window; Cost opens the Timeline tab, Status and "+N more" the Board, the clock and the empty states the Cards tab. The regular window is found by its name and gets the request as a same-origin message, so it does not reload. If it is gone, the cockpit opens a new regular window on that address.
-- B7. Minimum window (9.2): 1100 × 800 CSS px, and wide enough for the arrangement: about 1.3 times as wide as tall (1200 × 900 fits; 1100 × 860 does not, and the spike's own fit failed at 1100 × 900). The side consoles keep 64 design px from the window's edges instead of the spike's 40, so the camera's drift and parallax never push them off the screen; at 1440 × 900 and larger the arrangement is the spike's. Below that the black hole still renders and a centred note says "Make this window larger to see the cockpit." with a button to open the regular view.
+- B7. Minimum window (9.2): 1100 × 800 CSS px, and wide enough for the arrangement: about 1.3 times as wide as tall (1200 × 900 fits; 1100 × 1000 does not, and the spike's own fit failed at 1100 × 900). Every panel keeps 8 design px from the window's side edges at every camera pose, so the camera's drift and parallax (about 50 px at the pointer's corner, more for panels turned far out) never push it off the screen; at rest that puts the panels a little further in than the spike's 40 and 48 px. The gaps between panels are found by bisection, so they are exact and the same on both sides, and a window that fits keeps fitting as it grows (checked over 8,651 sizes). Below that the black hole still renders and a centred note says "Make this window larger to see the cockpit." with a button to open the regular view.
 - B8. Quality control (9.4): a small "High · Balanced" switch in the top right corner. The top left line reads "Swarm cockpit", plus "Sample data" with the demo, "Swarm finished" for a finished run and "Disconnected · retrying" when the connection drops. No "Watch-only" label (the owner had it removed from the regular view: "that is not required") and no frame-rate line.
 - B9. Panel heights are fixed in CSS (the spike sized its upper panels by content), so the arrangement is pure maths and testable in Node.
 - B10. Port, not rewrite (9.7): the shader passes and the arrangement follow the spike's maths with the same constants, restructured into ES modules with named constants. The look must match the spike (D2).
@@ -125,6 +125,7 @@ Hooks in PR 2's files, each in its own commit:
 **Files:**
 - Create: `ui/cockpit.html`
 - Create: `tests/cockpit-shell.test.mjs`
+- Create: `tests/helpers/cockpit.mjs` (values shared by the cockpit's tests; a helper, so importing it runs no tests)
 - Modify: `server/http.mjs` (the asset lookup at the end of `route()`)
 - Create: `tests/cockpit-server.test.mjs`
 
@@ -139,8 +140,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
+import { PANEL_TABS } from './helpers/cockpit.mjs';
+
 const html = readFileSync(new URL('../ui/cockpit.html', import.meta.url), 'utf8');
-export const PANEL_TABS = { 'ck-clock': 'cards', 'ck-cost': 'timeline', 'ck-needs': 'cards', 'ck-status': 'board', 'ck-activity': 'cards', 'ck-units': 'cards', 'ck-prs': 'board' };
 
 test('the cockpit shell loads only its own stylesheet and one module, with nothing inline', () => {
   assert.match(html, /<link rel="stylesheet" href="\/ui\/cockpit\.css">/);
@@ -156,6 +158,16 @@ test('the shell has the canvas, the top line, the quality switch, the note and e
   for (const id of ['ck-hud', 'ck-qual', 'ck-stage', 'ck-world', 'ck-note']) assert.match(html, new RegExp(`id="${id}"`));
   for (const [id, tab] of Object.entries(PANEL_TABS)) assert.match(html, new RegExp(`<section class="ck-panel [a-z-]+" id="${id}" data-tab="${tab}" aria-label="[A-Z][^"]+"></section>`));
 });
+```
+
+and the shared values:
+
+```js
+// tests/helpers/cockpit.mjs
+/** Values shared by the cockpit's tests. A helper, not a test file, so importing it runs no tests. */
+export const PANEL_TABS = Object.freeze({ 'ck-clock': 'cards', 'ck-cost': 'timeline', 'ck-needs': 'cards', 'ck-status': 'board', 'ck-activity': 'cards', 'ck-units': 'cards', 'ck-prs': 'board' });
+/** Common window sizes the arrangement and the browser check are tested at. */
+export const COCKPIT_SIZES = Object.freeze([[1100, 800], [1280, 800], [1440, 900], [1512, 900], [1680, 1050], [1920, 1080], [2560, 1440]]);
 ```
 
 - [ ] **Step 2: Run it to make sure it fails**
@@ -204,7 +216,7 @@ Expected: PASS (2 tests).
 - [ ] **Step 5: Commit the shell**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui/cockpit.html ghcp/plugins/swarm-dashboard/tests/cockpit-shell.test.mjs
+git add ghcp/plugins/swarm-dashboard/ui/cockpit.html ghcp/plugins/swarm-dashboard/tests/cockpit-shell.test.mjs ghcp/plugins/swarm-dashboard/tests/helpers/cockpit.mjs
 git commit -m "feat(swarm-dashboard): add the cockpit page shell"
 ```
 
@@ -805,7 +817,7 @@ git commit -m "feat(swarm-dashboard): add the cockpit's shared 3D space and came
 - Create: `tests/cockpit-fit.test.mjs`
 
 **Interfaces:**
-- Consumes: `REST`, `extremePoses`, `projectPanel`, `stageFor` from `ui/cockpit-space.mjs`.
+- Consumes: `REST`, `extremePoses`, `projectPanel`, `stageFor` from `ui/cockpit-space.mjs`; `PANEL_TABS`, `COCKPIT_SIZES` from `tests/helpers/cockpit.mjs` (Task 1).
 - Produces:
   - `PANELS` (id → `{ width, height }` in design px; Task 9's CSS must use the same numbers), `MIN_WINDOW = { width: 1100, height: 800 }`, `SPACING`, `TOP_BAND = 48` (window px under the flat top line and quality switch).
   - `fitPanels(width, height) → { stage, fits, reason: null|'small'|'crowded', placements: { [id]: placement }|null, rects: { [id]: rect }|null, problems: string[] }`.
@@ -818,37 +830,49 @@ git commit -m "feat(swarm-dashboard): add the cockpit's shared 3D space and came
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { MIN_WINDOW, PANELS, SPACING, TOP_BAND, fitPanels, overlapProblems } from '../ui/cockpit-fit.mjs';
-import { PANEL_TABS } from './cockpit-shell.test.mjs';
-
-export const COCKPIT_SIZES = [[1100, 800], [1280, 800], [1440, 900], [1512, 900], [1680, 1050], [1920, 1080], [2560, 1440]];
+import { COCKPIT_SIZES, PANEL_TABS } from './helpers/cockpit.mjs';
 
 test('every panel in the shell has a fixed size', () => {
   assert.deepEqual(Object.keys(PANELS).sort(), Object.keys(PANEL_TABS).sort());
   assert.deepEqual(MIN_WINDOW, { width: 1100, height: 800 });
 });
 
-test('the arrangement fits at common window sizes, without overlap and with even gaps', () => {
+test('the arrangement fits at common window sizes, with exact gaps that match on both sides', () => {
   for (const [width, height] of COCKPIT_SIZES) {
     const fit = fitPanels(width, height);
     assert.equal(fit.fits, true, `${width} × ${height}: ${fit.problems.join('; ')}`);
     const r = fit.rects;
     const s = fit.stage.scale;
-    assert.ok(Math.abs((r['ck-units'].left + r['ck-units'].right) / 2 - width / 2) < 0.5, 'the centre console is centred');
-    assert.ok(Math.abs(r['ck-activity'].left - (width - r['ck-prs'].right)) < 1, 'the side consoles mirror each other');
-    assert.ok(r['ck-units'].left - r['ck-activity'].right >= SPACING.consoleGap * s - 0.01);
-    assert.ok(r['ck-prs'].left - r['ck-units'].right >= SPACING.consoleGap * s - 0.01);
-    assert.ok(r['ck-cost'].bottom <= r['ck-activity'].top - SPACING.upperAbove * s + 0.01);
-    assert.ok(r['ck-clock'].bottom <= r['ck-cost'].top - SPACING.upperGap * s + 0.01);
-    assert.ok(r['ck-status'].bottom <= r['ck-prs'].top - SPACING.upperAbove * s + 0.01);
-    assert.ok(r['ck-needs'].bottom <= r['ck-status'].top - SPACING.upperGap * s + 0.01);
+    const near = (got, want, what) => assert.ok(Math.abs(got - want) < 0.5, `${width} × ${height}: ${what} is ${got.toFixed(2)} px, not ${want.toFixed(2)}`);
+    near((r['ck-units'].left + r['ck-units'].right) / 2, width / 2, "the centre console's middle");
+    near(r['ck-activity'].left, width - r['ck-prs'].right, "the left console's margin against the right one's");
+    near(r['ck-units'].left - r['ck-activity'].right, SPACING.consoleGap * s, 'the gap left of the centre console');
+    near(r['ck-prs'].left - r['ck-units'].right, SPACING.consoleGap * s, 'the gap right of the centre console');
+    near(r['ck-activity'].top - r['ck-cost'].bottom, SPACING.upperAbove * s, 'the gap above the activity console');
+    near(r['ck-prs'].top - r['ck-status'].bottom, SPACING.upperAbove * s, 'the gap above the PR console');
+    near(r['ck-cost'].top - r['ck-clock'].bottom, SPACING.upperGap * s, 'the gap inside the left stack');
+    near(r['ck-status'].top - r['ck-needs'].bottom, SPACING.upperGap * s, 'the gap inside the right stack');
     for (const id of ['ck-clock', 'ck-needs']) assert.ok(r[id].top >= TOP_BAND, `${id} stays under the top line`);
+  }
+});
+
+test('a window that fits keeps fitting as it grows wider', () => {
+  for (const height of [800, 900, 1000, 1080, 1200, 1360, 1440, 1600]) {
+    let fitted = false;
+    for (let width = 1100; width <= 3200; width += 40) {
+      const fits = fitPanels(width, height).fits;
+      if (fitted) assert.equal(fits, true, `${width} × ${height} stops fitting although a narrower window fits`);
+      fitted = fitted || fits;
+    }
+    const comfortable = Math.max(1100, Math.ceil(height * 1.4));
+    assert.equal(fitPanels(comfortable, height).fits, true, `${comfortable} × ${height}`);
   }
 });
 
 test('below the minimum window, or too narrow for its height, the cockpit says so instead', () => {
   assert.equal(fitPanels(1099, 800).reason, 'small');
   assert.equal(fitPanels(1280, 799).reason, 'small');
-  const narrow = fitPanels(1100, 900);
+  const narrow = fitPanels(1100, 1000);
   assert.deepEqual([narrow.fits, narrow.reason], [false, 'crowded']);
   assert.ok(narrow.problems.some(problem => problem.includes('ck-activity')));
 });
@@ -872,9 +896,10 @@ Expected: FAIL with `Cannot find module '../ui/cockpit-fit.mjs'`.
 // ui/cockpit-fit.mjs
 /**
  * Where the panels go for a window size. A console arc sits below the window: the units console straight ahead and the
- * activity and PR consoles turned out to each side, at the smallest angle that leaves an even gap. Above each side
- * console a stack of two upper panels is pushed as far out as the window allows. Everything is design px, scaled with
- * the stage; the browser check runs overlapProblems() again on the real page.
+ * activity and PR consoles turned out to each side, at the smallest angle that leaves the console gap. Above each side
+ * console a stack of two upper panels is pushed as far out as the window's edge allows. Gaps are found by bisection, so
+ * they are exact and match on both sides. Everything is design px, scaled with the stage; the browser check runs
+ * overlapProblems() again on the real page.
  */
 import { REST, extremePoses, projectPanel, stageFor } from './cockpit-space.mjs';
 
@@ -889,17 +914,36 @@ export const PANELS = Object.freeze({
 });
 export const MIN_WINDOW = Object.freeze({ width: 1100, height: 800 });
 /**
- * Gaps in design px: between consoles, from the side consoles to the window's edges (64 covers the camera's reach, about
- * 50 px at the pointer's corner), from the upper panels to the edges, above the consoles, inside a stack, and the top line.
+ * Gaps in design px: between consoles; from every panel to the window's side edges at every camera pose (the camera
+ * reaches about 50 px at the pointer's corner, more for panels turned far out); above the consoles; inside a stack; and
+ * the stacks' top line.
  */
-export const SPACING = Object.freeze({ consoleGap: 32, edge: 64, upperEdge: 48, upperAbove: 24, upperGap: 16, top: 64 });
+export const SPACING = Object.freeze({ consoleGap: 32, edge: 8, upperAbove: 24, upperGap: 16, top: 64 });
 /** Window px under the flat top line and the quality switch (16 px from the top, 24 px tall, 8 px clear). */
 export const TOP_BAND = 48;
 const CONSOLE = Object.freeze({ r: 860, y: -236, tilt: 12 });
-const SIDE = Object.freeze({ tilt: 8, turn: 0.5, rFrom: 940, rTo: 1300, rStep: 40, phiFrom: 14, phiTo: 60, phiStep: 0.5 });
-const UPPER = Object.freeze({ r: 1180, turn: 0.75, phiFrom: 44, phiTo: 16, phiStep: 0.5, yFrom: -300, yTo: 700, yStep: 4 });
+const SIDE = Object.freeze({ tilt: 8, turn: 0.5, rFrom: 940, rTo: 1300, rStep: 40, phiFrom: 14, phiTo: 60 });
+const UPPER = Object.freeze({ r: 1180, turn: 0.75, phiFrom: 44, phiTo: 16, yFrom: -300, yTo: 700 });
 
+const POSES = Object.freeze([REST, ...extremePoses()]);
 const overlap = (a, b, clear) => a.left < b.right + clear && b.left < a.right + clear && a.top < b.bottom + clear && b.top < a.bottom + clear;
+
+/** Where `ok` turns from false to true in [lo, hi] (ok is false below that point and true from it on); null if ok(hi) is false. */
+function firstTrue(lo, hi, ok) {
+  if (!ok(hi)) return null;
+  if (ok(lo)) return lo;
+  for (let i = 0; i < 40; i += 1) {
+    const mid = (lo + hi) / 2;
+    if (ok(mid)) hi = mid;
+    else lo = mid;
+  }
+  return hi;
+}
+/** Where `ok` turns from true to false in [lo, hi]; null if ok(lo) is false. */
+function lastTrue(lo, hi, ok) {
+  const value = firstTrue(-hi, -lo, x => ok(-x));
+  return value === null ? null : -value;
+}
 
 /** Panels that leave the screen or enter the top band, then pairs closer than `clear` px. All values are window px. */
 export function overlapProblems(rects, { width, height, top, edge, clear }) {
@@ -925,36 +969,56 @@ export function fitPanels(width, height) {
     rects[id] = projectPanel(placement, PANELS[id], REST, stage);
     return rects[id];
   };
+  /** A panel's least room to the window's side edge (the left one when sign < 0) over the camera's whole range. */
+  const room = (id, placement, sign) => Math.min(...POSES.map(cam => {
+    const rect = projectPanel(placement, PANELS[id], cam, stage);
+    return sign < 0 ? rect.left : width - rect.right;
+  }));
   const problems = [];
   const centre = put('ck-units', { phi: 0, y: CONSOLE.y, r: CONSOLE.r, tilt: CONSOLE.tilt, extra: 0 });
   for (const [id, sign] of [['ck-activity', -1], ['ck-prs', 1]]) {
+    const placement = (r, phi) => ({ phi: sign * phi, y: CONSOLE.y, r, tilt: SIDE.tilt, extra: -SIDE.turn * sign * phi });
+    const clear = rect => (sign > 0 ? rect.left - centre.right : centre.left - rect.right) >= SPACING.consoleGap * s;
     let done = false;
     for (let r = SIDE.rFrom; r <= SIDE.rTo && !done; r += SIDE.rStep) {
-      for (let phi = SIDE.phiFrom; phi <= SIDE.phiTo; phi += SIDE.phiStep) {
-        const rect = put(id, { phi: sign * phi, y: CONSOLE.y, r, tilt: SIDE.tilt, extra: -SIDE.turn * sign * phi });
-        const clear = sign > 0 ? rect.left >= centre.right + SPACING.consoleGap * s : rect.right <= centre.left - SPACING.consoleGap * s;
-        if (!clear) continue;
-        done = sign > 0 ? rect.right <= width - SPACING.edge * s : rect.left >= SPACING.edge * s;
-        break;
+      // The smallest turn that leaves exactly the console gap; further back if the camera could then push it off the screen.
+      const phi = firstTrue(SIDE.phiFrom, SIDE.phiTo, value => clear(put(id, placement(r, value))));
+      if (phi !== null) {
+        put(id, placement(r, phi));
+        done = room(id, placement(r, phi), sign) >= SPACING.edge * s;
       }
     }
     if (!done) problems.push(`${id} does not fit beside the centre console`);
   }
   for (const [ids, sign, below] of [[['ck-clock', 'ck-cost'], -1, 'ck-activity'], [['ck-needs', 'ck-status'], 1, 'ck-prs']]) {
-    let phi = UPPER.phiFrom;
+    let widest = UPPER.phiFrom;
     let floor = rects[below].top - SPACING.upperAbove * s;
     // The lower panel first, then the one above it.
     for (let k = ids.length - 1; k >= 0; k -= 1) {
       const id = ids[k];
-      for (let ph = phi; ph >= UPPER.phiTo; ph -= UPPER.phiStep) {
-        const rect = put(id, { phi: sign * ph, y: 0, r: UPPER.r, tilt: 0, extra: -UPPER.turn * sign * ph });
-        if (sign < 0 ? rect.left >= SPACING.upperEdge * s : rect.right <= width - SPACING.upperEdge * s) {
-          phi = ph;
-          break;
-        }
+      const placement = (phi, y) => ({ phi: sign * phi, y, r: UPPER.r, tilt: 0, extra: -UPPER.turn * sign * phi });
+      const place = (phi, y) => put(id, placement(phi, y));
+      // As far out as the camera's range allows and no further out than the panel below, then as low as leaves exactly
+      // the gap to the panel below. The camera's reach depends a little on the height, so a second pass checks the turn
+      // again at the height the first pass found.
+      let phi = null;
+      let y = 0;
+      for (let pass = 0; pass < 2 && y !== null; pass += 1) {
+        const at = y;
+        phi = lastTrue(UPPER.phiTo, widest, value => room(id, placement(value, at), sign) >= SPACING.edge * s);
+        if (phi === null) break;
+        y = firstTrue(UPPER.yFrom, UPPER.yTo, value => place(phi, value).bottom <= floor);
       }
-      for (let y = UPPER.yFrom; y < UPPER.yTo; y += UPPER.yStep) if (put(id, { ...placements[id], y }).bottom <= floor) break;
-      floor = rects[id].top - SPACING.upperGap * s;
+      if (phi === null) {
+        problems.push(`${id} does not fit inside the window's edge`);
+        break;
+      }
+      if (y === null) {
+        problems.push(`${id} does not fit above ${below}`);
+        break;
+      }
+      widest = phi;
+      floor = place(phi, y).top - SPACING.upperGap * s;
     }
   }
   const top = Math.max(SPACING.top * s, TOP_BAND);
@@ -962,7 +1026,7 @@ export function fitPanels(width, height) {
   // The camera's drift and parallax must never push a panel off the screen, into the top band or into another panel.
   for (const cam of extremePoses()) {
     const moved = Object.fromEntries(Object.entries(placements).map(([id, placement]) => [id, projectPanel(placement, PANELS[id], cam, stage)]));
-    for (const problem of overlapProblems(moved, { width, height, top: TOP_BAND, edge: 0, clear: 4 * s })) problems.push(`at the camera's limit, ${problem}`);
+    for (const problem of overlapProblems(moved, { width, height, top: TOP_BAND, edge: 4 * s, clear: 4 * s })) problems.push(`at the camera's limit, ${problem}`);
   }
   const unique = [...new Set(problems)];
   return { stage, fits: unique.length === 0, reason: unique.length ? 'crowded' : null, placements, rects, problems: unique };
@@ -972,7 +1036,7 @@ export function fitPanels(width, height) {
 - [ ] **Step 4: Run the tests to make sure they pass**
 
 Run: `node --test tests/cockpit-fit.test.mjs`
-Expected: PASS (4 tests).
+Expected: PASS (5 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -2934,7 +2998,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { CHECKS, COCKPIT_AUDIT, COCKPIT_SIZES, SMALL_SIZE, cockpitIssues, expandAll } from '../scripts/lib/cockpit-check.mjs';
 import { parseArguments } from '../scripts/check-cockpit.mjs';
-import { COCKPIT_SIZES as FIT_SIZES } from './cockpit-fit.test.mjs';
+import { COCKPIT_SIZES as FIT_SIZES } from './helpers/cockpit.mjs';
 
 test('the cockpit is checked at the window sizes the arrangement is tested at, and in a small window', () => {
   assert.deepEqual(COCKPIT_SIZES, FIT_SIZES);
