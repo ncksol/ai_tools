@@ -672,6 +672,73 @@ test('an abort stops the sync sub-agents and their runs; the end of the process 
   assert.deepEqual(state.subagentOutcomes, { completed: 1, failed: 2, cancelled: 1 });
 });
 
+// --- A follow-up that completes gets a finish item of its own ---
+
+const finishItems = (unit, runCount) => unit.feed.filter(item => item.kind === 'subagent-done' && item.source.endsWith(`/run-${runCount}`));
+
+test('a follow-up\'s last turn end adds a finish item for that run; one turn end after the first finish adds nothing', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const call = log.subagent({ name: 'scout', type: 'explore', mode: 'background', agentId: 'agent-s' });
+  log.wait(1000); log.sub(call, 'assistant.turn_start');
+  log.wait(1000); log.subagentDone(call, { durationMs: 2000, agentId: 'agent-s' });
+  log.sub(call, 'assistant.turn_end');
+  let unit = unitOf(foldRoot(log), call);
+  assert.deepEqual(unit.feed.map(item => item.text), ['started explore: scout', 'completed explore: scout'], 'a turn end just after the first finish adds nothing');
+  log.wait(60_000); log.toAgent('agent-s', 'one more thing');
+  log.wait(1000); log.sub(call, 'assistant.turn_start');
+  assert.equal(finishItems(unitOf(foldRoot(log), call), 2).length, 0, 'none while it works');
+  log.wait(5000); log.sub(call, 'assistant.turn_end');
+  unit = unitOf(foldRoot(log), call);
+  assert.deepEqual([unit.lastOutcome, unit.runCount], ['completed', 2]);
+  assert.deepEqual(finishItems(unit, 2), [{ at: T0 + 68_000, kind: 'subagent-done', text: 'completed explore: scout', source: `cli-1/${call}/run-2` }]);
+  log.wait(1000); log.sub(call, 'assistant.turn_end');
+  assert.equal(finishItems(unitOf(foldRoot(log), call), 2).length, 1, 'a turn end that finds the run closed changes nothing');
+  assert.equal(finishItems(unitOf(foldRoot(log), call), 2)[0].at, T0 + 68_000);
+});
+
+test('a follow-up with several turns has one finish item, after its last turn', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const call = log.subagent({ name: 'scout', type: 'explore', mode: 'background', agentId: 'agent-s' });
+  log.wait(1000); log.subagentDone(call, { durationMs: 1000, agentId: 'agent-s' });
+  log.wait(1000); log.toAgent('agent-s', 'follow up');
+  for (let turn = 1; turn <= 3; turn += 1) {
+    log.wait(1); log.sub(call, 'assistant.turn_start');
+    if (turn === 2) assert.equal(finishItems(unitOf(foldRoot(log), call), 2).length, 0, 'while it is in its second turn');
+    log.wait(1000); log.sub(call, 'assistant.turn_end');
+  }
+  const unit = unitOf(foldRoot(log), call);
+  assert.equal(finishItems(unit, 2).length, 1);
+  assert.equal(finishItems(unit, 2)[0].at, T0 + 5003);
+  assert.equal(new Set(unit.feed.map(item => `${item.kind}:${item.source}`)).size, unit.feed.length, 'the items\' ids are unique');
+});
+
+test('two follow-ups give two finish items with different sources, and a reopened first run adds none', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const call = log.subagent({ name: 'scout', type: 'explore', mode: 'background', agentId: 'agent-s' });
+  log.wait(1000); log.subagentDone(call, { durationMs: 1000, agentId: 'agent-s' });
+  for (let n = 0; n < 2; n += 1) {
+    log.wait(1000); log.toAgent('agent-s', `follow up ${n}`);
+    log.wait(1000); log.sub(call, 'assistant.turn_start');
+    log.wait(1000); log.sub(call, 'assistant.turn_end');
+  }
+  const unit = unitOf(foldRoot(log), call);
+  assert.deepEqual(unit.feed.filter(item => item.kind === 'subagent-done').map(item => [item.text, item.source]), [
+    ['completed explore: scout', `cli-1/${call}`], ['completed explore: scout', `cli-1/${call}/run-2`], ['completed explore: scout', `cli-1/${call}/run-3`],
+  ]);
+  const reopened = new EventLog(T0);
+  reopened.start(); reopened.turnStart();
+  const first = reopened.subagent({ name: 'scout', type: 'explore', mode: 'background', agentId: 'agent-s' });
+  reopened.wait(1000); reopened.subagentDone(first, { durationMs: 1000, agentId: 'agent-s' });
+  reopened.wait(1000); reopened.sub(first, 'assistant.turn_start');
+  reopened.wait(1000); reopened.sub(first, 'assistant.turn_end');
+  const kept = unitOf(foldRoot(reopened), first);
+  assert.deepEqual(kept.feed.map(item => item.source), [`cli-1/${first}`, `cli-1/${first}`], 'the first completion item stands');
+  assert.deepEqual([kept.runCount, kept.lastOutcome, kept.runs], [1, 'completed', [[T0, T0 + 3000]]]);
+});
+
 test('an abort keeps the sync sub-agents of a top sub-agent that is still working, even a resumed one', () => {
   const log = new EventLog(T0);
   log.start(); log.turnStart();

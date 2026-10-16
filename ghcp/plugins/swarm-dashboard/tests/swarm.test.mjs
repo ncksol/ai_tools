@@ -950,3 +950,24 @@ test('a cancelled sync follow-up takes its running sync child with it', () => {
   assert.equal(unit.statusDetail, 'cancelled');
   assert.deepEqual(unit.subagents.map(sub => [sub.id, sub.status]), [[ids.child, 'cancelled']]);
 });
+
+test('a follow-up that completes shows a completed item as the latest of its unit, with an id of its own', () => {
+  const ids = {};
+  const { data } = quietSwarm(root => {
+    root.at(at(60)); ids.call = root.subagent({ name: 'late', type: 'explore', mode: 'background', agentId: 'ag-late' });
+    root.at(at(61)); root.subagentDone(ids.call, { durationMs: MINUTE, agentId: 'ag-late' });
+    root.at(at(62)); root.toAgent('ag-late', 'again');
+    root.at(at(63)); root.sub(ids.call, 'assistant.turn_start');
+    root.at(at(65)); root.sub(ids.call, 'assistant.turn_end');
+  }, at(70));
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  const [unit] = subUnits(snapshot);
+  assert.deepEqual([unit.statusDetail, unit.endedAt], ['completed', at(65)]);
+  assert.deepEqual([unit.recent[0].text, unit.recent[0].at], ['completed explore: late', at(65)]);
+  const first = unit.recent.find(item => item.at === at(61));
+  assert.equal(first.text, 'completed explore: late');
+  assert.notEqual(first.id, unit.recent[0].id);
+  const ids2 = snapshot.feed.map(item => item.id);
+  assert.equal(new Set(ids2).size, ids2.length);
+});

@@ -693,7 +693,11 @@ function onOwnedEvent(state, event, data, owner, agentId, at) {
       unit.turnOpen = true;
       if (unit.firstFinishAt !== null) {
         const last = unit.runs[unit.runs.length - 1];
-        if (last && last[1] !== null) last[1] = null;
+        if (last && last[1] !== null) {
+          last[1] = null;
+          // A run that works again has not finished: its finish item (if any) comes back after its last turn.
+          unit.feed = unit.feed.filter(item => item.source !== runSource(state, parent));
+        }
       }
       break;
     case 'assistant.turn_end':
@@ -705,6 +709,8 @@ function onOwnedEvent(state, event, data, owner, agentId, at) {
         if (last && last[1] === null) {
           closeRun(unit, at);
           unit.lastOutcome = 'completed';
+          // The first run has its finish item already; each run opened by a follow-up gets one of its own.
+          if (unit.runCount >= 2) setRunFinishItem(state, parent, at, 'completed');
         }
       }
       break;
