@@ -45,21 +45,29 @@ const SUBAGENT_UNITS = [
   { label: 'probe-cache-sizes', state: 'failed', type: 'explore', mode: 'background', effort: 'low', start: 800, end: 790, name: 'Probe the cache sizes on the sample data', reason: 'Failed: the tool call timed out.' },
   { label: 'scan-test-names', state: 'cancelled', type: 'orchestrator-worker', mode: 'background', effort: 'medium', start: 90, end: 70, name: 'Scan the test names for duplicates', reason: 'Cancelled after 20 min.' },
   { label: 'map-old-endpoints', state: 'crashed', type: 'explore', mode: 'background', effort: 'low', start: 35, end: 20, name: 'Map the old endpoints to the new ones', reason: 'Ended rule: the orchestrator process ended while it ran.' },
+  // Seven more finished ones, so the snapshot lists MAX_FINISHED_SUBAGENT_UNITS finished sub-agents, as the engine would.
+  { label: 'tidy-css-tokens', state: 'completed', type: 'general-purpose', mode: 'background', effort: 'low', start: 160, end: 150, name: 'Tidy the CSS colour tokens' },
+  { label: 'verify-port-probe', state: 'completed', type: 'task', mode: 'sync', effort: null, start: 220, end: 210, name: 'Verify the port probe on a busy port' },
+  { label: 'collect-flaky-logs', state: 'failed', type: 'explore', mode: 'background', effort: 'low', start: 260, end: 255, name: 'Collect the logs of the flaky test runs', reason: 'Failed: the log folder was not found.' },
+  { label: 'check-a11y-labels', state: 'completed', type: 'code-review', mode: 'background', effort: 'medium', start: 340, end: 320, name: 'Check the accessible labels on the controls' },
+  { label: 'compare-fixture-shapes', state: 'completed', type: 'explore', mode: 'background', effort: 'low', start: 460, end: 440, name: 'Compare the fixture shapes with the schema' },
+  { label: 'review-docs-tone', state: 'completed', type: 'rubber-duck', mode: 'sync', effort: 'high', start: 520, end: 500, name: 'Review the tone of the user docs' },
+  { label: 'scan-old-branches', state: 'cancelled', type: 'orchestrator-worker', mode: 'background', effort: 'medium', start: 640, end: 600, name: 'Scan the old branches for unmerged work', reason: 'Cancelled after 40 min.' },
 ];
-/** Per sub-agent state: status, statusDetail, bucket, the orchestrator's SubagentView status, report status, activity and feed verb. */
+/** Per sub-agent state: the unit's status, statusDetail and bucket, the orchestrator's SubagentView status, the report status, the activity label and the feed verb. */
 const SUBAGENT_STATES = {
-  running: ['busy', 'busy', 'working', 'running', 'progress', 'Thinking', null],
-  stuck: ['stuck', 'stuck_subagent', 'stuck', 'stuck', 'progress', 'Thinking', null],
-  completed: ['done', 'completed', 'done', 'completed', 'complete', 'Done', 'completed'],
-  failed: ['blocked', 'failed', 'failed', 'failed', 'blocked', 'Failed', 'failed'],
-  cancelled: ['blocked', 'cancelled', 'failed', 'cancelled', 'blocked', 'Cancelled', 'cancelled'],
+  running: { status: 'busy', statusDetail: 'busy', bucket: 'working', viewStatus: 'running', reportStatus: 'progress', activity: 'Thinking', verb: null },
+  stuck: { status: 'stuck', statusDetail: 'stuck_subagent', bucket: 'stuck', viewStatus: 'stuck', reportStatus: 'progress', activity: 'Thinking', verb: null },
+  completed: { status: 'done', statusDetail: 'completed', bucket: 'done', viewStatus: 'completed', reportStatus: 'complete', activity: 'Done', verb: 'completed' },
+  failed: { status: 'blocked', statusDetail: 'failed', bucket: 'failed', viewStatus: 'failed', reportStatus: 'blocked', activity: 'Failed', verb: 'failed' },
+  cancelled: { status: 'blocked', statusDetail: 'cancelled', bucket: 'failed', viewStatus: 'cancelled', reportStatus: 'blocked', activity: 'Cancelled', verb: 'cancelled' },
   // The contract has no 'crashed' sub-agent status or feed text, so the orchestrator's view and the feed say failed.
-  crashed: ['blocked', 'crashed', 'failed', 'failed', 'blocked', 'Stopped', 'failed'],
+  crashed: { status: 'blocked', statusDetail: 'crashed', bucket: 'failed', viewStatus: 'failed', reportStatus: 'blocked', activity: 'Stopped', verb: 'failed' },
 };
 
 function subagentUnit(template, spec, index, t, parentId) {
   const unit = structuredClone(template);
-  const [status, statusDetail, bucket, , reportStatus, activityLabel, verb] = SUBAGENT_STATES[spec.state];
+  const { status, statusDetail, bucket, reportStatus, activity: activityLabel, verb } = SUBAGENT_STATES[spec.state];
   const id = `call-91${String(index + 1).padStart(2, '0')}-sub`;
   const startedAt = t - spec.start * MIN;
   const endedAt = spec.end === null ? null : t - spec.end * MIN;
@@ -81,7 +89,8 @@ function subagentUnit(template, spec, index, t, parentId) {
   unit.report = 'report' in spec ? spec.report : {
     status: reportStatus, source: 'message', at: lastEventAt,
     title: spec.title ?? `${spec.name}: ${{ progress: 'work continues.', complete: 'finished.', blocked: 'stopped early.' }[reportStatus]}`,
-    summary: null, evidence: [], blockers: null, body: null, unit: spec.label, commit: null,
+    // A 'message' report has no parsed status line, so it names no unit.
+    summary: null, evidence: [], blockers: null, body: null, unit: null, commit: null,
   };
   unit.subagents = Array.from({ length: spec.crowd ?? 0 }, (_, k) => ({
     id: `${id}-${k + 1}`, name: `helper-${k + 1}`, type: TYPES[k % TYPES.length], model: 'gpt-5.4-mini', mode: 'background', status: 'running',
@@ -103,10 +112,9 @@ function subagentUnit(template, spec, index, t, parentId) {
   return unit;
 }
 
-function subagentView(unit) {
-  const spec = SUBAGENT_UNITS.find(entry => entry.label === unit.label);
+function subagentView(unit, spec) {
   return {
-    id: unit.id, name: unit.label, type: unit.agent.type, model: unit.model, mode: unit.agent.mode, status: SUBAGENT_STATES[spec.state][3],
+    id: unit.id, name: unit.label, type: unit.agent.type, model: unit.model, mode: unit.agent.mode, status: SUBAGENT_STATES[spec.state].viewStatus,
     startedAt: unit.startedAt, endedAt: unit.endedAt, durationMs: unit.endedAt === null ? null : unit.endedAt - unit.startedAt,
     credits: unit.cost.credits, task: unit.name,
   };
@@ -186,12 +194,13 @@ export function stressScenario(fixtures) {
   const subagentUnits = [...snapshot.units.filter(unit => unit.kind === 'subagent'), ...subs].sort((a, b) => a.startedAt - b.startedAt);
   snapshot.units = [...sessions, ...extra, ...subagentUnits];
   // The orchestrator still lists every sub-agent, two omitted finished ones included, so its lane keeps drawing them.
+  // Omitted ones finished before every listed finished one, because units keep the most recently finished.
   const omitted = [
-    { id: 'call-9190-omitted', name: 'old-cache-check', type: 'explore', model: subTemplate.model, mode: 'background', status: 'completed', startedAt: t - 310 * MIN, endedAt: t - 300 * MIN, durationMs: 10 * MIN, credits: 12, task: 'Check the old cache keys' },
-    { id: 'call-9191-omitted', name: 'old-schema-probe', type: 'task', model: subTemplate.model, mode: 'background', status: 'failed', startedAt: t - 520 * MIN, endedAt: t - 500 * MIN, durationMs: 20 * MIN, credits: 9, task: 'Probe the old schema' },
+    { id: 'call-9190-omitted', name: 'old-cache-check', type: 'explore', model: subTemplate.model, mode: 'background', status: 'completed', startedAt: t - 4420 * MIN, endedAt: t - 4400 * MIN, durationMs: 20 * MIN, credits: 12, task: 'Check the old cache keys' },
+    { id: 'call-9191-omitted', name: 'old-schema-probe', type: 'task', model: subTemplate.model, mode: 'background', status: 'failed', startedAt: t - 4620 * MIN, endedAt: t - 4600 * MIN, durationMs: 20 * MIN, credits: 9, task: 'Probe the old schema' },
   ];
   const running = status => status === 'running' || status === 'stuck';
-  orchestrator.subagents = [...orchestrator.subagents, ...subs.map(subagentView), ...omitted]
+  orchestrator.subagents = [...orchestrator.subagents, ...subs.map((unit, index) => subagentView(unit, SUBAGENT_UNITS[index])), ...omitted]
     .sort((a, b) => Number(running(b.status)) - Number(running(a.status)) || b.startedAt - a.startedAt);
   const bar = (id, start, end, type) => ({ id, start, end, type });
   orchestrator.timeline.subagents = [

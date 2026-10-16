@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { validateRunListItem, validateRunSummary, validateSnapshot, validateSwarmListItem } from '../engine/schema.mjs';
+import { MAX_FINISHED_SUBAGENT_UNITS, validateRunListItem, validateRunSummary, validateSnapshot, validateSwarmListItem } from '../engine/schema.mjs';
 import { createDemoEngine, loadFixtures, shiftTimes, simulateStep } from '../server/demo-engine.mjs';
 import { createDefaultEngine } from '../server/engines.mjs';
 import { createSwarmEngine } from '../engine/engine.mjs';
@@ -11,6 +11,14 @@ const seeded = seed => () => {
 };
 const T = Date.UTC(2026, 9, 20, 12, 0, 0);
 const example = () => loadFixtures().snapshots[0];
+/** The swarm total is the orchestrator's cost (its sub-agents included) plus every session unit's, each counted once. */
+const sessionTotal = snapshot => Math.round((snapshot.orchestrator.cost.credits
+  + snapshot.units.filter(unit => unit.kind === 'project' || unit.kind === 'chat').reduce((sum, unit) => sum + unit.cost.credits, 0)) * 10) / 10;
+
+test('the example swarm counts each cost once: the orchestrator, its sub-agents included, and its session units', () => {
+  const snapshot = example();
+  assert.equal(snapshot.cost.credits, sessionTotal(snapshot));
+});
 
 test('times move to the present and durations stay as they are', () => {
   const base = example();
@@ -104,10 +112,10 @@ test('the stress scenario is valid and covers every status, a stalled run, a war
   assert.ok(snapshot.units.some(unit => unit.subagents.filter(sub => sub.status === 'running').length >= 6));
   assert.equal(engine.listSwarms().filter(swarm => swarm.lifecycle === 'live').length, 2);
   assert.throws(() => createDemoEngine({ scenario: 'nope' }), /scenario/);
-  // The orchestrator's sub-agents: 23 units after every session unit, oldest first, and the orchestrator's view of them.
+  // The orchestrator's sub-agents: 30 units after every session unit, oldest first, and the orchestrator's view of them.
   const kinds = snapshot.units.map(unit => unit.kind);
   const firstSubagent = kinds.indexOf('subagent');
-  assert.equal(kinds.filter(kind => kind === 'subagent').length, 23);
+  assert.deepEqual([kinds.filter(kind => kind !== 'subagent').length, kinds.filter(kind => kind === 'subagent').length], [18, 30]);
   assert.ok(kinds.slice(firstSubagent).every(kind => kind === 'subagent'), 'every session unit comes first');
   const subagents = snapshot.units.slice(firstSubagent);
   subagents.slice(1).forEach((unit, index) => assert.ok(unit.startedAt >= subagents[index].startedAt, `${unit.label} starts after the one before`));
@@ -123,6 +131,14 @@ test('the stress scenario is valid and covers every status, a stalled run, a war
   const notUnits = snapshot.orchestrator.timeline.subagents.filter(sub => !unitIds.has(sub.id));
   assert.deepEqual(notUnits.map(sub => sub.id).sort(), ['call-9190-omitted', 'call-9191-omitted']);
   assert.ok(notUnits.every(sub => sub.end !== null), 'only finished sub-agents are left out of units');
+  // Units keep the most recently finished sub-agents, so omitted ones mean a full list, and they finished before it.
+  const finished = subagents.filter(unit => unit.status !== 'busy' && unit.status !== 'stuck');
+  assert.ok(snapshot.omittedSubagents.done + snapshot.omittedSubagents.failed > 0);
+  assert.equal(finished.length, MAX_FINISHED_SUBAGENT_UNITS);
+  const earliestEnd = Math.min(...finished.map(unit => unit.endedAt));
+  for (const sub of notUnits) assert.ok(sub.end < earliestEnd, `${sub.id} ends before every listed finished sub-agent`);
+  // Sub-agent units are part of the orchestrator's cost, so the swarm total adds them once.
+  assert.equal(snapshot.cost.credits, sessionTotal(snapshot));
 });
 
 test('every reference in a scenario swarm points inside that swarm', async () => {
