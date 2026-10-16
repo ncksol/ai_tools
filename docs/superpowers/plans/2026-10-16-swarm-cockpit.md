@@ -3946,7 +3946,7 @@ test('the layout check runs the cockpit\'s checks after the dashboard\'s', () =>
   const source = readFileSync(new URL('../scripts/check-layout.mjs', import.meta.url), 'utf8');
   assert.match(source, /import \{ runCockpitChecks \} from '\.\/lib\/cockpit-check\.mjs';/);
   assert.match(source, /const cockpit = await runCockpitChecks\(/);
-  assert.match(source, /historyIssues\.length \|\| cockpit\.issues \? 1 : 0/);
+  assert.match(source, /reloadIssues\.length \|\| cockpit\.issues \? 1 : 0/);
 });
 ```
 
@@ -4025,11 +4025,11 @@ export const CHECKS = new Map([['scene', checkScene], ['layout', checkLayout], [
 In `scripts/check-layout.mjs`:
 - Add `import { runCockpitChecks } from './lib/cockpit-check.mjs';` to the imports.
 - In `USAGE`, after the sentence that ends `…reports how long each one takes.`, add: `Then it checks the swarm cockpit the same way (see scripts/check-cockpit.mjs).`
-- Replace the last line of the `try` block in `main`, `return failures.length || updateIssues.length || historyIssues.length ? 1 : 0;`, with:
+- Replace the last line of the `try` block in `main`, `return failures.length || updateIssues.length || historyIssues.length || reloadIssues.length ? 1 : 0;` (PR 2 added the self-reload check), with:
 
 ```js
     const cockpit = await runCockpitChecks({ page, browser, engine: options.engine, urls, options: { only: null, printMetrics: false, screenshots: options.screenshots }, stdout, stderr });
-    return failures.length || updateIssues.length || historyIssues.length || cockpit.issues ? 1 : 0;
+    return failures.length || updateIssues.length || historyIssues.length || reloadIssues.length || cockpit.issues ? 1 : 0;
 ```
 
 - [ ] **Step 5: Run the tests and both checks**
@@ -4037,6 +4037,11 @@ In `scripts/check-layout.mjs`:
 Run: `node --test tests/cockpit-check.test.mjs tests/check-layout.test.mjs && npm run check:layout`
 Then: `PLAYWRIGHT_CORE=<playwright-core folder outside the repository> npm run check:layout -- --engine webkit`
 Expected: PASS; both layout checks end with the cockpit's lines and 0 issues; Chrome prints the slowdown line with both medians.
+
+Amendments (16 October 2026, after the rebase onto PR 2 and Task 12's reviews):
+- The source test for the hook (`the layout check runs the cockpit's checks after the dashboard's`) goes in the hook commit, and the check-list change in the slowdown commit, so the tests pass at each commit.
+- The slowdown check cleans up as the link check does: its `finally` closes every new page target (not only the cockpit), resets the regular page's `window.name`, moves the page to `about:blank` before its server closes, and catches every cleanup error so the problem list survives.
+- Before it measures "beside", the check attaches to the cockpit and confirms it is drawing: `document.visibilityState` is `visible`, reduced motion is off, and `requestAnimationFrame` fires at least 20 times in a second. Otherwise it reports that the cockpit did not draw, so the comparison would mean nothing.
 
 - [ ] **Step 6: Commit (the check, then the hook)**
 
