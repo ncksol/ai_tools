@@ -516,20 +516,73 @@ async function updateTimes(page, count, timeoutMs) {
   return page.evaluate(`performance.getEntriesByName('swarm-update').slice(${start}).map(entry => entry.duration)`);
 }
 
-/** Runs in the cockpit: whether it is visible, wants motion, and how many animation frames fire in a second. */
-const DRAWING = `(async () => {
-  let frames = 0;
-  const started = performance.now();
-  await new Promise(resolve => {
-    const tick = now => {
-      if (now - started >= 1000) return resolve();
-      frames += 1;
-      requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  });
-  return { visibility: document.visibilityState, reduced: matchMedia('(prefers-reduced-motion: reduce)').matches, frames };
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+/** A DevTools call that gives up after `ms`, so no wait in the slowdown check depends on the page answering. */
+async function bounded(promise, ms, what) {
+  let timer;
+  try {
+    return await Promise.race([promise, new Promise((resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(`${what} did not answer within ${ms / 1000} s`)), ms);
+    })]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Close every page target that was not there before, and wait (bounded) until they are gone. */
+async function closeNewPages(browser, known) {
+  // List again rather than relying on the targets already observed: a popup may have opened late.
+  const fresh = async () => (await bounded(browser.send('Target.getTargets'), 5000, 'Chrome')).targetInfos.filter(info => !known.has(info.targetId) && info.type === 'page');
+  for (const info of await fresh()) await bounded(browser.send('Target.closeTarget', { targetId: info.targetId }), 5000, 'Chrome').catch(() => {});
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline && (await fresh()).length) await sleep(100);
+}
+
+const COCKPIT_STATE = `(() => {
+  const data = document.documentElement.dataset;
+  return { href: location.href, ready: data.ready ?? null, fit: data.fit ?? null, gl: data.gl ?? null, visibility: document.visibilityState, reduced: matchMedia('(prefers-reduced-motion: reduce)').matches, draws: window.cockpitDebug?.draws() ?? null };
 })()`;
+
+/**
+ * Open the cockpit with the regular page's control, size it to 1440 × 900, reload it with debug=1 in the same window,
+ * and confirm it is drawing: visible, reduced motion off, and at least 20 draws in a second timed here in Node.
+ * Returns a problem, or null when the cockpit is drawing.
+ */
+async function openDrawingCockpit({ page, browser }, known) {
+  await bounded(page.send('Runtime.evaluate', { expression: "document.querySelector('[data-cockpit]').click()", userGesture: true }), 5000, 'The regular page');
+  const opened = await waitForTarget(browser, known, info => info.type === 'page' && info.url.includes('/cockpit?'), 5000);
+  if (!opened) return 'the Cockpit control opened no window';
+  const { sessionId } = await bounded(browser.send('Target.attachToTarget', { targetId: opened.targetId, flatten: true }), 5000, 'The cockpit');
+  const send = (method, params) => bounded(browser.send(method, params, sessionId), 5000, `The cockpit (${method})`);
+  const read = async () => {
+    const { result, exceptionDetails } = await send('Runtime.evaluate', { expression: COCKPIT_STATE, returnByValue: true });
+    if (exceptionDetails) throw new Error(exceptionDetails.exception?.description ?? exceptionDetails.text);
+    return result.value;
+  };
+  await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+  const url = new URL(opened.url);
+  url.searchParams.set('debug', '1');
+  await send('Page.navigate', { url: url.href });
+  let state = null;
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    // Reads fail while the page is between documents; poll again.
+    state = await read().catch(() => null);
+    if (state?.href === url.href && state.ready === '1' && state.fit === 'ok' && state.gl === 'on') break;
+    await sleep(100);
+  }
+  const missing = state?.href !== url.href ? ['the reload with debug=1'] : [['ready', '1'], ['fit', 'ok'], ['gl', 'on']].filter(([key, want]) => state[key] !== want).map(([key, want]) => `data-${key}="${want}" (got ${state[key] === null ? 'none' : `"${state[key]}"`})`);
+  if (missing.length) return `the cockpit at 1440 × 900 did not reach ${missing.join(', ')} within 10 s`;
+  if (state.visibility !== 'visible' || state.reduced) return `the cockpit cannot draw (visibility ${state.visibility}, reduced motion ${state.reduced ? 'on' : 'off'}), so the comparison would mean nothing`;
+  const before = state.draws;
+  await sleep(1000);
+  const after = (await read()).draws;
+  if (!(after - before >= 20)) return `the cockpit drew ${after - before} frames in a second (at least 20 needed), so the comparison would mean nothing`;
+  return null;
+}
+
+const msText = value => `${value.toFixed(1)} ms`;
 
 /** Chrome only: the regular view's live updates cost no more with a cockpit window open beside it (anti-goal 5). */
 async function checkSlowdown({ page, browser, urls, engine, stdout, stderr }) {
@@ -546,41 +599,38 @@ async function checkSlowdown({ page, browser, urls, engine, stdout, stderr }) {
     const url = `${server.url}?host=browser`;
     await page.goto(url, 1440, 900);
     await page.waitFor(`location.href === ${JSON.stringify(url)} && document.documentElement.dataset.ready === '1' && document.querySelector('[data-cockpit]') !== null`);
-    const alone = await updateTimes(page, 6, 20000);
-    known = new Set((await browser.send('Target.getTargets')).targetInfos.map(info => info.targetId));
-    await page.send('Runtime.evaluate', { expression: "document.querySelector('[data-cockpit]').click()", userGesture: true });
-    const cockpit = await waitForTarget(browser, known, info => info.type === 'page' && info.url.includes('/cockpit?'), 5000);
-    if (!cockpit) {
-      problems.push('the Cockpit control opened no window');
-    } else {
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      const { sessionId } = await browser.send('Target.attachToTarget', { targetId: cockpit.targetId, flatten: true });
-      const { result, exceptionDetails } = await browser.send('Runtime.evaluate', { expression: DRAWING, returnByValue: true, awaitPromise: true }, sessionId);
-      if (exceptionDetails) throw new Error(exceptionDetails.exception?.description ?? exceptionDetails.text);
-      const drawing = result.value;
-      if (drawing.visibility !== 'visible' || drawing.reduced || drawing.frames < 20) {
-        problems.push(`the cockpit did not draw (visibility ${drawing.visibility}, reduced motion ${drawing.reduced ? 'on' : 'off'}, ${drawing.frames} animation frames in a second), so the comparison would mean nothing`);
-      } else {
-        const beside = await updateTimes(page, 6, 20000);
-        if (alone.length < 4 || beside.length < 4) {
-          problems.push(`too few live updates arrived to compare (${alone.length} and ${beside.length})`);
-        } else {
-          const [before, after] = [median(alone), median(beside)];
-          if (after > before * 1.25 + 2) problems.push(`the regular view's updates took ${after.toFixed(1)} ms with a cockpit open, ${before.toFixed(1)} ms without`);
-          line = `updates ${before.toFixed(1)} ms median alone, ${after.toFixed(1)} ms with the cockpit drawing beside it`;
-        }
+    known = new Set((await bounded(browser.send('Target.getTargets'), 5000, 'Chrome')).targetInfos.map(info => info.targetId));
+    // Warm up, then alone, with the cockpit drawing beside, and alone again (the cockpit closed), so warm-up and drift show.
+    await updateTimes(page, 3, 10000);
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const alone = await updateTimes(page, 6, 20000);
+      const problem = await openDrawingCockpit({ page, browser }, known);
+      if (problem) {
+        problems.push(problem);
+        break;
       }
+      const beside = await updateTimes(page, 6, 20000);
+      await closeNewPages(browser, known);
+      const again = await updateTimes(page, 6, 20000);
+      if (alone.length < 4 || beside.length < 4 || again.length < 4) {
+        problems.push(`too few live updates arrived to compare (${alone.length}, ${beside.length} and ${again.length})`);
+        break;
+      }
+      const [first, withCockpit, second] = [median(alone), median(beside), median(again)];
+      const medians = `${msText(first)} alone, ${msText(withCockpit)} with the cockpit, ${msText(second)} alone again`;
+      if (Math.abs(first - second) > 0.5 * Math.min(first, second) + 2) {
+        if (attempt === 2) problems.push(`the regular view's update times drifted too much to compare (${medians}, twice)`);
+        continue;
+      }
+      const baseline = (first + second) / 2;
+      if (withCockpit > baseline * 1.25 + 2) problems.push(`the regular view's updates took ${msText(withCockpit)} with a cockpit open, against ${msText(baseline)} alone (${medians})`);
+      line = `updates ${msText(first)} median alone, ${msText(withCockpit)} with the cockpit drawing beside it, ${msText(second)} alone again`;
+      break;
     }
   } catch (error) {
     problems.push(error.message);
   } finally {
-    // List again rather than relying on the targets already observed: a popup may have opened late.
-    if (known) {
-      const { targetInfos } = await browser.send('Target.getTargets').catch(() => ({ targetInfos: [] }));
-      for (const info of targetInfos) {
-        if (!known.has(info.targetId) && info.type === 'page') await browser.send('Target.closeTarget', { targetId: info.targetId }).catch(() => {});
-      }
-    }
+    if (known) await closeNewPages(browser, known).catch(() => {});
     await page.evaluate("window.name = ''").catch(() => {});
     await page.goto('about:blank', 1440).then(() => page.waitFor("location.href === 'about:blank'")).catch(() => {});
     await server.close().catch(() => {});
