@@ -290,7 +290,7 @@ git commit -m "feat(swarm-dashboard): serve the cockpit page at /cockpit"
   - `needRows(snapshot) → { total, rows: { id, kind, state, word, who, text, since, unitId|null }[] }`; `who` is the units' labels, or the orchestrator's label for a need without units (a stalled swarm, a question to the whole swarm).
   - `activityRows(snapshot) → { id, at, label, text, status|null, unitId|null }[]`, oldest first, newest last.
   - `prRows(snapshot) → { rows: { id, unitId, title, who, state, word }[], opened, merged }`.
-  - `hourlyRate(series) → number|null`; `costView(snapshot) → { credits, perHour|null, models: { model, credits, share }[] }`.
+  - `hourlyRate(series) → number|null`; `costView(snapshot, now = snapshot.generatedAt) → { credits, perHour|null, models: { model, credits, share }[] }`. The rate covers the hour up to `now`: the engine adds a series point only when credits are spent, so the series is carried on flat to `now` first, and a swarm that has stopped spending shows a falling rate, then 0.
   - `clockText(ms) → { hm, s }`, `dateText(ms) → string`, `timeText(ms) → 'HH:MM'`, `nextCheckAt(snapshot) → number|null`, `runLine(snapshot) → string`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -386,7 +386,9 @@ test('the hourly rate interpolates the cost series over the last hour', () => {
   assert.equal(hourlyRate([{ at: 0, credits: 10 }, { at: 300000, credits: 60 }]), null);
   assert.equal(hourlyRate([]), null);
   const view = costView(example());
-  assert.equal(Math.round(view.perHour), 2339);
+  assert.equal(Math.round(view.perHour), 2208, 'the hour up to the snapshot, 5 minutes after the last spend');
+  assert.equal(costView(example(), NOW + 3 * 3600000).perHour, 0, 'nothing spent in the last hour');
+  assert.equal(Math.round(costView(example(), NOW + 30 * 60000).perHour), Math.round(hourlyRate([...exampleSnapshot().cost.series, { at: NOW + 30 * 60000, credits: 97652.4 }])));
   assert.deepEqual(view.models.map(entry => [entry.model, Number(entry.share.toFixed(3))]), [['claude-sonnet-5', 1], ['claude-opus-4.8', 0.605], ['claude-haiku-5.5', 0.141], ['gpt-5.4-mini', 0.128]]);
   const ended = exampleSnapshot();
   ended.run.lifecycle = 'finished';
@@ -533,14 +535,20 @@ export function hourlyRate(series) {
   return last.credits - (a.credits + ((b.credits - a.credits) * (from - a.at)) / (b.at - a.at));
 }
 
-/** The swarm's cost. Sub-agent unit costs are inside the orchestrator's and are never added here. */
-export function costView(snapshot) {
+/** The series carried on flat to `now`: the engine adds a point only when credits are spent. */
+function untilNow(series, credits, now) {
+  const last = series[series.length - 1];
+  return last && now > last.at ? [...series, { at: now, credits: Math.max(credits, last.credits) }] : series;
+}
+
+/** The swarm's cost, with the rate over the hour up to `now`. Sub-agent unit costs are inside the orchestrator's and are never added here. */
+export function costView(snapshot, now = snapshot.generatedAt) {
   const { cost } = snapshot;
   const models = [...cost.byModel].sort((a, b) => b.credits - a.credits).slice(0, MODEL_ROWS);
   const max = models.length ? models[0].credits : 0;
   return {
     credits: cost.credits,
-    perHour: runEnd(snapshot) === null ? hourlyRate(cost.series ?? []) : null,
+    perHour: runEnd(snapshot) === null ? hourlyRate(untilNow(cost.series ?? [], cost.credits, now)) : null,
     models: models.map(entry => ({ model: entry.model, credits: entry.credits, share: max > 0 ? entry.credits / max : 0 })),
   };
 }
@@ -1156,7 +1164,7 @@ Builder decisions B1, B4, B5, B6 and B8 apply (confirmed).
 **Interfaces:**
 - Consumes: Task 2's `ui/cockpit-model.mjs`, Task 5's `QUALITIES`, and `ui/format.mjs` (`count`, `countdown`, `credits`, `dur`, `esc`, `liveTime`, `plural`, `usdRounded`), `ui/model.mjs` (`runEnd`).
 - Produces (pure HTML strings; every interactive element is a `<button type="button">`):
-  - `clockHtml(snapshot|null, now)`, `costHtml(snapshot|null)`, `needsHtml(snapshot|null, now)`, `statusHtml(snapshot|null)`, `activityHtml(snapshot|null)`, `unitsHtml(snapshot|null, now, fresh: Set<unitId>)`, `prsHtml(snapshot|null)`.
+  - `clockHtml(snapshot|null, now)`, `costHtml(snapshot|null, now)`, `needsHtml(snapshot|null, now)`, `statusHtml(snapshot|null)`, `activityHtml(snapshot|null)`, `unitsHtml(snapshot|null, now, fresh: Set<unitId>)`, `prsHtml(snapshot|null)`.
   - `hudHtml({ demo, connection, snapshot })`, `qualityHtml(quality)`, `noteHtml()`.
   - Markup contract used by Tasks 9 and 11: `[data-detail]` (a unit id) and `[data-tab]` (a regular-view tab) on click targets; `[data-key]` on list items; `[data-clock="hm"|"s"|"date"]` on the clock's texts; `[data-t]`/`[data-f]` live times from `liveTime()`; `[data-quality]` on the quality buttons; classes `ck-ph`, `ck-t`, `ck-side`, `ck-mono`, `ck-empty`, `ck-tiles d-<density>`, `ck-tile`, `ck-more`, `ck-foot`, `ck-log-window`, `ck-log`, `ck-log-row`, `ck-need`, `ck-leg`, `ck-model`, `ck-bar`, `ck-fill`, `ck-prs`, `ck-pr`, `st-<state>`, `is-attn`, `is-new`, `is-zero`, `is-off`.
 
@@ -1170,7 +1178,7 @@ import { activityHtml, clockHtml, costHtml, hudHtml, needsHtml, noteHtml, prsHtm
 import { NOW, deepFreeze, exampleSnapshot } from './helpers/ui.mjs';
 
 const example = () => deepFreeze(exampleSnapshot());
-const all = s => [clockHtml(s, NOW), costHtml(s), needsHtml(s, NOW), statusHtml(s), activityHtml(s), unitsHtml(s, NOW, new Set()), prsHtml(s)].join('');
+const all = s => [clockHtml(s, NOW), costHtml(s, NOW), needsHtml(s, NOW), statusHtml(s), activityHtml(s), unitsHtml(s, NOW, new Set()), prsHtml(s)].join('');
 const countOf = (html, pattern) => [...html.matchAll(pattern)].length;
 
 test('no panel uses bold, italic or inline type styles', () => {
@@ -1190,8 +1198,9 @@ test('the clock shows the time, the date, the run timer, the next monitor check 
 });
 
 test('cost shows credits, dollars, the hourly rate and up to four models as bars', () => {
-  const html = costHtml(example());
-  assert.match(html, /<button type="button" class="ck-t" data-tab="timeline">Cost<\/button><span class="ck-side"><span class="ck-mono">\+2,339 cr\/h<\/span><\/span>/);
+  const html = costHtml(example(), NOW);
+  assert.match(html, /<button type="button" class="ck-t" data-tab="timeline">Cost<\/button><span class="ck-side"><span class="ck-mono">\+2,208 cr\/h<\/span><\/span>/);
+  assert.match(costHtml(example(), NOW + 3 * 3600000), /<span class="ck-mono">\+0 cr\/h<\/span>/);
   assert.match(html, /<div class="ck-big ck-mono">97,652 cr<\/div><div class="ck-meta ck-mono">≈\$977 at list price<\/div>/);
   assert.equal(countOf(html, /class="ck-model"/g), 4);
   assert.match(html, /claude-sonnet-5<\/span><span class="ck-mono ck-n">52,100<\/span><span class="ck-bar"><span class="ck-fill" style="--w:1\.0000"><\/span>/);
@@ -1303,9 +1312,9 @@ export function clockHtml(snapshot, now) {
     + `<div class="ck-meta ck-ellipsis" title="${line}">${line}</div>`;
 }
 
-export function costHtml(snapshot) {
+export function costHtml(snapshot, now) {
   if (!snapshot) return head('Cost', 'timeline') + empty('No swarm yet');
-  const view = costView(snapshot);
+  const view = costView(snapshot, now);
   const side = view.perHour === null ? '' : `<span class="ck-mono">+${count(Math.round(view.perHour))} cr/h</span>`;
   const models = view.models.map(entry => `<div class="ck-model" data-key="${esc(entry.model)}"><span class="ck-model-n">${esc(entry.model)}</span>`
     + `<span class="ck-mono ck-n">${count(Math.round(entry.credits))}</span><span class="ck-bar"><span class="ck-fill" style="--w:${entry.share.toFixed(4)}"></span></span></div>`).join('');
@@ -3300,7 +3309,7 @@ function renderPanels() {
   morph($('ck-hud'), hudHtml({ demo: state.demo, connection: state.connection, snapshot: s }));
   morph($('ck-qual'), qualityHtml(state.quality));
   morph($('ck-clock'), clockHtml(s, t));
-  morph($('ck-cost'), costHtml(s));
+  morph($('ck-cost'), costHtml(s, t));
   morph($('ck-needs'), needsHtml(s, t));
   morph($('ck-status'), statusHtml(s));
   morph($('ck-activity'), activityHtml(s));
@@ -3344,7 +3353,11 @@ function tick() {
     const text = tickText(Number(el.dataset.t), el.dataset.f, t);
     if (el.textContent !== text) el.textContent = text;
   }
+  // The cost rate covers the hour up to now, so it moves even when no snapshot arrives.
+  ticks += 1;
+  if (ticks % 15 === 0) morph($('ck-cost'), costHtml(state.snapshot, t));
 }
+let ticks = 0;
 
 let fit = null;
 let cam = { ...REST };
