@@ -1393,6 +1393,32 @@ test('a sub-agent that waits on its sync child stays busy while the child works,
   assert.deepEqual(stuck.timeline.segments.at(-1), { start: at(128), end: null, state: 'stuck' });
 });
 
+test('a heavy sub-agent whose task start repeats keeps the model it runs on, so it is busy, not stuck, after 11 silent minutes', () => {
+  for (const observe of ['started', 'configured']) {
+    const { data } = quietSwarm(root => {
+      root.at(at(115));
+      const args = model => ({
+        name: 'heavy', agent_type: 'general-purpose', mode: 'background', description: 'heavy work', prompt: 'synthetic prompt', reasoning_effort: 'max',
+        ...(model === undefined ? {} : { model }),
+      });
+      root.push('tool.execution_start', { toolCallId: 'call-heavy', toolName: 'task', arguments: args('claude-sonnet-x') });
+      root.push('subagent.started', {
+        toolCallId: 'call-heavy', agentName: 'general-purpose', agentDisplayName: 'heavy', agentType: 'general-purpose', executionMode: 'background',
+        ...(observe === 'started' ? { model: 'claude-opus-x' } : {}),
+      }, { agentId: 'ag-heavy' });
+      if (observe === 'configured') root.push('subagent.configured', { model: 'claude-opus-x', reasoningEffort: 'max' }, { agentId: 'ag-heavy' });
+      root.done('call-heavy', { result: 'Agent started in background' });
+      root.push('tool.execution_start', { toolCallId: 'call-heavy', toolName: 'task', arguments: args('claude-sonnet-x') });
+      root.push('tool.execution_start', { toolCallId: 'call-heavy', toolName: 'task', arguments: args(undefined) });
+    }, at(115 + 11));
+    const snapshot = buildSnapshot(data);
+    assert.deepEqual(validateSnapshot(snapshot), []);
+    const [unit] = subUnits(snapshot);
+    assert.deepEqual([unit.statusDetail, unit.reason], ['busy', null], observe);
+    assert.deepEqual([unit.model, unit.effort], ['claude-opus-x', 'max'], observe);
+  }
+});
+
 // --- ReportView.repliedAt ---
 
 /** The heuristic swarm where the api session reports needs_input at minute 30, with `replies` from its parent at the given minutes. */

@@ -2,6 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { applyLine, createSessionState, mergeStates } from '../engine/model/session-state.mjs';
 import { LIMITS } from '../engine/model/state-utils.mjs';
+import { subagentLimitMs } from '../engine/model/status.mjs';
+import { DEFAULT_THRESHOLDS } from '../engine/config.mjs';
+import { MINUTE } from '../engine/time.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { fold } from './helpers/fold.mjs';
 
@@ -715,6 +718,61 @@ test('a configured sub-agent effort survives a repeated task start, for a root s
   const call = unconfigured.subagent({ name: 'plain', type: 'explore', mode: 'background', effort: 'low' });
   unconfigured.push('tool.execution_start', { toolCallId: call, toolName: 'task', arguments: { name: 'plain', agent_type: 'explore', mode: 'background', reasoning_effort: 'medium' } });
   assert.equal(fold(unconfigured).subagents.get(call).effort, 'medium', 'without a configured effort, a repeated start still updates the requested one');
+});
+
+/**
+ * A root sub-agent `lead` and its nested `kid`, each started by a general-purpose task call that requests claude-sonnet-x with
+ * effort max. `observe` says how the log reports the model they run on: 'started' (subagent.started), 'configured'
+ * (subagent.configured) or 'none'. Then each task start repeats, with each model in `repeats` (undefined: no model at all).
+ */
+function observedModelLog(observe, repeats) {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const args = (name, model) => ({
+    name, agent_type: 'general-purpose', mode: 'background', description: `${name} work`, prompt: 'synthetic prompt', reasoning_effort: 'max',
+    ...(model === undefined ? {} : { model }),
+  });
+  const begin = (id, name, agentId, parent) => {
+    const start = { toolCallId: id, toolName: 'task', arguments: args(name, 'claude-sonnet-x') };
+    if (parent) log.sub(parent, 'tool.execution_start', start);
+    else log.push('tool.execution_start', start);
+    log.push('subagent.started', {
+      toolCallId: id, agentName: 'general-purpose', agentDisplayName: name, agentType: 'general-purpose', executionMode: 'background',
+      ...(observe === 'started' ? { model: 'claude-opus-x' } : {}),
+    }, { agentId });
+    if (observe === 'configured') log.push('subagent.configured', { model: 'claude-opus-x', reasoningEffort: 'max' }, { agentId });
+  };
+  begin('call-lead', 'lead', 'agent-lead');
+  begin('call-kid', 'kid', 'agent-kid', 'call-lead');
+  for (const model of repeats) {
+    log.wait(1000);
+    log.push('tool.execution_start', { toolCallId: 'call-lead', toolName: 'task', arguments: args('lead', model) });
+    log.sub('call-lead', 'tool.execution_start', { toolCallId: 'call-kid', toolName: 'task', arguments: args('kid', model) });
+  }
+  return log;
+}
+
+test('an observed sub-agent model survives a repeated task start, for a root sub-agent and a nested one', () => {
+  for (const observe of ['started', 'configured']) {
+    for (const options of [undefined, ROOT]) {
+      const label = `${observe}, ${options ? 'root' : 'plain'} state`;
+      const state = fold(observedModelLog(observe, ['claude-sonnet-x', undefined]), 'cli-1', options);
+      const records = [state.subagents.get('call-lead')];
+      if (options) records.push(unitOf(state, 'call-lead').children.find(child => child.id === 'call-kid'));
+      for (const record of records) {
+        assert.deepEqual([record.model, record.effort], ['claude-opus-x', 'max'], `${label}: ${record.id} keeps the observed model`);
+        assert.equal(subagentLimitMs(record, DEFAULT_THRESHOLDS), 15 * MINUTE, `${label}: ${record.id} keeps the heavy silence limit`);
+      }
+    }
+  }
+});
+
+test('without an observed model, a repeated task start still updates the requested model', () => {
+  for (const options of [undefined, ROOT]) {
+    const state = fold(observedModelLog('none', ['claude-haiku-x']), 'cli-1', options);
+    assert.equal(state.subagents.get('call-lead').model, 'claude-haiku-x');
+    if (options) assert.equal(unitOf(state, 'call-lead').children.find(child => child.id === 'call-kid').model, 'claude-haiku-x');
+  }
 });
 
 test('sub-agent efforts are normalised: a blank configured effort keeps the requested one, and a requested effort is trimmed', () => {

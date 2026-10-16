@@ -580,7 +580,8 @@ function countSubagent(state, id, at, fields) {
 /**
  * A sub-agent of the session itself is counted once per task tool-call id. A repeated start for an id that is still in the details
  * updates them and leaves the counts alone (onToolStart ignores a repeated start for an id that has left the details). It keeps an
- * effort that subagent.configured set (`effortConfigured`) over the one the task call requests; so does onNestedTaskStart.
+ * effort that subagent.configured set (`effortConfigured`) over the one the task call requests, and a model that subagent.started
+ * or subagent.configured reported (`modelObserved`) over the one the task call requests, or its lack of one; so does onNestedTaskStart.
  */
 function newSubagent(state, id, at, args) {
   const fields = subagentFields(args);
@@ -588,6 +589,7 @@ function newSubagent(state, id, at, args) {
   if (known) {
     const { type, ...rest } = fields;
     if (known.effortConfigured) delete rest.effort;
+    if (known.modelObserved) delete rest.model;
     Object.assign(known, rest);
     if (known.unit) {
       known.unit.taskName = taskNameOf(args);
@@ -629,6 +631,7 @@ function onNestedTaskStart(state, id, parentId, args, at) {
     const child = childOf(state, id, entry);
     if (child) {
       if (child.effortConfigured) delete rest.effort;
+      if (child.modelObserved) delete rest.model;
       Object.assign(child, rest);
     }
     retypeNested(state, id, entry, type);
@@ -841,7 +844,10 @@ function onSubagentLifecycle(state, event, data, at) {
   }
   touchSubagent(state, key, at);
   if (event.type === 'subagent.configured') {
-    if (target && typeof data.model === 'string') target.model = data.model;
+    if (target && typeof data.model === 'string') {
+      target.model = data.model;
+      target.modelObserved = true;
+    }
     const effort = effortOf(data.reasoningEffort);
     if (target && effort) {
       target.effort = effort;
@@ -850,7 +856,10 @@ function onSubagentLifecycle(state, event, data, at) {
   } else if (event.type === 'subagent.started') {
     (sub ?? entry).startedAt = at;
     if (target) {
-      if (typeof data.model === 'string') target.model = data.model;
+      if (typeof data.model === 'string') {
+        target.model = data.model;
+        target.modelObserved = true;
+      }
       if (typeof data.agentDisplayName === 'string' && data.agentDisplayName) target.name = oneLine(data.agentDisplayName, 80);
       if (data.executionMode === 'background' || data.executionMode === 'sync') target.mode = data.executionMode;
       target.startedAt = at;
