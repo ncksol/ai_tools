@@ -303,7 +303,7 @@ export const AUDIT_DEFAULTS = Object.freeze({
   atoms: '.chip,.badge,.pill,.ring,.meter,.bar,.stage,.sw,button,select,.need,.b-card,.mc,.pn,.pl-row,.tile,.kv,.fi,.h-row,.g-row,.g-track,.hb-row,.c-who,.c-trk,.c-sum,.tabs,.seg',
   containers: '.b-card,.need,.rail,.detail,.mc,.pn,.pl-row,.tile,.h-row,.run-answer,.empty,.dash',
   follows: [{ item: '.cards-note', ref: '.b-card', gapOf: '.b-grid' }],
-  kindBorders: { selector: '.b-card[data-kind], .mc[data-kind]', skip: '.is-sel', colours: { subagent: 'var(--busy)', project: 'var(--merged)', chat: 'var(--merged)' } },
+  kindBorders: { selector: '.b-card[data-open], .mc[data-open]', skip: '.is-sel', colours: { subagent: 'var(--busy)', project: 'var(--merged)', chat: 'var(--merged)' } },
   padding: { '.dash': 16, '.b-card': 16, '.rail': 16, '.detail': 16, '.need': 12, '.pn': 12, '.pl-row': 12, '.mc': 12 },
   heights: {
     '.chip': 24, '.badge': 20, '.pill': 20, '.d-top .seg > button': 28, '.c-bar .seg > button': 24, '.x': 28, '.pick select': 28,

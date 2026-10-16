@@ -98,8 +98,8 @@ const SUBAGENT_BORDER = '.b-card[data-kind="subagent"], .mc[data-kind="subagent"
 const SESSION_BORDER = '.b-card[data-kind="project"], .b-card[data-kind="chat"], .mc[data-kind="project"], .mc[data-kind="chat"]';
 
 test('a card\'s border is blue for a one-off sub-agent and green for a child session, and status no longer sets it', () => {
-  assert.equal(block(SUBAGENT_BORDER).trim(), 'border-color: var(--busy);');
-  assert.equal(block(SESSION_BORDER).trim(), 'border-color: var(--merged);');
+  assert.equal(block(SUBAGENT_BORDER).trim(), 'border-color: var(--busy); box-shadow: inset 0 0 0 1px var(--busy);');
+  assert.equal(block(SESSION_BORDER).trim(), 'border-color: var(--merged); box-shadow: inset 0 0 0 1px var(--merged);');
   assert.equal(block('.b-card.st-plan, .b-card.st-question, .b-card.st-stuck, .b-card.st-blocked').trim(), 'background: var(--c-soft);');
   assert.equal(block('.mc.st-plan, .mc.st-question, .mc.st-stuck, .mc.st-blocked').trim(), 'background: var(--c-soft);');
 });
@@ -111,6 +111,7 @@ test('hover and the selected card still show over the kind colour', () => {
   assert.ok(hover > at(SUBAGENT_BORDER) && hover > at(SESSION_BORDER), 'hover after the kind rules');
   assert.ok(hover < at('.b-card.is-sel'), 'hover before the selected card');
   assert.equal(block('.b-card:hover').trim(), 'border-color: var(--ink-3);');
+  // The selected card's ink inset replaces the kind's inset line: same specificity, later in the file.
   assert.equal(block('.b-card.is-sel').trim(), 'border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink);');
   assert.equal(block('.mc[data-open]:hover').trim(), 'border-color: var(--ink-3);');
 });

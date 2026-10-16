@@ -65,13 +65,13 @@ test('the dashboard audit holds the Cards note to the cards\' gap and text edge'
   assert.ok(auditScript(AUDIT_DEFAULTS).includes('.cards-note'));
 });
 
-test('the dashboard audit holds each card\'s border to the colour of its kind, except on the selected card', () => {
+test('the dashboard audit holds every unit card\'s border to the colour of its kind, so a card that lost its kind is reported, except the selected card', () => {
   assert.deepEqual(AUDIT_DEFAULTS.kindBorders, {
-    selector: '.b-card[data-kind], .mc[data-kind]',
+    selector: '.b-card[data-open], .mc[data-open]',
     skip: '.is-sel',
     colours: { subagent: 'var(--busy)', project: 'var(--merged)', chat: 'var(--merged)' },
   });
   const script = auditScript(AUDIT_DEFAULTS);
-  assert.ok(script.includes('"kindBorders":{"selector":".b-card[data-kind], .mc[data-kind]"'));
+  assert.ok(script.includes('"kindBorders":{"selector":".b-card[data-open], .mc[data-open]"'));
   assert.ok(script.includes("'kind-border'"));
 });
