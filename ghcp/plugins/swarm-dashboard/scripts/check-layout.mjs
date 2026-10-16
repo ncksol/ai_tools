@@ -7,6 +7,7 @@ import { createDemoEngine } from '../server/demo-engine.mjs';
 import { createDashboardServer } from '../server/http.mjs';
 import { findBrowser, launchBrowser, openPage } from './lib/cdp.mjs';
 import { AUDIT_DEFAULTS, auditScript } from './lib/page-audit.mjs';
+import { findPlaywright, launchWebKit, openWebKitPage } from './lib/webkit.mjs';
 
 export const WIDTHS = [480, 560, 640, 800, 1024, 1280, 1440, 1600, 1920];
 export const CANVAS_WIDTHS = [480, 560, 640];
@@ -25,7 +26,7 @@ export const VIEWS = [
   { name: 'run', params: { page: 'run', run: 'RUN' }, history: true },
 ];
 export const SELF_TEST_RULES = ['overlap', 'font-family', 'font-size', 'font-style', 'text-transform', 'font-weight', 'letter-spacing', 'line-height', 'contrast', 'colour', 'grid', 'padding', 'height', 'spill', 'clipped', 'hidden-lines', 'cut', 'outside', 'hscroll'];
-export const USAGE = `Usage: check-layout [--scenario example|stress | --live <url>] [--width <px>] [--screenshots <dir>]
+export const USAGE = `Usage: check-layout [--scenario example|stress | --live <url>] [--width <px>] [--screenshots <dir>] [--engine chrome|webkit]
 
 Checks every dashboard view for overlap, clipped text, type, spacing, sizes, contrast and console errors in a
 local headless Chrome, Chromium or Edge (set CHROME_PATH to pick one). It proves its rules on a broken page first,
@@ -34,10 +35,11 @@ By default it serves the synthetic example and stress swarms itself; --live chec
 (for example http://127.0.0.1:7927/), whose report quotes your own data: keep it local.
 Screenshots of the synthetic swarms, when asked for, are written to <dir> for review; do not commit them.
 --live never writes screenshots, because its pages show your own data.
+--engine webkit runs the same checks in Playwright's WebKit, the engine of the Copilot app's panel. It needs Playwright installed outside this repository (set PLAYWRIGHT_CORE) and skips when it is missing.
 `;
 
 export function parseArguments(argv) {
-  const options = { scenarios: ['example', 'stress'], widths: WIDTHS, canvasWidths: CANVAS_WIDTHS, screenshots: null, live: null, help: false };
+  const options = { scenarios: ['example', 'stress'], widths: WIDTHS, canvasWidths: CANVAS_WIDTHS, screenshots: null, live: null, engine: 'chrome', help: false };
   let scenarioChosen = false;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -65,6 +67,10 @@ export function parseArguments(argv) {
     } else if (arg === '--screenshots') {
       options.screenshots = argv[++index];
       if (!options.screenshots) throw new Error('--screenshots takes a folder');
+    } else if (arg === '--engine') {
+      const engine = argv[++index];
+      if (engine !== 'chrome' && engine !== 'webkit') throw new Error('--engine takes chrome or webkit');
+      options.engine = engine;
     } else {
       throw new Error(`Unknown option: ${arg}`);
     }
@@ -240,7 +246,7 @@ function inspectPage() {
 
 /** Open the page with motion on, wait for live updates and inspect what they did; null when none arrived. */
 async function watchUpdates(page, url, { updates = 3, timeoutMs = 15000 } = {}) {
-  await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+  await page.setReducedMotion(false);
   try {
     page.errors.length = 0;
     // 600 px tall, so the example page can scroll.
@@ -259,7 +265,7 @@ async function watchUpdates(page, url, { updates = 3, timeoutMs = 15000 } = {}) 
     result.issues.push(...page.errors);
     return result;
   } finally {
-    await page.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+    await page.setReducedMotion(true);
   }
 }
 
@@ -292,19 +298,33 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
     stdout.write(USAGE);
     return 0;
   }
-  const executable = findBrowser(env);
-  if (!executable) {
-    stderr.write('No local Chrome, Chromium or Edge was found. Install one or set CHROME_PATH.\n');
-    return 2;
+  let browser;
+  if (options.engine === 'webkit') {
+    const entry = findPlaywright(env);
+    if (!entry) {
+      stdout.write('WebKit check skipped: Playwright is not available. Install playwright-core outside this repository and set PLAYWRIGHT_CORE (see the README).\n');
+      return 0;
+    }
+    browser = await launchWebKit(entry);
+    if (!browser) {
+      stdout.write('WebKit check skipped: Playwright\'s WebKit browser is not downloaded. Run: node <playwright-core folder>/cli.js install webkit\n');
+      return 0;
+    }
+  } else {
+    const executable = findBrowser(env);
+    if (!executable) {
+      stderr.write('No local Chrome, Chromium or Edge was found. Install one or set CHROME_PATH.\n');
+      return 2;
+    }
+    browser = await launchBrowser(executable);
   }
-  const browser = await launchBrowser(executable);
   const servers = [];
   const interrupt = () => process.exit(130);
   process.once('SIGINT', interrupt);
   process.once('SIGTERM', interrupt);
   try {
     stdout.write(`Browser: ${browser.product}\n`);
-    const page = await openPage(browser);
+    const page = options.engine === 'webkit' ? await openWebKitPage(browser) : await openPage(browser);
     const problems = await selfTest(page);
     if (problems.length) {
       for (const problem of problems) stderr.write(`self-test: ${problem}\n`);

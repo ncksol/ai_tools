@@ -65,7 +65,19 @@ Run these from the plugin folder.
 | `npm run snapshot -- --list` | Print the swarms as JSON; `--swarm <id>`, `--history` and `--run <id>` print the rest |
 | `npm test` | Run the unit tests |
 | `npm run validate` | Check the plugin's manifests, files and marketplace entry |
-| `npm run check:layout` | Check every view for overlap, clipped text, type, spacing and contrast at every width, and that live updates leave the page steady, in a local headless Chrome, Chromium or Edge (set `CHROME_PATH` to choose one); `-- --live <url>` checks a running dashboard |
+| `npm run check:layout` | Check every view for overlap, clipped text, type, spacing and contrast at every width, and that live updates leave the page steady, in a local headless Chrome, Chromium or Edge (set `CHROME_PATH` to choose one); `-- --live <url>` checks a running dashboard, and `-- --engine webkit` runs the same checks in WebKit (see below) |
+
+### Check the layout in WebKit (optional)
+
+The Copilot app shows the canvas in WebKit, so `npm run check:layout -- --engine webkit` runs the same checks in Playwright's WebKit build. Playwright is not a dependency of this plugin. Install it outside this repository, download its WebKit build once, and point the check at it:
+
+```bash
+npm install --prefix <folder outside this repository> playwright-core
+node <folder>/node_modules/playwright-core/cli.js install webkit
+PLAYWRIGHT_CORE=<folder>/node_modules/playwright-core npm run check:layout -- --engine webkit
+```
+
+Without Playwright or its WebKit build the check says so and skips. `npm test` and `npm run validate` never need it.
 
 ## Troubleshooting
 

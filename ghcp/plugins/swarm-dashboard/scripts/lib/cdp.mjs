@@ -142,6 +142,9 @@ export async function openPage(browser) {
       const { data } = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
       return Buffer.from(data, 'base64');
     },
+    async setReducedMotion(reduce) {
+      await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: reduce ? 'reduce' : 'no-preference' }] });
+    },
   };
   return page;
 }

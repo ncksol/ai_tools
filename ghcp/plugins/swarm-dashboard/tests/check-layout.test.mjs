@@ -1,7 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CANVAS_WIDTHS, VIEWS, WIDTHS, buildStates, describeKept, describeTimes, parseArguments } from '../scripts/check-layout.mjs';
+import { writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { CANVAS_WIDTHS, VIEWS, WIDTHS, buildStates, describeKept, describeTimes, main, parseArguments } from '../scripts/check-layout.mjs';
 import { findBrowser } from '../scripts/lib/cdp.mjs';
+import { findPlaywright } from '../scripts/lib/webkit.mjs';
+import { tempDir } from './helpers/temp.mjs';
+
+const sink = () => {
+  const out = { text: '', write(chunk) { out.text += chunk; return true; } };
+  return out;
+};
 
 test('every view is checked at the nine widths in the browser layout and three in the canvas layout', () => {
   assert.deepEqual(WIDTHS, [480, 560, 640, 800, 1024, 1280, 1440, 1600, 1920]);
@@ -17,14 +27,17 @@ test('every view is checked at the nine widths in the browser layout and three i
 });
 
 test('arguments narrow the run to one scenario or width, or ask for screenshots', () => {
-  assert.deepEqual(parseArguments([]), { scenarios: ['example', 'stress'], widths: WIDTHS, canvasWidths: CANVAS_WIDTHS, screenshots: null, live: null, help: false });
+  assert.deepEqual(parseArguments([]), { scenarios: ['example', 'stress'], widths: WIDTHS, canvasWidths: CANVAS_WIDTHS, screenshots: null, live: null, engine: 'chrome', help: false });
   assert.deepEqual(parseArguments(['--scenario', 'stress']).scenarios, ['stress']);
-  assert.deepEqual(parseArguments(['--width', '560']), { scenarios: ['example', 'stress'], widths: [560], canvasWidths: [560], screenshots: null, live: null, help: false });
+  assert.deepEqual(parseArguments(['--width', '560']), { scenarios: ['example', 'stress'], widths: [560], canvasWidths: [560], screenshots: null, live: null, engine: 'chrome', help: false });
   assert.deepEqual(parseArguments(['--width', '1280']).canvasWidths, []);
   assert.equal(parseArguments(['--screenshots', '/tmp/shots']).screenshots, '/tmp/shots');
   assert.throws(() => parseArguments(['--scenario', 'nope']), /scenario/);
   assert.throws(() => parseArguments(['--width', '100']), /width/);
   assert.throws(() => parseArguments(['--nope']), /Unknown option/);
+  assert.equal(parseArguments(['--engine', 'webkit']).engine, 'webkit');
+  assert.equal(parseArguments(['--engine', 'chrome']).engine, 'chrome');
+  assert.throws(() => parseArguments(['--engine', 'safari']), /--engine/);
 });
 
 test('a running dashboard is checked with the swarm, unit and run it shows', () => {
@@ -57,4 +70,20 @@ test('the browser comes from CHROME_PATH when it is set', () => {
 test('the live-update line names the checks it measured and those it could not', () => {
   assert.equal(describeKept([]), 'cards kept, no repeated highlights, scroll kept, busy rings in phase');
   assert.equal(describeKept(['scroll', 'busy-ring phase']), 'cards kept, no repeated highlights, not measured: scroll, busy-ring phase');
+});
+
+test('Playwright is found only where PLAYWRIGHT_CORE points, or through normal resolution', () => {
+  assert.equal(findPlaywright({ PLAYWRIGHT_CORE: '/no/such/folder' }), null);
+  const folder = tempDir();
+  writeFileSync(path.join(folder, 'index.mjs'), '');
+  assert.equal(findPlaywright({ PLAYWRIGHT_CORE: folder }), pathToFileURL(path.join(folder, 'index.mjs')).href);
+});
+
+test('the WebKit mode skips with a message when Playwright is missing', async () => {
+  const stdout = sink();
+  const stderr = sink();
+  assert.equal(await main(['--engine', 'webkit'], { stdout, stderr, env: { PLAYWRIGHT_CORE: tempDir() } }), 0);
+  assert.ok(stdout.text.includes('WebKit check skipped: Playwright is not available'), stdout.text);
+  assert.ok(!stdout.text.includes('Browser:'), stdout.text);
+  assert.equal(stderr.text, '');
 });

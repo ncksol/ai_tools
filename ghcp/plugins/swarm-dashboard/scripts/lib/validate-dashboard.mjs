@@ -9,7 +9,7 @@ export const DASHBOARD_FILES = [
   'server/http.mjs', 'server/hub.mjs', 'server/shared.mjs',
   'ui/index.html', 'ui/styles.css', 'ui/app.mjs', 'ui/format.mjs', 'ui/history.mjs', 'ui/live.mjs', 'ui/main.mjs', 'ui/model.mjs',
   'ui/morph.mjs', 'ui/parts.mjs', 'ui/plan.mjs', 'ui/timeline.mjs',
-  'scripts/swarm-dashboard.mjs', 'scripts/check-layout.mjs', 'scripts/lib/cdp.mjs', 'scripts/lib/page-audit.mjs',
+  'scripts/swarm-dashboard.mjs', 'scripts/check-layout.mjs', 'scripts/lib/cdp.mjs', 'scripts/lib/page-audit.mjs', 'scripts/lib/webkit.mjs',
   'tests/fixtures/layout-good.html', 'tests/fixtures/layout-bad.html',
 ];
 const SCRIPTS = { start: 'node scripts/swarm-dashboard.mjs', 'check:layout': 'node scripts/check-layout.mjs' };
