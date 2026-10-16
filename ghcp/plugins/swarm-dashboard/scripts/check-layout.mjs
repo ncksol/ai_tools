@@ -362,6 +362,101 @@ async function watchHistory(page, servers) {
   }
 }
 
+/** Wait up to timeoutMs for the server to count the page's live connection, then let the page handle what it sent. */
+async function waitForClient(server, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (server.clientCount() < 1 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
+  if (server.clientCount() < 1) return false;
+  await new Promise(resolve => setTimeout(resolve, 300));
+  return true;
+}
+
+/**
+ * Open the Board with a detail panel on a synthetic server, then restart the server with new dashboard files, twice.
+ * The first time the page must reload once and keep the Board tab and the open detail; the second time it has already
+ * tried the new files (its sessionStorage says so), so it must not reload again.
+ */
+async function watchReload(page, servers) {
+  const issues = [];
+  const started = [];
+  const serve = async (port, uiFingerprint) => {
+    const server = createDashboardServer({ createEngine: () => createDemoEngine({ scenario: 'example', simulate: false }), port, version: 'layout-check', uiFingerprint, hub: { engineIdleMs: 600000 } });
+    started.push(server);
+    servers.push(server);
+    await server.listen();
+    return server;
+  };
+  let port = null;
+  // Restart on the same port, as an update does, so the page reconnects by itself.
+  const restart = async (server, uiFingerprint) => {
+    await server.close();
+    try {
+      return await serve(port, uiFingerprint);
+    } catch (error) {
+      issues.push(`the restarted server could not listen: ${error.message}`);
+      return null;
+    }
+  };
+  try {
+    const first = await serve(0, 'layout-check-a');
+    port = first.port;
+    const url = `${first.url}?host=browser`;
+    await page.goto(url, 1280);
+    await page.waitFor(`location.href === ${JSON.stringify(url)} && document.documentElement.dataset.ready === '1'`);
+    await page.evaluate("sessionStorage.removeItem('swarm-dashboard:reloaded-for')");
+    if (!await waitForClient(first, 5000)) {
+      issues.push('the page did not open its live connection within 5 s');
+      return { issues };
+    }
+    await page.evaluate(`document.querySelector('[data-tab="board"]').click()`);
+    await page.waitFor(`document.querySelector('.board .mc[data-open]') !== null`, 5000);
+    const unit = await page.evaluate(`(() => { const card = document.querySelector('.board .mc[data-open]'); card.click(); return card.dataset.open; })()`);
+    await page.waitFor(`document.querySelector('.detail') !== null`, 5000);
+    await page.evaluate("window.swarmMark = 'a'");
+
+    // New dashboard files: the page reloads once into them, keeping what was on screen.
+    const second = await restart(first, 'layout-check-b');
+    if (!second) return { issues };
+    try {
+      await page.waitFor("window.swarmMark === undefined && document.documentElement.dataset.ready === '1'", 15000);
+    } catch {
+      issues.push('the page did not reload for new dashboard files within 15 s');
+      return { issues };
+    }
+    const after = await page.evaluate(`({
+      own: document.querySelector('meta[name="swarm-ui"]')?.content,
+      board: document.querySelector('[data-tab="board"]')?.getAttribute('aria-selected') === 'true',
+      detail: document.querySelector('.detail') !== null ? new URLSearchParams(location.search).get('detail') : null,
+      attempted: sessionStorage.getItem('swarm-dashboard:reloaded-for'),
+    })`);
+    if (after.own !== 'layout-check-b') issues.push(`the reloaded page has the dashboard files ${after.own}, not layout-check-b`);
+    if (!after.board) issues.push('the reload lost the Board tab');
+    if (after.detail !== unit) issues.push('the reload closed the detail panel');
+    if (after.attempted !== 'layout-check-b') issues.push(`the page remembered the attempt as ${after.attempted}, not layout-check-b`);
+    if (!await waitForClient(second, 5000)) {
+      issues.push('the reloaded page did not open its live connection within 5 s');
+      return { issues };
+    }
+
+    // Files the page has already tried for: they still differ from its own, but it must not reload again.
+    await page.evaluate("sessionStorage['swarm-dashboard:reloaded-for'] = 'layout-check-c'; window.swarmMark = 'b'");
+    const third = await restart(second, 'layout-check-c');
+    if (!third) return { issues };
+    if (!await waitForClient(third, 15000)) {
+      issues.push('the page did not reconnect to the restarted server within 15 s');
+      return { issues };
+    }
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    if (await page.evaluate('window.swarmMark').catch(() => undefined) !== 'b') issues.push('the page reloaded again for a fingerprint it had already tried');
+    return { issues };
+  } finally {
+    for (const server of started) {
+      await server.close();
+      servers.splice(servers.indexOf(server), 1);
+    }
+  }
+}
+
 async function selfTest(page) {
   const problems = [];
   for (const [name, broken] of [['layout-bad.html', true], ['layout-good.html', false]]) {
@@ -505,7 +600,13 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
       if (!watchedHistory.issues.length) stdout.write(`History refresh (example, simulated): a finished run and a reconnect each updated History in place; ${watchedHistory.requests} history requests.\n`);
       for (const issue of watchedHistory.issues) stderr.write(`history: ${issue}\n`);
     }
-    return failures.length || updateIssues.length || historyIssues.length ? 1 : 0;
+    let reloadIssues = [];
+    if (!options.live) {
+      reloadIssues = (await watchReload(page, servers)).issues;
+      if (!reloadIssues.length) stdout.write('Self-reload (example, simulated): the page reloaded once for new dashboard files, kept the Board tab and the open detail, and did not reload again for files it had already tried.\n');
+      for (const issue of reloadIssues) stderr.write(`reload: ${issue}\n`);
+    }
+    return failures.length || updateIssues.length || historyIssues.length || reloadIssues.length ? 1 : 0;
   } finally {
     process.off('SIGINT', interrupt);
     process.off('SIGTERM', interrupt);
