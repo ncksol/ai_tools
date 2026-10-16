@@ -1,37 +1,49 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { MIN_WINDOW, PANELS, SPACING, TOP_BAND, fitPanels, overlapProblems } from '../ui/cockpit-fit.mjs';
-import { PANEL_TABS } from './cockpit-shell.test.mjs';
-
-export const COCKPIT_SIZES = [[1100, 800], [1280, 800], [1440, 900], [1512, 900], [1680, 1050], [1920, 1080], [2560, 1440]];
+import { COCKPIT_SIZES, PANEL_TABS } from './helpers/cockpit.mjs';
 
 test('every panel in the shell has a fixed size', () => {
   assert.deepEqual(Object.keys(PANELS).sort(), Object.keys(PANEL_TABS).sort());
   assert.deepEqual(MIN_WINDOW, { width: 1100, height: 800 });
 });
 
-test('the arrangement fits at common window sizes, without overlap and with even gaps', () => {
+test('the arrangement fits at common window sizes, with exact gaps that match on both sides', () => {
   for (const [width, height] of COCKPIT_SIZES) {
     const fit = fitPanels(width, height);
     assert.equal(fit.fits, true, `${width} × ${height}: ${fit.problems.join('; ')}`);
     const r = fit.rects;
     const s = fit.stage.scale;
-    assert.ok(Math.abs((r['ck-units'].left + r['ck-units'].right) / 2 - width / 2) < 0.5, 'the centre console is centred');
-    assert.ok(Math.abs(r['ck-activity'].left - (width - r['ck-prs'].right)) < 1, 'the side consoles mirror each other');
-    assert.ok(r['ck-units'].left - r['ck-activity'].right >= SPACING.consoleGap * s - 0.01);
-    assert.ok(r['ck-prs'].left - r['ck-units'].right >= SPACING.consoleGap * s - 0.01);
-    assert.ok(r['ck-cost'].bottom <= r['ck-activity'].top - SPACING.upperAbove * s + 0.01);
-    assert.ok(r['ck-clock'].bottom <= r['ck-cost'].top - SPACING.upperGap * s + 0.01);
-    assert.ok(r['ck-status'].bottom <= r['ck-prs'].top - SPACING.upperAbove * s + 0.01);
-    assert.ok(r['ck-needs'].bottom <= r['ck-status'].top - SPACING.upperGap * s + 0.01);
+    const near = (got, want, what) => assert.ok(Math.abs(got - want) < 0.5, `${width} × ${height}: ${what} is ${got.toFixed(2)} px, not ${want.toFixed(2)}`);
+    near((r['ck-units'].left + r['ck-units'].right) / 2, width / 2, "the centre console's middle");
+    near(r['ck-activity'].left, width - r['ck-prs'].right, "the left console's margin against the right one's");
+    near(r['ck-units'].left - r['ck-activity'].right, SPACING.consoleGap * s, 'the gap left of the centre console');
+    near(r['ck-prs'].left - r['ck-units'].right, SPACING.consoleGap * s, 'the gap right of the centre console');
+    near(r['ck-activity'].top - r['ck-cost'].bottom, SPACING.upperAbove * s, 'the gap above the activity console');
+    near(r['ck-prs'].top - r['ck-status'].bottom, SPACING.upperAbove * s, 'the gap above the PR console');
+    near(r['ck-cost'].top - r['ck-clock'].bottom, SPACING.upperGap * s, 'the gap inside the left stack');
+    near(r['ck-status'].top - r['ck-needs'].bottom, SPACING.upperGap * s, 'the gap inside the right stack');
     for (const id of ['ck-clock', 'ck-needs']) assert.ok(r[id].top >= TOP_BAND, `${id} stays under the top line`);
+  }
+});
+
+test('a window that fits keeps fitting as it grows wider', () => {
+  for (const height of [800, 900, 1000, 1080, 1200, 1360, 1440, 1600]) {
+    let fitted = false;
+    for (let width = 1100; width <= 3200; width += 40) {
+      const fits = fitPanels(width, height).fits;
+      if (fitted) assert.equal(fits, true, `${width} × ${height} stops fitting although a narrower window fits`);
+      fitted = fitted || fits;
+    }
+    const comfortable = Math.max(1100, Math.ceil(height * 1.4));
+    assert.equal(fitPanels(comfortable, height).fits, true, `${comfortable} × ${height}`);
   }
 });
 
 test('below the minimum window, or too narrow for its height, the cockpit says so instead', () => {
   assert.equal(fitPanels(1099, 800).reason, 'small');
   assert.equal(fitPanels(1280, 799).reason, 'small');
-  const narrow = fitPanels(1100, 900);
+  const narrow = fitPanels(1100, 1000);
   assert.deepEqual([narrow.fits, narrow.reason], [false, 'crowded']);
   assert.ok(narrow.problems.some(problem => problem.includes('ck-activity')));
 });
