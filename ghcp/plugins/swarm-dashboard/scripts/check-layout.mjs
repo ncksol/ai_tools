@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { createDemoEngine } from '../server/demo-engine.mjs';
 import { createDashboardServer } from '../server/http.mjs';
 import { findBrowser, launchBrowser, openPage } from './lib/cdp.mjs';
+import { runCockpitChecks } from './lib/cockpit-check.mjs';
 import { AUDIT_DEFAULTS, auditScript } from './lib/page-audit.mjs';
 import { findPlaywright, launchWebKit, openWebKitPage } from './lib/webkit.mjs';
 
@@ -41,6 +42,7 @@ export const USAGE = `Usage: check-layout [--scenario example|stress | --live <u
 Checks every dashboard view for overlap, clipped text, type, spacing, sizes, contrast and console errors in a
 local headless Chrome, Chromium or Edge (set CHROME_PATH to pick one). It proves its rules on a broken page first,
 tests the page's in-place updates, and then watches live updates arrive and reports how long each one takes.
+Then it checks the swarm cockpit the same way (see scripts/check-cockpit.mjs).
 By default it serves the synthetic example and stress swarms itself; --live checks a running dashboard instead
 (for example http://127.0.0.1:7927/), whose report quotes your own data: keep it local.
 Screenshots of the synthetic swarms, when asked for, are written to <dir> for review; do not commit them.
@@ -950,7 +952,8 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
       if (!historyErrorIssues.length) stdout.write('History unavailable (example): a failed History load said so instead of showing no runs, and the rows appeared by themselves once History answered.\n');
       for (const issue of historyErrorIssues) stderr.write(`history-error: ${issue}\n`);
     }
-    return failures.length || updateIssues.length || historyIssues.length || reloadIssues.length || reconnectIssues.length || nothingIssues.length || historyErrorIssues.length ? 1 : 0;
+    const cockpit = await runCockpitChecks({ page, browser, engine: options.engine, urls, options: { only: null, printMetrics: false, screenshots: options.screenshots }, stdout, stderr });
+    return failures.length || updateIssues.length || historyIssues.length || reloadIssues.length || reconnectIssues.length || nothingIssues.length || historyErrorIssues.length || cockpit.issues ? 1 : 0;
   } finally {
     process.off('SIGINT', interrupt);
     process.off('SIGTERM', interrupt);

@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { CHECKS, COCKPIT_AUDIT, COCKPIT_SIZES, SMALL_SIZE, cockpitIssues, expandAll } from '../scripts/lib/cockpit-check.mjs';
 import { parseArguments } from '../scripts/check-cockpit.mjs';
 import { COCKPIT_SIZES as FIT_SIZES } from './helpers/cockpit.mjs';
@@ -34,4 +35,11 @@ test('rectangles grow by the camera\'s reach before the scene is sampled', () =>
 test('the command can save screenshots of the synthetic swarms', () => {
   assert.equal(parseArguments(['--screenshots', '/tmp/x']).screenshots, '/tmp/x');
   assert.throws(() => parseArguments(['--screenshots']), /--screenshots takes a folder/);
+});
+
+test('the layout check runs the cockpit\'s checks after the dashboard\'s', () => {
+  const source = readFileSync(new URL('../scripts/check-layout.mjs', import.meta.url), 'utf8');
+  assert.match(source, /import \{ runCockpitChecks \} from '\.\/lib\/cockpit-check\.mjs';/);
+  assert.match(source, /const cockpit = await runCockpitChecks\(/);
+  assert.match(source, /historyErrorIssues\.length \|\| cockpit\.issues \? 1 : 0/);
 });
