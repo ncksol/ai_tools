@@ -564,6 +564,27 @@ test('log lines over the size limit are skipped with a warning, and a recoverabl
   assert.equal((await engine.getSnapshot('ws-root')).units.find(unit => unit.id === 'ws-ui').statusDetail, 'busy');
 });
 
+test('an oversized line of a prototype-named type does not hide the turn end after it in the same chunk', async () => {
+  const home = scenario();
+  const clock = at(80);
+  const engine = createSwarmEngine({ copilotHome: home.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => clock, processProbe: alwaysAlive, prLookup: 'off' });
+  const file = path.join(home.dir('cli-ui'), 'events.jsonl');
+  const working = new EventLog(at(61));
+  working.turnStart();
+  home.writeEvents('cli-ui', working.events, { append: true });
+  const odd = JSON.stringify({ type: 'constructor', timestamp: new Date(at(70)).toISOString(), filler: 'x'.repeat(17 * 1024 * 1024) });
+  appendFileSync(file, `${odd}\n`);
+  const ending = new EventLog(at(75));
+  ending.turnEnd();
+  appendFileSync(file, ending.lines());
+  await engine.refresh();
+  const snapshot = await engine.getSnapshot('ws-root');
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  assert.notEqual(snapshot.units.find(unit => unit.id === 'ws-ui').statusDetail, 'busy');
+  const events = engine.diagnostics().filter(item => item.source === 'events');
+  assert.deepEqual(events.map(item => item.message), ['cli-ui: 1 log line over the size limit was not read in full; 1 was applied from its type and ids.']);
+});
+
 /** Opens a writer on data.db that holds an uncheckpointed rename of the root workspace in the -wal. */
 function holdUncheckpointedRename(home) {
   const writer = openWriter(home.dataDb);

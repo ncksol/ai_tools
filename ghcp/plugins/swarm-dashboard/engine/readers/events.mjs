@@ -16,6 +16,7 @@ function freshPartial(tail) {
   tail.skipping = false;
   tail.skipBytes = 0;
   tail.scanner = null;
+  tail.scanError = null;
 }
 
 export function createTail(file) {
@@ -35,6 +36,11 @@ export function createTail(file) {
  * Each skipped line is scanned as it streams past (json-scan.mjs), and onOversized(event | null, bytes) is called once at its
  * end in place of onLine: event holds the line's type, timestamp and other depth-1 keys and its data's primitive keys, or
  * is null when none could be recovered.
+ *
+ * Every line is applied or counted before its chunk's bytes count as read: onLine and onOversized are called inside a
+ * per-line try/catch, so a line that throws is counted as failed and the lines after it in the chunk are still delivered.
+ * The result reports failed (a count) and lastError (the last message, at most 200 characters), both present only when
+ * a line failed. A scanner that throws makes its oversized line unrecoverable: onOversized(null, bytes), counted as failed.
  */
 export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onReset = null, onOversized = null, maxLineBytes = MAX_LINE_BYTES } = {}) {
   let info;
@@ -57,13 +63,31 @@ export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onRes
   let bytes = 0;
   let skipped = 0;
   let skippedBytes = 0;
+  let failed = 0;
+  let lastError = '';
+  const fail = error => {
+    failed += 1;
+    lastError = String(error?.message ?? error).slice(0, 200);
+  };
+  const scan = (chunk, start, end) => {
+    if (tail.scanError) return;
+    try {
+      tail.scanner.write(chunk, start, end);
+    } catch (error) {
+      tail.scanError = error;
+    }
+  };
   const deliver = (chunk, start, end) => {
     let line = tail.pending.length ? Buffer.concat([...tail.pending, chunk.subarray(start, end)]) : chunk.subarray(start, end);
     freshPartial(tail);
     if (line.length && line[line.length - 1] === CARRIAGE_RETURN) line = line.subarray(0, -1);
     if (!line.length) return;
     lines += 1;
-    onLine(line.toString('utf8'));
+    try {
+      onLine(line.toString('utf8'));
+    } catch (error) {
+      fail(error);
+    }
   };
   const handle = await open(tail.file, 'r');
   try {
@@ -84,20 +108,35 @@ export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onRes
           tail.skipBytes = tail.pendingBytes;
           // Scan the whole oversized line as it streams past, starting with the bytes already held. No line bytes are kept.
           tail.scanner = createJsonScanner();
-          for (const part of tail.pending) tail.scanner.write(part, 0, part.length);
+          for (const part of tail.pending) scan(part, 0, part.length);
           tail.pending = [];
           tail.pendingBytes = 0;
         }
         if (tail.skipping) {
           tail.skipBytes += end - start;
-          tail.scanner.write(chunk, start, end);
+          scan(chunk, start, end);
           if (newline !== -1) {
             skipped += 1;
             skippedBytes += tail.skipBytes + 1;
-            const recovered = tail.scanner.finish();
+            let recovered = null;
+            if (tail.scanError) {
+              fail(tail.scanError);
+            } else {
+              try {
+                recovered = tail.scanner.finish();
+              } catch (error) {
+                fail(error);
+              }
+            }
             const lineBytes = tail.skipBytes + 1;
             freshPartial(tail);
-            if (onOversized) onOversized(recovered, lineBytes);
+            if (onOversized) {
+              try {
+                onOversized(recovered, lineBytes);
+              } catch (error) {
+                fail(error);
+              }
+            }
           }
         } else if (newline === -1) {
           tail.pending.push(Buffer.from(chunk.subarray(start, end)));
@@ -111,5 +150,8 @@ export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onRes
   } finally {
     await handle.close();
   }
-  return skipped ? { missing: false, reset, lines, bytes, skipped, skippedBytes } : { missing: false, reset, lines, bytes };
+  const result = { missing: false, reset, lines, bytes };
+  if (skipped) Object.assign(result, { skipped, skippedBytes });
+  if (failed) Object.assign(result, { failed, lastError });
+  return result;
 }

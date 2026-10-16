@@ -26,7 +26,7 @@ export const DEFAULT_THRESHOLDS = Object.freeze({
 export function resolveThresholds(overrides = {}) {
   const result = { ...DEFAULT_THRESHOLDS };
   for (const [key, value] of Object.entries(overrides ?? {})) {
-    if (!(key in DEFAULT_THRESHOLDS)) throw new Error(`Unknown threshold ${key}`);
+    if (!Object.prototype.hasOwnProperty.call(DEFAULT_THRESHOLDS, key)) throw new Error(`Unknown threshold ${key}`);
     if (!Number.isFinite(value) || value < 0) throw new Error(`Threshold ${key} must be a non-negative number`);
     result[key] = value;
   }

@@ -45,6 +45,12 @@ test('thresholds default to the design values and accept overrides', () => {
   assert.throws(() => resolveThresholds({ silentBusyMs: -1 }), /non-negative/);
 });
 
+test('thresholds accept only their own keys, not inherited member names', () => {
+  for (const name of ['constructor', 'toString', 'hasOwnProperty', 'valueOf']) {
+    assert.throws(() => resolveThresholds({ [name]: 1 }), new RegExp(`Unknown threshold ${name}$`));
+  }
+});
+
 test('copilotPaths derives every location from one home', () => {
   const paths = copilotPaths('/home/user/.copilot');
   assert.equal(paths.dataDb, path.join('/home/user/.copilot', 'data.db'));

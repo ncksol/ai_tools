@@ -180,7 +180,7 @@ export function createSwarmEngine(options = {}) {
   async function tailSession(cliId, diag) {
     let entry = sessions.get(cliId);
     if (!entry) {
-      entry = { tail: createTail(path.join(paths.stateDir, cliId, 'events.jsonl')), state: createSessionState(cliId), missing: true, skipped: 0, applied: 0 };
+      entry = { tail: createTail(path.join(paths.stateDir, cliId, 'events.jsonl')), state: createSessionState(cliId), missing: true, skipped: 0, applied: 0, failed: 0, lastError: '' };
       sessions.set(cliId, entry);
     }
     try {
@@ -189,15 +189,21 @@ export function createSwarmEngine(options = {}) {
           entry.state = createSessionState(cliId);
           entry.skipped = 0;
           entry.applied = 0;
+          entry.failed = 0;
+          entry.lastError = '';
         },
         // A line over the size limit is not read in full, but its type, ids and time are applied when they can be recovered.
         onOversized: event => {
-          if (event) entry.applied += 1;
           applyRecovered(entry.state, event);
+          if (event) entry.applied += 1;
         },
       });
       entry.missing = result.missing;
       entry.skipped += result.skipped ?? 0;
+      if (result.failed) {
+        entry.failed += result.failed;
+        entry.lastError = result.lastError;
+      }
     } catch (error) {
       diag.push({ level: 'warn', source: 'events', message: `${shortId(cliId)}: ${error.message}` });
     }
@@ -207,6 +213,13 @@ export function createSwarmEngine(options = {}) {
         level: 'warn', source: 'events',
         message: `${shortId(cliId)}: ${skipped} log line${skipped === 1 ? '' : 's'} over the size limit ${skipped === 1 ? 'was' : 'were'} not read in full; `
           + `${applied} ${applied === 1 ? 'was' : 'were'} applied from its type and ids.`,
+      });
+    }
+    if (entry.failed) {
+      const { failed, lastError } = entry;
+      diag.push({
+        level: 'warn', source: 'events',
+        message: `${shortId(cliId)}: ${failed} log line${failed === 1 ? '' : 's'} could not be applied and ${failed === 1 ? 'was' : 'were'} skipped (last error: ${lastError}).`,
       });
     }
     return entry.missing ? null : entry.state;

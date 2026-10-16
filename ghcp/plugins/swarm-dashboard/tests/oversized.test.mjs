@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { appendFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_THRESHOLDS } from '../engine/config.mjs';
 import { createJsonScanner } from '../engine/readers/json-scan.mjs';
@@ -304,4 +304,150 @@ test('other oversized events inside a sub-agent only move that sub-agent\'s cloc
   const inside = { type: 'assistant.message', id: 'ev-in', timestamp: new Date(T0 + 9 * MINUTE).toISOString(), parentId: null, agentId: 'agent-7', data: {} };
   const { state } = await fold([...log.events.map(lineOf), bigLine(inside, { typeLast: true })]);
   assert.equal(state.subagents.get(call).lastEventAt, T0 + 9 * MINUTE);
+});
+
+const iso = ms => new Date(ms).toISOString();
+const PROTOTYPE_NAMES = ['constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf'];
+const ODD_TYPES = ['unknown.event', ...PROTOTYPE_NAMES];
+
+test('events of an unknown type or a prototype-named type only move the clock', () => {
+  for (const type of ODD_TYPES) {
+    const state = createSessionState('cli-1');
+    applyLine(state, lineOf({ type, id: 'ev-1', timestamp: iso(T0 + MINUTE), data: { toolCallId: 'call-1', success: false } }));
+    assert.equal(state.lastEventAt, T0 + MINUTE, type);
+    assert.equal(state.lines, 1, type);
+    assert.equal(state.parseErrors, 0, type);
+    assert.equal(state.openTools.size + state.waits.size + state.subagents.size, 0, type);
+    assert.equal(state.feed.length + state.marks.length + state.recent.failures.length, 0, type);
+  }
+});
+
+test('tools named after prototype members open and close a call and add no wait, question or plan', () => {
+  for (const name of ['constructor', 'toString', '__proto__']) {
+    const log = new EventLog(T0);
+    log.start(); log.turnStart();
+    const state = createSessionState('cli-1');
+    for (const event of log.events) applyLine(state, lineOf(event));
+    const feedBefore = state.feed.length;
+    const marksBefore = state.marks.length;
+    const call = log.tool(name, { question: 'Which colour?', summary: 'A plan' });
+    applyLine(state, lineOf(log.events[log.events.length - 1]));
+    assert.equal(state.openTools.size, 1, name);
+    assert.equal(state.openTools.get(call).name, name);
+    assert.equal(state.waits.size, 0, name);
+    log.done(call);
+    applyLine(state, lineOf(log.events[log.events.length - 1]));
+    assert.equal(state.openTools.size, 0, name);
+    assert.equal(state.waits.size, 0, name);
+    assert.equal(state.waitSpans.length, 0, name);
+    assert.equal(state.marks.length, marksBefore, name);
+    assert.equal(state.feed.some(item => ['question', 'plan-req', 'answer', 'plan-ok'].includes(item.kind)), false, name);
+    assert.ok(state.feed.length >= feedBefore);
+  }
+});
+
+test('oversized events of an unknown or prototype-named type only move the clock, and the turn end after them is applied', async () => {
+  for (const type of ODD_TYPES) {
+    for (const typeLast of [false, true]) {
+      const log = new EventLog(T0);
+      log.start(); log.turnStart();
+      log.at(T0 + 4 * MINUTE); log.turnEnd();
+      const [start, turnStart, turnEnd] = log.events.map(lineOf);
+      const odd = { type, id: 'ev-odd', timestamp: iso(T0 + 5 * MINUTE), parentId: null, data: { toolCallId: 'call-1', success: false } };
+      const { state, result } = await fold([start, turnStart, bigLine(odd, { typeLast }), turnEnd]);
+      const label = `${type}, typeLast ${typeLast}`;
+      assert.equal(result.skipped, 1, label);
+      assert.equal(result.failed, undefined, label);
+      assert.equal(state.turn, null, label);
+      assert.equal(state.lastTurnEndAt, T0 + 4 * MINUTE, label);
+      assert.equal(state.lastEventAt, T0 + 5 * MINUTE, label);
+      assert.equal(state.lines, 4, label);
+      assert.equal(state.recent.failures.length, 0, label);
+    }
+  }
+});
+
+const BOOM = 'throw-on-this-line';
+const markedLine = (content = BOOM) => lineOf({ type: 'assistant.message', id: 'ev-marked', timestamp: iso(T0 + MINUTE), data: { content } });
+
+/** Reads a log with handlers that may throw; returns the tail, state, result and how many lines each handler saw. */
+async function readThrowing(lines, { onLine, onOversized }) {
+  const state = createSessionState('cli-1');
+  const file = path.join(dir, `throw-${counter += 1}.jsonl`);
+  writeFileSync(file, `${lines.join('\n')}\n`);
+  const tail = createTail(file);
+  const seen = { lines: 0, oversized: 0 };
+  const options = {
+    maxLineBytes: LIMIT,
+    onOversized: (event, bytes) => { seen.oversized += 1; onOversized(state, event, bytes); },
+  };
+  const read = () => readNewLines(tail, line => { seen.lines += 1; onLine(state, line); }, options);
+  return { state, file, tail, seen, read };
+}
+
+const applyUnlessMarked = (state, line) => {
+  if (line.includes(BOOM)) throw new Error('boom');
+  applyLine(state, line);
+};
+
+test('a line that throws is counted and skipped, the rest of its chunk is applied, and nothing is read twice', async () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  log.at(T0 + 2 * MINUTE); log.turnEnd();
+  const [start, turnStart, turnEnd] = log.events.map(lineOf);
+  const run = await readThrowing([start, turnStart, markedLine(), turnEnd], { onLine: applyUnlessMarked, onOversized: applyRecovered });
+  const first = await run.read();
+  assert.equal(first.failed, 1);
+  assert.equal(first.lastError, 'boom');
+  assert.equal(first.lines, 4);
+  assert.equal(run.state.turn, null);
+  assert.equal(run.state.lastTurnEndAt, T0 + 2 * MINUTE);
+  assert.equal(run.tail.offset, statSync(run.file).size);
+  appendFileSync(run.file, `${lineOf({ type: 'assistant.message', id: 'ev-later', timestamp: iso(T0 + 3 * MINUTE), data: { content: 'later' } })}\n`);
+  const second = await run.read();
+  assert.equal(second.lines, 1);
+  assert.equal('failed' in second, false);
+  assert.equal('lastError' in second, false);
+  assert.equal(run.seen.lines, 5);
+  assert.equal(run.state.lastEventAt, T0 + 3 * MINUTE);
+});
+
+test('an oversized line whose handler throws is counted and skipped, and the turn end after it is applied', async () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  log.at(T0 + 2 * MINUTE); log.turnEnd();
+  const [start, turnStart, turnEnd] = log.events.map(lineOf);
+  const odd = { type: 'boom.type', id: 'ev-odd', timestamp: iso(T0 + MINUTE), parentId: null, data: {} };
+  const onOversized = (state, event) => {
+    if (event?.type === 'boom.type') throw new Error('oversized boom');
+    applyRecovered(state, event);
+  };
+  const run = await readThrowing([start, turnStart, bigLine(odd), turnEnd], { onLine: applyUnlessMarked, onOversized });
+  const first = await run.read();
+  assert.equal(first.skipped, 1);
+  assert.equal(first.failed, 1);
+  assert.equal(first.lastError, 'oversized boom');
+  assert.equal(run.state.turn, null);
+  assert.equal(run.tail.offset, statSync(run.file).size);
+  appendFileSync(run.file, `${markedLine('fine')}\n`);
+  const second = await run.read();
+  assert.equal(second.lines, 1);
+  assert.equal(second.failed, undefined);
+  assert.equal(run.seen.oversized, 1);
+  assert.equal(run.seen.lines, 4);
+});
+
+test('failed lines are all counted, and the last error is clipped to 200 characters', async () => {
+  const lines = [markedLine(), markedLine('fine'), markedLine(), markedLine('fine')];
+  let calls = 0;
+  const onLine = (state, line) => {
+    if (!line.includes(BOOM)) return;
+    calls += 1;
+    throw new Error(calls === 1 ? 'first' : 'x'.repeat(500));
+  };
+  const run = await readThrowing(lines, { onLine, onOversized: applyRecovered });
+  const result = await run.read();
+  assert.equal(result.failed, 2);
+  assert.equal(result.lastError, 'x'.repeat(200));
+  assert.equal(result.lines, 4);
 });

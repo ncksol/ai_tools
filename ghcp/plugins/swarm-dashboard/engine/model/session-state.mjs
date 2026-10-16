@@ -11,7 +11,7 @@ export const SKIP_TYPES = new Set([
 ]);
 /** Each skip type mapped to its own constant: keeping head[1], a slice of the line, would pin the whole read chunk. */
 const SKIP_NAMES = new Map([...SKIP_TYPES].map(type => [type, type]));
-const WAIT_TOOLS = { ask_user: 'question', exit_plan_mode: 'plan' };
+const WAIT_TOOLS = new Map([['ask_user', 'question'], ['exit_plan_mode', 'plan']]);
 const BUSY_JOIN_MS = 5000;
 
 function argsOf(value) {
@@ -66,11 +66,12 @@ export function applyLine(state, line) {
 }
 
 /** The only data keys applied from an oversized line, by event type: enough to close a tool call, wait or sub-agent. */
-const RECOVERED_DATA = Object.freeze({
-  'tool.execution_complete': ['toolCallId', 'success', 'parentToolCallId'],
-  'subagent.completed': ['toolCallId', 'durationMs', 'parentToolCallId', 'agentId'],
-  'subagent.failed': ['toolCallId', 'durationMs', 'parentToolCallId', 'agentId'],
-});
+/** A Map, not an object: the event type comes from a log, and a plain object would also answer to `constructor` or `__proto__`. */
+const RECOVERED_DATA = new Map([
+  ['tool.execution_complete', ['toolCallId', 'success', 'parentToolCallId']],
+  ['subagent.completed', ['toolCallId', 'durationMs', 'parentToolCallId', 'agentId']],
+  ['subagent.failed', ['toolCallId', 'durationMs', 'parentToolCallId', 'agentId']],
+]);
 
 /**
  * Applies an event recovered from an oversized line (see readers/json-scan.mjs). It counts the line like applyLine and applies
@@ -83,7 +84,7 @@ export function applyRecovered(state, event) {
   if (!event) return;
   const at = parseTime(event.timestamp);
   if (at === null) return;
-  const keys = RECOVERED_DATA[event.type];
+  const keys = RECOVERED_DATA.get(event.type);
   if (keys) {
     const data = {};
     for (const key of keys) if (event.data && event.data[key] !== undefined) data[key] = event.data[key];
@@ -378,7 +379,7 @@ function onToolStart(state, data, at) {
   const args = argsOf(data.arguments);
   state.openTools.set(id, { id, name, startedAt: at, args: toolArgs(name, args) });
   pushBounded(state.recent.calls, { at, name, key: callKey(name, data.arguments), prompt: state.prompts }, LIMITS.recent);
-  const kind = WAIT_TOOLS[name];
+  const kind = WAIT_TOOLS.get(name);
   if (kind) {
     const text = clip(String((kind === 'question' ? args.question : args.summary) ?? ''), 2000);
     state.waits.set(id, { id, kind, text, startedAt: at });
