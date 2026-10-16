@@ -220,6 +220,7 @@ function freshKeys(prev, next) {
 
 function applySnapshot(next) {
   const prev = view.snapshot;
+  if (prev?.run.id !== next?.run.id) view.cockpitNote = null;
   const found = prev && next && prev.run.id === next.run.id && !justConnected ? freshKeys(prev, next) : emptyFresh();
   const t = performance.now();
   const carried = t < freshUntil && !justConnected ? view.fresh : emptyFresh();
