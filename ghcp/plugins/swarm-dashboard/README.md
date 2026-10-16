@@ -6,13 +6,13 @@ It opens as a canvas in the app's side panel, or in any browser through a small 
 
 ## What it shows
 
-- Header: the swarm, how long it has run, its cost in credits and dollars, and how many sessions are working, stuck, waiting, idle, done or failed.
+- Header: the swarm, how long it has run, its cost in credits and dollars, and how many sessions and sub-agents are working, stuck, waiting, idle, done or failed.
 - Needs you: a stalled swarm first, then questions, plans and PRs waiting for you, longest wait first.
-- Cards: one card per unit with its state, stage, task-list progress, latest report, running sub-agents and cost.
+- Cards: one card per unit with its state, stage, task-list progress, latest report, running sub-agents and cost. The orchestrator's one-off sub-agents get a card while they run or are stuck, with their type and mode in place of the stage and monitor.
 - Activity: the latest events across the swarm.
-- Timeline: each session's busy, idle and waiting time over the last hours or the whole run, with cost over time.
-- Plan and Board: the planned units and what each waits on, and every unit by stage, from planned to archived.
-- Detail panel: one unit's current activity, why it counts as stuck or waiting, its latest report, sub-agents, PR and monitor, and recent activity.
+- Timeline: each session's busy, idle and waiting time over the last hours or the whole run, with cost over time. The orchestrator's one-off sub-agents have their own lanes right under it, for those active in the chosen window.
+- Plan and Board: the planned units and what each waits on, and every unit by stage, from planned to archived, with the orchestrator's sub-agents in a column of their own.
+- Detail panel: one unit's current activity, why it counts as stuck or waiting, its latest report, sub-agents, PR and monitor (for a sub-agent: its type, mode and effort), and recent activity.
 - History: finished runs with their duration, cost and outcomes, and a summary of each run.
 
 ## Install
