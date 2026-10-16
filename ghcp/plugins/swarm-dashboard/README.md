@@ -65,7 +65,7 @@ Run these from the plugin folder.
 | `npm run snapshot -- --list` | Print the swarms as JSON; `--swarm <id>`, `--history` and `--run <id>` print the rest |
 | `npm test` | Run the unit tests |
 | `npm run validate` | Check the plugin's manifests, files and marketplace entry |
-| `npm run check:layout` | Check every view for overlap, clipped text, type, spacing and contrast at every width, and that live updates leave the page steady, in a local headless Chrome, Chromium or Edge (set `CHROME_PATH` to choose one); `-- --live <url>` checks a running dashboard, and `-- --engine webkit` runs the same checks in WebKit (see below) |
+| `npm run check:layout` | Check every view for overlap, clipped text, type, spacing and contrast at every width, and that live updates leave the page steady, and that History refreshes in place when a run finishes or the page reconnects, in a local headless Chrome, Chromium or Edge (set `CHROME_PATH` to choose one); `-- --live <url>` checks a running dashboard, and `-- --engine webkit` runs the same checks in WebKit (see below) |
 
 ### Check the layout in WebKit (optional)
 

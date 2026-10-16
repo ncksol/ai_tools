@@ -269,6 +269,83 @@ async function watchUpdates(page, url, { updates = 3, timeoutMs = 15000 } = {}) 
   }
 }
 
+/** Runs in the page on History: counts any moment it shows its loading state, and the history requests made so far. */
+function watchLoading() {
+  const state = { loading: 0, requests: performance.getEntriesByType('resource').filter(entry => entry.name.includes('/api/history')).length };
+  const look = () => {
+    if (document.documentElement.dataset.ready !== '1' || document.getElementById('dash').textContent.includes('Loading finished runs')) state.loading += 1;
+  };
+  new MutationObserver(look).observe(document.documentElement, { attributes: true, childList: true, subtree: true, characterData: true });
+  window.swarmHistory = state;
+}
+
+/** Wait up to timeoutMs for History to show at least count rows; false when it does not. */
+async function waitForRows(page, count, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await page.evaluate("document.querySelectorAll('.h-row[data-run]').length") >= count) return true;
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  return false;
+}
+
+/**
+ * Open History on a synthetic server, finish its live run, then restart the server with one more finished run.
+ * History must show each new run in place, without its loading state and with one request per refresh.
+ */
+async function watchHistory(page, servers) {
+  const issues = [];
+  const started = [];
+  const demo = createDemoEngine({ scenario: 'example', simulate: false });
+  const history = await demo.listHistory();
+  const engine = { ...demo, listHistory: async () => structuredClone(history) };
+  const serve = async port => {
+    const server = createDashboardServer({ createEngine: () => engine, port, version: 'layout-check', hub: { engineIdleMs: 600000 } });
+    started.push(server);
+    servers.push(server);
+    await server.listen();
+    return server;
+  };
+  try {
+    const server = await serve(0);
+    const { port } = server;
+    const url = `${server.url}?host=browser&page=history`;
+    await page.goto(url, 1280);
+    await page.waitFor(`location.href === ${JSON.stringify(url)} && document.documentElement.dataset.ready === '1'`);
+    const before = await page.evaluate("document.querySelectorAll('.h-row[data-run]').length");
+    await page.evaluate(`(${watchLoading})()`);
+
+    const snapshot = await engine.getSnapshot();
+    snapshot.run.lifecycle = 'finished';
+    snapshot.run.finishedAt = Date.now();
+    snapshot.revision += 1;
+    history.unshift({ ...history[0], id: snapshot.run.id, name: snapshot.run.name, project: snapshot.run.project, startedAt: snapshot.run.startedAt, finishedAt: snapshot.run.finishedAt });
+    engine.push(snapshot);
+    if (!await waitForRows(page, before + 1, 8000)) issues.push('History did not show the finished run within 8 s');
+
+    history.unshift({ ...history[0], id: 'ws-history-check', name: 'History check' });
+    await server.close();
+    let restarted = true;
+    try {
+      await serve(port);
+    } catch (error) {
+      restarted = false;
+      issues.push(`the restarted server could not listen: ${error.message}`);
+    }
+    if (restarted && !await waitForRows(page, before + 2, 10000)) issues.push('History did not show the run added while the page was disconnected within 10 s');
+
+    const state = await page.evaluate("({ loading: window.swarmHistory.loading, requests: performance.getEntriesByType('resource').filter(entry => entry.name.includes('/api/history')).length - window.swarmHistory.requests })");
+    if (state.loading) issues.push('History showed its loading state while refreshing');
+    if (state.requests < 2 || state.requests > 4) issues.push(`History made ${state.requests} requests for two refreshes`);
+    return { issues, requests: state.requests };
+  } finally {
+    for (const server of started) {
+      await server.close();
+      servers.splice(servers.indexOf(server), 1);
+    }
+  }
+}
+
 async function selfTest(page) {
   const problems = [];
   for (const [name, broken] of [['layout-bad.html', true], ['layout-good.html', false]]) {
@@ -405,7 +482,14 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
       if (watched) stdout.write(`Live updates (example, simulated): ${describeTimes(watched.durations)}${watched.issues.length ? '' : `; ${describeKept(watched.unmeasured)}`}.\n`);
     }
     for (const issue of updateIssues) stderr.write(`update: ${issue}\n`);
-    return failures.length || updateIssues.length ? 1 : 0;
+    let historyIssues = [];
+    if (!options.live) {
+      const watchedHistory = await watchHistory(page, servers);
+      historyIssues = watchedHistory.issues;
+      if (!watchedHistory.issues.length) stdout.write(`History refresh (example, simulated): a finished run and a reconnect each updated History in place; ${watchedHistory.requests} history requests.\n`);
+      for (const issue of watchedHistory.issues) stderr.write(`history: ${issue}\n`);
+    }
+    return failures.length || updateIssues.length || historyIssues.length ? 1 : 0;
   } finally {
     process.off('SIGINT', interrupt);
     process.off('SIGTERM', interrupt);
