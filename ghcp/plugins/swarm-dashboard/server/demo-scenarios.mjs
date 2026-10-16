@@ -5,15 +5,16 @@ const SEGMENT = { busy: 'busy', idle: 'idle', plan: 'plan', question: 'question'
 const TYPES = ['explore', 'task', 'code-review', 'rubber-duck', 'research', 'general-purpose'];
 /**
  * Extra units for the stress scenario: every status detail, long names and labels (C6-1 fits its ring whole, MM-1 does
- * not), crowded chips, a PR closed without merging and a deep plan.
+ * not), crowded chips, a PR closed without merging and a deep plan. A unit without its own effort keeps B1's (xhigh).
+ * Q1 has a long model name with xhigh and two finished sub-agents, one with an effort and one without.
  */
 const EXTRA = [
-  { label: 'Q1', name: 'Export format questions for the reporting service, with a name long enough to need an ellipsis', status: 'question', statusDetail: 'waiting_question', bucket: 'waiting', stage: 'pr_open', dependsOn: 'B1' },
-  { label: 'S2', name: 'retry loop', status: 'stuck', statusDetail: 'spinning', bucket: 'stuck', reason: 'Spinning rule: 6 failed tool calls within 30 busy minutes.', dependsOn: 'Q1' },
+  { label: 'Q1', name: 'Export format questions for the reporting service, with a name long enough to need an ellipsis', status: 'question', statusDetail: 'waiting_question', bucket: 'waiting', stage: 'pr_open', dependsOn: 'B1', model: 'claude-sonnet-5-1m-context-preview-20261001', effort: 'xhigh', finished: 2 },
+  { label: 'S2', name: 'retry loop', status: 'stuck', statusDetail: 'spinning', bucket: 'stuck', reason: 'Spinning rule: 6 failed tool calls within 30 busy minutes.', dependsOn: 'Q1', effort: null },
   { label: 'X3', name: 'crashed worker', status: 'blocked', statusDetail: 'crashed', bucket: 'failed', reason: 'Ended rule: the process is gone, with no shutdown event and a turn still open.', alive: false, dependsOn: 'S2' },
-  { label: 'P4', name: 'paused monitor', status: 'idle', statusDetail: 'idle', bucket: 'idle', stage: 'in_review', monitor: 'paused', dependsOn: 'X3' },
-  { label: 'N5', name: 'no report and no task list', status: 'busy', statusDetail: 'busy', bucket: 'working', report: null, progress: null, dependsOn: 'P4' },
-  { label: 'C6', name: 'crowded chips', status: 'busy', statusDetail: 'slow_model_call', bucket: 'working', crowd: 7 },
+  { label: 'P4', name: 'paused monitor', status: 'idle', statusDetail: 'idle', bucket: 'idle', stage: 'in_review', monitor: 'paused', dependsOn: 'X3', effort: 'medium' },
+  { label: 'N5', name: 'no report and no task list', status: 'busy', statusDetail: 'busy', bucket: 'working', report: null, progress: null, dependsOn: 'P4', effort: null },
+  { label: 'C6', name: 'crowded chips', status: 'busy', statusDetail: 'slow_model_call', bucket: 'working', crowd: 7, effort: 'high' },
   { label: 'REPORTING-SERVICE', name: 'a label longer than the ring', status: 'stuck', statusDetail: 'stuck_subagent', bucket: 'stuck', reason: 'Sub-agent rule: code-review has had no events for 14 min (limit 10 min).', stuckSubagent: true },
   { label: 'R8', name: 'blocked report', status: 'blocked', statusDetail: 'blocked', bucket: 'waiting', reportStatus: 'blocked' },
   { label: 'M9', name: 'merged after review', status: 'merged', statusDetail: 'merged', bucket: 'done', stage: 'merged', outcome: 'merged' },
@@ -28,7 +29,7 @@ const EXTRA = [
  * start and end are minutes before the snapshot time; end is null while the sub-agent runs.
  */
 const SUBAGENT_UNITS = [
-  { label: 'investigate-flaky-integration-te', state: 'running', type: 'general-purpose', mode: 'background', effort: 'high', start: 25, end: null, name: 'Investigate the flaky integration tests in the export pipeline, with a description long enough to need an ellipsis' },
+  { label: 'investigate-flaky-integration-te', state: 'running', type: 'general-purpose', mode: 'background', effort: null, start: 25, end: null, name: 'Investigate the flaky integration tests in the export pipeline, with a description long enough to need an ellipsis' },
   { label: 'review-api-diff', state: 'running', type: 'code-review', mode: 'sync', effort: null, start: 8, end: null, name: 'Review the API diff for breaking changes', crowd: 4 },
   { label: 'trace-import-callers', state: 'running', type: 'explore', mode: 'background', effort: 'low', start: 3, end: null, name: 'Trace who calls the import service', tool: true },
   { label: 'draft-release-notes', state: 'running', type: 'task', mode: 'background', effort: 'medium', start: 1, end: null, name: 'Draft the release notes for the export changes', report: null },
@@ -79,7 +80,7 @@ function subagentUnit(template, spec, index, t, parentId) {
     status, statusDetail, bucket, since, reason: spec.reason ?? null, startedAt, endedAt, lastEventAt,
     busyMs: (endedAt ?? t) - startedAt, waitingOnUserMs: 0, alive: true,
     cost: { credits: round1(20 + 13.7 * index), calls: 5 + index },
-    parentId, depth: 1, stage: 'subagent', pr: null,
+    parentId, depth: 1, stage: 'subagent', pr: null, effort: spec.effort,
     monitor: { state: 'none', lastCheckAt: null, nextCheckAt: null, everyMinutes: null, since: null },
     progress: null, outcome: null, closedWithoutMerge: false, dependsOn: null, todoId: null,
     agent: { type: spec.type, mode: spec.mode, effort: spec.effort },
@@ -94,7 +95,7 @@ function subagentUnit(template, spec, index, t, parentId) {
     summary: null, evidence: [], blockers: null, body: null, unit: null, commit: null, repliedAt: null,
   };
   unit.subagents = Array.from({ length: spec.crowd ?? 0 }, (_, k) => ({
-    id: `${id}-${k + 1}`, name: `helper-${k + 1}`, type: TYPES[k % TYPES.length], model: 'gpt-5.4-mini', mode: 'background', status: 'running',
+    id: `${id}-${k + 1}`, name: `helper-${k + 1}`, type: TYPES[k % TYPES.length], model: 'gpt-5.4-mini', effort: k % 2 ? null : 'low', mode: 'background', status: 'running',
     startedAt: t - (k + 2) * MIN, endedAt: null, durationMs: null, credits: 3 + k, task: `Check ${k + 1} of the API diff`,
   }));
   const segments = spec.silent
@@ -115,7 +116,7 @@ function subagentUnit(template, spec, index, t, parentId) {
 
 function subagentView(unit, spec) {
   return {
-    id: unit.id, name: unit.label, type: unit.agent.type, model: unit.model, mode: unit.agent.mode, status: SUBAGENT_STATES[spec.state].viewStatus,
+    id: unit.id, name: unit.label, type: unit.agent.type, model: unit.model, effort: unit.effort, mode: unit.agent.mode, status: SUBAGENT_STATES[spec.state].viewStatus,
     startedAt: unit.startedAt, endedAt: unit.endedAt, durationMs: unit.endedAt === null ? null : unit.endedAt - unit.startedAt,
     credits: unit.cost.credits, task: unit.name,
   };
@@ -130,11 +131,14 @@ function monitorFor(spec, stage, t) {
 
 function subagentsFor(spec, n, t) {
   const make = (k, status, type) => ({
-    id: `call-90${n}-${k}`, name: `helper-${k + 1}`, type, model: 'gpt-5.4-mini', mode: 'background', status,
+    id: `call-90${n}-${k}`, name: `helper-${k + 1}`, type, model: 'gpt-5.4-mini', effort: k % 2 ? null : 'medium', mode: 'background', status,
     startedAt: t - (k + 1) * 3 * MIN, endedAt: null, durationMs: null, credits: 10 + k, task: `Background check ${k + 1}`,
   });
   if (spec.crowd) return Array.from({ length: spec.crowd }, (_, k) => make(k, 'running', TYPES[k % TYPES.length]));
   if (spec.stuckSubagent) return [make(0, 'stuck', 'code-review')];
+  if (spec.finished) {
+    return Array.from({ length: spec.finished }, (_, k) => ({ ...make(k, 'completed', TYPES[k % TYPES.length]), endedAt: t - (k + 1) * MIN, durationMs: 2 * k * MIN + 2 * MIN }));
+  }
   return [];
 }
 
@@ -149,6 +153,7 @@ function stressUnit(template, spec, index, t, parentId) {
     id: `ws-90${n}-stress`, label: spec.label, name: spec.name, cliSessionIds: [`cli-90${n}-stress`], branch: `feature/stress-${n}`,
     status: spec.status, statusDetail: spec.statusDetail, bucket: spec.bucket, since: t - (5 + index * 7) * MIN, reason: spec.reason ?? null,
     startedAt, endedAt, lastEventAt, alive: spec.alive ?? true, cost: { credits: round1(1500 + index * 2333.3), calls: 100 + index * 10 },
+    model: spec.model ?? template.model, effort: 'effort' in spec ? spec.effort : template.effort,
     parentId, depth: 1, stage, closedWithoutMerge: spec.outcome === 'closed', outcome: spec.outcome ?? null, dependsOn: spec.dependsOn ?? null, todoId: null,
   });
   unit.pr = stage === 'coding' ? null : {
@@ -218,8 +223,8 @@ export function stressScenario(fixtures) {
   // The orchestrator still lists every sub-agent, two omitted finished ones included, so its lane keeps drawing them.
   // Omitted ones finished before every listed finished one, because units keep the most recently finished.
   const omitted = [
-    { id: 'call-9190-omitted', name: 'old-cache-check', type: 'explore', model: subTemplate.model, mode: 'background', status: 'completed', startedAt: t - 4420 * MIN, endedAt: t - 4400 * MIN, durationMs: 20 * MIN, credits: 12, task: 'Check the old cache keys' },
-    { id: 'call-9191-omitted', name: 'old-schema-probe', type: 'task', model: subTemplate.model, mode: 'background', status: 'failed', startedAt: t - 4620 * MIN, endedAt: t - 4600 * MIN, durationMs: 20 * MIN, credits: 9, task: 'Probe the old schema' },
+    { id: 'call-9190-omitted', name: 'old-cache-check', type: 'explore', model: subTemplate.model, effort: 'low', mode: 'background', status: 'completed', startedAt: t - 4420 * MIN, endedAt: t - 4400 * MIN, durationMs: 20 * MIN, credits: 12, task: 'Check the old cache keys' },
+    { id: 'call-9191-omitted', name: 'old-schema-probe', type: 'task', model: subTemplate.model, effort: null, mode: 'background', status: 'failed', startedAt: t - 4620 * MIN, endedAt: t - 4600 * MIN, durationMs: 20 * MIN, credits: 9, task: 'Probe the old schema' },
   ];
   const running = status => status === 'running' || status === 'stuck';
   orchestrator.subagents = [...orchestrator.subagents, ...subs.map((unit, index) => subagentView(unit, SUBAGENT_UNITS[index])), ...omitted]
@@ -250,9 +255,13 @@ export function stressScenario(fixtures) {
   snapshot.cost.credits = round1(snapshot.cost.credits + added + subCredits);
   snapshot.cost.usd = Math.round(snapshot.cost.credits) / 100;
   snapshot.cost.maxUnitCredits = Math.max(...snapshot.units.map(unit => unit.cost.credits));
-  for (const [modelName, credits] of [[template.model, added], [subTemplate.model, subCredits]]) {
+  // Each extra session's cost goes to its own model (Q1's long one is new), the new sub-agents' to theirs.
+  const byModel = new Map([[subTemplate.model, subCredits]]);
+  for (const unit of extra) byModel.set(unit.model, round1((byModel.get(unit.model) ?? 0) + unit.cost.credits));
+  for (const [modelName, credits] of byModel) {
     const model = snapshot.cost.byModel.find(entry => entry.model === modelName);
     if (model) model.credits = round1(model.credits + credits);
+    else snapshot.cost.byModel.push({ model: modelName, credits, calls: 0, apiMs: 0 });
   }
   const last = snapshot.cost.series[snapshot.cost.series.length - 1];
   snapshot.cost.series.push({ at: last.at + 5 * MIN, credits: snapshot.cost.credits });

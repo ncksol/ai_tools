@@ -83,7 +83,7 @@ a { color: var(--busy-ink); }
 .muted { color: var(--ink-2); }
 .small { font-size: 12px; line-height: 16px; }
 .warn { color: var(--blocked-ink); }
-.usd { font-size: 12px; font-weight: 400; color: var(--ink-2); }
+.usd, .v-note { font-size: 12px; font-weight: 400; color: var(--ink-2); }
 .tx { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .seg { display: inline-flex; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
 .seg button { height: 28px; padding: 0 12px; border: 0; border-radius: 4px; background: none; cursor: pointer; white-space: nowrap; }

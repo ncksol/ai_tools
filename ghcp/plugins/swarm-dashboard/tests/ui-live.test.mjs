@@ -174,17 +174,58 @@ test('a session card still shows its stage and monitor rows', () => {
   assert.doesNotMatch(text(html), /Type|Mode|Sub-agent ·/);
 });
 
-test('the detail panel shows a sub-agent\'s type, mode and effort in place of its PR and monitor', () => {
+test('the detail panel shows a sub-agent\'s type and mode, with no Effort row, in place of its PR and monitor', () => {
   const snapshot = exampleSnapshot();
   const html = detailHtml('call-root-24', false, context(snapshot));
   const words = text(html);
   assert.match(html, /<section class="detail" aria-label="Details for scan-docs-links">/);
-  assert.match(html, /<div class="dt-sec"><h4>Sub-agent<\/h4><div class="dt-kv"><span class="k">Type<\/span><span>orchestrator-worker<\/span><span class="k">Mode<\/span><span>Background<\/span><span class="k">Effort<\/span><span>medium<\/span><\/div><\/div>/);
+  assert.match(html, /<div class="dt-sec"><h4>Sub-agent<\/h4><div class="dt-kv"><span class="k">Type<\/span><span>orchestrator-worker<\/span><span class="k">Mode<\/span><span>Background<\/span><\/div><\/div>/);
   assert.doesNotMatch(html, /PR and monitor/);
   assert.match(html, /<div class="dt-why st-blocked"><h4>Why this counts as cancelled<\/h4><p>Cancelled after 12 min\.<\/p><\/div>/);
   assert.match(words, /Stage Sub-agent Model claude-sonnet-5/);
-  assert.match(text(detailHtml('call-root-18', false, context(snapshot))), /Sub-agent Type task Mode Background Effort not set/);
+  const unset = text(detailHtml('call-root-18', false, context(snapshot)));
+  assert.match(unset, /Sub-agent Type task Mode Background Recent activity/);
+  for (const words of [text(html), unset]) assert.doesNotMatch(words, /Effort|not set/);
   assert.match(text(detailHtml('ws-0005-i1', false, context(snapshot))), /PR and monitor/);
+});
+
+/** The Model fact of a unit's detail panel, from its key to the end of its value. */
+const modelFact = html => html.match(/<span class="k">Model<\/span><span class="v">.*?<\/span><\/div>/)[0];
+
+test('the Model fact shows the effort after the model, muted, and the model only when the effort is null', () => {
+  const snapshot = exampleSnapshot();
+  const i1 = findByLabel(snapshot, 'I1');
+  Object.assign(i1, { model: 'claude-x', effort: 'high' });
+  assert.equal(modelFact(detailHtml(i1.id, false, context(snapshot))), '<span class="k">Model</span><span class="v">claude-x<span class="v-note"> · high</span></span></div>');
+  i1.effort = null;
+  const fact = modelFact(detailHtml(i1.id, false, context(snapshot)));
+  assert.equal(fact, '<span class="k">Model</span><span class="v">claude-x</span></div>');
+  assert.doesNotMatch(fact, /v-note|unknown|not set/);
+  i1.model = null;
+  assert.equal(modelFact(detailHtml(i1.id, false, context(snapshot))), '<span class="k">Model</span><span class="v">unknown</span></div>', 'a null model keeps today\'s text');
+});
+
+test('a sub-agent unit\'s Model fact shows the effort it ran with', () => {
+  const snapshot = exampleSnapshot();
+  assert.equal(modelFact(detailHtml('call-root-24', false, context(snapshot))), '<span class="k">Model</span><span class="v">claude-sonnet-5<span class="v-note"> · medium</span></span></div>');
+  assert.equal(modelFact(detailHtml('call-root-18', false, context(snapshot))), '<span class="k">Model</span><span class="v">claude-haiku-5.5</span></div>');
+});
+
+test('the detail panel\'s sub-agent list reads model · effort · runtime · cost, and model · runtime · cost with no effort', () => {
+  const snapshot = exampleSnapshot();
+  const b1 = findByLabel(snapshot, 'B1');
+  const html = detailHtml(b1.id, false, context(snapshot));
+  const second = title => text(html.split('<li class="sa"').find(part => part.includes(`title="${title}"`)).match(/<div class="sa-2">.*?<\/div>/)[0]).split(' · ');
+  const [withEffort, without] = [second('Review PR #418'), second('Run the API test suite')];
+  assert.deepEqual(withEffort.slice(0, 2), ['claude-sonnet-5', 'high']);
+  assert.equal(withEffort.length, 5, withEffort.join(' · '));
+  assert.match(withEffort[2], /^\d+m$/);
+  assert.match(withEffort[3], /^[\d,.]+ cr$/);
+  assert.equal(without[0], 'claude-haiku-5.5');
+  assert.equal(without.length, 4, without.join(' · '));
+  assert.match(without[1], /^\d+m$/);
+  assert.match(without[2], /^[\d,.]+ cr$/);
+  assert.doesNotMatch(html.match(/<ul class="sa-list">.*?<\/ul>/)[0], /unknown|not set/);
 });
 
 test('a card carries its unit\'s kind, so a child session and a one-off sub-agent can look different', () => {
@@ -304,7 +345,8 @@ test('a sub-agent unit without agent details reads "unknown" in the detail panel
   const snapshot = exampleSnapshot();
   findByLabel(snapshot, 'map-import-module').agent = null;
   const html = detailHtml('call-root-41', false, context(snapshot));
-  assert.match(html, /<h4>Sub-agent<\/h4><div class="dt-kv"><span class="k">Type<\/span><span>unknown<\/span><span class="k">Mode<\/span><span>Unknown<\/span><span class="k">Effort<\/span><span>not set<\/span><\/div>/);
+  assert.match(html, /<h4>Sub-agent<\/h4><div class="dt-kv"><span class="k">Type<\/span><span>unknown<\/span><span class="k">Mode<\/span><span>Unknown<\/span><\/div>/);
+  assert.doesNotMatch(html, /Effort|not set/);
   assert.match(text(card(cardsHtml(context(snapshot)), 'call-root-41')), /Type Sub-agent · unknown Mode Unknown/);
 });
 

@@ -127,3 +127,7 @@ test('a leaving card fades to transparent over CARD_FADE_MS', () => {
 test('a replied report\'s badge and dot take the neutral idle ink', () => {
   assert.ok(css.includes('.rp-replied { --r: var(--idle-ink); }'));
 });
+
+test('the effort after the model shares the muted rule of the cost\'s dollars', () => {
+  assert.equal(block('.usd, .v-note').trim(), 'font-size: 12px; font-weight: 400; color: var(--ink-2);');
+});

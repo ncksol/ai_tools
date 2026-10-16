@@ -7,7 +7,8 @@ const TIME_KEY = /^(at|since|start|end)$|At$/;
 const MIN = 60000;
 const BUCKET = 5 * MIN;
 const SCENARIOS = ['example', 'stress'];
-const AGENTS = [['explore', 'gpt-5.4-mini', 'Map the module'], ['task', 'claude-haiku-5.5', 'Run the test suite'], ['code-review', 'claude-sonnet-5', 'Review the diff']];
+/** Sub-agents a simulated step may start: type, model, task and effort (null when unknown). */
+const AGENTS = [['explore', 'gpt-5.4-mini', 'Map the module', 'low'], ['task', 'claude-haiku-5.5', 'Run the test suite', null], ['code-review', 'claude-sonnet-5', 'Review the diff', 'high']];
 const REPORTS = ['Review fixes pushed.', 'Tests pass on the branch.', 'Edge cases are covered.', 'Docs updated for the new endpoint.'];
 const round1 = value => Math.round(value * 10) / 10;
 
@@ -65,9 +66,9 @@ function addCost(snapshot, session, amount, now) {
   else cost.series.push({ at: bucket, credits: cost.credits });
 }
 
-function startSubagent(snapshot, session, [type, model, task], now) {
+function startSubagent(snapshot, session, [type, model, task, effort], now) {
   const id = `demo-call-${snapshot.revision}`;
-  session.subagents.unshift({ id, name: task.toLowerCase().replace(/[^a-z0-9]+/g, '-'), type, model, mode: 'background', status: 'running', startedAt: now, endedAt: null, durationMs: null, credits: 0, task });
+  session.subagents.unshift({ id, name: task.toLowerCase().replace(/[^a-z0-9]+/g, '-'), type, model, effort, mode: 'background', status: 'running', startedAt: now, endedAt: null, durationMs: null, credits: 0, task });
   session.timeline.subagents.push({ id, start: now, end: null, type });
   addFeed(snapshot, session, 'subagent-start', `started ${type}: ${task.toLowerCase()}`, now);
 }

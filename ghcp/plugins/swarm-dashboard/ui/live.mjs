@@ -110,7 +110,7 @@ function subagentsHtml(subagents, now, end) {
     const [state, word] = SUBAGENT_PILLS[sub.status] ?? ['idle', sub.status];
     const runtime = sub.endedAt ? dur(sub.durationMs ?? sub.endedAt - sub.startedAt) : runningFor(sub.startedAt, end, now);
     return `<li class="sa" title="${esc(sub.task ?? sub.name)}"><div class="sa-1"><span>${esc(sub.type)}${sub.mode === 'sync' ? ' (sync)' : ''}</span><span class="pill st-${state}">${esc(word)}</span></div>`
-      + `<div class="sa-2">${esc(sub.model ?? 'model unknown')} · ${runtime} · ${costText(sub.credits)}</div></li>`;
+      + `<div class="sa-2">${esc(sub.model ?? 'model unknown')}${sub.effort ? ` · ${esc(sub.effort)}` : ''} · ${runtime} · ${costText(sub.credits)}</div></li>`;
   }).join('');
   const more = subagents.length > SUBAGENT_LIMIT ? `<p class="small muted">${subagents.length - SUBAGENT_LIMIT} earlier sub-agents not shown</p>` : '';
   return `<ul class="sa-list">${rows}</ul>${more}`;
@@ -139,10 +139,9 @@ function prHtml(unit, now) {
 }
 
 function agentHtml(unit) {
-  const agent = unit.agent ?? { type: 'unknown', mode: null, effort: null };
+  const agent = unit.agent ?? { type: 'unknown', mode: null };
   return `<div class="dt-sec"><h4>Sub-agent</h4><div class="dt-kv"><span class="k">Type</span><span>${esc(agent.type)}</span>`
-    + `<span class="k">Mode</span><span>${MODE_WORDS[agent.mode] ?? 'Unknown'}</span>`
-    + `<span class="k">Effort</span><span>${agent.effort ? esc(agent.effort) : 'not set'}</span></div></div>`;
+    + `<span class="k">Mode</span><span>${MODE_WORDS[agent.mode] ?? 'Unknown'}</span></div></div>`;
 }
 
 /** Details for one unit. In narrow mode (inMain) it replaces the card list and offers a way back. */
@@ -160,7 +159,7 @@ export function detailHtml(unitId, inMain, ctx) {
     + `<div class="kv"><span class="k">Cost</span><span class="v">${costHtml(unit.cost.credits)}</span></div>`
     + `<div class="kv"><span class="k">Progress</span><span class="v">${progress === null ? 'No task list' : `${progress}%`}</span></div>`
     + `<div class="kv"><span class="k">Stage</span><span class="v">${STAGE_NAMES[unit.stage]}</span></div>`
-    + `<div class="kv"><span class="k">Model</span><span class="v">${esc(unit.model ?? 'unknown')}</span></div></div>`;
+    + `<div class="kv"><span class="k">Model</span><span class="v">${esc(unit.model ?? 'unknown')}${unit.effort ? `<span class="v-note"> · ${esc(unit.effort)}</span>` : ''}</span></div></div>`;
   const current = `<div class="dt-sec"><h4>Current activity</h4><div class="dt-kv"><span class="k">Doing</span><span>${esc(activity.label)}</span>`
     + (unit.reason && !WHY_STATUSES.has(unit.status) ? `<span class="k">Note</span><span>${esc(unit.reason)}</span>` : '')
     + (activity.tool ? `<span class="k">Tool call</span><span><span class="code">${esc(activity.tool.summary)}</span> · ${runningFor(activity.tool.startedAt, end, now)}</span>` : '')

@@ -204,6 +204,25 @@ test('the stress demo\'s Cards tab shows a replied and an unanswered question an
   for (const [label] of [...looks.needs_input, ...looks.blocked]) assert.equal(snapshot.units.find(unit => unit.label === label).report.repliedAt, null, label);
 });
 
+test('the demos show set and null efforts on units and sub-agent rows, and the audited detail views cover every look', async () => {
+  const looks = values => [...new Set(values.map(value => (value === null ? 'null' : typeof value === 'string' && value ? 'set' : String(value))))].sort();
+  for (const scenario of ['example', 'stress']) {
+    const snapshot = await createDemoEngine({ scenario, now: () => T, simulate: false }).getSnapshot();
+    const sessions = [snapshot.orchestrator, ...snapshot.units];
+    assert.deepEqual(looks(snapshot.units.map(unit => unit.effort)), ['null', 'set'], `${scenario}: unit efforts`);
+    assert.deepEqual(looks(sessions.flatMap(session => session.subagents.map(sub => sub.effort))), ['null', 'set'], `${scenario}: sub-agent row efforts`);
+    for (const unit of snapshot.units.filter(item => item.kind === 'subagent')) assert.equal(unit.effort, unit.agent.effort, `${scenario}: ${unit.label}`);
+  }
+  // check:layout opens these stress detail panels: a Model fact with no effort, rows with and without one, and a long model with xhigh.
+  const stress = await createDemoEngine({ scenario: 'stress', now: () => T, simulate: false }).getSnapshot();
+  const unit = id => stress.units.find(item => item.id === id);
+  assert.equal(unit('call-9101-sub').effort, null);
+  const q1 = unit('ws-9001-stress');
+  assert.equal(q1.effort, 'xhigh');
+  assert.ok(q1.model.length > 30, q1.model);
+  assert.deepEqual(looks(q1.subagents.map(sub => sub.effort)), ['null', 'set']);
+});
+
 test('every demo report has repliedAt null or a time between its report and the snapshot, before and after simulated steps', async () => {
   const check = (snapshot, where) => {
     for (const unit of snapshot.units) {

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { renderApp } from '../ui/app.mjs';
+import { esc } from '../ui/format.mjs';
 import { historyHtml, runHtml } from '../ui/history.mjs';
 import { planGraphHtml, planListHtml } from '../ui/plan.mjs';
 import { axisSvg, costSvg, laneSvg, timelineWindow } from '../ui/timeline.mjs';
@@ -8,7 +9,7 @@ import { NOW, exampleSnapshot, fixture } from './helpers/ui.mjs';
 
 const MARK = '<x-hostile a="1">"&\'';
 /** Free text the engine reads from session files, prompts or PRs; ids, times and enum fields stay as they are. */
-const TEXT_KEYS = new Set(['name', 'title', 'summary', 'body', 'type', 'model', 'text', 'label', 'labels', 'reason', 'message', 'dependsOn', 'waitsOn', 'evidence', 'blockers']);
+const TEXT_KEYS = new Set(['name', 'title', 'summary', 'body', 'type', 'model', 'effort', 'text', 'label', 'labels', 'reason', 'message', 'dependsOn', 'waitsOn', 'evidence', 'blockers']);
 
 /** A copy of value with MARK appended to every string under TEXT_KEYS, string array items included. */
 function hostile(value) {
@@ -61,4 +62,8 @@ test('text from Copilot data is escaped in every view', () => {
   assert.ok(out['live cards'].includes('&lt;x-hostile'), 'the cards show the escaped text');
   assert.ok(out['live cards'].includes('data-swarm'), 'the picker is rendered');
   assert.ok(out[`detail ${hostileSnapshot().units.find(item => item.subagents.length).id}`].includes('odd&lt;x-hostile'), 'the odd sub-agent status is shown, escaped');
+  // B1 runs with xhigh, and its code-review sub-agent with high: both efforts show in its detail panel, escaped.
+  const b1 = out['detail ws-0003-b1'];
+  assert.ok(b1.includes(`<span class="v-note"> · ${esc(`xhigh${MARK}`)}</span>`), 'the unit\'s effort is shown, escaped');
+  assert.ok(b1.includes(`claude-sonnet-5${esc(MARK)} · ${esc(`high${MARK}`)} · `), 'the sub-agent\'s effort is shown, escaped');
 });
