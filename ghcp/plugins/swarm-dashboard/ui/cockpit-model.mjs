@@ -116,14 +116,20 @@ export function hourlyRate(series) {
   return last.credits - (a.credits + ((b.credits - a.credits) * (from - a.at)) / (b.at - a.at));
 }
 
-/** The swarm's cost. Sub-agent unit costs are inside the orchestrator's and are never added here. */
-export function costView(snapshot) {
+/** The series carried on flat to `now`: the engine adds a point only when credits are spent. */
+function untilNow(series, credits, now) {
+  const last = series[series.length - 1];
+  return last && now > last.at ? [...series, { at: now, credits: Math.max(credits, last.credits) }] : series;
+}
+
+/** The swarm's cost, with the rate over the hour up to `now`. Sub-agent unit costs are inside the orchestrator's and are never added here. */
+export function costView(snapshot, now = snapshot.generatedAt) {
   const { cost } = snapshot;
   const models = [...cost.byModel].sort((a, b) => b.credits - a.credits).slice(0, MODEL_ROWS);
   const max = models.length ? models[0].credits : 0;
   return {
     credits: cost.credits,
-    perHour: runEnd(snapshot) === null ? hourlyRate(cost.series ?? []) : null,
+    perHour: runEnd(snapshot) === null ? hourlyRate(untilNow(cost.series ?? [], cost.credits, now)) : null,
     models: models.map(entry => ({ model: entry.model, credits: entry.credits, share: max > 0 ? entry.credits / max : 0 })),
   };
 }

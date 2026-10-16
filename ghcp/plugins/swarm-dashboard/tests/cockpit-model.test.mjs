@@ -87,7 +87,9 @@ test('the hourly rate interpolates the cost series over the last hour', () => {
   assert.equal(hourlyRate([{ at: 0, credits: 10 }, { at: 300000, credits: 60 }]), null);
   assert.equal(hourlyRate([]), null);
   const view = costView(example());
-  assert.equal(Math.round(view.perHour), 2339);
+  assert.equal(Math.round(view.perHour), 2208, 'the hour up to the snapshot, 5 minutes after the last spend');
+  assert.equal(costView(example(), NOW + 3 * 3600000).perHour, 0, 'nothing spent in the last hour');
+  assert.equal(Math.round(costView(example(), NOW + 30 * 60000).perHour), Math.round(hourlyRate([...exampleSnapshot().cost.series, { at: NOW + 30 * 60000, credits: 97652.4 }])));
   assert.deepEqual(view.models.map(entry => [entry.model, Number(entry.share.toFixed(3))]), [['claude-sonnet-5', 1], ['claude-opus-4.8', 0.605], ['claude-haiku-5.5', 0.141], ['gpt-5.4-mini', 0.128]]);
   const ended = exampleSnapshot();
   ended.run.lifecycle = 'finished';
