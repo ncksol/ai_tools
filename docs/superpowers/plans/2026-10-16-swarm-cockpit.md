@@ -2690,6 +2690,7 @@ Rules the CSS keeps (they make the audit's numbers hold):
 - Panels draw their 1 px frame with an inset `box-shadow`, not a border, so a panel's content box is exactly its size minus 32 px of padding. Every panel's content adds up to that box: clock 40 + 8 + 16 + 8 + 20 + 8 + 20 + 8 + 16 = 144; cost 20 + 8 + 24 + 8 + 16 + 8 + 120 = 204; needs 20 + 8 + 52 + 8 + 52 = 140; status 20 + 8 + 3 × 20 + 2 × 4 = 96; units 20 + 8 + 168 + 8 + 16 = 220; activity 20 + 8 + 192 = 220; PRs 20 + 8 + 4 × 40 + 3 × 4 = 200 (of 220).
 - Tile grids are 168 px tall: full tiles 2 × 80 + 8, two-line tiles 3 × 48 + 2 × 8 (160), one-line tiles 4 × 32 + 3 × 8 (152).
 - The activity rows' font is monospace, so the label column's `ch` width matches the monospace labels; the row's text switches back to the sans font.
+- Long values never overlap: a PR's number column grows to fit ids of up to 8 digits (Azure DevOps ids are long), and a need's unit labels end in an ellipsis within half the row. Task 10's edge scenario renders both.
 - The glass is `background-color`; the corner accents and the darkening gradient are `background-image` on top of it.
 
 - [ ] **Step 1: Write the failing tests**
@@ -2724,7 +2725,7 @@ test('type uses the approved sizes and weights; only the clock is larger; no ita
     assert.notEqual(prop, 'text-transform', selector);
     if (prop === 'font-style') assert.equal(value, 'normal', selector);
   }
-  assert.doesNotMatch(bare, /italic|uppercase|text-shadow/);
+  assert.doesNotMatch(bare, /italic|uppercase|text-shadow|filter|drop-shadow/);
 });
 
 test('spacing stays on the 4 px grid', () => {
@@ -2869,8 +2870,8 @@ html[data-gl="off"] body { background: radial-gradient(ellipse at 50% 38%, rgb(2
 .ck-light { width: 12px; height: 12px; border-radius: 50%; background-color: var(--question); box-shadow: 0 0 12px 2px color-mix(in oklch, var(--question) 55%, transparent); animation: ck-pulse 3.2s ease-in-out infinite; }
 .ck-light.is-off { background-color: var(--archived); box-shadow: none; opacity: 0.6; animation: none; }
 .ck-needs { display: flex; flex-direction: column; gap: 8px; }
-.ck-need { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-rows: 16px 16px; row-gap: 4px; column-gap: 8px; width: 100%; padding: 8px; border-radius: 4px; background-color: rgb(255 255 255 / 0.035); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--c) 30%, transparent); font-size: 12px; line-height: 16px; }
-.ck-need .ck-lab { color: var(--c); }
+.ck-need { display: grid; grid-template-columns: fit-content(50%) minmax(0, 1fr) auto; grid-template-rows: 16px 16px; row-gap: 4px; column-gap: 8px; width: 100%; padding: 8px; border-radius: 4px; background-color: rgb(255 255 255 / 0.035); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--c) 30%, transparent); font-size: 12px; line-height: 16px; }
+.ck-need .ck-lab { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--c); }
 .ck-kind { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
 .ck-age { color: var(--ink-3); text-align: right; white-space: nowrap; }
 .ck-need .ck-txt { grid-column: 1 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
@@ -2926,7 +2927,7 @@ button.ck-log-row:hover .ck-txt { color: var(--ink); }
 
 /* Pull requests. */
 .ck-prs { display: flex; flex-direction: column; gap: 4px; }
-.ck-pr { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; column-gap: 8px; width: 100%; height: 40px; padding: 4px 8px; border-radius: 4px; background-color: rgb(255 255 255 / 0.025); font-size: 12px; line-height: 16px; }
+.ck-pr { display: grid; grid-template-columns: minmax(40px, max-content) minmax(0, 1fr) auto; align-items: center; column-gap: 8px; width: 100%; height: 40px; padding: 4px 8px; border-radius: 4px; background-color: rgb(255 255 255 / 0.025); font-size: 12px; line-height: 16px; }
 .ck-pr:hover, .ck-need:hover { background-color: rgb(255 255 255 / 0.06); }
 .ck-num { color: var(--ink); }
 .ck-pr-t { display: flex; flex-direction: column; min-width: 0; }
@@ -2993,7 +2994,7 @@ How the layout check works, per scenario (example and stress) and window size:
 2. The panels' DOM rectangles must be within 1 px of `fitPanels()`'s, and pass `overlapProblems()` together with the top line and the quality switch. Then at each of the 16 extreme camera poses (`cockpitDebug.setCamera`), again.
 3. With the camera back at rest, read the scene's brightest pixel behind each panel, the top line and the quality switch (their rectangles grown by 32 px for the camera's reach).
 4. Lay the page out flat (`html[data-flat]`), wrap each of those elements in a block filled with its scene colour, and run the dashboard's own audit (`page-audit.mjs`) with `COCKPIT_AUDIT`: overlap, clipped text, type, the 4 px grid, padding, heights and contrast, now measured against glass over the brightest scene pixel. The audit's single-font rule is relaxed for monospace text in `.ck-mono`, and two extra rules keep 36 px to the clock and monospace to numbers and labels.
-5. Also: a 1024 × 700 window shows the note and no panels; `?gl=0` shows the panels over the CSS backdrop (scene colour `rgb(26, 20, 16)`); console errors fail the state.
+5. Also: a 1024 × 700 window shows the note and no panels; `?gl=0` shows the panels over the CSS backdrop (scene colour `rgb(26, 20, 16)`); an edge scenario (the example swarm with a 7-digit PR id and a need naming five units) renders at 1100 × 800 and 1440 × 900; console errors fail the state.
 
 The motion check (Chrome only): under reduced motion the frame counter does not move for 600 ms; without it, the page draws 20 to 33 frames in a second.
 
@@ -3052,6 +3053,8 @@ In `scripts/lib/cockpit-check.mjs`, add these imports at the top:
 ```js
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { createDemoEngine } from '../../server/demo-engine.mjs';
+import { createDashboardServer } from '../../server/http.mjs';
 import { fitPanels, overlapProblems } from '../../ui/cockpit-fit.mjs';
 import { REST, extremePoses } from '../../ui/cockpit-space.mjs';
 import { auditScript } from './page-audit.mjs';
@@ -3184,6 +3187,20 @@ async function checkState({ page, options }, { url, width, height, expect, label
   return { problems: [...new Set(problems)], checks: result.audit.checks };
 }
 
+/** The example swarm with the longest values the cockpit's tightest places must take: a 7-digit PR id and a need naming five units. */
+function edgeEngine() {
+  const demo = createDemoEngine({ scenario: 'example', simulate: false });
+  const stretch = snapshot => {
+    if (!snapshot) return snapshot;
+    const copy = structuredClone(snapshot);
+    const withPr = copy.units.find(unit => unit.pr);
+    if (withPr) withPr.pr.id = 1234567;
+    if (copy.needs[0]) copy.needs[0].labels = copy.units.slice(0, 5).map(unit => unit.label);
+    return copy;
+  };
+  return { ...demo, getSnapshot: async (...args) => stretch(await demo.getSnapshot(...args)) };
+}
+
 async function checkLayout(context) {
   const { urls, options, stdout, stderr } = context;
   if (options.screenshots) mkdirSync(options.screenshots, { recursive: true });
@@ -3195,17 +3212,28 @@ async function checkLayout(context) {
     states.push({ label: `${scenario} small`, url: `${base}cockpit?debug=1&quality=high`, width: SMALL_SIZE[0], height: SMALL_SIZE[1], expect: { fit: 'small', gl: 'on' } });
     states.push({ label: `${scenario} no-webgl`, url: `${base}cockpit?debug=1&quality=high&gl=0`, width: 1440, height: 900, expect: { fit: 'ok', gl: 'off' } });
   }
-  for (const state of states) {
-    const result = await checkState(context, state);
-    checks += result.checks;
-    issues += result.problems.length;
-    if (result.problems.length) {
-      stderr.write(`\ncockpit, ${state.label}:\n`);
-      for (const problem of result.problems.slice(0, 20)) stderr.write(`  ${problem}\n`);
-      if (result.problems.length > 20) stderr.write(`  and ${result.problems.length - 20} more\n`);
+  // On the synthetic swarms, also the longest values, at the smallest and a common window size.
+  const edge = urls.example ? createDashboardServer({ createEngine: edgeEngine, port: 0, version: 'cockpit-check', hub: { engineIdleMs: 600000 } }) : null;
+  try {
+    if (edge) {
+      await edge.listen();
+      for (const [width, height] of [[1100, 800], [1440, 900]]) states.push({ label: `edge ${width}x${height}`, url: `${edge.url}cockpit?debug=1&quality=high`, width, height, expect: { fit: 'ok', gl: 'on' } });
     }
+    for (const state of states) {
+      const result = await checkState(context, state);
+      checks += result.checks;
+      issues += result.problems.length;
+      if (result.problems.length) {
+        stderr.write(`\ncockpit, ${state.label}:\n`);
+        for (const problem of result.problems.slice(0, 20)) stderr.write(`  ${problem}\n`);
+        if (result.problems.length > 20) stderr.write(`  and ${result.problems.length - 20} more\n`);
+      }
+    }
+  } finally {
+    await edge?.close();
   }
-  stdout.write(`Cockpit: checked ${states.length} states (${Object.keys(urls).join(' and ')}; ${COCKPIT_SIZES.map(size => size.join(' × ')).join(', ')}; a ${SMALL_SIZE.join(' × ')} window; no WebGL): ${checks} checks, ${issues} issues.\n`);
+  const sources = [...Object.keys(urls), ...(edge ? ['edge values'] : [])].join(', ');
+  stdout.write(`Cockpit: checked ${states.length} states (${sources}; ${COCKPIT_SIZES.map(size => size.join(' × ')).join(', ')}; a ${SMALL_SIZE.join(' × ')} window; no WebGL): ${checks} checks, ${issues} issues.\n`);
   return issues;
 }
 
@@ -3619,7 +3647,7 @@ start();
 
 Run: `node scripts/check-cockpit.mjs`
 Then: `PLAYWRIGHT_CORE=<playwright-core folder outside the repository> node scripts/check-cockpit.mjs --engine webkit`
-Expected: both exit 0 with `Cockpit: checked 18 states … 0 issues.` and the scene line. Fix the CSS or the page for every issue; never relax `COCKPIT_AUDIT`, `SPACING` or a test to make an issue go away. If a contrast issue needs more opaque glass, raise `--glass` in steps of 0.02 and say so in the report.
+Expected: both exit 0 with `Cockpit: checked 20 states … 0 issues.` and the scene line. Fix the CSS or the page for every issue; never relax `COCKPIT_AUDIT`, `SPACING` or a test to make an issue go away. If a contrast issue needs more opaque glass, raise `--glass` in steps of 0.02 and say so in the report.
 
 - [ ] **Step 4: Look at it next to the spike**
 
@@ -3895,7 +3923,7 @@ Expected: FAIL on both tests.
 
 - [ ] **Step 3: Add the slowdown check**
 
-In `scripts/lib/cockpit-check.mjs`, add `import { createDemoEngine } from '../../server/demo-engine.mjs';` and `import { createDashboardServer } from '../../server/http.mjs';` to the imports, and above `CHECKS`:
+In `scripts/lib/cockpit-check.mjs` (it already imports `createDemoEngine` and `createDashboardServer`, since Task 10), above `CHECKS`:
 
 ```js
 const median = values => {
