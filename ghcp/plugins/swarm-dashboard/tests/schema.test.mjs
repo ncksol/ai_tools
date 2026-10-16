@@ -338,3 +338,39 @@ test('the fake engine does not share its inputs', () => {
   assert.equal(listed.length, fixture('example-swarms.json').length);
   assert.equal(listed[0].name, name);
 });
+
+test('every report has repliedAt: null or a time, and a report without it fails validation', () => {
+  const snapshot = fixture('example-snapshot.json');
+  const reports = snapshot.units.map(unit => unit.report).filter(Boolean);
+  assert.ok(reports.length > 0);
+  for (const report of reports) assert.ok('repliedAt' in report, `report at ${report.at} has no repliedAt`);
+  const target = snapshot.units.findIndex(unit => unit.report);
+  const errorsFor = value => {
+    const copy = structuredClone(snapshot);
+    if (value === undefined) delete copy.units[target].report.repliedAt;
+    else copy.units[target].report.repliedAt = value;
+    return validateSnapshot(copy);
+  };
+  assert.deepEqual(errorsFor(null), []);
+  assert.deepEqual(errorsFor(snapshot.units[target].report.at + 1000), []);
+  assert.ok(errorsFor(undefined).includes(`snapshot.units[${target}].report.repliedAt: missing`));
+  assert.ok(errorsFor('later').some(error => error.startsWith(`snapshot.units[${target}].report.repliedAt: invalid value`)));
+});
+
+test('the example snapshot has an answered and an unanswered needs_input report, and the answered one reads consistently', () => {
+  const snapshot = fixture('example-snapshot.json');
+  const asking = snapshot.units.filter(unit => unit.report?.status === 'needs_input');
+  const answered = asking.filter(unit => unit.report.repliedAt !== null);
+  const unanswered = asking.filter(unit => unit.report.repliedAt === null);
+  assert.equal(answered.length, 1);
+  assert.equal(unanswered.length, 1);
+  assert.equal(unanswered[0].statusDetail, 'blocked_on_orchestrator');
+  const [unit] = answered;
+  assert.ok(unit.report.repliedAt > unit.report.at);
+  assert.notEqual(unit.statusDetail, 'blocked_on_orchestrator');
+  const text = `reported needs input: ${unit.report.title}`;
+  for (const items of [unit.recent, snapshot.feed]) {
+    assert.ok(items.some(item => item.unitId === unit.id && item.kind === 'report' && item.at === unit.report.at && item.text === text), 'the report feed item reads as a question');
+  }
+  assert.ok(unit.timeline.marks.some(mark => mark.at === unit.report.at && mark.kind === 'question' && mark.status === 'needs_input'));
+});

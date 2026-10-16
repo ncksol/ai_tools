@@ -51,8 +51,10 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  *   The open tool call; `limitMs` is the stuck limit for this call, or null when no tool rule applies.
  * @typedef {{ status: 'complete'|'progress'|'needs_input'|'blocked', source: 'contract'|'purpose'|'message'|'task_complete',
  *   at: EpochMs, title: string, summary: string|null, evidence: string[], blockers: string[]|null, body: string|null,
- *   unit: string|null, commit: string|null }} ReportView
+ *   unit: string|null, commit: string|null, repliedAt: EpochMs|null }} ReportView
  *   `blockers` is null when the report has no Blockers field and [] for "Blockers: none". `body` is free text outside the fields.
+ *   `repliedAt` is when the unit's parent first sent it a message after `at` (for a session, the orchestrator's reply; for a
+ *   sub-agent unit, a follow-up), else null.
  * @typedef {{ id: string, name: string, type: string, model: string|null, mode: 'sync'|'background',
  *   status: 'running'|'completed'|'failed'|'stuck'|'cancelled', startedAt: EpochMs, endedAt: EpochMs|null, durationMs: number|null,
  *   credits: number, task: string|null }} SubagentView
@@ -123,7 +125,7 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  *   activity        its open tool call ('Running ...'), 'Thinking', or a fixed label once finished
  *   report          its latest non-empty message, source 'message': status 'progress' while it runs, 'complete'
  *                   once completed (its final answer), 'blocked' if it failed or was cancelled; null before its
- *                   first message
+ *                   first message; repliedAt: its first follow-up after that message, else null
  *   progress        null          subagents: the sub-agents it started itself
  *   timeline        busy while it runs, idle between a completion and a follow-up, stuck from when it became stuck;
  *                   bars for its own sub-agents; a 'report' mark when it finishes
@@ -288,7 +290,7 @@ const TOOL_CALL = { id: is.id, name: is.id, summary: is.text, startedAt: TIME, l
 const REPORT = {
   status: oneOf(REPORT_STATUSES), source: oneOf(REPORT_SOURCES), at: TIME, title: is.text,
   summary: OPT_TEXT, evidence: arrayOf(is.text), blockers: nullable(arrayOf(is.text)), body: OPT_TEXT,
-  unit: OPT_TEXT, commit: OPT_TEXT,
+  unit: OPT_TEXT, commit: OPT_TEXT, repliedAt: OPT_TIME,
 };
 const SUBAGENT = {
   id: is.id, name: is.text, type: is.text, model: OPT_TEXT, mode: oneOf(SUBAGENT_MODES), status: oneOf(SUBAGENT_STATUSES),

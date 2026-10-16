@@ -1143,3 +1143,25 @@ test('merged root states keep every open unit and the 20 latest finishes, and co
   assert.deepEqual(merged.unitsEvicted, { done: 100 - failed, failed });
   assert.ok(failed > 0 && failed < 100);
 });
+
+test('a unit records when a message was sent to its sub-agent after its latest message, and a new message clears it', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const call = log.subagent({ name: 'scout', type: 'explore', mode: 'background', agentId: 'agent-s' });
+  log.wait(1000); log.toAgent('agent-s', 'the prompt');
+  assert.equal(unitOf(foldRoot(log), call).repliedAt, null, 'the prompt comes before any message');
+  log.wait(1000); log.sub(call, 'assistant.message', { content: 'first' });
+  assert.equal(unitOf(foldRoot(log), call).repliedAt, null);
+  log.toAgent('agent-s', 'same moment');
+  assert.equal(unitOf(foldRoot(log), call).repliedAt, null, 'a message at the same time is not after it');
+  log.wait(1000); log.toAgent('agent-s', 'to a running sub-agent');
+  let unit = unitOf(foldRoot(log), call);
+  assert.deepEqual([unit.repliedAt, unit.runs.length], [T0 + 3000, 1], 'it counts without a follow-up run (the sub-agent is still running)');
+  log.wait(1000); log.toAgent('agent-s', 'another');
+  assert.equal(unitOf(foldRoot(log), call).repliedAt, T0 + 3000, 'the first one stays');
+  log.wait(1000); log.sub(call, 'assistant.message', { content: '  ' });
+  assert.equal(unitOf(foldRoot(log), call).repliedAt, T0 + 3000, 'an empty message changes nothing');
+  log.wait(1000); log.sub(call, 'assistant.message', { content: 'second' });
+  unit = unitOf(foldRoot(log), call);
+  assert.deepEqual([unit.repliedAt, unit.lastMessage.text], [null, 'second']);
+});

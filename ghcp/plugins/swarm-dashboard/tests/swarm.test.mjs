@@ -477,7 +477,7 @@ test('sub-agent units show the orchestrator\'s one-off sub-agents in each state,
     label: 'Running grep: needle', lastEventAt: at(118),
     tool: { id: 'tool-1', name: 'grep', summary: 'grep: needle', startedAt: at(118), limitMs: 2 * MINUTE },
   });
-  assert.deepEqual(busy.report, { status: 'progress', source: 'message', at: at(118), title: 'Working on it', summary: null, evidence: [], blockers: null, body: 'Working on it', unit: null, commit: null });
+  assert.deepEqual(busy.report, { status: 'progress', source: 'message', at: at(118), title: 'Working on it', summary: null, evidence: [], blockers: null, body: 'Working on it', unit: null, commit: null, repliedAt: null });
   assert.deepEqual(busy.timeline, { segments: [{ start: at(100), end: null, state: 'busy' }], subagents: [], marks: [] });
   assert.deepEqual(busy.subagents, []);
   assert.deepEqual(busy.cost, { credits: 0, calls: 0 });
@@ -499,7 +499,7 @@ test('sub-agent units show the orchestrator\'s one-off sub-agents in each state,
     startedAt: at(10), endedAt: at(15), busyMs: 5 * MINUTE, lastEventAt: at(15), model: 'claude-sonnet-5',
   });
   assert.deepEqual(done.activity, { label: 'Done', tool: null, lastEventAt: at(15) });
-  assert.deepEqual(done.report, { status: 'complete', source: 'message', at: at(14), title: 'The final answer', summary: null, evidence: [], blockers: null, body: 'The final answer', unit: null, commit: null });
+  assert.deepEqual(done.report, { status: 'complete', source: 'message', at: at(14), title: 'The final answer', summary: null, evidence: [], blockers: null, body: 'The final answer', unit: null, commit: null, repliedAt: null });
   assert.deepEqual(done.timeline.segments, [{ start: at(10), end: at(15), state: 'busy' }]);
   assert.deepEqual(done.timeline.marks, [{ at: at(15), kind: 'report', text: 'The final answer', status: 'complete' }]);
 
@@ -1318,4 +1318,51 @@ test('a sub-agent that waits on its sync child stays busy while the child works,
   assert.deepEqual([stuck.statusDetail, stuck.reason], ['stuck_subagent', 'No events for 12 min; the limit is 10 min.']);
   assert.equal(stuck.activity.tool?.name, 'task');
   assert.deepEqual(stuck.timeline.segments.at(-1), { start: at(128), end: null, state: 'stuck' });
+});
+
+// --- ReportView.repliedAt ---
+
+/** The heuristic swarm where the api session reports needs_input at minute 30, with `replies` from its parent at the given minutes. */
+function askingSwarm(replies) {
+  const data = input(false);
+  const api = new EventLog(at(5));
+  api.start(); api.turnStart();
+  api.at(at(20)); api.crossSession({ fromSessionId: 'cli-root', fromProjectSessionId: 'ws-root', name: 'Sample story', content: 'Start with the models.' });
+  api.at(at(30)); api.report('ws-root', 'Need a decision before publishing PR !4711.', 'needs_input');
+  api.at(at(31)); api.turnEnd();
+  for (const minute of replies) {
+    api.at(at(minute)); api.crossSession({ fromSessionId: 'cli-root', fromProjectSessionId: 'ws-root', name: 'Sample story', content: `Reply at ${minute}.` });
+  }
+  data.states.set('cli-api', fold(api, 'cli-api'));
+  return buildSnapshot(data);
+}
+
+test('a needs_input report has repliedAt null until its parent sends a message after it, and then the time of the first one', () => {
+  const none = askingSwarm([]);
+  assert.deepEqual(validateSnapshot(none), []);
+  const waiting = none.units.find(unit => unit.id === 'ws-api');
+  assert.deepEqual([waiting.report.status, waiting.report.at, waiting.report.repliedAt, waiting.statusDetail], ['needs_input', at(30), null, 'blocked_on_orchestrator'],
+    'the parent message from minute 20 is before the report and does not count');
+  const answered = askingSwarm([40, 50]);
+  assert.deepEqual(validateSnapshot(answered), []);
+  const unit = answered.units.find(item => item.id === 'ws-api');
+  assert.equal(unit.report.repliedAt, at(40));
+  assert.notEqual(unit.statusDetail, 'blocked_on_orchestrator');
+  for (const view of answered.units) if (view.id !== 'ws-api' && view.report) assert.equal(view.report.repliedAt, null, `${view.id} has no reply`);
+});
+
+test('a sub-agent unit\'s report has repliedAt null, the follow-up\'s time after a follow-up, and null again after its next message', () => {
+  const build = stage => quietSwarm(root => {
+    root.at(at(115));
+    const call = root.subagent({ name: 'late', type: 'explore', mode: 'background', agentId: 'ag-late' });
+    root.at(at(116)); root.sub(call, 'assistant.message', { content: 'First answer' });
+    if (stage >= 1) { root.at(at(118)); root.toAgent('ag-late', 'one more thing'); }
+    if (stage >= 2) { root.at(at(120)); root.sub(call, 'assistant.message', { content: 'Second answer' }); }
+  }, at(122)).data;
+  const reports = [0, 1, 2].map(stage => {
+    const snapshot = buildSnapshot(build(stage));
+    assert.deepEqual(validateSnapshot(snapshot), []);
+    return subUnits(snapshot)[0].report;
+  });
+  assert.deepEqual(reports.map(report => [report.title, report.repliedAt]), [['First answer', null], ['First answer', at(118)], ['Second answer', null]]);
 });

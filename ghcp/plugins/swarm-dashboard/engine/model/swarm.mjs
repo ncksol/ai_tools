@@ -105,11 +105,12 @@ export function reportFromMessage(message, purpose, at) {
     ...reportFields(line ? text.split(/\r?\n/).slice(1).join('\n') : text),
     unit: line?.unit ?? null,
     commit: line?.commit ?? null,
+    repliedAt: null,
   };
 }
 
 function reportFromTask(task) {
-  return { status: task.success ? 'complete' : 'blocked', source: 'task_complete', at: task.at, ...reportFields(task.summary), unit: null, commit: null };
+  return { status: task.success ? 'complete' : 'blocked', source: 'task_complete', at: task.at, ...reportFields(task.summary), unit: null, commit: null, repliedAt: null };
 }
 
 function plannedLabel(todoId) {
@@ -299,6 +300,13 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
   for (const item of c.all.inbound) {
     if (parent.ids.has(item.fromSessionId) || parent.ids.has(item.fromProjectSessionId)) parentRepliedAt = maxTime(parentRepliedAt, item.at);
   }
+  // When the parent first sent a message after the final report (the same test as parentRepliedAt, which takes the latest one).
+  if (report) {
+    report.repliedAt = null;
+    for (const item of c.all.inbound) {
+      if (item.at > report.at && (parent.ids.has(item.fromSessionId) || parent.ids.has(item.fromProjectSessionId))) report.repliedAt = minTime(report.repliedAt, item.at);
+    }
+  }
 
   const host = hostOf(c.workspaceFile, (node.projectId ? input.app.projects.get(node.projectId) : null) ?? project);
   const identity = resolvePr({ registry: row, statusLines, createdPr: node.createdPr, mentions: c.all.prMentions, host });
@@ -470,7 +478,7 @@ function subagentUnitView(input, rootContext, root, sub, evaluation, label, roll
   const report = unit.lastMessage
     ? {
       status: running ? 'progress' : evaluation.detail === 'completed' ? 'complete' : 'blocked', source: 'message', at: unit.lastMessage.at,
-      ...reportFields(unit.lastMessage.text), unit: null, commit: null,
+      ...reportFields(unit.lastMessage.text), unit: null, commit: null, repliedAt: unit.repliedAt ?? null,
     }
     : null;
   const stuckIds = new Set(unit.children.filter(child => child.status === 'running' && now - child.lastEventAt > subagentLimitMs(child, thresholds)).map(child => child.id));

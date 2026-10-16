@@ -305,6 +305,8 @@ function newUnit(args, at) {
     // runCount: runs opened (the first, then one per follow-up). lastOutcome: how the last closed run ended; the chip's own outcome
     // (the sub-agent's status) never changes after the first finish.
     runCount: 1, lastOutcome: null,
+    // When a message was first sent to the sub-agent after its latest message (`lastMessage`); null until then and after the next message.
+    repliedAt: null,
     openTools: new Map(), lastMessage: null, error: null, feed: [], children: [], firstFinishAt: null,
   };
 }
@@ -756,11 +758,16 @@ function onOwnedEvent(state, event, data, owner, agentId, at) {
       }
       break;
     case 'assistant.message':
-      if (unit && typeof data.content === 'string' && data.content.trim()) unit.lastMessage = { at, text: ownString(clip(data.content, 4000)) };
+      if (unit && typeof data.content === 'string' && data.content.trim()) {
+        unit.lastMessage = { at, text: ownString(clip(data.content, 4000)) };
+        unit.repliedAt = null;
+      }
       break;
     case 'user.message': {
       // A message to the sub-agent: the first is its prompt (its first run is already open). One sent after its work ended is a follow-up.
       if (!unit || data.parentToolCallId || agentId === null) break;
+      // The first message after its latest one is its reply, whether the sub-agent is running or not.
+      if (unit.lastMessage && unit.repliedAt === null && at > unit.lastMessage.at) unit.repliedAt = at;
       const last = unit.runs[unit.runs.length - 1];
       if (!last || last[1] === null) break;
       pushRun(unit, [at, null]);

@@ -62,7 +62,7 @@
       "busyMs": 18000000, "waitingOnUserMs": 0, "alive": false,
       "cost": { "credits": 10912.0, "calls": 820 },
       "activity": { "label": "Archived", "tool": null, "lastEventAt": 1791964200000 },
-      "report": { "status": "complete", "source": "contract", "at": 1791963600000, "title": "Schema v3 merged in PR #412. The migration was tested on a copy of staging.", "summary": "Schema v3 merged in PR #412. The migration was tested on a copy of staging.", "evidence": ["Migration ran on a staging copy in 4 min", "PR #412 merged after 2 approvals"], "blockers": [], "body": null, "unit": "B0", "commit": "3f9a2c1" },
+      "report": { "status": "complete", "source": "contract", "at": 1791963600000, "title": "Schema v3 merged in PR #412. The migration was tested on a copy of staging.", "summary": "Schema v3 merged in PR #412. The migration was tested on a copy of staging.", "evidence": ["Migration ran on a staging copy in 4 min", "PR #412 merged after 2 approvals"], "blockers": [], "body": null, "unit": "B0", "commit": "3f9a2c1", "repliedAt": null },
       "progress": { "done": 12, "total": 12 },
       "subagents": [
         { "id": "call-b0-7", "name": "staging-run", "type": "task", "model": "claude-haiku-5.5", "mode": "background", "status": "completed", "startedAt": 1791927600000, "endedAt": 1791927840000, "durationMs": 240000, "credits": 260.0, "task": "Run the migration on a staging copy" }
@@ -94,7 +94,7 @@
       "busyMs": 10800000, "waitingOnUserMs": 0, "alive": true,
       "cost": { "credits": 4312.0, "calls": 300 },
       "activity": { "label": "Done. PR merged", "tool": null, "lastEventAt": 1791936600000 },
-      "report": { "status": "complete", "source": "contract", "at": 1791936000000, "title": "Part 1 of the test harness merged in PR #409.", "summary": "Part 1 of the test harness merged in PR #409.", "evidence": ["PR #409 merged"], "blockers": [], "body": null, "unit": "F2a", "commit": null },
+      "report": { "status": "complete", "source": "contract", "at": 1791936000000, "title": "Part 1 of the test harness merged in PR #409.", "summary": "Part 1 of the test harness merged in PR #409.", "evidence": ["PR #409 merged"], "blockers": [], "body": null, "unit": "F2a", "commit": null, "repliedAt": null },
       "progress": { "done": 6, "total": 6 },
       "subagents": [],
       "recent": [],
@@ -123,7 +123,7 @@
       "busyMs": 21600000, "waitingOnUserMs": 0, "alive": true,
       "cost": { "credits": 24016.0, "calls": 1210 },
       "activity": { "label": "Running edit: src/api/orders.ts", "tool": { "id": "call-b1-9", "name": "edit", "summary": "edit: src/api/orders.ts", "startedAt": 1792065540000, "limitMs": 120000 }, "lastEventAt": 1792065540000 },
-      "report": { "status": "complete", "source": "contract", "at": 1792058160000, "title": "Opened PR #418 with 14 endpoints. All API tests pass.", "summary": "Opened PR #418 with 14 endpoints. All API tests pass.", "evidence": ["API tests: 212 passed, 0 failed", "PR #418 opened on top of the B0 branch"], "blockers": [], "body": null, "unit": "B1", "commit": "9b1e4d2" },
+      "report": { "status": "needs_input", "source": "contract", "at": 1792058160000, "title": "PR #418 is open with 14 endpoints. Should list endpoints page by cursor or by offset?", "summary": "PR #418 is open with 14 endpoints. Should list endpoints page by cursor or by offset?", "evidence": ["API tests: 212 passed, 0 failed", "PR #418 opened on top of the B0 branch"], "blockers": ["Needs a decision: cursor or offset paging"], "body": null, "unit": "B1", "commit": "9b1e4d2", "repliedAt": 1792063500000 },
       "progress": { "done": 7, "total": 10 },
       "subagents": [
         { "id": "call-b1-8", "name": "review-pr-418", "type": "code-review", "model": "claude-sonnet-5", "mode": "background", "status": "running", "startedAt": 1792065240000, "endedAt": null, "durationMs": null, "credits": 85.0, "task": "Review PR #418" },
@@ -132,7 +132,7 @@
       "recent": [
         { "id": "ws-0003-b1:subagent-start:call-b1-8", "at": 1792065240000, "unitId": "ws-0003-b1", "label": "B1", "kind": "subagent-start", "text": "started code-review: review-pr-418" },
         { "id": "ws-0003-b1:monitor-check:evt-b1-0301", "at": 1792063080000, "unitId": "ws-0003-b1", "label": "B1", "kind": "monitor-check", "text": "PR monitor check" },
-        { "id": "ws-0003-b1:report:call-b1-4", "at": 1792058160000, "unitId": "ws-0003-b1", "label": "B1", "kind": "report", "text": "reported complete: Opened PR #418 with 14 endpoints. All API tests pass." }
+        { "id": "ws-0003-b1:report:call-b1-4", "at": 1792058160000, "unitId": "ws-0003-b1", "label": "B1", "kind": "report", "text": "reported needs input: PR #418 is open with 14 endpoints. Should list endpoints page by cursor or by offset?" }
       ],
       "timeline": {
         "segments": [
@@ -148,7 +148,7 @@
         ],
         "marks": [
           { "at": 1792058040000, "kind": "pr-open", "text": "PR opened", "status": null },
-          { "at": 1792058160000, "kind": "report", "text": "Opened PR #418 with 14 endpoints.", "status": "complete" },
+          { "at": 1792058160000, "kind": "question", "text": "PR #418 is open with 14 endpoints. Should list endpoints page by cursor or by offset?", "status": "needs_input" },
           { "at": 1792063080000, "kind": "monitor", "text": "PR monitor check", "status": null }
         ]
       },
@@ -165,7 +165,7 @@
       "busyMs": 7200000, "waitingOnUserMs": 0, "alive": true,
       "cost": { "credits": 3058.0, "calls": 260 },
       "activity": { "label": "Idle", "tool": null, "lastEventAt": 1792065060000 },
-      "report": { "status": "complete", "source": "contract", "at": 1792047600000, "title": "Opened PR #421 and started a PR monitor. Waiting for review.", "summary": "Opened PR #421 and started a PR monitor. Waiting for review.", "evidence": ["Docs build passes", "PR #421 opened"], "blockers": [], "body": null, "unit": "D5", "commit": "c41d0e7" },
+      "report": { "status": "complete", "source": "contract", "at": 1792047600000, "title": "Opened PR #421 and started a PR monitor. Waiting for review.", "summary": "Opened PR #421 and started a PR monitor. Waiting for review.", "evidence": ["Docs build passes", "PR #421 opened"], "blockers": [], "body": null, "unit": "D5", "commit": "c41d0e7", "repliedAt": null },
       "progress": { "done": 9, "total": 10 },
       "subagents": [],
       "recent": [
@@ -198,7 +198,7 @@
       "busyMs": 14400000, "waitingOnUserMs": 0, "alive": true,
       "cost": { "credits": 9702.0, "calls": 640 },
       "activity": { "label": "Running bash: dotnet test --filter E2E", "tool": { "id": "call-i1-4", "name": "bash", "summary": "bash: dotnet test --filter E2E", "startedAt": 1792062720000, "limitMs": 900000 }, "lastEventAt": 1792062720000 },
-      "report": { "status": "complete", "source": "contract", "at": 1792054680000, "title": "Contract tests are wired and pass locally. Starting the end-to-end run next.", "summary": "Contract tests are wired and pass locally. Starting the end-to-end run next.", "evidence": ["12 contract tests pass"], "blockers": [], "body": null, "unit": "I1", "commit": null },
+      "report": { "status": "complete", "source": "contract", "at": 1792054680000, "title": "Contract tests are wired and pass locally. Starting the end-to-end run next.", "summary": "Contract tests are wired and pass locally. Starting the end-to-end run next.", "evidence": ["12 contract tests pass"], "blockers": [], "body": null, "unit": "I1", "commit": null, "repliedAt": null },
       "progress": { "done": 5, "total": 9 },
       "subagents": [],
       "recent": [],
@@ -229,7 +229,7 @@
       "busyMs": 10800000, "waitingOnUserMs": 0, "alive": true,
       "cost": { "credits": 8330.0, "calls": 520 },
       "activity": { "label": "Waiting for the orchestrator", "tool": null, "lastEventAt": 1792064880000 },
-      "report": { "status": "needs_input", "source": "contract", "at": 1792064880000, "title": "The results page needs a table: reuse DataGrid, or build a lighter table.", "summary": "The results page needs a table: reuse DataGrid, or build a lighter table.", "evidence": ["DataGrid already supports virtual scroll and sorting", "A new table would cut the bundle by about 40 KB"], "blockers": ["Needs a decision: reuse DataGrid or build a new table"], "body": null, "unit": "F1", "commit": null },
+      "report": { "status": "needs_input", "source": "contract", "at": 1792064880000, "title": "The results page needs a table: reuse DataGrid, or build a lighter table.", "summary": "The results page needs a table: reuse DataGrid, or build a lighter table.", "evidence": ["DataGrid already supports virtual scroll and sorting", "A new table would cut the bundle by about 40 KB"], "blockers": ["Needs a decision: reuse DataGrid or build a new table"], "body": null, "unit": "F1", "commit": null, "repliedAt": null },
       "progress": { "done": 4, "total": 10 },
       "subagents": [
         { "id": "call-f1-1", "name": "compare-tables", "type": "explore", "model": "gpt-5.4-mini", "mode": "background", "status": "completed", "startedAt": 1792063800000, "endedAt": 1792064040000, "durationMs": 240000, "credits": 12.0, "task": "Compare table components" }
@@ -262,7 +262,7 @@
       "busyMs": 5400000, "waitingOnUserMs": 2280000, "alive": true,
       "cost": { "credits": 5790.0, "calls": 410 },
       "activity": { "label": "Waiting for plan approval", "tool": null, "lastEventAt": 1792063320000 },
-      "report": { "status": "complete", "source": "contract", "at": 1792063140000, "title": "The parser is done. The plan for step 2 is waiting for approval.", "summary": "The parser is done. The plan for step 2 is waiting for approval.", "evidence": ["Parser handles CSV and TSV", "18 parser tests pass"], "blockers": ["Plan for step 2 needs approval"], "body": null, "unit": "B2", "commit": null },
+      "report": { "status": "complete", "source": "contract", "at": 1792063140000, "title": "The parser is done. The plan for step 2 is waiting for approval.", "summary": "The parser is done. The plan for step 2 is waiting for approval.", "evidence": ["Parser handles CSV and TSV", "18 parser tests pass"], "blockers": ["Plan for step 2 needs approval"], "body": null, "unit": "B2", "commit": null, "repliedAt": null },
       "progress": { "done": 3, "total": 10 },
       "subagents": [
         { "id": "call-b2-1", "name": "find-import-code", "type": "explore", "model": "gpt-5.4-mini", "mode": "background", "status": "completed", "startedAt": 1792044600000, "endedAt": 1792044780000, "durationMs": 180000, "credits": 12.0, "task": "Find existing import code" }
@@ -297,7 +297,7 @@
       "busyMs": 1200000, "waitingOnUserMs": 0, "alive": true,
       "cost": { "credits": 140.0, "calls": 24 },
       "activity": { "label": "Done", "tool": null, "lastEventAt": 1791812400000 },
-      "report": { "status": "complete", "source": "message", "at": 1791812400000, "title": "Schema audit: 9 call sites use the old column name.", "summary": null, "evidence": [], "blockers": null, "body": "Only 3 of them read it. The other 6 only write it.\nNone of them needs a data fix.", "unit": null, "commit": null },
+      "report": { "status": "complete", "source": "message", "at": 1791812400000, "title": "Schema audit: 9 call sites use the old column name.", "summary": null, "evidence": [], "blockers": null, "body": "Only 3 of them read it. The other 6 only write it.\nNone of them needs a data fix.", "unit": null, "commit": null, "repliedAt": null },
       "progress": null,
       "subagents": [],
       "recent": [
@@ -328,7 +328,7 @@
       "busyMs": 900000, "waitingOnUserMs": 0, "alive": true,
       "cost": { "credits": 38.0, "calls": 11 },
       "activity": { "label": "Failed", "tool": null, "lastEventAt": 1791839100000 },
-      "report": { "status": "blocked", "source": "message", "at": 1791839040000, "title": "Migrated 14 of 31 fixtures, then the model request failed.", "summary": null, "evidence": [], "blockers": null, "body": null, "unit": null, "commit": null },
+      "report": { "status": "blocked", "source": "message", "at": 1791839040000, "title": "Migrated 14 of 31 fixtures, then the model request failed.", "summary": null, "evidence": [], "blockers": null, "body": null, "unit": null, "commit": null, "repliedAt": null },
       "progress": null,
       "subagents": [],
       "recent": [
@@ -388,7 +388,7 @@
       "busyMs": 2100000, "waitingOnUserMs": 0, "alive": true,
       "cost": { "credits": 102.0, "calls": 18 },
       "activity": { "label": "Thinking", "tool": null, "lastEventAt": 1792064700000 },
-      "report": { "status": "progress", "source": "message", "at": 1792064400000, "title": "Compared DataGrid with two lighter table libraries so far.", "summary": null, "evidence": [], "blockers": null, "body": null, "unit": null, "commit": null },
+      "report": { "status": "progress", "source": "message", "at": 1792064400000, "title": "Compared DataGrid with two lighter table libraries so far.", "summary": null, "evidence": [], "blockers": null, "body": null, "unit": null, "commit": null, "repliedAt": null },
       "progress": null,
       "subagents": [],
       "recent": [
@@ -416,7 +416,7 @@
       "busyMs": 240000, "waitingOnUserMs": 0, "alive": true,
       "cost": { "credits": 51.0, "calls": 6 },
       "activity": { "label": "Running grep: ImportService", "tool": { "id": "call-sub41-3", "name": "grep", "summary": "grep: ImportService", "startedAt": 1792065540000, "limitMs": 120000 }, "lastEventAt": 1792065540000 },
-      "report": { "status": "progress", "source": "message", "at": 1792065480000, "title": "Found the parser entry points. Now tracing who calls them.", "summary": null, "evidence": [], "blockers": null, "body": null, "unit": null, "commit": null },
+      "report": { "status": "progress", "source": "message", "at": 1792065480000, "title": "Found the parser entry points. Now tracing who calls them.", "summary": null, "evidence": [], "blockers": null, "body": null, "unit": null, "commit": null, "repliedAt": null },
       "progress": null,
       "subagents": [],
       "recent": [
@@ -454,7 +454,7 @@
     { "id": "ws-0004-b2:plan-req:call-b2-31", "at": 1792063320000, "unitId": "ws-0004-b2", "label": "B2", "kind": "plan-req", "text": "sent a plan for approval" },
     { "id": "ws-0004-b2:report:call-b2-5", "at": 1792063140000, "unitId": "ws-0004-b2", "label": "B2", "kind": "report", "text": "reported complete: The parser is done. The plan for step 2 is waiting for approval." },
     { "id": "ws-0003-b1:monitor-check:evt-b1-0301", "at": 1792063080000, "unitId": "ws-0003-b1", "label": "B1", "kind": "monitor-check", "text": "PR monitor check" },
-    { "id": "ws-0003-b1:report:call-b1-4", "at": 1792058160000, "unitId": "ws-0003-b1", "label": "B1", "kind": "report", "text": "reported complete: Opened PR #418 with 14 endpoints. All API tests pass." },
+    { "id": "ws-0003-b1:report:call-b1-4", "at": 1792058160000, "unitId": "ws-0003-b1", "label": "B1", "kind": "report", "text": "reported needs input: PR #418 is open with 14 endpoints. Should list endpoints page by cursor or by offset?" },
     { "id": "call-root-24:subagent-done:cli-0000-root/evt-root-1224", "at": 1791844320000, "unitId": "call-root-24", "label": "scan-docs-links", "kind": "subagent-done", "text": "cancelled orchestrator-worker: scan-docs-links" },
     { "id": "call-root-24:subagent-start:cli-0000-root/call-root-24", "at": 1791843600000, "unitId": "call-root-24", "label": "scan-docs-links", "kind": "subagent-start", "text": "started orchestrator-worker: scan-docs-links" },
     { "id": "call-root-18:subagent-done:cli-0000-root/evt-root-0818", "at": 1791839100000, "unitId": "call-root-18", "label": "migrate-fixtures", "kind": "subagent-done", "text": "failed task: migrate-fixtures" },
