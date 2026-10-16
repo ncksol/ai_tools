@@ -4047,6 +4047,7 @@ Review amendments (16 October 2026), applied in a follow-up commit after this ta
 - Warmed A→B→A: the check lets 3 updates pass, then takes 6 updates alone, 6 with the cockpit drawing, and 6 alone again (the cockpit window closed). The baseline is the mean of the two alone medians, and the check fails when the median with the cockpit is above baseline × 1.25 + 2 ms. When the two alone medians differ by more than 50% + 2 ms, it runs the triple once more, and reports a problem if they still differ. It prints all three medians. This guards against gross slowdowns (about +4 ms at a 7–8 ms baseline), not 1–2 ms ones.
 - The cockpit is measured at its normal size: after the control opens it, the check sizes the cockpit's page to 1440 × 900 and reloads it with `debug=1` added (same window), then waits for `data-ready="1"`, `data-fit="ok"` and `data-gl="on"`.
 - "Drawing" means `cockpitDebug.draws()` goes up by at least 20 over one second, read twice from Node with a Node-side timer (nothing waits on the page's own frames), after `document.visibilityState` is `visible` and reduced motion is off. A lost WebGL context or a hidden window fails it within that second.
+- Before "alone again", the check confirms every new page target is gone: it closes them, polls until they have left `Target.getTargets`, tries once more for any that remain, and if one still remains it reports a problem and skips the comparison rather than measure with a cockpit drawing.
 
 - [ ] **Step 6: Commit (the check, then the hook)**
 
