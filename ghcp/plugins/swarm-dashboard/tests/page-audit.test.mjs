@@ -59,3 +59,8 @@ test('the audit script is self-contained and carries its options', () => {
   assert.doesNotMatch(script, /\bimport\b|\bexport\b/);
   assert.doesNotThrow(() => new Function(script));
 });
+
+test('the dashboard audit holds the Cards note to the cards\' gap and text edge', () => {
+  assert.deepEqual(AUDIT_DEFAULTS.follows, [{ item: '.cards-note', ref: '.b-card', gapOf: '.b-grid' }]);
+  assert.ok(auditScript(AUDIT_DEFAULTS).includes('.cards-note'));
+});

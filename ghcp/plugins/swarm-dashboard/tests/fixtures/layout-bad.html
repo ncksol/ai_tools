@@ -12,6 +12,8 @@ body { margin: 0; padding: 16px; font: 400 14px/20px system-ui, -apple-system, "
 .chip { display: inline-flex; align-items: center; height: 30px; padding: 0 8px; font-size: 12px; line-height: 16px; border: 1px solid #ddd; }
 .narrow { width: 120px; }
 .wide { width: 3000px; height: 4px; }
+.b-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+.cards-note { font-size: 12px; line-height: 16px; color: #555; }
 </style>
 </head>
 <body>
@@ -34,6 +36,8 @@ body { margin: 0; padding: 16px; font: 400 14px/20px system-ui, -apple-system, "
   <article class="b-card narrow" style="display: block"><span style="white-space: nowrap">This inline text runs past the card edge</span></article>
   <article class="b-card narrow"><div style="height: 20px; overflow: hidden">These words wrap onto lines that the box hides</div></article>
   <article class="b-card narrow"><div style="display: flex; overflow: hidden"><span style="flex: none">Its row cuts this text off</span></div></article>
+  <div class="b-grid"><article class="b-card"><span>A card in a grid</span></article></div>
+  <p class="cards-note" style="margin-top: 4px">A note too close to the cards and not lined up with their text</p>
   <div class="wide"></div>
 </main>
 </body>

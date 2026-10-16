@@ -211,6 +211,28 @@ export function auditPage(options) {
     }
   }
 
+  // An element laid out after a group of references: one gap below them, its content lined up with theirs.
+  const contentLeft = el => el.getBoundingClientRect().left + el.clientLeft + parseFloat(getComputedStyle(el).paddingLeft);
+  for (const rule of options.follows ?? []) {
+    const refs = [...root.querySelectorAll(rule.ref)].filter(el => shown.has(el));
+    for (const el of root.querySelectorAll(rule.item)) {
+      if (!shown.has(el) || !refs.length) continue;
+      const box = el.getBoundingClientRect();
+      const above = refs.map(ref => ref.getBoundingClientRect().bottom).filter(bottom => bottom <= box.top + 0.5);
+      if (!above.length) continue;
+      const holder = el.closest(rule.gapOf) ?? [...root.querySelectorAll(rule.gapOf)].find(node => shown.has(node));
+      checks += 2;
+      if (holder) {
+        const want = parseFloat(getComputedStyle(holder).rowGap);
+        const got = box.top - Math.max(...above);
+        if (Math.abs(got - want) > 0.5) report('gap', el, `${got.toFixed(1)}px below the ${rule.ref} above it instead of ${want}px`);
+      }
+      const want = Math.min(...refs.map(contentLeft));
+      const got = contentLeft(el);
+      if (Math.abs(got - want) > 0.5) report('align', el, `content starts at ${got.toFixed(1)}px instead of ${want.toFixed(1)}px like ${rule.ref}`);
+    }
+  }
+
   checks += 1;
   if (document.documentElement.scrollWidth > window.innerWidth + 1) report('hscroll', document.documentElement, `${document.documentElement.scrollWidth}px wide in a ${window.innerWidth}px window`);
 
@@ -250,6 +272,7 @@ export const AUDIT_DEFAULTS = Object.freeze({
   fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
   atoms: '.chip,.badge,.pill,.ring,.meter,.bar,.stage,.sw,button,select,.need,.b-card,.mc,.pn,.pl-row,.tile,.kv,.fi,.h-row,.g-row,.g-track,.hb-row,.c-who,.c-trk,.c-sum,.tabs,.seg',
   containers: '.b-card,.need,.rail,.detail,.mc,.pn,.pl-row,.tile,.h-row,.run-answer,.empty,.dash',
+  follows: [{ item: '.cards-note', ref: '.b-card', gapOf: '.b-grid' }],
   padding: { '.dash': 16, '.b-card': 16, '.rail': 16, '.detail': 16, '.need': 12, '.pn': 12, '.pl-row': 12, '.mc': 12 },
   heights: {
     '.chip': 24, '.badge': 20, '.pill': 20, '.d-top .seg > button': 28, '.c-bar .seg > button': 24, '.x': 28, '.pick select': 28,

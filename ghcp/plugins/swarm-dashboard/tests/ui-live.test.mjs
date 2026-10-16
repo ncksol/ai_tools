@@ -87,8 +87,9 @@ test('cards sort by attention, hide archived units and point to the Board for th
   const html = cardsHtml(context(exampleSnapshot()));
   assert.deepEqual(cardIds(html), ['ws-0005-i1', 'ws-0004-b2', 'ws-0006-f1', 'ws-0003-b1', 'ws-0007-d5', 'ws-0002-f2a']);
   const note = '<p class="cards-note">Archived and hidden sessions are on the <button type="button" class="link" data-tab="board">Board tab</button>.</p>';
-  assert.ok(html.includes(note), html);
-  assert.doesNotMatch(note, /B0|schema/);
+  assert.ok(html.startsWith('<div class="b-grid">') && html.endsWith(`${note}</div>`), html);
+  assert.equal(html.split('class="cards-note"').length, 2, html);
+  assert.doesNotMatch(html, /\bB0\b|schema/);
 });
 
 test('cards show no Board note when nothing is hidden', () => {
@@ -135,4 +136,10 @@ test('a swarm with no active units says so', () => {
   const snapshot = exampleSnapshot();
   snapshot.units = [];
   assert.equal(cardsHtml(context(snapshot)), '<p class="none">No active child sessions.</p>');
+});
+
+test('with every unit archived, the Board note follows the empty line', () => {
+  const snapshot = exampleSnapshot();
+  snapshot.units = snapshot.units.map(unit => ({ ...unit, status: 'archived' }));
+  assert.equal(cardsHtml(context(snapshot)), '<p class="none">No active child sessions.</p><p class="cards-note">Archived and hidden sessions are on the <button type="button" class="link" data-tab="board">Board tab</button>.</p>');
 });

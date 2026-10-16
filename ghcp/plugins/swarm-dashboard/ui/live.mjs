@@ -57,10 +57,11 @@ export function cardHtml(unit, ctx) {
 
 export function cardsHtml(ctx) {
   const units = cardUnits(ctx.snapshot);
-  const grid = units.length ? `<div class="b-grid">${units.map(unit => cardHtml(unit, ctx)).join('')}</div>` : '<p class="none">No active child sessions.</p>';
   // The Cards tab leaves out archived units; the Board shows every unit in its stage column.
   const note = units.length < ctx.snapshot.units.length ? '<p class="cards-note">Archived and hidden sessions are on the <button type="button" class="link" data-tab="board">Board tab</button>.</p>' : '';
-  return grid + note;
+  if (!units.length) return `<p class="none">No active child sessions.</p>${note}`;
+  // Inside the grid the note sits one card gap below the last row of cards.
+  return `<div class="b-grid">${units.map(unit => cardHtml(unit, ctx)).join('')}${note}</div>`;
 }
 
 export const railHtml = ctx => `<section class="rail" aria-label="Activity"><div class="sec-h"><h3>Activity</h3><span class="small muted">all units, latest first</span></div>${feedList(ctx.snapshot.feed, 16, ctx.now, ctx.fresh.feed)}</section>`;

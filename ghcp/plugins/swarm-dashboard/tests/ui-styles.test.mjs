@@ -4,6 +4,11 @@ import { readFileSync } from 'node:fs';
 
 const css = readFileSync(new URL('../ui/styles.css', import.meta.url), 'utf8');
 const declarations = [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([a-z-]+)\s*:\s*([^;{}]+)[;}]/g)].map(([, prop, value]) => [prop, value.trim()]);
+const block = selector => {
+  const start = css.indexOf(`\n${selector} {`);
+  assert.notEqual(start, -1, selector);
+  return css.slice(css.indexOf('{', start) + 1, css.indexOf('}', start));
+};
 
 const TOKENS = {
   '--page': '0.975 0.004 250', '--surface': '0.993 0.002 250', '--sunk': '0.95 0.005 250', '--line': '0.905 0.008 250',
@@ -40,7 +45,7 @@ test('type uses only the approved sizes, line heights and weights, with no itali
 test('spacing stays on the 4 px grid', () => {
   const allowed = new Set(['margin-top: 6px']);
   for (const [prop, value] of declarations) {
-    if (!/^(gap|row-gap|column-gap|padding(-top|-right|-bottom|-left)?|margin(-top|-right|-bottom|-left)?)$/.test(prop)) continue;
+    if (!/^(gap|row-gap|column-gap|padding(-top|-right|-bottom|-left)?|margin(-top|-right|-bottom|-left)?|--card-pad)$/.test(prop)) continue;
     if (allowed.has(`${prop}: ${value}`)) continue;
     for (const [, number] of value.matchAll(/(-?\d+(?:\.\d+)?)px/g)) assert.equal(Number(number) % 4, 0, `${prop}: ${value}`);
   }
@@ -58,4 +63,18 @@ test('the font comes from the host with the approved fallback, motion stops on r
   assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\* \{ animation: none !important; \}/);
   assert.doesNotMatch(css, /@import|url\((?!#cHatch2\))/);
   assert.match(css, /html\[data-host="canvas"\] \.dash \{/);
+});
+
+test('the Cards note takes its inset from the same tokens as a card and adds no margin', () => {
+  assert.match(css, /--card-pad: 16px;/);
+  assert.match(css, /--card-border: 1px;/);
+  const card = block('.b-card');
+  assert.match(card, /padding: var\(--card-pad\);/);
+  assert.match(card, /border: var\(--card-border\) solid var\(--line\);/);
+  const note = block('.b-grid > .cards-note');
+  assert.match(note, /grid-column: 1 \/ -1;/);
+  assert.match(note, /padding: 0 var\(--card-pad\);/);
+  assert.match(note, /border-left: var\(--card-border\) solid transparent;/);
+  assert.match(note, /border-right: var\(--card-border\) solid transparent;/);
+  assert.doesNotMatch(note, /margin/);
 });

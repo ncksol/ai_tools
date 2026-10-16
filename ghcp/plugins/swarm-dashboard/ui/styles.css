@@ -4,6 +4,8 @@
   --page: oklch(0.975 0.004 250);
   --surface: oklch(0.993 0.002 250);
   --sunk: oklch(0.95 0.005 250);
+  --card-pad: 16px;
+  --card-border: 1px;
   --line: oklch(0.905 0.008 250);
   --line-2: oklch(0.94 0.006 250);
   --ink: oklch(0.30 0.02 255);
@@ -138,7 +140,7 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 
 /* cards */
 .b-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(296px, 1fr)); gap: 12px; }
-.b-card { display: flex; flex-direction: column; gap: 12px; padding: 16px; min-width: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); cursor: pointer; }
+.b-card { display: flex; flex-direction: column; gap: 12px; padding: var(--card-pad); min-width: 0; border: var(--card-border) solid var(--line); border-radius: 8px; background: var(--surface); cursor: pointer; }
 .b-card:hover { border-color: var(--ink-3); }
 .b-card.st-plan, .b-card.st-question, .b-card.st-stuck, .b-card.st-blocked { background: var(--c-soft); border-color: var(--c); }
 .b-card.is-sel { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
@@ -184,6 +186,8 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 .b-card .chips { height: 24px; overflow: hidden; }
 .cards-note { font-size: 12px; line-height: 16px; color: var(--ink-2); }
 .cards-note .link { text-decoration: underline; text-underline-offset: 2px; }
+/* In the grid, the note sits one card gap below the last row, and its box mirrors a card's so its text lines up with theirs. */
+.b-grid > .cards-note { grid-column: 1 / -1; padding: 0 var(--card-pad); border-left: var(--card-border) solid transparent; border-right: var(--card-border) solid transparent; }
 
 /* activity rail and feed */
 .rail { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }
