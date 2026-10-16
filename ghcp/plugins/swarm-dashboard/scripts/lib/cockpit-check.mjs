@@ -502,8 +502,96 @@ async function checkLinks({ page, browser, urls, engine, stdout, stderr }) {
   return problems.length;
 }
 
-/** The cockpit's checks in the order they run. Task 13 adds slowdown. */
-export const CHECKS = new Map([['scene', checkScene], ['layout', checkLayout], ['motion', checkMotion], ['links', checkLinks]]);
+const median = values => {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = sorted.length / 2;
+  return sorted.length % 2 ? sorted[Math.floor(middle)] : (sorted[middle - 1] + sorted[middle]) / 2;
+};
+
+/** Wait for `count` more live updates of the regular page and return their durations in ms. */
+async function updateTimes(page, count, timeoutMs) {
+  const start = await page.evaluate("performance.getEntriesByName('swarm-update').length");
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline && await page.evaluate("performance.getEntriesByName('swarm-update').length") < start + count) await new Promise(resolve => setTimeout(resolve, 200));
+  return page.evaluate(`performance.getEntriesByName('swarm-update').slice(${start}).map(entry => entry.duration)`);
+}
+
+/** Runs in the cockpit: whether it is visible, wants motion, and how many animation frames fire in a second. */
+const DRAWING = `(async () => {
+  let frames = 0;
+  const started = performance.now();
+  await new Promise(resolve => {
+    const tick = now => {
+      if (now - started >= 1000) return resolve();
+      frames += 1;
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  return { visibility: document.visibilityState, reduced: matchMedia('(prefers-reduced-motion: reduce)').matches, frames };
+})()`;
+
+/** Chrome only: the regular view's live updates cost no more with a cockpit window open beside it (anti-goal 5). */
+async function checkSlowdown({ page, browser, urls, engine, stdout, stderr }) {
+  if (engine !== 'chrome' || !urls.example) {
+    stdout.write('Regular view with a cockpit open: measured in Chrome, on the synthetic swarm.\n');
+    return 0;
+  }
+  const server = createDashboardServer({ createEngine: () => createDemoEngine({ scenario: 'example', simulate: true, stepMs: 1000 }), port: 0, version: 'cockpit-check' });
+  await server.listen();
+  const problems = [];
+  let known = null;
+  let line = null;
+  try {
+    const url = `${server.url}?host=browser`;
+    await page.goto(url, 1440, 900);
+    await page.waitFor(`location.href === ${JSON.stringify(url)} && document.documentElement.dataset.ready === '1' && document.querySelector('[data-cockpit]') !== null`);
+    const alone = await updateTimes(page, 6, 20000);
+    known = new Set((await browser.send('Target.getTargets')).targetInfos.map(info => info.targetId));
+    await page.send('Runtime.evaluate', { expression: "document.querySelector('[data-cockpit]').click()", userGesture: true });
+    const cockpit = await waitForTarget(browser, known, info => info.type === 'page' && info.url.includes('/cockpit?'), 5000);
+    if (!cockpit) {
+      problems.push('the Cockpit control opened no window');
+    } else {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      const { sessionId } = await browser.send('Target.attachToTarget', { targetId: cockpit.targetId, flatten: true });
+      const { result, exceptionDetails } = await browser.send('Runtime.evaluate', { expression: DRAWING, returnByValue: true, awaitPromise: true }, sessionId);
+      if (exceptionDetails) throw new Error(exceptionDetails.exception?.description ?? exceptionDetails.text);
+      const drawing = result.value;
+      if (drawing.visibility !== 'visible' || drawing.reduced || drawing.frames < 20) {
+        problems.push(`the cockpit did not draw (visibility ${drawing.visibility}, reduced motion ${drawing.reduced ? 'on' : 'off'}, ${drawing.frames} animation frames in a second), so the comparison would mean nothing`);
+      } else {
+        const beside = await updateTimes(page, 6, 20000);
+        if (alone.length < 4 || beside.length < 4) {
+          problems.push(`too few live updates arrived to compare (${alone.length} and ${beside.length})`);
+        } else {
+          const [before, after] = [median(alone), median(beside)];
+          if (after > before * 1.25 + 2) problems.push(`the regular view's updates took ${after.toFixed(1)} ms with a cockpit open, ${before.toFixed(1)} ms without`);
+          line = `updates ${before.toFixed(1)} ms median alone, ${after.toFixed(1)} ms with the cockpit drawing beside it`;
+        }
+      }
+    }
+  } catch (error) {
+    problems.push(error.message);
+  } finally {
+    // List again rather than relying on the targets already observed: a popup may have opened late.
+    if (known) {
+      const { targetInfos } = await browser.send('Target.getTargets').catch(() => ({ targetInfos: [] }));
+      for (const info of targetInfos) {
+        if (!known.has(info.targetId) && info.type === 'page') await browser.send('Target.closeTarget', { targetId: info.targetId }).catch(() => {});
+      }
+    }
+    await page.evaluate("window.name = ''").catch(() => {});
+    await page.goto('about:blank', 1440).then(() => page.waitFor("location.href === 'about:blank'")).catch(() => {});
+    await server.close().catch(() => {});
+  }
+  stdout.write(`Regular view with a cockpit open: ${problems.length ? `${problems.length} problems` : line}.\n`);
+  for (const problem of problems) stderr.write(`slowdown: ${problem}\n`);
+  return problems.length;
+}
+
+/** The cockpit's checks in the order they run. */
+export const CHECKS = new Map([['scene', checkScene], ['layout', checkLayout], ['motion', checkMotion], ['links', checkLinks], ['slowdown', checkSlowdown]]);
 
 export async function runCockpitChecks(context) {
   let issues = 0;

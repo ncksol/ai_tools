@@ -7,7 +7,7 @@ import { COCKPIT_SIZES as FIT_SIZES } from './helpers/cockpit.mjs';
 test('the cockpit is checked at the window sizes the arrangement is tested at, and in a small window', () => {
   assert.deepEqual(COCKPIT_SIZES, FIT_SIZES);
   assert.deepEqual(SMALL_SIZE, [1024, 700]);
-  assert.deepEqual([...CHECKS.keys()], ['scene', 'layout', 'motion', 'links']);
+  assert.deepEqual([...CHECKS.keys()], ['scene', 'layout', 'motion', 'links', 'slowdown']);
 });
 
 test('the audit uses the approved type scale plus the clock, and even padding for panels and tiles', () => {
