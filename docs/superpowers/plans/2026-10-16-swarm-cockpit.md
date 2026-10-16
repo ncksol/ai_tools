@@ -4368,6 +4368,12 @@ In the Commands table, after the `npm run check:layout` row, add:
 | `node scripts/cockpit-gpu.mjs` | Measure the cockpit's GPU time per frame on this machine for High and Balanced (`--engine webkit`) |
 ```
 
+Amendments (16 October 2026, after the owner's answer on browsers and Task 14's measurements):
+- The owner needs the cockpit in Chrome and Edge only; Safari is out of scope. The regular view must still pass WebKit, because the app's canvas uses it. The cockpit section says so in one line after its first paragraph: `The cockpit is made for Chrome and Edge. In the app's canvas, Cockpit shows its address to open in one of them.` (and the second paragraph's last sentence goes, since this line says it).
+- The quality bullet's last sentence uses the measured cost: `High keeps the GPU busy about a fifth of the time at 1440 × 900 and a quarter at 1920 × 1080 on an Apple M5 Pro, and may make a fanless laptop warm.`
+- The `check-cockpit.mjs` row says the checks run in a local Chrome, Chromium or Edge (`CHROME_PATH` chooses one), as the `check:layout` row does.
+- Final checks also run `CHROME_PATH=<Edge's binary> node scripts/check-cockpit.mjs` once (0 issues). A WebKit-only cockpit issue does not block; a WebKit issue in the regular view does.
+
 - [ ] **Step 2: Update the repository instructions**
 
 In `.github/copilot-instructions.md`, in the `swarm-dashboard` bullet, change "a no-build UI (`ui/`)" to "a no-build UI (`ui/`) with a regular view and a WebGL2 cockpit view", and "a launcher, snapshot command and headless layout check (`scripts/`)" to "a launcher, snapshot command, headless layout check and dev-only GPU frame-time test (`scripts/`)". In the "Working in this repo" rule for `swarm-dashboard`, change "every view must report 0 issues" to "every view and every cockpit state must report 0 issues".
