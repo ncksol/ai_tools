@@ -83,3 +83,31 @@ test('listenShared starts a server, finds a running dashboard, or reports a take
     await close(other);
   }
 });
+
+test('a listener that redirects its health check is another program, and the redirect is not followed', async () => {
+  let hits = 0;
+  const target = createServer((req, res) => {
+    hits += 1;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ app: 'swarm-dashboard', version: 'test' }));
+  });
+  const targetPort = await freePort();
+  await listen(target, targetPort);
+  const foreign = createServer((req, res) => {
+    res.writeHead(302, { Location: `http://127.0.0.1:${targetPort}/api/health` });
+    res.end();
+  });
+  const foreignPort = await freePort();
+  await listen(foreign, foreignPort);
+  try {
+    assert.deepEqual(await probePort(foreignPort), { state: 'other' });
+    assert.equal(hits, 0);
+    assert.deepEqual(await listenShared({ port: foreignPort, makeServer: () => { throw new Error('must not bind'); } }), { status: 'taken' });
+    assert.equal(hits, 0);
+    assert.equal((await probePort(targetPort)).state, 'ours');
+    assert.equal(hits, 1);
+  } finally {
+    await close(foreign);
+    await close(target);
+  }
+});

@@ -13,12 +13,21 @@ export function resolvePort(env = process.env) {
 
 /**
  * Who holds the port: our dashboard ('ours', with its health answer), nobody ('free'), another program ('other'), or
- * something that accepts connections but does not answer in time ('unresponsive').
+ * something that accepts connections but does not answer in time ('unresponsive'). Only a direct 200 answer from the
+ * port counts; a redirect means another program.
  */
 export async function probePort(port, { timeoutMs = 2500 } = {}) {
+  const url = `http://127.0.0.1:${port}/api/health`;
   try {
-    const response = await fetch(`http://127.0.0.1:${port}/api/health`, { signal: AbortSignal.timeout(timeoutMs) });
-    const body = response.ok ? await response.json().catch(() => null) : null;
+    // Only a direct answer from this loopback port counts: a redirect could name another listener, or leave the machine.
+    // The URL is written out again in the call so the packaging test can see that the server only calls loopback.
+    const response = await fetch(`http://127.0.0.1:${port}/api/health`, { redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
+    const direct = response.status === 200 && !response.redirected && response.url === url;
+    if (!direct) {
+      await response.body?.cancel().catch(() => {});
+      return { state: 'other' };
+    }
+    const body = await response.json().catch(() => null);
     return body && body.app === APP_ID ? { state: 'ours', health: body } : { state: 'other' };
   } catch (error) {
     if ((error?.cause?.code ?? error?.code) === 'ECONNREFUSED') return { state: 'free' };
