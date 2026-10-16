@@ -385,6 +385,20 @@ function movedDefault(demo, swarmId) {
 
 const stressDemo = () => createDemoEngine({ scenario: 'stress', simulate: false });
 
+/** The example demo with nothing live: every swarm, and the run of every snapshot, reads as finished. */
+function nothingLive(demo) {
+  return {
+    ...demo,
+    listSwarms: () => demo.listSwarms().map(swarm => ({ ...swarm, lifecycle: 'finished' })),
+    getSnapshot: async id => {
+      const snapshot = await demo.getSnapshot(id);
+      if (!snapshot) return snapshot;
+      return { ...snapshot, run: { ...snapshot.run, lifecycle: 'finished', finishedAt: snapshot.run.finishedAt ?? snapshot.run.lastActivityAt } };
+    },
+  };
+}
+const nothingLiveDemo = () => nothingLive(createDemoEngine({ scenario: 'example', simulate: false }));
+
 /**
  * The servers of one phase. The first listens on a free port, and restart() closes a server and listens again on that
  * port, as an update does, so the page reconnects by itself; a restart that cannot listen is an issue. Each server is
@@ -431,19 +445,25 @@ async function readApi(server, route) {
   return response.json();
 }
 
-/**
- * Open the dashboard with no swarm asked for, wait for its live connection, then open the Board and a detail panel.
- * Returns the detail's name and the header's swarm name, or null (with an issue) when the page did not connect.
- */
-async function openBoardDetail(page, server, issues) {
+/** Open the dashboard with no swarm asked for and wait for its live connection; false (with an issue) when it did not connect. */
+async function openDefault(page, server, issues) {
   const url = `${server.url}?host=browser`;
   await page.goto(url, 1280);
   await page.waitFor(`location.href === ${JSON.stringify(url)} && document.documentElement.dataset.ready === '1'`);
   await page.evaluate("sessionStorage.removeItem('swarm-dashboard:reloaded-for')");
   if (!await waitForClient(server, 5000)) {
     issues.push('the page did not open its live connection within 5 s');
-    return null;
+    return false;
   }
+  return true;
+}
+
+/**
+ * Open the dashboard with no swarm asked for, wait for its live connection, then open the Board and a detail panel.
+ * Returns the detail's name and the header's swarm name, or null (with an issue) when the page did not connect.
+ */
+async function openBoardDetail(page, server, issues) {
+  if (!await openDefault(page, server, issues)) return null;
   await page.evaluate(`document.querySelector('[data-tab="board"]').click()`);
   await page.waitFor(`document.querySelector('.board .mc[data-open]') !== null`, 5000);
   await page.evaluate(`document.querySelector('.board .mc[data-open]').click()`);
@@ -471,6 +491,25 @@ const SHOWN_STATE = `({
   search: location.search,
   attempted: sessionStorage.getItem('swarm-dashboard:reloaded-for'),
 })`;
+
+/**
+ * After a restart with the same dashboard files: wait for the page to reconnect and for the top bar to drop
+ * "Disconnected", then let the new connection's snapshot be applied and rendered. False (with an issue) when the page
+ * did not reconnect.
+ */
+async function waitForReconnect(page, server, issues) {
+  if (!await waitForClient(server, 15000)) {
+    issues.push('the page did not reconnect to the restarted server within 15 s');
+    return false;
+  }
+  try {
+    await page.waitFor(`!(document.querySelector('.d-top-r')?.textContent ?? '').includes('Disconnected')`, 5000);
+  } catch {
+    issues.push('the top bar still said Disconnected 5 s after the page reconnected');
+  }
+  await new Promise(resolve => setTimeout(resolve, 1500));
+  return true;
+}
 
 /** Click a tab, which saves the page's state, and return the swarm it remembers for later visits. */
 async function rememberedSwarm(page) {
@@ -570,17 +609,7 @@ async function watchReconnect(page, servers) {
     if (!second) return { issues };
     const now = (await readApi(second, 'api/snapshot')).snapshot?.run.id ?? null;
     if (now !== otherId) issues.push(`the restarted server's default is ${now}, not the other live swarm ${otherId}`);
-    if (!await waitForClient(second, 15000)) {
-      issues.push('the page did not reconnect to the restarted server within 15 s');
-      return { issues };
-    }
-    try {
-      await page.waitFor(`!(document.querySelector('.d-top-r')?.textContent ?? '').includes('Disconnected')`, 5000);
-    } catch {
-      issues.push('the top bar still said Disconnected 5 s after the page reconnected');
-    }
-    // Let the new connection's snapshot be applied and rendered.
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    if (!await waitForReconnect(page, second, issues)) return { issues };
     const after = await page.evaluate(SHOWN_STATE);
     if (after.mark !== 'r') issues.push('the page reloaded, though the dashboard files did not change');
     if (!after.board) issues.push('the reconnect lost the Board tab');
@@ -589,6 +618,78 @@ async function watchReconnect(page, servers) {
     if (after.search !== '?host=browser') issues.push(`the reconnected page changed its address: ${after.search}`);
     const remembered = await rememberedSwarm(page);
     if (remembered !== null) issues.push(`the page remembered the swarm it showed by default as ${remembered}`);
+    return { issues };
+  } finally {
+    await phase.close();
+  }
+}
+
+/** What a page with nothing live shows: the window mark, the empty state's heading, whether the live tabs are there, and the address. */
+const NOTHING_LIVE_STATE = `({
+  mark: window.swarmMark ?? null,
+  heading: document.querySelector('.empty h3')?.textContent ?? null,
+  tabs: document.querySelector('.tabs') !== null,
+  search: location.search,
+})`;
+
+/** Issues when the page does not show "No live swarm", or shows the finished run's dashboard; when names the moment. */
+function nothingLiveIssues(state, when) {
+  const issues = [];
+  if (state.tabs) issues.push(`${when} the page shows the finished run's dashboard instead of "No live swarm"`);
+  if (state.heading !== 'No live swarm') issues.push(`${when} the heading is ${JSON.stringify(state.heading)}, not "No live swarm"`);
+  return issues;
+}
+
+/**
+ * Open the dashboard with no swarm asked for on the example demo with nothing live, so it shows "No live swarm", then
+ * restart the server twice: with the same dashboard files, so the page reconnects without reloading, and with new
+ * files, so it reloads once. Both times it must still show "No live swarm", not the finished run's dashboard.
+ */
+async function watchNothingLive(page, servers) {
+  const issues = [];
+  const phase = phaseServers(servers, issues);
+  try {
+    const first = await phase.serve('layout-check-a', nothingLiveDemo);
+    if (!await openDefault(page, first, issues)) return { issues };
+    try {
+      await page.waitFor(`document.querySelector('.empty h3, .tabs') !== null`, 5000);
+    } catch {
+      // nothingLiveIssues reports what is missing.
+    }
+    const before = await page.evaluate(NOTHING_LIVE_STATE);
+    const control = nothingLiveIssues(before, 'before any restart');
+    if (control.length) return { issues: [...issues, ...control] };
+    await page.evaluate("window.swarmMark = 'n'");
+
+    // The same dashboard files: the page reconnects without reloading.
+    const second = await phase.restart(first, 'layout-check-a', nothingLiveDemo);
+    if (!second) return { issues };
+    if (!await waitForReconnect(page, second, issues)) return { issues };
+    const reconnected = await page.evaluate(NOTHING_LIVE_STATE);
+    if (reconnected.mark !== 'n') issues.push('the page reloaded, though the dashboard files did not change');
+    issues.push(...nothingLiveIssues(reconnected, 'after the reconnect'));
+
+    // New dashboard files: the page reloads once.
+    const third = await phase.restart(second, 'layout-check-b', nothingLiveDemo);
+    if (!third) return { issues };
+    try {
+      await page.waitFor("window.swarmMark === undefined && document.documentElement.dataset.ready === '1'", 15000);
+    } catch {
+      issues.push('the page did not reload for new dashboard files within 15 s');
+      return { issues };
+    }
+    if (!await waitForClient(third, 5000)) {
+      issues.push('the reloaded page did not open its live connection within 5 s');
+      return { issues };
+    }
+    try {
+      await page.waitFor(`document.querySelector('.empty h3, .tabs') !== null`, 5000);
+    } catch {
+      // nothingLiveIssues reports what is missing.
+    }
+    const reloaded = await page.evaluate(NOTHING_LIVE_STATE);
+    issues.push(...nothingLiveIssues(reloaded, 'after the self-reload'));
+    if (reloaded.search !== '?host=browser') issues.push(`the reloaded page kept its state in the address: ${reloaded.search}`);
     return { issues };
   } finally {
     await phase.close();
@@ -750,7 +851,13 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
       if (!reconnectIssues.length) stdout.write('Reconnect (stress, two live swarms): the page reconnected to a restarted server with the same dashboard files and kept the Board tab, the open detail and the swarm it showed by default when the server\'s default moved to the other swarm.\n');
       for (const issue of reconnectIssues) stderr.write(`reconnect: ${issue}\n`);
     }
-    return failures.length || updateIssues.length || historyIssues.length || reloadIssues.length || reconnectIssues.length ? 1 : 0;
+    let nothingIssues = [];
+    if (!options.live) {
+      nothingIssues = (await watchNothingLive(page, servers)).issues;
+      if (!nothingIssues.length) stdout.write('Nothing live (example): a reconnect and a self-reload both kept "No live swarm" instead of the finished run\'s dashboard.\n');
+      for (const issue of nothingIssues) stderr.write(`nothing-live: ${issue}\n`);
+    }
+    return failures.length || updateIssues.length || historyIssues.length || reloadIssues.length || reconnectIssues.length || nothingIssues.length ? 1 : 0;
   } finally {
     process.off('SIGINT', interrupt);
     process.off('SIGTERM', interrupt);

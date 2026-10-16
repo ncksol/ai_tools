@@ -90,23 +90,26 @@ test('at start-up the page restores a picked swarm and cleans the address only a
   assert.match(main, /if \(restored\) history\.replaceState\(/);
 });
 
-test('at start-up the page restores a swarm it showed by default, and keeps it temporary', () => {
+test('at start-up the page restores a swarm it showed by default as a transport swarm, never as its own choice', () => {
   const main = readFileSync(file('main.mjs'), 'utf8');
-  for (const needle of ['sessionStorage.getItem(SHOWN_KEY)', 'sessionStorage.removeItem(SHOWN_KEY)', 'startsShown({ urlSwarm, restoredPick, restoredShown, session: params.get(\'session\') })']) assert.ok(main.includes(needle), needle);
+  for (const needle of ['sessionStorage.getItem(SHOWN_KEY)', 'sessionStorage.removeItem(SHOWN_KEY)', 'let shownSwarm = startShown({ urlSwarm, restoredPick, restoredShown, session: params.get(\'session\') });']) assert.ok(main.includes(needle), needle);
   assert.match(main, /startSwarm\(\{ urlSwarm, restoredPick, restoredShown, session: params\.get\('session'\), savedSwarm: saved\.swarm \}\)/);
   const save = main.slice(main.indexOf('function save()'), main.indexOf('\n}\n', main.indexOf('function save()')));
-  assert.ok(save.includes('swarm: swarmIsShown ? null : view.swarm'), 'a swarm shown by default is never remembered');
+  assert.ok(save.includes('swarm: view.swarm'), 'save() remembers the page\'s own swarm');
+  assert.ok(!save.includes('shownSwarm'), 'a transport swarm is never remembered');
+  assert.ok(!main.includes('swarmIsShown'), 'no swarmIsShown is left');
 });
 
-test('a swarm shown by default gives way as on the server, and picking a swarm makes it an ordinary pick', () => {
+test('a transport swarm gives way as on the server, and picking a swarm clears it', () => {
   const main = readFileSync(file('main.mjs'), 'utf8');
   const handler = main.slice(main.indexOf("addEventListener('swarms'"));
   const swarms = handler.slice(0, handler.indexOf('});'));
-  assert.ok(swarms.includes('swarmIsShown ? staleShown(view.swarm, view.swarms) : staleChoice(view.swarm, swarmFromUrl, view.swarms)'));
-  assert.match(swarms, /swarmIsShown = false;/);
+  assert.ok(swarms.includes('if (staleChoice(view.swarm, swarmFromUrl, view.swarms) || (!view.swarm && staleShown(shownSwarm, view.swarms))) {'));
+  const giveWay = swarms.slice(swarms.indexOf('if (staleChoice('));
+  assert.ok(giveWay.indexOf('shownSwarm = null;') > -1 && giveWay.indexOf('shownSwarm = null;') < giveWay.indexOf('connect();'), 'giving way clears the transport swarm before reconnecting');
   const picker = main.slice(main.indexOf("addEventListener('change'"));
   const change = picker.slice(0, picker.indexOf('});'));
-  assert.match(change, /swarmFromUrl = false;\s*swarmIsShown = false;/);
+  assert.match(change, /swarmFromUrl = false;\s*shownSwarm = null;/);
 });
 
 test('the swarms handler reloads History through historyReloadWanted, so the first event after load reloads it too', () => {
@@ -117,7 +120,7 @@ test('the swarms handler reloads History through historyReloadWanted, so the fir
   assert.ok(body.includes('reloadHistory()'));
 });
 
-test('a page showing the default asks for the swarm on screen whenever it connects, as a temporary shown swarm', () => {
+test('a page showing the default asks for the swarm on screen whenever it connects, as a transport swarm only', () => {
   const main = readFileSync(file('main.mjs'), 'utf8');
   const start = main.indexOf('function connect()');
   const body = main.slice(start, main.indexOf('\n}\n', start));
@@ -125,11 +128,21 @@ test('a page showing the default asks for the swarm on screen whenever it connec
     assert.ok(body.includes(needle), needle);
     return body.indexOf(needle);
   };
-  assert.ok(at('keptDefault(') < at('new URLSearchParams()'), 'the swarm on screen is kept before the query is built');
-  assert.ok(at('swarmIsShown = true') < at('new URLSearchParams()'), 'the kept swarm is temporary');
-  assert.ok(at('swarmIsShown = true') < at('new EventSource('));
+  assert.ok(at('shownSwarm = view.swarm ? null : keptDefault(') < at('new URLSearchParams()'), 'the swarm on screen is kept before the query is built');
+  assert.ok(at('const asked = view.swarm ?? shownSwarm;') < at('new EventSource('), 'the page asks for its own swarm, else the transport swarm');
+  assert.ok(at("if (asked) query.set('swarm', asked);") < at('new EventSource('));
+  assert.doesNotMatch(body.slice(0, at('new EventSource(')), /view\.swarm\s*=[^=]/, 'connecting never changes the page\'s own swarm');
   const pageshow = main.slice(main.indexOf("addEventListener('pageshow'"));
   assert.match(pageshow.slice(0, pageshow.indexOf('});')), /connect\(\)/);
+});
+
+test('a self-reload carries the transport swarm, and only the page\'s own swarm decides the finished empty state', () => {
+  const main = readFileSync(file('main.mjs'), 'utf8');
+  const start = main.indexOf('function considerReload');
+  const body = main.slice(start, main.indexOf('\n}\n', start));
+  assert.ok(body.includes('transport: shownSwarm'), 'considerReload passes the transport swarm');
+  const app = readFileSync(file('app.mjs'), 'utf8');
+  assert.ok(app.includes("snapshot.run.lifecycle === 'finished' && !view.swarm"), 'liveHtml shows the empty state for a page with no swarm of its own');
 });
 
 test('every error reconnects through connect(), and only for the EventSource that is still current', () => {

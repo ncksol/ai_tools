@@ -1,4 +1,4 @@
-import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, historyReloadWanted, isNarrow, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, staleChoice, staleShown, startSwarm, startsShown } from './app.mjs';
+import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, historyReloadWanted, isNarrow, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, staleChoice, staleShown, startShown, startSwarm } from './app.mjs';
 import { tickText } from './format.mjs';
 import { morph } from './morph.mjs';
 import { nextCardChange, runEnd, unitEnd } from './model.mjs';
@@ -48,6 +48,7 @@ const view = {
   span: choose(params.get('span') ?? saved.span, SPANS, '12h'),
   detail: params.get('detail'),
   runId: params.get('run'),
+  /** The page's own swarm: addressed, picked or remembered. The UI, the picker and save() read only this. */
   swarm: startSwarm({ urlSwarm, restoredPick, restoredShown, session: params.get('session'), savedSwarm: saved.swarm }),
   session: params.get('session'),
   narrow: false,
@@ -66,9 +67,10 @@ if (restored) history.replaceState(null, '', `${location.pathname}${baseSearch(p
 
 // A swarm named in the address always applies; a picked or remembered one only while it is live.
 let swarmFromUrl = Boolean(urlSwarm);
-// A swarm the page showed by default, kept through a self-reload or a reconnect, is temporary: never remembered, and it
-// gives way as a default page does on the server.
-let swarmIsShown = startsShown({ urlSwarm, restoredPick, restoredShown, session: params.get('session') });
+// The transport swarm: the swarm a page with no swarm of its own showed by default, which it asks for on the wire after a
+// self-reload or a reconnect. It is never the page's own choice, so the UI, the picker and save() never see it, and it
+// gives way as a default page does on the server. Only connect(), the swarms handler and considerReload use it.
+let shownSwarm = startShown({ urlSwarm, restoredPick, restoredShown, session: params.get('session') });
 let offset = 0;
 let source = null;
 let reconnectTimer = null;
@@ -91,7 +93,7 @@ const now = () => Date.now() + offset;
 
 function save() {
   try {
-    localStorage.setItem(STORE, JSON.stringify({ tab: view.tab, span: view.span, swarm: swarmIsShown ? null : view.swarm }));
+    localStorage.setItem(STORE, JSON.stringify({ tab: view.tab, span: view.span, swarm: view.swarm }));
   } catch {
     // Storage can be unavailable; the dashboard works without it.
   }
@@ -100,15 +102,13 @@ function save() {
 function connect() {
   clearTimeout(reconnectTimer);
   source?.close();
-  // The server pins a page that asked for no swarm only for one connection, so a page showing the default asks for the
-  // swarm on screen when it connects again, as a temporary shown swarm, instead of landing on whatever is the default now.
-  const kept = keptDefault({ swarm: view.swarm, session: view.session, onScreen: view.snapshot?.run.id ?? null, swarms: view.swarms });
-  if (kept) {
-    view.swarm = kept;
-    swarmIsShown = true;
-  }
+  // The server pins a page that asked for no swarm only for one connection, so a page with no swarm of its own asks for
+  // the swarm on screen (or, before its first snapshot, the transport swarm it already had) when it connects again,
+  // instead of landing on whatever is the default now. That is a transport swarm only: the page stays a default page.
+  shownSwarm = view.swarm ? null : keptDefault({ swarm: null, session: view.session, onScreen: view.snapshot?.run.id ?? shownSwarm, swarms: view.swarms });
+  const asked = view.swarm ?? shownSwarm;
   const query = new URLSearchParams();
-  if (view.swarm) query.set('swarm', view.swarm);
+  if (asked) query.set('swarm', asked);
   else if (view.session) query.set('session', view.session);
   const search = query.toString();
   const own = new EventSource(`/api/events${search ? `?${search}` : ''}`);
@@ -148,9 +148,9 @@ function connect() {
     const key = lifecycleKey(view.swarms);
     if (historyReloadWanted({ asked: historyAsked, previousKey: lifecycle, key })) reloadHistory();
     lifecycle = key;
-    if (swarmIsShown ? staleShown(view.swarm, view.swarms) : staleChoice(view.swarm, swarmFromUrl, view.swarms)) {
+    if (staleChoice(view.swarm, swarmFromUrl, view.swarms) || (!view.swarm && staleShown(shownSwarm, view.swarms))) {
       view.swarm = null;
-      swarmIsShown = false;
+      shownSwarm = null;
       view.snapshot = null;
       view.loaded = false;
       view.detail = null;
@@ -182,8 +182,8 @@ function considerReload() {
   try {
     sessionStorage.setItem(RELOAD_KEY, servedUi);
     // A picked swarm, or the swarm a default page shows, is not written to the address, so carry it in this tab's
-    // storage; each tab restores its own. The shown one travels apart, so the reloaded page keeps it temporary.
-    const carry = reloadCarry({ swarm: view.swarm, fromUrl: swarmFromUrl, shown: swarmIsShown, session: view.session, onScreen: view.snapshot?.run.id ?? null, swarms: view.swarms });
+    // storage; each tab restores its own. The shown one travels apart, so the reloaded page keeps it a transport swarm.
+    const carry = reloadCarry({ swarm: view.swarm, fromUrl: swarmFromUrl, session: view.session, onScreen: view.snapshot?.run.id ?? null, transport: shownSwarm, swarms: view.swarms });
     if (carry.pick) sessionStorage.setItem(PICK_KEY, carry.pick);
     else sessionStorage.removeItem(PICK_KEY);
     if (carry.shown) sessionStorage.setItem(SHOWN_KEY, carry.shown);
@@ -448,7 +448,7 @@ dash.addEventListener('change', event => {
   if (!event.target.matches('select[data-swarm]')) return;
   view.swarm = event.target.value;
   swarmFromUrl = false;
-  swarmIsShown = false;
+  shownSwarm = null;
   view.snapshot = null;
   view.loaded = false;
   view.detail = null;
