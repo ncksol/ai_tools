@@ -381,3 +381,16 @@ test('the orchestrator\'s stuck flag for a sub-agent that has a unit follows the
   assert.equal(stuckOf(plain.log, T0 + 12 * MINUTE), 1);
   assert.equal(evaluate(fold(withInnerTool('view', { path: 'a.txt' }).log), T0 + 3 * MINUTE + 1).stuckSubagents.size, 0, 'a state with no unit keeps the silence rule');
 });
+
+test('the orchestrator gives the tool reason when its sub-agent is stuck on a tool, and the silence reason when it is stuck by silence', () => {
+  const rootEvaluate = (log, now) => evaluate(fold(log, 'cli-1', { subagentUnits: true }), now);
+  const view = rootEvaluate(withInnerTool('view', { path: 'a.txt' }).log, T0 + 4 * MINUTE);
+  assert.deepEqual([view.detail, view.since], ['stuck_subagent', T0 + MINUTE]);
+  assert.equal(view.reason, 'Sub-agent worker (general-purpose): view has run for 3 min with a limit of 2 min.');
+  const bash = rootEvaluate(withInnerTool('bash', { command: 'long job', initial_wait: 600 }).log, T0 + 17 * MINUTE);
+  assert.deepEqual([bash.detail, bash.since], ['stuck_subagent', T0 + MINUTE]);
+  assert.equal(bash.reason, 'Sub-agent worker (general-purpose): bash has run for 16 min with a limit of 15 min (initial_wait 10 min + 5 min).');
+  const silent = rootEvaluate(withInnerTool('web_fetch', { url: 'https://example.invalid' }).log, T0 + 12 * MINUTE);
+  assert.deepEqual([silent.detail, silent.since], ['stuck_subagent', T0 + MINUTE]);
+  assert.equal(silent.reason, 'Sub-agent worker (general-purpose) has had no events for 11 min; the limit is 10 min.');
+});

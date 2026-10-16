@@ -110,7 +110,8 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  *                   silence limit; completed 'done'/'completed'/'done'; failed 'blocked'/'failed'/'failed';
  *                   cancelled 'blocked'/'cancelled'/'failed'; the orchestrator's process ended while it ran
  *                   'blocked'/'crashed'/'failed'
- *   since           start of its current run; when stuck, its last event, or the start of the stuck tool call; once finished, endedAt
+ *   since           start of its current run; when stuck, its last event, or the start of the stuck tool call;
+ *                   once finished, endedAt
  *   reason          stuck: the rule and its numbers; failed: the error; cancelled: when; crashed: why
  *   startedAt       when it started       endedAt: when it finished (after a follow-up: when its last turn ended, or when an
  *                                         abort or the end of the orchestrator's process stopped it);

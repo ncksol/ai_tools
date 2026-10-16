@@ -162,6 +162,11 @@ export function evaluateStatus(input) {
   }
   if (stuckSubagents.size) {
     const sub = state.subagents.get([...stuckSubagents][0]);
+    // A sub-agent with a unit that is stuck on a tool call gets the unit's reason, so both views say the same.
+    const unitEvaluation = sub.unit ? evaluateSubagentUnit(sub, { alive: true, now, thresholds: t }) : null;
+    if (unitEvaluation?.detail === 'stuck_tool') {
+      return result('stuck_subagent', unitEvaluation.since, `Sub-agent ${sub.name} (${sub.type}): ${unitEvaluation.reason}`);
+    }
     return result('stuck_subagent', sub.lastEventAt,
       `Sub-agent ${sub.name} (${sub.type}) has had no events for ${formatDuration(now - sub.lastEventAt)}; the limit is ${formatDuration(subagentLimitMs(sub, t))}.`);
   }
