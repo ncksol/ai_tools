@@ -92,8 +92,9 @@ test('a PR without a repository is looked up only from an existing worktree', as
   lookup.request({ provider: 'ado', id: 8, repo: 'org/project/repo' }, { cwd: '/synthetic/gone' });
   await lookup.settle();
   assert.deepEqual(calls, [['6', '/synthetic/worktree'], ['8', undefined]]);
-  assert.equal(lookup.get({ provider: 'ado', id: 7, repo: null }).state, 'unknown');
-  assert.match(lookup.get({ provider: 'ado', id: 7, repo: null }).error, /worktree is gone/);
+  const gone = lookup.get({ provider: 'ado', id: 7, repo: null }, { cwd: '/synthetic/gone' });
+  assert.equal(gone.state, 'unknown');
+  assert.match(gone.error, /worktree is gone/);
 });
 
 test('a registry repository that is not organization/project/repo adds no organization and keeps the worktree fallback', async () => {
@@ -176,4 +177,52 @@ test('a missing azure-devops extension is reported, never installed', async () =
     'Azure DevOps PR state is unavailable: the azure-devops extension for az is not installed (the dashboard never installs it).');
   assert.equal(calls.length, 1);
   assert.ok(calls.every(call => !call.some(arg => /extension|config/.test(arg))));
+});
+
+test('PRs without a repository are kept apart by worktree, and PRs with one share an entry', async () => {
+  const cases = [
+    { provider: 'ado', repo: 'org/project/repo', merged: '{"status":"completed"}', open: '{"status":"active"}' },
+    { provider: 'github', repo: 'o/r', merged: '{"state":"MERGED"}', open: '{"state":"OPEN"}' },
+  ];
+  for (const { provider, repo, merged, open } of cases) {
+    const gates = [];
+    const run = (command, args, options) => new Promise(resolve => gates.push({ cwd: options.cwd, release: () => resolve(options.cwd === '/synthetic/a' ? merged : open) }));
+    const lookup = createPrLookup({ run, exists: () => true });
+    const pr = { provider, id: 42, repo: null };
+    const inA = { cwd: '/synthetic/a' };
+    const inB = { cwd: '/synthetic/b' };
+    lookup.request(pr, inA);
+    assert.equal(lookup.pending(pr, inA), true, provider);
+    assert.equal(lookup.pending(pr, inB), false, provider);
+    lookup.request(pr, inB);
+    assert.deepEqual(gates.map(gate => gate.cwd), ['/synthetic/a', '/synthetic/b'], provider);
+    for (const gate of gates) gate.release();
+    await lookup.settle();
+    assert.equal(lookup.get(pr, inA).state, 'merged', provider);
+    assert.equal(lookup.get(pr, inB).state, 'open', provider);
+    assert.equal(lookup.pending(pr, inA), false, provider);
+
+    const shared = { provider, id: 43, repo };
+    lookup.request(shared, inA);
+    lookup.request(shared, inB);
+    assert.equal(gates.length, 3, provider);
+    assert.equal(lookup.pending(shared, inB), true, provider);
+    gates[2].release();
+    await lookup.settle();
+    assert.equal(lookup.get(shared, inB), lookup.get(shared, inA), provider);
+    assert.equal(lookup.get(shared), lookup.get(shared, inA), provider);
+  }
+});
+
+test('lookup errors name the PR without the worktree path', async () => {
+  const lookup = createPrLookup({ run: async () => { throw new Error('az failed: not logged in'); }, exists: () => true });
+  lookup.request({ provider: 'ado', id: 42, repo: null }, { cwd: '/synthetic/private/worktree' });
+  lookup.request({ provider: 'ado', id: 43, repo: 'org/project/repo' });
+  await lookup.settle();
+  const errors = lookup.errors();
+  assert.deepEqual(errors, [
+    { key: 'ado:worktree:42', error: 'az failed: not logged in' },
+    { key: 'ado:org/project/repo:43', error: 'az failed: not logged in' },
+  ]);
+  assert.ok(errors.every(entry => !entry.key.includes('/synthetic')));
 });

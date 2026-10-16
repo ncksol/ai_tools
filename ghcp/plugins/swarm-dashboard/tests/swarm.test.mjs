@@ -7,6 +7,7 @@ import { buildForest } from '../engine/model/forest.mjs';
 import { buildSegments, buildSnapshot, deriveLabels, runLifecycle, splitFeed } from '../engine/model/swarm.mjs';
 import { ACTIVE_DETAILS } from '../engine/model/status.mjs';
 import { summarizeRun } from '../engine/model/history.mjs';
+import { createPrLookup } from '../engine/model/pr-lookup.mjs';
 import { HOUR, MINUTE } from '../engine/time.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { fold } from './helpers/fold.mjs';
@@ -316,6 +317,42 @@ test('a unit on an unknown code host gets no PR from mentions', () => {
   assert.equal(api.pr, null);
   assert.equal(api.stage, 'coding');
   assert.equal(data.requests.length, 0);
+});
+
+test('the same report-inferred PR number in two worktrees keeps each worktree\'s own state', async () => {
+  const data = input(false);
+  const reporting = (start, minute) => {
+    const log = new EventLog(at(start));
+    log.start(); log.turnStart(); log.at(at(minute));
+    log.report('ws-root', 'Opened PR !42 for review.', 'handoff');
+    log.turnEnd();
+    return log;
+  };
+  data.states.set('cli-api', fold(reporting(5, 30), 'cli-api'));
+  data.states.set('cli-ui', fold(reporting(6, 40), 'cli-ui'));
+  data.workspaceFiles.set('cli-api', { cwd: '/synthetic/worktrees/api', branch: 'feature/api', hostType: 'ado', repository: null });
+  data.workspaceFiles.set('cli-ui', { cwd: '/synthetic/worktrees/ui', branch: 'feature/ui', hostType: 'ado', repository: null });
+  const calls = [];
+  const lookup = createPrLookup({
+    run: async (command, args, options) => {
+      calls.push(options.cwd);
+      return options.cwd === '/synthetic/worktrees/api' ? '{"status":"completed","closedDate":"2026-10-15T09:50:00Z"}' : '{"status":"active"}';
+    },
+    now: () => at(120), exists: () => true,
+  });
+  data.prInfo = (pr, { cwd }) => {
+    lookup.request(pr, { cwd });
+    return lookup.get(pr, { cwd });
+  };
+  buildSnapshot(data);
+  await lookup.settle();
+  const units = buildSnapshot(data).units;
+  const api = units.find(unit => unit.id === 'ws-api');
+  const ui = units.find(unit => unit.id === 'ws-ui');
+  assert.deepEqual(calls.sort(), ['/synthetic/worktrees/api', '/synthetic/worktrees/ui']);
+  assert.deepEqual([api.pr.id, api.pr.state, api.outcome, api.stage], [42, 'merged', 'merged', 'merged']);
+  assert.deepEqual([ui.pr.id, ui.pr.state, ui.outcome], [42, 'open', null]);
+  assert.notEqual(ui.stage, 'merged');
 });
 
 /** The unit sent no report of its own; only the orchestrator's received copy of its status line exists. */

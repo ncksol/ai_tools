@@ -270,8 +270,8 @@ export function createSwarmEngine(options = {}) {
       prInfo: (pr, { cwd }) => {
         if (!lookup) return null;
         lookup.request(pr, { cwd });
-        if (lookup.pending?.(pr)) sawPending = true;
-        return lookup.get(pr);
+        if (lookup.pending?.(pr, { cwd })) sawPending = true;
+        return lookup.get(pr, { cwd });
       },
     });
     if (sawPending) pendingRoots.add(rootId);

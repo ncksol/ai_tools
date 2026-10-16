@@ -39,9 +39,13 @@ export function runCommand(command, args, { cwd, timeoutMs, env }) {
   });
 }
 
-export const prKey = pr => `${pr.provider}:${pr.repo ?? ''}:${pr.id}`;
-
 const adoOrg = pr => (typeof pr.repo === 'string' && ADO_REPO.test(pr.repo) ? pr.repo.split('/')[0] : null);
+
+/** The repository a lookup can name on the command line, or null when it has to run in the unit's worktree. */
+export const targetOf = pr => (pr.provider === 'ado' ? adoOrg(pr) : typeof pr.repo === 'string' && GITHUB_REPO.test(pr.repo) ? pr.repo : null);
+
+/** Cache key. A PR without a usable repository is resolved in its worktree, so the worktree is part of its identity. */
+export const prKey = (pr, cwd = null) => (targetOf(pr) ? `${pr.provider}:${pr.repo}:${pr.id}` : `${pr.provider}:@${cwd ?? ''}:${pr.id}`);
 
 export function adoArgs(pr) {
   const args = ['repos', 'pr', 'show', '--id', String(pr.id), '--output', 'json'];
@@ -90,11 +94,12 @@ export function createPrLookup({ run = runCommand, now = Date.now, ttlMs = 5 * M
   let waiters = [];
   const isFinal = info => info.state === 'merged' || info.state === 'closed';
   const due = key => {
-    const info = cache.get(key);
+    const info = cache.get(key)?.info;
     return !info || (!isFinal(info) && now() - info.checkedAt >= ttlMs);
   };
 
-  async function lookup({ pr, key, cwd }) {
+  async function lookup({ pr, key, label, cwd }) {
+    const store = info => cache.set(key, { label, info });
     try {
       if (cwd && !exists(cwd)) throw new Error('its worktree is gone, so its repository is unknown');
       const ado = pr.provider === 'ado';
@@ -106,9 +111,9 @@ export function createPrLookup({ run = runCommand, now = Date.now, ttlMs = 5 * M
         if (ado && MISSING_EXTENSION.test(error.message)) throw new Error(MISSING_EXTENSION_MESSAGE);
         throw error;
       }
-      cache.set(key, { ...(ado ? mapAdo : mapGithub)(JSON.parse(stdout)), checkedAt: now(), error: null });
+      store({ ...(ado ? mapAdo : mapGithub)(JSON.parse(stdout)), checkedAt: now(), error: null });
     } catch (error) {
-      cache.set(key, { ...(cache.get(key) ?? EMPTY_INFO), checkedAt: now(), error: error.message });
+      store({ ...(cache.get(key)?.info ?? EMPTY_INFO), checkedAt: now(), error: error.message });
     }
   }
 
@@ -132,20 +137,21 @@ export function createPrLookup({ run = runCommand, now = Date.now, ttlMs = 5 * M
 
   function request(pr, { cwd = null } = {}) {
     if (!pr || !Number.isInteger(pr.id) || pr.id <= 0 || (pr.provider !== 'ado' && pr.provider !== 'github')) return;
-    const key = prKey(pr);
-    if (inflight.has(key) || !due(key)) return;
-    const target = pr.provider === 'ado' ? adoOrg(pr) : pr.repo && GITHUB_REPO.test(pr.repo) ? pr.repo : null;
+    const target = targetOf(pr);
     if (!target && !cwd) return;
+    const key = prKey(pr, cwd);
+    if (inflight.has(key) || !due(key)) return;
     inflight.add(key);
-    queue.push({ pr, key, cwd: target ? null : cwd });
+    // The label goes into diagnostics, so it never holds the worktree path.
+    queue.push({ pr, key, label: `${pr.provider}:${pr.repo ?? 'worktree'}:${pr.id}`, cwd: target ? null : cwd });
     pump();
   }
 
   return {
-    get: pr => cache.get(prKey(pr)) ?? null,
+    get: (pr, { cwd = null } = {}) => cache.get(prKey(pr, cwd))?.info ?? null,
     request,
-    pending: pr => Boolean(pr) && inflight.has(prKey(pr)),
+    pending: (pr, { cwd = null } = {}) => Boolean(pr) && inflight.has(prKey(pr, cwd)),
     settle: () => (active || queue.length ? new Promise(resolve => waiters.push(resolve)) : Promise.resolve()),
-    errors: () => [...cache].filter(([, info]) => info.error).map(([key, info]) => ({ key, error: info.error })),
+    errors: () => [...cache.values()].filter(({ info }) => info.error).map(({ label, info }) => ({ key: label, error: info.error })),
   };
 }
