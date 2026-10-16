@@ -86,17 +86,18 @@ export function baseSearch(params) {
  * The page's own swarm at start: one named in the address, else one picked before a self-reload, else none for a page
  * opened for a session (the server picks that session's swarm) or for a page that showed the default before a
  * self-reload (it stays a default page, see startShown), else the one remembered from an earlier visit.
- * Only the first counts as addressed; the others keep the picker's "only while live" rule (see staleChoice).
+ * Only the first counts as addressed; the others keep the picker's "only while live" rule (see staleChoice). An empty
+ * value counts as none, as on the server.
  */
 export function startSwarm({ urlSwarm, restoredPick, restoredShown = null, session, savedSwarm }) {
-  return urlSwarm ?? restoredPick ?? (session || restoredShown ? null : savedSwarm ?? null);
+  return urlSwarm || restoredPick || (session || restoredShown ? null : savedSwarm || null);
 }
 /**
  * The transport swarm a page starts with: the swarm it showed by default before a self-reload, when no address, pick or
  * session decides. The page asks for it on the wire only; it is never the page's own choice, and it gives way as a
- * default page does on the server (see staleShown).
+ * default page does on the server (see staleShown). An empty value counts as none.
  */
-export const startShown = ({ urlSwarm, restoredPick, restoredShown, session }) => (!urlSwarm && !restoredPick && !session ? restoredShown ?? null : null);
+export const startShown = ({ urlSwarm, restoredPick, restoredShown, session }) => (!urlSwarm && !restoredPick && !session ? restoredShown || null : null);
 
 /** Wrap load so that calls never overlap: a call made while one runs makes it run once more afterwards, even if that run failed. */
 export function coalesced(load) {

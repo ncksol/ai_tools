@@ -25,7 +25,9 @@ function readSaved() {
   }
 }
 const saved = readSaved();
-const urlSwarm = params.get('swarm');
+// An empty parameter is no parameter, as on the server.
+const urlSwarm = params.get('swarm') || null;
+const urlSession = params.get('session') || null;
 /** After a self-reload: the swarm picked or shown by default before it, and whether the address still carries the reload's state. */
 let restoredPick = null;
 let restoredShown = null;
@@ -49,8 +51,8 @@ const view = {
   detail: params.get('detail'),
   runId: params.get('run'),
   /** The page's own swarm: addressed, picked or remembered. The UI, the picker and save() read only this. */
-  swarm: startSwarm({ urlSwarm, restoredPick, restoredShown, session: params.get('session'), savedSwarm: saved.swarm }),
-  session: params.get('session'),
+  swarm: startSwarm({ urlSwarm, restoredPick, restoredShown, session: urlSession, savedSwarm: saved.swarm }),
+  session: urlSession,
   narrow: false,
   loaded: false,
   snapshot: null,
@@ -70,7 +72,7 @@ let swarmFromUrl = Boolean(urlSwarm);
 // The transport swarm: the swarm a page with no swarm of its own showed by default, which it asks for on the wire after a
 // self-reload or a reconnect. It is never the page's own choice, so the UI, the picker and save() never see it, and it
 // gives way as a default page does on the server. Only connect(), the swarms handler and considerReload use it.
-let shownSwarm = startShown({ urlSwarm, restoredPick, restoredShown, session: params.get('session') });
+let shownSwarm = startShown({ urlSwarm, restoredPick, restoredShown, session: urlSession });
 let offset = 0;
 let source = null;
 let reconnectTimer = null;
@@ -106,7 +108,7 @@ function connect() {
   // the swarm on screen (or, before its first snapshot, the transport swarm it already had) when it connects again,
   // instead of landing on whatever is the default now. That is a transport swarm only: the page stays a default page.
   shownSwarm = view.swarm ? null : keptDefault({ swarm: null, session: view.session, onScreen: view.snapshot?.run.id ?? shownSwarm, swarms: view.swarms });
-  const asked = view.swarm ?? shownSwarm;
+  const asked = view.swarm || shownSwarm;
   const query = new URLSearchParams();
   if (asked) query.set('swarm', asked);
   else if (view.session) query.set('session', view.session);

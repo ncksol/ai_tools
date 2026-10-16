@@ -261,6 +261,28 @@ test('a page that showed the default before a self-reload stays a default page, 
   }
 });
 
+test('an empty swarm, pick, shown swarm, session or remembered swarm counts as none', () => {
+  // [input, the page's own swarm (startSwarm), the transport swarm it asks for (startShown)]
+  const none = { urlSwarm: null, restoredPick: null, restoredShown: null, session: null, savedSwarm: null };
+  const cases = [
+    [{ ...none, urlSwarm: '' }, null, null],
+    [{ ...none, urlSwarm: '', savedSwarm: 'ws-saved' }, 'ws-saved', null],
+    [{ ...none, urlSwarm: '', restoredShown: 'ws-shown', savedSwarm: 'ws-saved' }, null, 'ws-shown'],
+    [{ ...none, session: '', savedSwarm: 'ws-saved' }, 'ws-saved', null],
+    [{ ...none, session: '', restoredShown: 'ws-shown' }, null, 'ws-shown'],
+    [{ ...none, restoredPick: '', savedSwarm: 'ws-saved' }, 'ws-saved', null],
+    [{ ...none, restoredPick: '', restoredShown: 'ws-shown' }, null, 'ws-shown'],
+    [{ ...none, restoredShown: '', savedSwarm: 'ws-saved' }, 'ws-saved', null],
+    [{ ...none, restoredShown: '' }, null, null],
+    [{ ...none, savedSwarm: '' }, null, null],
+    [{ urlSwarm: '', restoredPick: '', restoredShown: '', session: '', savedSwarm: '' }, null, null],
+  ];
+  for (const [input, swarm, shown] of cases) {
+    assert.equal(startSwarm(input), swarm, `startSwarm ${JSON.stringify(input)}`);
+    assert.equal(startShown(input), shown, `startShown ${JSON.stringify(input)}`);
+  }
+});
+
 test('a swarm shown by default gives way once it is no longer live while another swarm is', () => {
   const swarms = fixture('example-swarms.json');
   const none = swarms.map(swarm => ({ ...swarm, lifecycle: 'finished' }));

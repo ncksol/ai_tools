@@ -92,12 +92,20 @@ test('at start-up the page restores a picked swarm and cleans the address only a
 
 test('at start-up the page restores a swarm it showed by default as a transport swarm, never as its own choice', () => {
   const main = readFileSync(file('main.mjs'), 'utf8');
-  for (const needle of ['sessionStorage.getItem(SHOWN_KEY)', 'sessionStorage.removeItem(SHOWN_KEY)', 'let shownSwarm = startShown({ urlSwarm, restoredPick, restoredShown, session: params.get(\'session\') });']) assert.ok(main.includes(needle), needle);
-  assert.match(main, /startSwarm\(\{ urlSwarm, restoredPick, restoredShown, session: params\.get\('session'\), savedSwarm: saved\.swarm \}\)/);
+  for (const needle of ['sessionStorage.getItem(SHOWN_KEY)', 'sessionStorage.removeItem(SHOWN_KEY)', 'let shownSwarm = startShown({ urlSwarm, restoredPick, restoredShown, session: urlSession });']) assert.ok(main.includes(needle), needle);
+  assert.match(main, /startSwarm\(\{ urlSwarm, restoredPick, restoredShown, session: urlSession, savedSwarm: saved\.swarm \}\)/);
   const save = main.slice(main.indexOf('function save()'), main.indexOf('\n}\n', main.indexOf('function save()')));
   assert.ok(save.includes('swarm: view.swarm'), 'save() remembers the page\'s own swarm');
   assert.ok(!save.includes('shownSwarm'), 'a transport swarm is never remembered');
   assert.ok(!main.includes('swarmIsShown'), 'no swarmIsShown is left');
+});
+
+test('an empty swarm or session parameter reads as none, as on the server', () => {
+  const main = readFileSync(file('main.mjs'), 'utf8');
+  assert.ok(main.includes("const urlSwarm = params.get('swarm') || null;"), 'an empty swarm parameter is no swarm');
+  assert.ok(main.includes("const urlSession = params.get('session') || null;"), 'an empty session parameter is no session');
+  assert.ok(main.includes('session: urlSession,'), 'the page keeps the normalized session');
+  assert.doesNotMatch(main, /params\.get\('(?:swarm|session)'\)(?! \|\| null)/, 'every read of the swarm or session parameter is normalized');
 });
 
 test('a transport swarm gives way as on the server, and picking a swarm clears it', () => {
@@ -129,7 +137,7 @@ test('a page showing the default asks for the swarm on screen whenever it connec
     return body.indexOf(needle);
   };
   assert.ok(at('shownSwarm = view.swarm ? null : keptDefault(') < at('new URLSearchParams()'), 'the swarm on screen is kept before the query is built');
-  assert.ok(at('const asked = view.swarm ?? shownSwarm;') < at('new EventSource('), 'the page asks for its own swarm, else the transport swarm');
+  assert.ok(at('const asked = view.swarm || shownSwarm;') < at('new EventSource('), 'the page asks for its own swarm, else the transport swarm, and an empty choice never masks it');
   assert.ok(at("if (asked) query.set('swarm', asked);") < at('new EventSource('));
   assert.doesNotMatch(body.slice(0, at('new EventSource(')), /view\.swarm\s*=[^=]/, 'connecting never changes the page\'s own swarm');
   const pageshow = main.slice(main.indexOf("addEventListener('pageshow'"));
