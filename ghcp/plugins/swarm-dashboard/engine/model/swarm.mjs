@@ -407,7 +407,7 @@ function assignSubagentLabels(subs, taken) {
   const used = new Set([...taken].map(label => label.toLowerCase()));
   const labels = new Map();
   subs.forEach((sub, index) => {
-    const base = safeLabel(sub.unit.labelName) || `${safeLabel(sub.type).slice(0, 28) || 'agent'}-${index + 1}`;
+    const base = safeLabel(sub.unit.taskName) || `${safeLabel(sub.unit.labelType).slice(0, 28) || 'agent'}-${index + 1}`;
     let label = base;
     for (let n = 2; used.has(label.toLowerCase()); n += 1) label = `${base.slice(0, LABEL_MAX - `-${n}`.length)}-${n}`;
     used.add(label.toLowerCase());

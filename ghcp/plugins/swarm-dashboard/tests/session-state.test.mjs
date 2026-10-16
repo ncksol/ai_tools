@@ -759,16 +759,21 @@ test('an abort ends a sync child of an evicted sync top sub-agent with it, and k
   assert.deepEqual(background.state.subagentOutcomes, { completed: 0, failed: 0, cancelled: 0 });
 });
 
-test('a unit keeps its label base from launch: the name argument, else the description, else nothing', () => {
+test('a unit keeps its label base and label type from launch: the name argument (else null) and the task call\'s agent type', () => {
   const log = new EventLog(T0);
   log.start(); log.turnStart();
-  const named = log.tool('task', { name: 'Named one', description: 'a description', agent_type: 'explore', mode: 'background' });
-  const described = log.tool('task', { description: 'Only a description', agent_type: 'explore', mode: 'background' });
-  const bare = log.tool('task', { agent_type: 'explore', mode: 'background' });
+  const named = log.tool('task', { name: 'Named one', description: 'a description', agent_type: 'general-purpose', mode: 'background' });
+  const described = log.tool('task', { description: 'Only a description', agent_type: 'general-purpose', mode: 'background' });
+  const bare = log.tool('task', { mode: 'background' });
+  log.push('subagent.started', { toolCallId: named, agentType: 'explore', agentDisplayName: 'Display Name', executionMode: 'background' }, { agentId: 'agent-n' });
   log.push('subagent.started', { toolCallId: described, agentType: 'explore', agentDisplayName: 'Display Name', executionMode: 'background' }, { agentId: 'agent-d' });
-  const state = foldRoot(log);
-  assert.deepEqual([named, described, bare].map(id => unitOf(state, id).labelName), ['Named one', 'Only a description', null]);
-  assert.equal(state.subagents.get(described).name, 'Display Name', 'the display name replaces the chip name, not the label base');
+  let state = foldRoot(log);
+  assert.deepEqual([named, described, bare].map(id => [unitOf(state, id).taskName, unitOf(state, id).labelType]),
+    [['Named one', 'general-purpose'], [null, 'general-purpose'], [null, 'task']]);
+  assert.deepEqual([state.subagents.get(described).type, state.subagents.get(described).name], ['explore', 'Display Name'], 'the start event changes the chip, not the label inputs');
+  log.push('tool.execution_start', { toolCallId: described, toolName: 'task', arguments: { name: 'Now named', agent_type: 'review', mode: 'background' } });
+  state = foldRoot(log);
+  assert.deepEqual([unitOf(state, described).taskName, unitOf(state, described).labelType], ['Now named', 'review'], 'a repeated start refreshes both');
 });
 
 test('a unit keeps its full busy time when old runs drop out of the bounded list', () => {

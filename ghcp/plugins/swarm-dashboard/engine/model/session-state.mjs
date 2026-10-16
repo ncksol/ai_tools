@@ -271,18 +271,19 @@ function closeRun(unit, at) {
   if (last && last[1] === null) last[1] = Math.max(at, last[0]);
 }
 
+/** The task's `name` argument: the base of a unit's label. Fixed at launch; the display name that arrives with subagent.started never changes it. */
 function taskNameOf(args) {
   return (typeof args.name === 'string' ? oneLine(args.name, 80) : '') || null;
 }
 
-/** What a unit's label is made from, fixed at launch: the name argument, else the description. The display name that arrives with subagent.started never changes it. */
-function labelNameOf(args) {
-  return taskNameOf(args) ?? ((typeof args.description === 'string' ? oneLine(args.description, 80) : '') || null);
+/** The task call's agent type. A unit's label falls back to it, fixed at launch, though subagent.started can retype the sub-agent. */
+function agentTypeOf(args) {
+  return oneLine(args.agent_type ?? 'task', 60) || 'task';
 }
 
 function newUnit(args, at) {
   return {
-    taskName: taskNameOf(args), labelName: labelNameOf(args), runs: [[at, null]], droppedBusyMs: 0, turnOpen: false, lastTurnEndAt: null,
+    taskName: taskNameOf(args), labelType: agentTypeOf(args), runs: [[at, null]], droppedBusyMs: 0, turnOpen: false, lastTurnEndAt: null,
     openTools: new Map(), lastMessage: null, error: null, feed: [], children: [], firstFinishAt: null,
   };
 }
@@ -457,7 +458,7 @@ function evictSubagent(state) {
 function subagentFields(args) {
   return {
     name: oneLine(args.name ?? args.description ?? 'sub-agent', 80) || 'sub-agent',
-    type: oneLine(args.agent_type ?? 'task', 60) || 'task',
+    type: agentTypeOf(args),
     mode: args.mode === 'background' ? 'background' : 'sync',
     model: typeof args.model === 'string' ? args.model : null,
     effort: typeof args.reasoning_effort === 'string' ? args.reasoning_effort : null,
@@ -488,7 +489,7 @@ function newSubagent(state, id, at, args) {
     Object.assign(known, rest);
     if (known.unit) {
       known.unit.taskName = taskNameOf(args);
-      known.unit.labelName = labelNameOf(args);
+      known.unit.labelType = agentTypeOf(args);
     }
     retypeSubagent(state, known, type);
     return known;

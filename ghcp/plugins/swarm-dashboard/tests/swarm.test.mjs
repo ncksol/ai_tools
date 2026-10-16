@@ -640,7 +640,7 @@ test('labels come from the task names, made safe, unique against every label, an
     for (const name of ['api', 'Fix the bug!', 'fix the bug', '***', 'API', 'x'.repeat(40), 'x'.repeat(40), 'ss']) start(name);
     root.wait(MINUTE);
     const described = root.tool('task', { description: 'Do things!', agent_type: 'explore', mode: 'background' });
-    root.push('subagent.started', { toolCallId: described, agentType: 'explore', agentDisplayName: 'Renamed at start', executionMode: 'background' });
+    root.push('subagent.started', { toolCallId: described, agentType: 'review', agentDisplayName: 'Renamed at start', executionMode: 'background' });
     root.wait(MINUTE);
     root.tool('task', { agent_type: 'review', mode: 'background' });
     start('export');
@@ -650,12 +650,24 @@ test('labels come from the task names, made safe, unique against every label, an
   assert.equal(snapshot.orchestrator.label, 'SS');
   assert.deepEqual(snapshot.planned.map(entry => entry.label), ['export']);
   assert.deepEqual(subUnits(snapshot).map(unit => unit.label), [
-    'api-2', 'Fix-the-bug', 'fix-the-bug-2', 'explore-4', 'API-3', 'x'.repeat(32), `${'x'.repeat(30)}-2`, 'ss-2', 'Do-things', 'review-10', 'export-2',
+    'api-2', 'Fix-the-bug', 'fix-the-bug-2', 'explore-4', 'API-3', 'x'.repeat(32), `${'x'.repeat(30)}-2`, 'ss-2', 'explore-9', 'review-10', 'export-2',
   ]);
-  assert.equal(subUnits(snapshot)[8].name, 'Do things!', 'the unit is named by its description; the display name does not change its label');
+  assert.equal(subUnits(snapshot)[8].name, 'Do things!', 'a task without a name is labelled by its type and position; the unit is still named by its description');
   const labels = [snapshot.orchestrator.label, ...snapshot.units.map(unit => unit.label), ...snapshot.planned.map(entry => entry.label)].map(label => label.toLowerCase());
   assert.equal(new Set(labels).size, labels.length);
   assert.ok(subUnits(snapshot).every(unit => /^[A-Za-z0-9._-]{1,32}$/.test(unit.label)));
+});
+
+test('a task without a name keeps its type-and-position label when its start event names another type', () => {
+  const { data } = withSubagents(root => {
+    root.at(at(100));
+    const call = root.tool('task', { agent_type: 'general-purpose', mode: 'background' });
+    root.push('subagent.started', { toolCallId: call, agentType: 'explore', agentDisplayName: 'Display Name', executionMode: 'background' }, { agentId: 'ag-late' });
+  });
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  const [unit] = subUnits(snapshot);
+  assert.deepEqual([unit.label, unit.agent.type, unit.name], ['general-purpose-1', 'explore', 'Display Name']);
 });
 
 test('a sub-agent keeps its label when the set of listed units changes', () => {
