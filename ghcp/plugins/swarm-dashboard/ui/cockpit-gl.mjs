@@ -30,10 +30,14 @@ function program(gl, source, name) {
 export function createRenderer(canvas) {
   const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, depth: false, stencil: false, powerPreference: 'low-power', preserveDrawingBuffer: false });
   if (!gl) throw new Error('WebGL2 is not available');
-  // Half-float targets keep the black hole in HDR for bloom and tone mapping; without them, 8-bit targets still work.
-  const hdr = Boolean(gl.getExtension('EXT_color_buffer_float'));
-  const format = hdr ? gl.RGBA16F : gl.RGBA8;
-  const type = hdr ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE;
+  // Half-float targets keep the black hole in HDR for bloom and tone mapping; without them, or when the device cannot
+  // allocate them, 8-bit targets still work.
+  let hdr = Boolean(gl.getExtension('EXT_color_buffer_float'));
+  let format = hdr ? gl.RGBA16F : gl.RGBA8;
+  let type = hdr ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE;
+  // Neither side of the canvas goes past 4096 px or the device's texture and viewport limits.
+  const viewportLimit = gl.getParameter(gl.MAX_VIEWPORT_DIMS);
+  const maxSide = Math.min(4096, gl.getParameter(gl.MAX_TEXTURE_SIZE), viewportLimit[0], viewportLimit[1]);
   const programs = { hole: program(gl, HOLE, 'hole'), prefilter: program(gl, PREFILTER, 'prefilter'), down: program(gl, DOWN, 'down'), up: program(gl, UP, 'up'), final: program(gl, FINAL, 'final') };
   const vao = gl.createVertexArray();
   gl.bindVertexArray(vao);
@@ -43,11 +47,7 @@ export function createRenderer(canvas) {
   let height = 0;
   let holeView = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
 
-  function target(old, w, h) {
-    if (old) {
-      gl.deleteTexture(old.tex);
-      gl.deleteFramebuffer(old.fbo);
-    }
+  function target(w, h) {
     const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.texImage2D(gl.TEXTURE_2D, 0, format, w, h, 0, gl.RGBA, type, null);
@@ -55,8 +55,40 @@ export function createRenderer(canvas) {
     const fbo = gl.createFramebuffer();
     gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    if (status !== gl.FRAMEBUFFER_COMPLETE) {
+      gl.deleteTexture(tex);
+      gl.deleteFramebuffer(fbo);
+      throw new Error(`render target ${w} × ${h} is not supported`);
+    }
     return { tex, fbo, w, h };
+  }
+
+  function release() {
+    for (const old of [targets.hole, ...targets.down, ...targets.up]) {
+      if (!old) continue;
+      gl.deleteTexture(old.tex);
+      gl.deleteFramebuffer(old.fbo);
+    }
+    targets.hole = null;
+    targets.down = [];
+    targets.up = [];
+  }
+
+  /** The black hole target and the bloom chain below it; on failure nothing is left allocated. */
+  function allocate(hw, hh) {
+    release();
+    try {
+      targets.hole = target(hw, hh);
+      for (let i = 0; i < levels; i += 1) {
+        targets.down[i] = target(Math.max(1, hw >> (i + 1)), Math.max(1, hh >> (i + 1)));
+        if (i < levels - 1) targets.up[i] = target(Math.max(1, hw >> (i + 1)), Math.max(1, hh >> (i + 1)));
+      }
+    } catch (error) {
+      release();
+      throw error;
+    }
   }
 
   function use(prog, into) {
@@ -139,16 +171,23 @@ export function createRenderer(canvas) {
 
   return {
     resize(cssWidth, cssHeight, dpr, holeScale) {
-      width = Math.max(1, Math.min(4096, Math.round(cssWidth * dpr)));
-      height = Math.max(1, Math.round((cssHeight * width) / cssWidth));
+      // One scale for both sides keeps the aspect ratio; within the limits it is 1 and changes nothing.
+      const scale = Math.min(1, maxSide / (cssWidth * dpr), maxSide / (cssHeight * dpr));
+      width = Math.max(1, Math.min(maxSide, Math.round(cssWidth * dpr * scale)));
+      height = Math.max(1, Math.min(maxSide, Math.round((cssHeight * width) / cssWidth)));
       canvas.width = width;
       canvas.height = height;
       const hw = Math.max(64, Math.round(width * holeScale));
       const hh = Math.max(36, Math.round(height * holeScale));
-      targets.hole = target(targets.hole, hw, hh);
-      for (let i = 0; i < levels; i += 1) {
-        targets.down[i] = target(targets.down[i], Math.max(1, hw >> (i + 1)), Math.max(1, hh >> (i + 1)));
-        if (i < levels - 1) targets.up[i] = target(targets.up[i], Math.max(1, hw >> (i + 1)), Math.max(1, hh >> (i + 1)));
+      try {
+        allocate(hw, hh);
+      } catch (error) {
+        if (!hdr) throw error;
+        // Half-float targets failed: switch to 8-bit targets for good and try once more.
+        hdr = false;
+        format = gl.RGBA8;
+        type = gl.UNSIGNED_BYTE;
+        allocate(hw, hh);
       }
       return { holeWidth: hw, holeHeight: hh, width, height, hdr };
     },

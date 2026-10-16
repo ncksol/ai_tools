@@ -18,12 +18,12 @@ test('every shader is GLSL ES 3.00 with its constants filled in', () => {
 });
 
 /** A synthetic frame: dark sky, a peach ceiling arc, stars on the left, a ring and disk around a black shadow, a dark desk. */
-function syntheticFrame(width = 240, height = 150) {
+function syntheticFrame({ width = 240, height = 150, stars = 40 } = {}) {
   const data = new Uint8Array(width * height * 4);
   const set = (x, y, [r, g, b]) => { const i = (y * width + x) * 4; data[i] = r; data[i + 1] = g; data[i + 2] = b; data[i + 3] = 255; };
   for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) set(x, y, [6, 7, 12]);
   for (let x = 0; x < width; x += 1) set(x, 4 + Math.round(((x - width / 2) / width) ** 2 * 20), [230, 170, 150]);
-  for (let k = 0; k < 40; k += 1) set(4 + ((k * 37) % 50), 20 + ((k * 23) % 40), [255, 250, 240]);
+  for (let k = 0; k < stars; k += 1) set(4 + ((k * 37) % 50), 20 + ((k * 23) % 40), [255, 250, 240]);
   for (let x = 60; x < 180; x += 1) for (let y = 70; y < 80; y += 1) set(x, y, [250, 190, 140]);
   for (let y = 41; y < 70; y += 1) for (let x = 100; x < 140; x += 1) set(x, y, [0, 0, 0]);
   for (let y = 80; y < 110; y += 1) for (let x = 100; x < 140; x += 1) set(x, y, [0, 0, 0]);
@@ -38,6 +38,13 @@ test('the frame analysis finds the shadow, the ceiling line, the stars and the d
   assert.ok(metrics.stars >= 30, `stars ${metrics.stars}`);
   assert.ok(metrics.desk < 0.05, `desk ${metrics.desk}`);
   assert.deepEqual(sceneProblems(metrics, { ...SCENE_LIMITS, mean: [0, 1] }), []);
+});
+
+test('a frame without stars fails the stars check, though its ceiling line is bright', () => {
+  const metrics = analyseFrame(syntheticFrame({ stars: 0 }));
+  assert.equal(metrics.stars, 0);
+  const problems = sceneProblems(metrics, { ...SCENE_LIMITS, mean: [0, 1] });
+  assert.ok(problems.some(problem => problem.includes('stars')), problems.join('; '));
 });
 
 test('a black frame fails every structural check', () => {

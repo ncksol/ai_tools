@@ -360,8 +360,8 @@ void main() {
     float fresnel = 0.05 + 0.5 * pow(1.0 - abs(rd.y), 6.0);
     float near = smoothstep(RC * 0.35, RC, rr);
     col = vec3(0.012, 0.015, 0.022) + reflection * fresnel * near * 0.9;
-    col += vec3(0.05, 0.035, 0.03) * smoothstep(RC * 0.4, RC, rr) * smoothstep(1.3, 0.0, abs(phi));
-    col += blue * 0.018 * line(rr - 880.0, 260.0) * smoothstep(1.2, 0.3, abs(phi));
+    col += vec3(0.05, 0.035, 0.03) * smoothstep(RC * 0.4, RC, rr) * (1.0 - smoothstep(0.0, 1.3, abs(phi)));
+    col += blue * 0.018 * line(rr - 880.0, 260.0) * (1.0 - smoothstep(0.3, 1.2, abs(phi)));
     col += blue * (line(rr - (RC - 10.0), 3.0) * 0.55 + line(rr - (RC - 10.0), 40.0) * 0.06);
     col += blue * (line(rr - 640.0, 2.0) * 0.30 + line(rr - 640.0, 30.0) * 0.03);
     col += vec3(0.05, 0.06, 0.08) * line(mullion(phi) / RC * rr, 1.5) * near;
@@ -388,7 +388,7 @@ void main() {
       col = hole * (0.82 + 0.18 * smoothstep(MULLION_HALF, MULLION_HALF + 60.0, md));
       col += blue * 0.035 * exp(-(y - Y_DESK) / 140.0);
       col += vec3(0.6, 0.7, 0.9) * 0.012 * line(fract((phi * RC + y * 0.6) / 900.0) - 0.5, 0.08);
-      col *= smoothstep(Y_TOP, Y_TOP - 40.0, y) * 0.25 + 0.75;
+      col *= (1.0 - smoothstep(Y_TOP - 40.0, Y_TOP, y)) * 0.25 + 0.75;
     }
   }
   vec2 q = uv - 0.5;

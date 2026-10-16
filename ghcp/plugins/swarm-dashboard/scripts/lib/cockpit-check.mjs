@@ -26,16 +26,20 @@ async function renderStill(analyse) {
 
 async function checkScene({ page, urls, options, stdout, stderr }) {
   const url = `${Object.values(urls)[0]}?host=browser`;
+  page.errors.length = 0;
   await page.goto(url, 1440, 900);
   await page.waitFor(`location.href === ${JSON.stringify(url)} && document.readyState === 'complete'`);
   const result = await page.evaluate(`(${renderStill})(${analyseFrame})`);
+  const consoleProblems = page.errors.map(message => `console: ${message}`);
   if (result.error) {
-    stderr.write(`scene: ${result.error}\n`);
-    return 1;
+    for (const problem of [result.error, ...consoleProblems]) stderr.write(`scene: ${problem}\n`);
+    return 1 + consoleProblems.length;
   }
   const problems = sceneProblems(result.still);
   const drift = Math.abs(result.reused.mean - result.still.mean) / result.still.mean;
   if (drift > 0.25) problems.push(`a frame that reuses the black hole differs in brightness by ${(drift * 100).toFixed(0)}%`);
+  for (const problem of sceneProblems(result.reused)) problems.push(`a frame that reuses the black hole: ${problem}`);
+  problems.push(...consoleProblems);
   if (options.printMetrics) stdout.write(`scene metrics: ${JSON.stringify(result.still)}\n`);
   stdout.write(`Scene (${result.info.renderer}, ${result.info.hdr ? 'HDR' : '8-bit'} targets): ${problems.length ? `${problems.length} problems` : 'shadow, ring, ceiling line, stars and desk in place'}.\n`);
   for (const problem of problems) stderr.write(`scene: ${problem}\n`);

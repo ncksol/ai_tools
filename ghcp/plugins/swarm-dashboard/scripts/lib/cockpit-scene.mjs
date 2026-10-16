@@ -5,7 +5,8 @@
  * - shadow: the longest dark run down the centre column (under 0.15: bloom lifts the shadow above black) that bright light
  *   (over 0.5, the ring and the disk) frames within 3% of the height at both ends, as a share of the height;
  * - peach: the share of columns in the central half with a peach pixel in the top 15% (the ceiling's light line);
- * - stars: small bright points in the upper-left quarter;
+ * - stars: point peaks in the upper-left quarter, below the ceiling (rows 12% to 45% of the height, the left 25% of the
+ *   width): pixels brighter than 0.25 whose eight neighbours are all under 0.8 times their brightness;
  * - desk: average luminance of the bottom-centre block.
  */
 export function analyseFrame(frame) {
@@ -50,18 +51,18 @@ export function analyseFrame(frame) {
     }
   }
   let stars = 0;
-  for (let y = 1; y < Math.floor(height * 0.45); y += 1) for (let x = 1; x < Math.floor(width * 0.25); x += 1) {
+  // A star is a point: every neighbour is clearly darker, so lines and soft glows do not count.
+  for (let y = Math.max(1, Math.floor(height * 0.12)); y < Math.floor(height * 0.45); y += 1) for (let x = 1; x < Math.floor(width * 0.25); x += 1) {
     const centre = lum(x, y);
-    if (centre < 0.25) continue;
-    let ring = 0;
-    let higher = false;
-    for (let dy = -1; dy <= 1; dy += 1) for (let dx = -1; dx <= 1; dx += 1) {
-      if (!dx && !dy) continue;
-      const value = lum(x + dx, y + dy);
-      ring += value;
-      if (value > centre) higher = true;
+    if (centre <= 0.25) continue;
+    let peak = true;
+    for (let dy = -1; dy <= 1 && peak; dy += 1) for (let dx = -1; dx <= 1; dx += 1) {
+      if ((dx || dy) && lum(x + dx, y + dy) >= 0.8 * centre) {
+        peak = false;
+        break;
+      }
     }
-    if (!higher && centre > 2 * (ring / 8)) stars += 1;
+    if (peak) stars += 1;
   }
   let desk = 0;
   let deskSamples = 0;
@@ -74,10 +75,10 @@ export function analyseFrame(frame) {
 
 /**
  * Limits for a still frame at 1440 × 900. Measured on 16 October 2026 in Chrome 155 and WebKit 27.2 (Apple M5 Pro): mean
- * 0.073, shadow 0.13, peach 1, stars 58, desk 0.034. Shadow and peach at 60% of that, stars at half, mean from half to
+ * 0.073, shadow 0.13, peach 1, stars 18, desk 0.034. Shadow and peach at 60% of that, stars at half, mean from half to
  * twice, desk at twice.
  */
-export const SCENE_LIMITS = Object.freeze({ mean: [0.035, 0.15], shadow: 0.07, peach: 0.6, stars: 29, desk: 0.07 });
+export const SCENE_LIMITS = Object.freeze({ mean: [0.035, 0.15], shadow: 0.07, peach: 0.6, stars: 9, desk: 0.07 });
 
 export function sceneProblems(metrics, limits = SCENE_LIMITS) {
   const problems = [];
