@@ -673,3 +673,42 @@ test('start() after stop() during a refresh keeps the connections', { skip: !can
   assert.equal(existsSync(`${home.dataDb}-shm`), true, 'the restarted engine still holds its connection');
   engine.stop();
 });
+
+test('only the root orchestrator\'s sessions follow sub-agents in detail, and a session that stops being a root is read again from its start', async () => {
+  const home = new CopilotHome();
+  home.project({ id: 'project-1', name: 'sample-project' });
+  home.workspace({ id: 'ws-root', projectId: 'project-1', name: 'Sample story', createdAt: T0, sessionId: 'cli-root' });
+  home.workspace({ id: 'ws-kid', projectId: 'project-1', name: 'Sample k1 kid', createdAt: at(1), sessionId: 'cli-kid', parentId: 'ws-root', creatorSessionId: 'cli-root' });
+  const root = new EventLog(T0);
+  root.start(); root.turnStart(); root.wait(MINUTE);
+  root.subagent({ name: 'scout', type: 'explore', mode: 'background' });
+  home.writeEvents('cli-root', root.events);
+  const kid = new EventLog(at(1));
+  kid.calls = 100;
+  kid.start(); kid.turnStart(); kid.wait(MINUTE);
+  kid.subagent({ name: 'peeker', type: 'explore', mode: 'background' });
+  home.writeEvents('cli-kid', kid.events);
+  let clock = at(10);
+  const engine = createSwarmEngine({ copilotHome: home.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => clock, processProbe: alwaysAlive, prLookup: 'off' });
+  const texts = view => view.recent.map(item => item.text);
+
+  let snapshot = await engine.getSnapshot('ws-root');
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  assert.deepEqual(texts(snapshot.orchestrator), [], 'a root session keeps its one-off sub-agents out of the session feed');
+  assert.deepEqual(texts(snapshot.units[0]), ['started explore: peeker'], 'a child session keeps its sub-agents as feed items');
+  assert.equal(snapshot.feed.some(item => item.text.includes('scout')), false);
+
+  home.workspace({ id: 'ws-top', projectId: 'project-1', name: 'Top story', createdAt: T0 - 5 * MINUTE, sessionId: 'cli-top' });
+  home.insert(home.dataDb, 'workspace_parent_links', { child_workspace_id: 'ws-root', parent_workspace_id: 'ws-top', creator_session_id: 'cli-top', created_at: new Date(T0).toISOString() });
+  const top = new EventLog(T0 - 5 * MINUTE);
+  top.start(); top.turnStart(); top.wait(MINUTE); top.turnEnd();
+  home.writeEvents('cli-top', top.events);
+  clock = at(11);
+  await engine.refresh();
+  snapshot = await engine.getSnapshot('ws-top');
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  assert.deepEqual(snapshot.units.map(unit => [unit.id, unit.depth]), [['ws-root', 1], ['ws-kid', 2]]);
+  assert.deepEqual(texts(snapshot.units[0]), ['started explore: scout'], 'the session was read again from its start without the flag');
+  assert.deepEqual(texts(snapshot.orchestrator), []);
+  assert.equal((await engine.getRunSummary('ws-top')).subagents, 2, 'the counters were reset, not added twice');
+});

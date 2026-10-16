@@ -64,8 +64,25 @@ export class EventLog {
 
   sub(callId, type = 'assistant.message', data = {}) { return this.push(type, { ...data, parentToolCallId: callId }); }
 
-  subagentDone(callId, { durationMs = 60_000, failed = false } = {}) {
-    return this.push(failed ? 'subagent.failed' : 'subagent.completed', { toolCallId: callId, durationMs, totalTokens: 1000, totalToolCalls: 3 });
+  /** A sub-agent started by another sub-agent: a `task` call made inside it (parentToolCallId), then its start event. */
+  nested(parentId, { name = 'child', type = 'general-purpose', mode = 'sync', model = 'claude-sonnet-5', agentId } = {}) {
+    const id = `call-${++this.calls}`;
+    this.push('tool.execution_start', {
+      toolCallId: id, toolName: 'task', parentToolCallId: parentId,
+      arguments: { name, agent_type: type, mode, model, description: `${name} work`, prompt: 'synthetic prompt' },
+    });
+    this.push('subagent.started', { toolCallId: id, agentName: type, agentDisplayName: name, agentType: type, model, executionMode: mode }, agentId ? { agentId } : {});
+    return id;
+  }
+
+  /** A message sent to a sub-agent (its prompt, or a later follow-up): a user.message with the sub-agent's top-level agentId. */
+  toAgent(agentId, content = 'follow up') { return this.push('user.message', { content, transformedContent: content }, { agentId }); }
+
+  subagentDone(callId, { durationMs = 60_000, failed = false, cancelled = false, error, agentId } = {}) {
+    return this.push(failed ? 'subagent.failed' : 'subagent.completed', {
+      toolCallId: callId, durationMs, totalTokens: 1000, totalToolCalls: 3,
+      ...(cancelled ? { cancelled: true } : {}), ...(failed && error ? { error } : {}),
+    }, agentId ? { agentId } : {});
   }
 
   crossSession({ fromSessionId, fromProjectSessionId = fromSessionId, sourceToolCallId = 'call-remote', name = 'unit', content }) {

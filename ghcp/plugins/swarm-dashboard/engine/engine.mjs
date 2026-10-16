@@ -177,16 +177,27 @@ export function createSwarmEngine(options = {}) {
     return items.sort(byLifecycleThenActivity);
   }
 
-  async function tailSession(cliId, diag) {
+  /**
+   * `subagentUnits` is true for the CLI sessions of the swarm's root orchestrator. A cached entry that was built with the other
+   * value is read again from the start of its log, so its state has the right shape.
+   */
+  async function tailSession(cliId, diag, subagentUnits = false) {
     let entry = sessions.get(cliId);
+    if (entry && entry.subagentUnits !== subagentUnits) {
+      sessions.delete(cliId);
+      entry = null;
+    }
     if (!entry) {
-      entry = { tail: createTail(path.join(paths.stateDir, cliId, 'events.jsonl')), state: createSessionState(cliId), missing: true, skipped: 0, applied: 0, failed: 0, lastError: '' };
+      entry = {
+        tail: createTail(path.join(paths.stateDir, cliId, 'events.jsonl')), state: createSessionState(cliId, { subagentUnits }), subagentUnits,
+        missing: true, skipped: 0, applied: 0, failed: 0, lastError: '',
+      };
       sessions.set(cliId, entry);
     }
     try {
       const result = await readNewLines(entry.tail, line => applyLine(entry.state, line), {
         onReset: () => {
-          entry.state = createSessionState(cliId);
+          entry.state = createSessionState(cliId, { subagentUnits });
           entry.skipped = 0;
           entry.applied = 0;
           entry.failed = 0;
@@ -230,8 +241,9 @@ export function createSwarmEngine(options = {}) {
     const states = new Map();
     const alive = new Map();
     const workspaceFiles = new Map();
+    const rootCliIds = new Set(nodes[0].cliSessionIds);
     for (const cliId of new Set(nodes.flatMap(node => node.cliSessionIds))) {
-      const state = await tailSession(cliId, diag);
+      const state = await tailSession(cliId, diag, rootCliIds.has(cliId));
       if (state) states.set(cliId, state);
       alive.set(cliId, await livenessOf(cliId, at));
       workspaceFiles.set(cliId, readWorkspaceYaml(path.join(paths.stateDir, cliId)));
