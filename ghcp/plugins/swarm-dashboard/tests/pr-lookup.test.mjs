@@ -226,3 +226,43 @@ test('lookup errors name the PR without the worktree path', async () => {
   ]);
   assert.ok(errors.every(entry => !entry.key.includes('/synthetic')));
 });
+
+test('a closed PR is checked again after the TTL, since it can be reopened, but a merged PR is final', async () => {
+  const cases = [
+    { provider: 'ado', repo: 'org/project/repo', closed: '{"status":"abandoned"}', reopened: '{"status":"active"}', merged: '{"status":"completed"}' },
+    { provider: 'github', repo: 'o/r', closed: '{"state":"CLOSED"}', reopened: '{"state":"OPEN"}', merged: '{"state":"MERGED"}' },
+  ];
+  for (const { provider, repo, closed, reopened, merged } of cases) {
+    let clock = T0;
+    const replies = new Map([[1, [closed, reopened]], [2, [merged, reopened]]]);
+    const calls = [];
+    const run = async (command, args) => {
+      const id = Number(provider === 'ado' ? args[4] : args[2]);
+      calls.push(id);
+      return replies.get(id).shift();
+    };
+    const lookup = createPrLookup({ run, now: () => clock });
+    const closedPr = { provider, id: 1, repo };
+    const mergedPr = { provider, id: 2, repo };
+    lookup.request(closedPr);
+    lookup.request(mergedPr);
+    await lookup.settle();
+    assert.deepEqual([lookup.get(closedPr).state, lookup.get(mergedPr).state], ['closed', 'merged'], provider);
+    clock += 5 * MINUTE - 1;
+    lookup.request(closedPr);
+    lookup.request(mergedPr);
+    await lookup.settle();
+    assert.equal(calls.length, 2, provider);
+    clock += 1;
+    lookup.request(closedPr);
+    lookup.request(mergedPr);
+    await lookup.settle();
+    assert.deepEqual(calls.sort(), [1, 1, 2], provider);
+    assert.equal(lookup.get(closedPr).state, 'open', provider);
+    clock += 60 * MINUTE;
+    lookup.request(mergedPr);
+    await lookup.settle();
+    assert.equal(calls.length, 3, provider);
+    assert.equal(lookup.get(mergedPr).state, 'merged', provider);
+  }
+});

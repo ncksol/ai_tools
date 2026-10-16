@@ -85,14 +85,17 @@ export function mapGithub(json) {
   };
 }
 
-/** Cached, read-only PR state through `az repos pr show` and `gh pr view`. Merged and closed results are final. */
+/**
+ * Cached, read-only PR state through `az repos pr show` and `gh pr view`. Only a merged result is final. A closed or abandoned PR can
+ * be reopened or reactivated, so it is checked again after the TTL like an open one.
+ */
 export function createPrLookup({ run = runCommand, now = Date.now, ttlMs = 5 * MINUTE, timeoutMs = 20_000, concurrency = 2, exists = existsSync } = {}) {
   const cache = new Map();
   const queue = [];
   const inflight = new Set();
   let active = 0;
   let waiters = [];
-  const isFinal = info => info.state === 'merged' || info.state === 'closed';
+  const isFinal = info => info.state === 'merged';
   const due = key => {
     const info = cache.get(key)?.info;
     return !info || (!isFinal(info) && now() - info.checkedAt >= ttlMs);
