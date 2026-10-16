@@ -139,7 +139,7 @@ html[data-gl="off"] body { background: radial-gradient(ellipse at 50% 38%, rgb(2
 .ck-log-row .ck-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--sans); color: var(--ink-2); }
 button.ck-log-row:hover .ck-txt { color: var(--ink); }
 
-/* Mission control: tile density follows the count (cockpit-model.mjs). */
+/* Mission control: tile density and rows follow the count (cockpit-model.mjs); a tile spans a quarter, a third or half of 12 columns. */
 .ck-tiles { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); align-content: start; gap: 8px; height: 168px; }
 .ck-w3 { grid-column: span 3; }
 .ck-w4 { grid-column: span 4; }

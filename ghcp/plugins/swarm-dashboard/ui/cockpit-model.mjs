@@ -34,7 +34,7 @@ function tileUnits(snapshot) {
     .map(({ unit }) => unit);
 }
 
-/** Tiles for Mission control (builder decision B1). */
+/** Tiles for Mission control (builder decision B1), and `rows`: tiles per row, differing by at most one, fuller rows first. */
 export function tileGrid(snapshot) {
   const units = tileUnits(snapshot);
   const density = DENSITIES.find(entry => units.length <= entry.max) ?? DENSITIES[DENSITIES.length - 1];
