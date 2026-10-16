@@ -372,48 +372,135 @@ async function waitForTarget(browser, known, accept, timeoutMs) {
   return null;
 }
 
-/** Chrome only: the control opens the cockpit on the shown swarm; a tile opens its unit in the regular window, in place; the canvas shows the address. */
+/** Chrome only: links follow the shown swarm, reject unknown units and clear stale canvas addresses. */
 async function checkLinks({ page, browser, urls, engine, stdout, stderr }) {
-  if (engine !== 'chrome' || !urls.example) {
-    stdout.write('Cockpit links: checked in Chrome, on the synthetic swarm.\n');
+  if (engine !== 'chrome' || !urls.example || !urls.stress) {
+    stdout.write('Cockpit links: checked in Chrome, on the synthetic example and stress swarms.\n');
     return 0;
   }
   const problems = [];
+  page.errors.length = 0;
+  const goRegular = async (url, width = 1440) => {
+    await page.goto(url, width, 900);
+    await page.waitFor(`location.href === ${JSON.stringify(url)} && document.documentElement.dataset.ready === '1' && document.querySelector('[data-cockpit]') !== null`);
+  };
+  const pick = async swarm => {
+    await page.evaluate(`(() => {
+      const picker = document.querySelector('select[data-swarm]');
+      picker.value = ${JSON.stringify(swarm)};
+      picker.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`);
+    await page.waitFor(`document.querySelector('select[data-swarm]')?.value === ${JSON.stringify(swarm)} && document.querySelector('[data-open="${swarm === 'ws-8000-root' ? 'ws-8005-i1' : 'ws-0005-i1'}"]') !== null`);
+  };
+  const clickControl = () => page.send('Runtime.evaluate', { expression: "document.querySelector('[data-cockpit]').click()", userGesture: true });
+  const cockpitTarget = info => info.type === 'page' && info.url.includes('/cockpit?');
   const regular = `${urls.example}?host=browser&swarm=ws-0000-root`;
-  await page.goto(regular, 1440, 900);
-  await page.waitFor(`location.href === ${JSON.stringify(regular)} && document.documentElement.dataset.ready === '1' && document.querySelector('[data-cockpit]') !== null`);
-  await page.evaluate('window.swarmKept = true');
+  await goRegular(regular);
+  await page.evaluate(`(() => {
+    window.swarmKept = true;
+    window.swarmUnknownHandled = false;
+    window.addEventListener('message', event => {
+      if (event.origin === location.origin && event.data?.kind === 'swarm-dashboard:show' && event.data.detail === 'ws-unknown-unit') window.swarmUnknownHandled = true;
+    });
+  })()`);
   const known = new Set((await browser.send('Target.getTargets')).targetInfos.map(info => info.targetId));
-  await page.send('Runtime.evaluate', { expression: "document.querySelector('[data-cockpit]').click()", userGesture: true });
-  const opened = await waitForTarget(browser, known, info => info.type === 'page' && info.url.includes('/cockpit?'), 5000);
-  if (!opened) {
-    problems.push('the Cockpit control opened no window');
-  } else {
-    if (new URL(opened.url).searchParams.get('swarm') !== 'ws-0000-root') problems.push(`the cockpit opened at ${opened.url}`);
-    const { sessionId } = await browser.send('Target.attachToTarget', { targetId: opened.targetId, flatten: true });
-    const inCockpit = async (expression, userGesture = false) => (await browser.send('Runtime.evaluate', { expression, returnByValue: true, userGesture }, sessionId)).result.value;
-    const deadline = Date.now() + 8000;
-    while (Date.now() < deadline && await inCockpit("document.querySelector('.ck-tile[data-detail=\"ws-0005-i1\"]') !== null") !== true) await new Promise(resolve => setTimeout(resolve, 100));
-    await inCockpit("document.querySelector('.ck-tile[data-detail=\"ws-0005-i1\"]').click()", true);
-    try {
-      await page.waitFor("document.querySelector('.detail[aria-label=\"Details for I1\"]') !== null && window.swarmKept === true", 5000);
-    } catch {
-      problems.push('a tile in the cockpit did not open its details in the regular window in place');
-    }
-    await browser.send('Target.closeTarget', { targetId: opened.targetId });
-  }
-  const canvas = `${urls.example}?host=canvas&swarm=ws-0000-root`;
-  await page.goto(canvas, 480, 900);
-  await page.waitFor(`location.href === ${JSON.stringify(canvas)} && document.documentElement.dataset.ready === '1' && document.querySelector('[data-cockpit]') !== null`);
-  const before = new Set((await browser.send('Target.getTargets')).targetInfos.map(info => info.targetId));
-  await page.send('Runtime.evaluate', { expression: "document.querySelector('[data-cockpit]').click()", userGesture: true });
+  let changing;
   try {
-    await page.waitFor("(document.querySelector('.ck-addr-url')?.textContent ?? '').endsWith('/cockpit?swarm=ws-0000-root')", 3000);
-  } catch {
-    problems.push('in the canvas the control did not show the cockpit\'s address');
+    await clickControl();
+    const opened = await waitForTarget(browser, known, cockpitTarget, 5000);
+    if (!opened) {
+      problems.push('the Cockpit control opened no window');
+    } else {
+      if (new URL(opened.url).searchParams.get('swarm') !== 'ws-0000-root') problems.push(`the cockpit opened at ${opened.url}`);
+      const { sessionId } = await browser.send('Target.attachToTarget', { targetId: opened.targetId, flatten: true });
+      const inCockpit = async (expression, userGesture = false) => {
+        const { result, exceptionDetails } = await browser.send('Runtime.evaluate', { expression, returnByValue: true, userGesture }, sessionId);
+        if (exceptionDetails) throw new Error(exceptionDetails.exception?.description ?? exceptionDetails.text);
+        return result.value;
+      };
+      const tile = "document.querySelector('.ck-tile[data-detail=\"ws-0005-i1\"]')";
+      const deadline = Date.now() + 8000;
+      while (Date.now() < deadline && !await inCockpit(`${tile} !== null`)) await new Promise(resolve => setTimeout(resolve, 100));
+      if (!await inCockpit(`${tile} !== null`)) {
+        problems.push('the expected tile I1 never appeared in the cockpit');
+      } else {
+        await inCockpit(`window.open('', 'swarm-dashboard').postMessage({ kind: 'swarm-dashboard:show', swarm: 'ws-0000-root', detail: 'ws-unknown-unit', tab: null }, location.origin)`, true);
+        try {
+          await page.waitFor(`window.swarmUnknownHandled === true && window.swarmKept === true && location.href === ${JSON.stringify(regular)} && document.querySelector('.detail') === null`, 5000);
+        } catch {
+          problems.push('an unknown unit request opened details or navigated the regular window, or was not received');
+        }
+        await inCockpit(`${tile}.click()`, true);
+        try {
+          await page.waitFor("document.querySelector('.detail[aria-label=\"Details for I1\"]') !== null && window.swarmKept === true", 5000);
+        } catch {
+          problems.push('a tile in the cockpit did not open its details in the regular window in place');
+        }
+      }
+      await browser.send('Target.closeTarget', { targetId: opened.targetId });
+    }
+
+    // No swarm in the address: the picker, not the URL or the server's default, decides what Cockpit opens.
+    await goRegular(`${urls.stress}?host=browser`);
+    await pick('ws-8000-root');
+    await clickControl();
+    const picked = await waitForTarget(browser, known, cockpitTarget, 5000);
+    if (!picked) {
+      problems.push('the Cockpit control opened no window for the picked swarm');
+    } else {
+      if (new URL(picked.url).searchParams.get('swarm') !== 'ws-8000-root') problems.push(`the picked swarm's cockpit opened at ${picked.url}`);
+      await browser.send('Target.closeTarget', { targetId: picked.targetId });
+    }
+
+    await goRegular(`${urls.stress}?host=canvas`, 480);
+    await pick('ws-8000-root');
+    const before = new Set((await browser.send('Target.getTargets')).targetInfos.map(info => info.targetId));
+    await clickControl();
+    try {
+      await page.waitFor("(document.querySelector('.ck-addr-url')?.textContent ?? '').endsWith('/cockpit?swarm=ws-8000-root')", 3000);
+    } catch {
+      problems.push('in the canvas the control did not show the picked swarm\'s cockpit address');
+    }
+    if (await waitForTarget(browser, before, info => info.type === 'page', 500)) problems.push('in the canvas the control opened a window');
+    await pick('ws-0000-root');
+    if (await page.evaluate("document.querySelector('.ck-addr') !== null")) problems.push('in the canvas picking another swarm kept the old cockpit address');
+
+    // A real lifecycle event changes the shown swarm without the picker; its old address must disappear too.
+    const demo = createDemoEngine({ scenario: 'stress', simulate: false });
+    changing = createDashboardServer({ createEngine: () => demo, port: 0, version: 'cockpit-check', hub: { engineIdleMs: 600000 } });
+    await changing.listen();
+    await goRegular(`${changing.url}?host=canvas`, 480);
+    await pick('ws-8000-root');
+    await clickControl();
+    await page.waitFor("(document.querySelector('.ck-addr-url')?.textContent ?? '').endsWith('/cockpit?swarm=ws-8000-root')");
+    const finished = await demo.getSnapshot('ws-8000-root');
+    finished.run.lifecycle = 'finished';
+    finished.run.finishedAt = Date.now();
+    finished.revision += 1;
+    demo.push(finished);
+    await page.waitFor("document.querySelector('[data-open=\"ws-0005-i1\"]') !== null");
+    try {
+      await page.waitFor("document.querySelector('.ck-addr') === null", 3000);
+    } catch {
+      problems.push('in the canvas an automatic swarm change kept the old cockpit address');
+    }
+  } catch (error) {
+    problems.push(error.message);
+  } finally {
+    try {
+      // List again rather than relying on the targets already observed: a popup may have opened late.
+      const { targetInfos } = await browser.send('Target.getTargets');
+      for (const info of targetInfos) if (!known.has(info.targetId) && cockpitTarget(info)) await browser.send('Target.closeTarget', { targetId: info.targetId });
+    } finally {
+      try {
+        await page.evaluate("window.name = ''");
+      } finally {
+        await changing?.close();
+      }
+    }
   }
-  if (await waitForTarget(browser, before, info => info.type === 'page', 500)) problems.push('in the canvas the control opened a window');
-  stdout.write(`Cockpit links: ${problems.length ? `${problems.length} problems` : 'the control opens the cockpit on the shown swarm, a tile opens its details in place, and the canvas shows the address'}.\n`);
+  problems.push(...page.errors.map(message => `console: ${message}`));
+  stdout.write(`Cockpit links: ${problems.length ? `${problems.length} problems` : 'the control opens the cockpit on the picked swarm, a tile opens its details in place, unknown units do not navigate, and canvas addresses follow picker and automatic swarm changes'}.\n`);
   for (const problem of problems) stderr.write(`links: ${problem}\n`);
   return problems.length;
 }
