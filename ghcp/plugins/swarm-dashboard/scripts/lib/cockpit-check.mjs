@@ -2,9 +2,9 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createDemoEngine } from '../../server/demo-engine.mjs';
 import { createDashboardServer } from '../../server/http.mjs';
-import { fitPanels, overlapProblems } from '../../ui/cockpit-fit.mjs';
+import { PANELS, fitPanels, overlapProblems } from '../../ui/cockpit-fit.mjs';
 import { REST, extremePoses } from '../../ui/cockpit-space.mjs';
-import { auditScript } from './page-audit.mjs';
+import { auditScript, luminance } from './page-audit.mjs';
 import { analyseFrame, sceneProblems } from './cockpit-scene.mjs';
 
 /** Runs in the page: draws a still frame in a full-window canvas from the page's own modules, then a reprojected one. */
@@ -92,6 +92,10 @@ function readRects() {
 function sceneBackdrops(rects) {
   const frame = window.cockpitDebug.readFrame();
   const k = frame.width / innerWidth;
+  const linear = value => {
+    const channel = value / 255;
+    return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  };
   const out = {};
   for (const [id, r] of Object.entries(rects)) {
     let best = [0, 0, 0];
@@ -102,7 +106,7 @@ function sceneBackdrops(rects) {
     const y1 = Math.min(frame.height, Math.ceil(r.bottom * k));
     for (let y = y0; y < y1; y += 1) for (let x = x0; x < x1; x += 1) {
       const i = (y * frame.width + x) * 4;
-      const lum = 0.2126 * frame.data[i] + 0.7152 * frame.data[i + 1] + 0.0722 * frame.data[i + 2];
+      const lum = 0.2126 * linear(frame.data[i]) + 0.7152 * linear(frame.data[i + 1]) + 0.0722 * linear(frame.data[i + 2]);
       if (lum > top) {
         top = lum;
         best = [frame.data[i], frame.data[i + 1], frame.data[i + 2]];
@@ -126,34 +130,40 @@ function prepareFlat(backdrops) {
   }
 }
 
-/** Runs in the page: 36 px only for the clock, and monospace only in numbers, labels and times. */
-function cockpitExtras() {
+/** Runs in the page: 36/40 px only for the clock, and monospace only in numbers, labels and times. */
+function cockpitExtras(mono) {
   const issues = [];
-  const probe = document.querySelector('.ck-mono');
-  const mono = probe ? getComputedStyle(probe).fontFamily : null;
+  const normalised = family => family.replace(/["'\s]/g, '').toLowerCase();
   for (const el of document.querySelectorAll('.ck *')) {
     if (![...el.childNodes].some(node => node.nodeType === 3 && node.nodeValue.trim())) continue;
+    if (el.getClientRects().length === 0) continue;
     const style = getComputedStyle(el);
+    if (style.visibility === 'hidden') continue;
     if (parseFloat(style.fontSize) === 36 && !el.matches('.ck-hm')) issues.push({ rule: 'clock-only', target: el.className, detail: '36 px outside the clock' });
-    if (mono && style.fontFamily === mono && !el.closest('.ck-mono')) issues.push({ rule: 'mono', target: el.className, detail: 'monospace outside numbers and labels' });
+    if (parseFloat(style.lineHeight) === 40 && !el.matches('.ck-hm')) issues.push({ rule: 'clock-only', target: el.className, detail: '40 px line height outside the clock' });
+    if (normalised(style.fontFamily) === mono && !el.closest('.ck-mono')) issues.push({ rule: 'mono', target: el.className, detail: 'monospace outside numbers and labels' });
   }
   return issues;
 }
 
 /** One cockpit state: open it, check the arrangement in 3D, then audit it flat over its scene colours. */
-async function checkState({ page, options }, { url, width, height, expect, label }) {
+async function checkState({ page, options }, { url, width, height, expect, label, texts = [] }) {
   page.errors.length = 0;
   await page.goto(url, width, height);
   await page.waitFor(`location.href === ${JSON.stringify(url)} && document.documentElement.dataset.ready === '1'`);
   const problems = [];
+  if (texts.length) {
+    const content = await page.evaluate("document.querySelector('.ck').textContent");
+    for (const text of texts) if (!content.includes(text)) problems.push(`the edge value ${text} did not reach the page`);
+  }
   const shown = await page.evaluate("({ gl: document.documentElement.dataset.gl, fit: document.documentElement.dataset.fit, note: !document.getElementById('ck-note').hidden })");
   if (shown.fit !== expect.fit) problems.push(`the arrangement is ${shown.fit}, not ${expect.fit}`);
   if (shown.gl !== expect.gl) problems.push(`WebGL is ${shown.gl}, not ${expect.gl}`);
   if (shown.note !== (expect.fit !== 'ok')) problems.push(shown.note ? 'the note shows over the panels' : 'the note is missing');
   const rects = await page.evaluate(`(${readRects})()`);
+  const fit = fitPanels(width, height);
+  const s = fit.stage.scale;
   if (expect.fit === 'ok') {
-    const fit = fitPanels(width, height);
-    const s = fit.stage.scale;
     for (const [id, want] of Object.entries(fit.rects)) {
       const got = rects[id];
       const off = got ? Math.max(Math.abs(got.left - want.left), Math.abs(got.top - want.top), Math.abs(got.right - want.right), Math.abs(got.bottom - want.bottom)) : Infinity;
@@ -166,12 +176,15 @@ async function checkState({ page, options }, { url, width, height, expect, label
       problems.push(...overlapProblems(moved, { width, height, top: 0, edge: 0, clear: 4 * s }).map(problem => `at the camera's limit, ${problem}`));
     }
     await page.evaluate(`cockpitDebug.setCamera(${JSON.stringify(REST)})`);
+  } else {
+    for (const id of Object.keys(PANELS)) if (rects[id]) problems.push(`${id} shows although the window is too small`);
   }
   if (options.screenshots) writeFileSync(path.join(options.screenshots, `${label.replace(/[^\w]+/g, '-')}.png`), await page.screenshot());
   const backdrops = expect.gl === 'off'
     ? Object.fromEntries(Object.keys(rects).map(id => [id, NO_GL_BACKDROP]))
-    : await page.evaluate(`(${sceneBackdrops})(${JSON.stringify(expandAll(rects, 32))})`);
-  const result = await page.evaluate(`(() => { (${prepareFlat})(${JSON.stringify(backdrops)}); return { audit: ${auditScript(COCKPIT_AUDIT)}, extras: (${cockpitExtras})() }; })()`);
+    : await page.evaluate(`(${sceneBackdrops})(${JSON.stringify(expandAll(rects, Math.ceil(32 * Math.max(1, s))))})`);
+  if (expect.gl === 'on' && Math.max(...Object.values(backdrops).map(([r, g, b]) => luminance({ r: r / 255, g: g / 255, b: b / 255 }))) < 0.01) problems.push('the scene behind the panels is black; the frame was not drawn');
+  const result = await page.evaluate(`(() => { (${prepareFlat})(${JSON.stringify(backdrops)}); return { audit: ${auditScript(COCKPIT_AUDIT)}, extras: (${cockpitExtras})(${JSON.stringify(MONO)}) }; })()`);
   problems.push(...[...cockpitIssues(result.audit.issues), ...result.extras].map(issue => `${issue.rule}: ${issue.target} (${issue.detail})`));
   problems.push(...page.errors.map(message => `console: ${message}`));
   return { problems: [...new Set(problems)], checks: result.audit.checks };
@@ -207,7 +220,7 @@ async function checkLayout(context) {
   try {
     if (edge) {
       await edge.listen();
-      for (const [width, height] of [[1100, 800], [1440, 900]]) states.push({ label: `edge ${width}x${height}`, url: `${edge.url}cockpit?debug=1&quality=high`, width, height, expect: { fit: 'ok', gl: 'on' } });
+      for (const [width, height] of [[1100, 800], [1440, 900]]) states.push({ label: `edge ${width}x${height}`, url: `${edge.url}cockpit?debug=1&quality=high`, width, height, expect: { fit: 'ok', gl: 'on' }, texts: ['1234567', 'B0 F2a B1 D5 I1'] });
     }
     for (const state of states) {
       const result = await checkState(context, state);

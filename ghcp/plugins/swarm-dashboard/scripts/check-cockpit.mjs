@@ -7,10 +7,10 @@ import { findBrowser, launchBrowser, openPage } from './lib/cdp.mjs';
 import { CHECKS, runCockpitChecks } from './lib/cockpit-check.mjs';
 import { findPlaywright, launchWebKit, openWebKitPage } from './lib/webkit.mjs';
 
-export const USAGE = `Usage: check-cockpit [--engine chrome|webkit] [--only <check>] [--print-metrics]
+export const USAGE = `Usage: check-cockpit [--engine chrome|webkit] [--only <check>] [--print-metrics] [--screenshots <dir>]
 
 Checks the swarm cockpit in a local headless Chrome, Chromium or Edge (CHROME_PATH picks one), or in Playwright's
-WebKit with --engine webkit (PLAYWRIGHT_CORE, as for check-layout), against the synthetic example swarm.
+WebKit with --engine webkit (PLAYWRIGHT_CORE, as for check-layout), against the synthetic example and stress swarms, plus edge values.
 --only runs one check: ${[...CHECKS.keys()].join(', ')}. --print-metrics prints the scene's measurements.
 --screenshots <dir> saves a picture of each state of the synthetic swarms there, for review; do not commit them.
 npm run check:layout runs these checks too.
