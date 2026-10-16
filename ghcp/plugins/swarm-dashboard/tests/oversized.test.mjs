@@ -231,6 +231,37 @@ test('an oversized subagent.completed finishes its sub-agent, so no false stuck 
   assert.notEqual(evaluate(state, T0 + 40 * MINUTE).detail, 'stuck_subagent');
 });
 
+test('an oversized cancelled subagent.completed keeps its cancelled flag, and the event after it is applied once', async () => {
+  for (const typeLast of [false, true]) {
+    const label = `typeLast ${typeLast}`;
+    const log = new EventLog(T0);
+    log.start(); log.turnStart();
+    const call = log.subagent({ name: 'helper', mode: 'background', agentId: 'agent-1' });
+    const cancelled = {
+      type: 'subagent.completed', id: 'ev-cancel', timestamp: iso(T0 + 3 * MINUTE), parentId: null, agentId: 'agent-1',
+      data: { toolCallId: call, cancelled: true, durationMs: 120_000, summary: 'synthetic free text '.repeat(400) },
+    };
+    const recovered = (await readFile([bigLine(cancelled, { typeLast })])).oversized[0].event;
+    assert.deepEqual(recovered, {
+      type: 'subagent.completed', id: 'ev-cancel', timestamp: iso(T0 + 3 * MINUTE), parentId: null, agentId: 'agent-1',
+      data: { toolCallId: call, cancelled: true, durationMs: 120_000 },
+    }, label);
+    const after = new EventLog(T0 + 4 * MINUTE);
+    after.turnEnd();
+    const startLines = log.events.map(lineOf);
+    const { state, result } = await fold([...startLines, bigLine(cancelled, { typeLast }), ...after.events.map(lineOf)]);
+    assert.equal(result.skipped, 1, label);
+    const sub = state.subagents.get(call);
+    assert.equal(sub.status, 'cancelled', label);
+    assert.equal(sub.durationMs, 120_000, label);
+    assert.deepEqual(state.subagentOutcomes, { completed: 0, failed: 0, cancelled: 1 }, label);
+    assert.equal(state.lines, startLines.length + 2, label);
+    assert.equal(state.turn, null, label);
+    assert.equal(state.lastTurnEndAt, T0 + 4 * MINUTE, label);
+    assert.equal(state.feed.filter(item => item.kind === 'subagent-done').length, 1, label);
+  }
+});
+
 test('an oversized event inside a sub-agent moves that sub-agent\'s last event time', async () => {
   const log = new EventLog(T0);
   log.start(); log.turnStart();

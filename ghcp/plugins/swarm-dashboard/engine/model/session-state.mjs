@@ -98,8 +98,8 @@ const RECOVERED_DATA = new Map([
 
 /**
  * Applies an event recovered from an oversized line (see readers/json-scan.mjs). It counts the line like applyLine and applies
- * metadata only, never text: a tool completion or a sub-agent completion or failure is applied with just the ids, success flag
- * and duration it needs to close its tool call, wait or sub-agent. Any other event only moves the session's clock, and the
+ * metadata only, never text: a tool completion or a sub-agent completion or failure is applied with just the ids, success and
+ * cancelled flags and duration it needs to close its tool call, wait or sub-agent. Any other event only moves the session's clock, and the
  * clock of the sub-agent it belongs to (by data.parentToolCallId, or a top-level agentId that is known).
  */
 export function applyRecovered(state, event) {
