@@ -1,3 +1,4 @@
+import { request } from 'node:http';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createFakeEngine } from '../engine/fake-engine.mjs';
@@ -289,4 +290,55 @@ test('close ends live connections and frees the port', async () => {
   await page.waitFor(entry => entry.event === 'snapshot');
   await server.close();
   await assert.rejects(get(port, '/api/health'));
+});
+
+test('a paused reader leaves at most one frame queued in the server, and gets the newest snapshot when it reads again', async () => {
+  const big = exampleSnapshot();
+  for (const unit of big.units) if (unit.report) unit.report.body = 'x'.repeat(20000);
+  deepFreeze(big);
+  const frameBytes = Buffer.byteLength(JSON.stringify({ serverNow: 0, snapshot: big })) + 64;
+  assert.ok(frameBytes > 100000, `a frame of ${frameBytes} bytes is too small to back up a socket`);
+  const engine = createFakeEngine({ snapshots: [big] });
+  const server = await started(() => engine, { hub: { engineIdleMs: 60, heartbeatMs: 1000, stallMs: 10000 } });
+  let response = null;
+  const req = request({ host: '127.0.0.1', port: server.port, path: '/api/events' }, res => { response = res; res.pause(); });
+  req.on('error', () => {});
+  req.end();
+  const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+  try {
+    for (let waited = 0; server.clientCount() !== 1 && waited < 2000; waited += 10) await wait(10);
+    assert.equal(server.clientCount(), 1);
+    await wait(100);
+    for (let i = 1; i <= 80; i += 1) {
+      const next = structuredClone(big);
+      next.revision = i;
+      engine.push(next);
+      await wait(5);
+    }
+    await wait(100);
+    const queued = server.queuedBytes();
+    assert.ok(queued <= frameBytes + 65536, `the server holds ${queued} bytes for one paused page; a frame is ${frameBytes}`);
+    assert.equal(server.clientCount(), 1);
+
+    const events = [];
+    let buffer = '';
+    response.setEncoding('utf8');
+    response.on('data', chunk => {
+      buffer += chunk;
+      for (let end = buffer.indexOf('\n\n'); end >= 0; end = buffer.indexOf('\n\n')) {
+        const block = buffer.slice(0, end);
+        buffer = buffer.slice(end + 2);
+        const event = /^event: (.+)$/m.exec(block)?.[1];
+        const data = /^data: (.+)$/m.exec(block)?.[1];
+        if (event) events.push({ event, data: JSON.parse(data) });
+      }
+    });
+    response.resume();
+    const newest = entry => entry.event === 'snapshot' && entry.data.snapshot.revision === 80;
+    for (let waited = 0; !events.some(newest) && waited < 3000; waited += 10) await wait(10);
+    assert.ok(events.some(newest), `no snapshot of revision 80 in ${events.length} events`);
+  } finally {
+    req.destroy();
+    await server.close();
+  }
 });

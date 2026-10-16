@@ -103,6 +103,7 @@ export function createDashboardServer({ createEngine, host = '127.0.0.1', port =
       return boundPort;
     },
     clientCount: () => hub.clientCount(),
+    queuedBytes: () => hub.queuedBytes(),
     async close() {
       hub.close();
       server.closeAllConnections?.();

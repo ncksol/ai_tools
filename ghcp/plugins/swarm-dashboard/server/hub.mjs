@@ -1,9 +1,11 @@
 /**
  * Live page connections (Server-Sent Events) and the engine's lifetime. The engine is created when the first page
  * connects or an API call needs it, polls only while a page is connected, and is dropped engineIdleMs after the last
- * page leaves, so an idle server holds no engine memory. Never writes to stdout.
+ * page leaves, so an idle server holds no engine memory. At most maxClients pages connect at once, and a page whose
+ * socket stays backed up for stallMs is dropped, so a page that stops reading never holds more than one frame here.
+ * Never writes to stdout.
  */
-export function createHub({ createEngine, now = Date.now, intervalMs = 3000, engineIdleMs = 300000, heartbeatMs = 15000, log = () => {}, onIdle = () => {} }) {
+export function createHub({ createEngine, now = Date.now, intervalMs = 3000, engineIdleMs = 300000, heartbeatMs = 15000, maxClients = 32, stallMs = 30000, log = () => {}, onIdle = () => {} }) {
   const clients = new Set();
   let engine = null;
   let ready = null;
@@ -12,6 +14,7 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
   let heartbeat = null;
   let polling = false;
   let swarmsKey = '';
+  let refusedAt = -Infinity;
   const warn = error => log({ level: 'warn', source: 'server', message: error?.message ?? String(error) });
 
   function acquire() {
@@ -30,7 +33,7 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
     if (polling || !engine) return;
     polling = true;
     engine.start({ intervalMs });
-    heartbeat = setInterval(() => { for (const client of clients) client.res.write(': ping\n\n'); }, heartbeatMs);
+    heartbeat = setInterval(() => { for (const client of clients) if (!client.blocked) write(client, ': ping\n\n'); }, heartbeatMs);
     heartbeat.unref?.();
   }
 
@@ -59,8 +62,55 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
     onIdle();
   }
 
-  function send(client, event, data) {
-    if (!client.closed) client.res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  /**
+   * Write to one page. When its socket is backed up, write nothing more until 'drain', and drop the page if that takes
+   * longer than stallMs: it reconnects by itself and gets the current snapshot. So a page never has more than one frame
+   * queued in the server.
+   */
+  function write(client, text) {
+    if (client.closed || client.res.write(text)) return;
+    client.blocked = true;
+    client.stallTimer = setTimeout(() => drop(client), stallMs);
+    client.stallTimer.unref?.();
+  }
+
+  /** Send an event. While the page is behind, only the newest payload of each event waits; payload() runs when written. */
+  function send(client, event, payload) {
+    if (client.closed) return;
+    if (client.blocked) {
+      client.pending.delete(event);
+      client.pending.set(event, payload);
+      return;
+    }
+    write(client, `event: ${event}\ndata: ${JSON.stringify(payload())}\n\n`);
+  }
+
+  function drained(client) {
+    clearTimeout(client.stallTimer);
+    client.stallTimer = null;
+    client.blocked = false;
+    for (const [event, payload] of client.pending) {
+      client.pending.delete(event);
+      send(client, event, payload);
+      if (client.blocked) return;
+    }
+  }
+
+  function forget(client) {
+    if (client.closed) return;
+    client.closed = true;
+    clearTimeout(client.stallTimer);
+    client.stallTimer = null;
+    client.pending.clear();
+    clients.delete(client);
+    scheduleRelease();
+  }
+
+  function drop(client) {
+    if (client.closed) return;
+    log({ level: 'warn', source: 'server', message: `Dropped a live page that read nothing for ${Math.round(stallMs / 1000)} s; it reconnects by itself` });
+    forget(client);
+    client.res.destroy();
   }
 
   function sendSwarms(force, target) {
@@ -69,7 +119,7 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
     const key = JSON.stringify(swarms.map(swarm => [swarm.id, swarm.name, swarm.lifecycle]));
     if (!force && key === swarmsKey) return;
     swarmsKey = key;
-    for (const client of target ? [target] : [...clients].filter(item => item.greeted)) send(client, 'swarms', swarms);
+    for (const client of target ? [target] : [...clients].filter(item => item.greeted)) send(client, 'swarms', () => swarms);
   }
 
   async function push(client) {
@@ -99,7 +149,7 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
         const key = snapshot ? `${snapshot.run.id}#${snapshot.revision}` : 'none';
         if (key !== client.lastKey) {
           client.lastKey = key;
-          send(client, 'snapshot', { serverNow: now(), snapshot });
+          send(client, 'snapshot', () => ({ serverNow: now(), snapshot }));
         }
       } while (client.again && !client.closed);
     } catch (error) {
@@ -124,18 +174,25 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
 
   /** Serve one page's event stream. swarm: the swarm it asked for; session: a session whose swarm it wants. */
   async function add(req, res, { swarm = null, session = null } = {}) {
+    if (clients.size >= maxClients) {
+      // A refused page retries every few seconds, so say so at most once a minute.
+      if (now() - refusedAt > 60000) {
+        refusedAt = now();
+        log({ level: 'warn', source: 'server', message: `Refused a live page: ${maxClients} are already connected` });
+      }
+      res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'Retry-After': '5' });
+      res.end('Too many live pages');
+      return;
+    }
     res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
-    res.write('retry: 2000\n\n');
-    const client = { res, swarm, session, pinned: null, lastKey: null, busy: false, again: false, closed: false, greeted: false };
+    const client = { res, swarm, session, pinned: null, lastKey: null, busy: false, again: false, closed: false, greeted: false, blocked: false, pending: new Map(), stallTimer: null };
     clients.add(client);
-    req.on('close', () => {
-      client.closed = true;
-      clients.delete(client);
-      scheduleRelease();
-    });
+    res.on('drain', () => drained(client));
+    req.on('close', () => forget(client));
+    write(client, 'retry: 2000\n\n');
     const current = await acquire();
     if (client.closed) return;
-    send(client, 'hello', { serverNow: now(), demo: Boolean(current.isDemo) });
+    send(client, 'hello', () => ({ serverNow: now(), demo: Boolean(current.isDemo) }));
     client.greeted = true;
     startPolling();
     sendSwarms(true, client);
@@ -157,6 +214,7 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
   function close() {
     for (const client of clients) {
       client.closed = true;
+      clearTimeout(client.stallTimer);
       client.res.end();
     }
     clients.clear();
@@ -173,5 +231,8 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
     ready = null;
   }
 
-  return { add, withEngine, close, clientCount: () => clients.size, hasEngine: () => engine !== null };
+  /** Bytes written to live pages that their sockets have not taken yet (a diagnostic for tests). */
+  const queuedBytes = () => [...clients].reduce((sum, client) => sum + (client.res.writableLength ?? 0), 0);
+
+  return { add, withEngine, close, clientCount: () => clients.size, hasEngine: () => engine !== null, queuedBytes };
 }

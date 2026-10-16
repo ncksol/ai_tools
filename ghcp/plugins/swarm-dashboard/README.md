@@ -85,7 +85,7 @@ Without Playwright or its WebKit build the check says so and skips. `npm test` a
 - "Port 7927 serves the dashboard with sample data": a launcher started with `--demo` holds the port. Stop it with Ctrl+C in its terminal, or start it with `--port <n>`.
 - "Disconnected · retrying" in a browser: no dashboard server is running. Start the launcher or open the canvas. In the canvas the page recovers by itself within a few seconds; if it does not, close and reopen the canvas.
 - Old behaviour after an update: restart the app, or reload extensions in every session, so that no session still serves the previous version. A canvas that finds an older dashboard on the port says so in the extension log.
-- Pages that never load: browsers allow about six open connections per site, and each open dashboard page holds one. With more than about six dashboard tabs or canvases open at once, the extra pages wait; close the ones you do not need.
+- Pages that never load: browsers allow about six open connections per site, and each open dashboard page holds one. With more than about six dashboard tabs or canvases open at once, the extra pages wait; close the ones you do not need. The server itself serves at most 32 live pages at once. It disconnects a page that has read nothing for 30 seconds, and that page reconnects by itself.
 - "1 data warning" at the top right: some Copilot data could not be read, for example after a Copilot update changed a file format. Hover over it for details. The rest of the dashboard still works.
 
 ## Layout
