@@ -14,7 +14,7 @@ Measures the swarm cockpit's GPU time per frame on this machine, at 1440 × 900 
 ratio 2, on the synthetic example swarm: High redraws the black hole every frame, Balanced every second frame. Each
 frame is forced to finish before it is timed. A dev-only test: it reports the cost, and fails only when WebGL2 is
 missing, the renderer is a software one, or High at 1440 × 900 cannot hold 30 frames a second. It cannot measure heat.
---engine webkit uses Playwright's WebKit (set PLAYWRIGHT_CORE, as for check-layout). --frames sets frames per run (30).
+--engine webkit uses Playwright's WebKit (set PLAYWRIGHT_CORE, as for check-layout). --frames sets frames per run (30). WebKit rounds its timers to 1 ms, so its times are rough.
 `;
 
 export function parseArguments(argv) {
@@ -66,8 +66,8 @@ export function verdict(results) {
 const percent = ms => Math.round(ms * 3);
 export function describe(result) {
   const { passes } = result.high;
-  return `${result.width} × ${result.height} at ${result.dpr}x (${result.size.width} × ${result.size.height}): High ${result.high.median} ms median (90th percentile ${result.high.p90.toFixed(1)} ms), `
-    + `Balanced ${result.balanced.mean} ms a frame on average; black hole ${passes.holeMs}, bloom ${passes.bloomMs}, final ${passes.finalMs} ms. `
+  return `${result.width} × ${result.height} at ${result.dpr}x (${result.size.width} × ${result.size.height}): High ${result.high.median.toFixed(1)} ms median (90th percentile ${result.high.p90.toFixed(1)} ms), `
+    + `Balanced ${result.balanced.mean.toFixed(1)} ms a frame on average; black hole ${passes.holeMs.toFixed(1)}, bloom ${passes.bloomMs.toFixed(1)}, final ${passes.finalMs.toFixed(1)} ms. `
     + `At 30 fps the GPU is busy about ${percent(result.high.median)}% of the time on High and ${percent(result.balanced.mean)}% on Balanced.`;
 }
 
@@ -131,6 +131,9 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
     browser = await launchBrowser(executable);
   }
   const server = createDashboardServer({ createEngine: () => createDemoEngine({ scenario: 'example', simulate: false }), port: 0, version: 'cockpit-gpu' });
+  const interrupt = () => process.exit(130);
+  process.once('SIGINT', interrupt);
+  process.once('SIGTERM', interrupt);
   try {
     await server.listen();
     const url = `${server.url}cockpit?debug=1&quality=high`;
@@ -149,11 +152,14 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
     }
     const first = results.find(result => result.renderer);
     stdout.write(`Browser: ${browser.product}\nRenderer: ${first ? `${first.renderer}, ${first.hdr ? 'HDR' : '8-bit'} targets` : 'none'}\n`);
+    if (options.engine === 'webkit') stdout.write('WebKit rounds its timers to 1 ms, so these times are within ±1 ms and the pass breakdown is rough.\n');
     for (const result of results.filter(item => item.renderer)) stdout.write(`${describe(result)}\n`);
     const problems = verdict(results);
     for (const problem of problems) stderr.write(`${problem}\n`);
     return problems.length ? 1 : 0;
   } finally {
+    process.off('SIGINT', interrupt);
+    process.off('SIGTERM', interrupt);
     await server.close();
     await browser.close();
   }
