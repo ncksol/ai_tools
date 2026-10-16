@@ -1,9 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { adoArgs, createPrLookup, githubArgs, mapAdo, mapGithub, prKey } from '../engine/model/pr-lookup.mjs';
+import { adoArgs, cliEnv, createPrLookup, githubArgs, mapAdo, mapGithub, prKey, runCommand } from '../engine/model/pr-lookup.mjs';
 import { MINUTE } from '../engine/time.mjs';
 
 const T0 = Date.UTC(2026, 9, 15, 8, 0, 0);
+const AZ_OVERRIDES = {
+  AZURE_EXTENSION_USE_DYNAMIC_INSTALL: 'no', AZURE_CORE_COLLECT_TELEMETRY: 'no', AZURE_LOGGING_ENABLE_LOG_FILE: 'no',
+  AZURE_CORE_SURVEY_MESSAGE: 'no', 'AZURE_AUTO-UPGRADE_ENABLE': 'no',
+};
+const GH_OVERRIDES = { GH_NO_UPDATE_NOTIFIER: '1', GH_NO_EXTENSION_UPDATE_NOTIFIER: '1', GH_PROMPT_DISABLED: '1', GH_TELEMETRY: 'false' };
+const pick = (env, names) => Object.fromEntries(names.map(name => [name, env?.[name]]));
 
 test('Azure DevOps PR JSON maps to a PR state and review note', () => {
   const base = { pullRequestId: 4711, title: 'Add API', creationDate: '2026-10-15T08:00:00Z', closedDate: null, repository: { webUrl: 'https://dev.azure.com/org/project/_git/repo' } };
@@ -123,4 +129,51 @@ test('pending is true from the request until its lookup resolves or fails', asyn
   assert.equal(lookup.pending(third), false);
   assert.equal(lookup.get(second).error, 'gh failed');
   assert.equal(lookup.pending(null), false);
+});
+
+test('az and gh run with logs, telemetry, installs, upgrades, surveys and prompts turned off, and the rest of the environment kept', async t => {
+  process.env.SWARM_PR_LOOKUP_SENTINEL = 'kept';
+  t.after(() => { delete process.env.SWARM_PR_LOOKUP_SENTINEL; });
+  const calls = [];
+  const lookup = createPrLookup({ run: async (command, args, options) => { calls.push({ command, env: options.env }); return '{}'; } });
+  lookup.request({ provider: 'ado', id: 7, repo: 'org/project/repo' });
+  lookup.request({ provider: 'github', id: 3, repo: 'o/r' });
+  await lookup.settle();
+  const az = calls.find(call => call.command === 'az');
+  const gh = calls.find(call => call.command === 'gh');
+  assert.deepEqual(pick(az.env, Object.keys(AZ_OVERRIDES)), AZ_OVERRIDES);
+  assert.deepEqual(pick(gh.env, Object.keys(GH_OVERRIDES)), GH_OVERRIDES);
+  assert.equal(az.env.SWARM_PR_LOOKUP_SENTINEL, 'kept');
+  assert.equal(gh.env.SWARM_PR_LOOKUP_SENTINEL, 'kept');
+});
+
+test('runCommand hands its environment to the child process', async () => {
+  const names = ['SENTINEL', 'AZURE_EXTENSION_USE_DYNAMIC_INSTALL', 'AZURE_AUTO-UPGRADE_ENABLE', 'AZURE_CORE_COLLECT_TELEMETRY', 'SWARM_PR_LOOKUP_ABSENT'];
+  const script = `const names = ${JSON.stringify(names)}; process.stdout.write(JSON.stringify(Object.fromEntries(names.map(name => [name, process.env[name] ?? null]))));`;
+  process.env.SWARM_PR_LOOKUP_ABSENT = 'parent only';
+  try {
+    const stdout = await runCommand(process.execPath, ['-e', script], { timeoutMs: 20_000, env: cliEnv('az', { PATH: process.env.PATH, SENTINEL: 'x' }) });
+    assert.deepEqual(JSON.parse(stdout), {
+      SENTINEL: 'x', AZURE_EXTENSION_USE_DYNAMIC_INSTALL: 'no', 'AZURE_AUTO-UPGRADE_ENABLE': 'no', AZURE_CORE_COLLECT_TELEMETRY: 'no', SWARM_PR_LOOKUP_ABSENT: null,
+    });
+  } finally {
+    delete process.env.SWARM_PR_LOOKUP_ABSENT;
+  }
+});
+
+test('a missing azure-devops extension is reported, never installed', async () => {
+  const calls = [];
+  const lookup = createPrLookup({
+    run: async (command, args) => {
+      calls.push([command, ...args]);
+      throw new Error("az failed: ERROR: 'repos' is misspelled or not recognized by the system.");
+    },
+  });
+  const pr = { provider: 'ado', id: 9, repo: 'org/project/repo' };
+  lookup.request(pr);
+  await lookup.settle();
+  assert.equal(lookup.get(pr).error,
+    'Azure DevOps PR state is unavailable: the azure-devops extension for az is not installed (the dashboard never installs it).');
+  assert.equal(calls.length, 1);
+  assert.ok(calls.every(call => !call.some(arg => /extension|config/.test(arg))));
 });

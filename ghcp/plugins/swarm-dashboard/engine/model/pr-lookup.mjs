@@ -6,9 +6,28 @@ export const GITHUB_REPO = /^[A-Za-z0-9][\w.-]*\/[\w.-]+$/;
 export const ADO_REPO = /^[A-Za-z0-9][\w.-]*\/[^/\r\n]+\/[^/\r\n]+$/;
 const EMPTY_INFO = Object.freeze({ state: 'unknown', title: null, openedAt: null, mergedAt: null, closedAt: null, reviewNote: null, url: null });
 
-export function runCommand(command, args, { cwd, timeoutMs }) {
+// Turns off what az and gh write or send on their own: logs, telemetry, extension installs, upgrades, surveys and prompts.
+// Accepted exception: the CLIs may still refresh their sign-in caches, and az may rebuild its command index after an upgrade.
+export const CLI_ENV = Object.freeze({
+  az: Object.freeze({
+    AZURE_EXTENSION_USE_DYNAMIC_INSTALL: 'no',
+    AZURE_CORE_COLLECT_TELEMETRY: 'no',
+    AZURE_LOGGING_ENABLE_LOG_FILE: 'no',
+    AZURE_CORE_SURVEY_MESSAGE: 'no',
+    'AZURE_AUTO-UPGRADE_ENABLE': 'no', // knack keeps the hyphen of the auto-upgrade section.
+  }),
+  gh: Object.freeze({ GH_NO_UPDATE_NOTIFIER: '1', GH_NO_EXTENSION_UPDATE_NOTIFIER: '1', GH_PROMPT_DISABLED: '1', GH_TELEMETRY: 'false' }),
+});
+
+export const cliEnv = (command, base = process.env) => ({ ...base, ...CLI_ENV[command] });
+
+// With dynamic install off, az fails like this when the azure-devops extension is missing. The dashboard never installs it.
+const MISSING_EXTENSION = /not recognized by the system|requires the extension|az extension add/i;
+const MISSING_EXTENSION_MESSAGE = 'Azure DevOps PR state is unavailable: the azure-devops extension for az is not installed (the dashboard never installs it).';
+
+export function runCommand(command, args, { cwd, timeoutMs, env }) {
   return new Promise((resolve, reject) => {
-    execFile(command, args, { cwd, timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
+    execFile(command, args, { cwd, env, timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
       if (error) {
         const failure = new Error(`${command} failed: ${String(stderr || error.message).trim().split('\n')[0].slice(0, 200)}`);
         failure.code = error.code;
@@ -79,7 +98,14 @@ export function createPrLookup({ run = runCommand, now = Date.now, ttlMs = 5 * M
     try {
       if (cwd && !exists(cwd)) throw new Error('its worktree is gone, so its repository is unknown');
       const ado = pr.provider === 'ado';
-      const stdout = await run(ado ? 'az' : 'gh', ado ? adoArgs(pr) : githubArgs(pr), { cwd: cwd ?? undefined, timeoutMs });
+      const command = ado ? 'az' : 'gh';
+      let stdout;
+      try {
+        stdout = await run(command, ado ? adoArgs(pr) : githubArgs(pr), { cwd: cwd ?? undefined, timeoutMs, env: cliEnv(command) });
+      } catch (error) {
+        if (ado && MISSING_EXTENSION.test(error.message)) throw new Error(MISSING_EXTENSION_MESSAGE);
+        throw error;
+      }
       cache.set(key, { ...(ado ? mapAdo : mapGithub)(JSON.parse(stdout)), checkedAt: now(), error: null });
     } catch (error) {
       cache.set(key, { ...(cache.get(key) ?? EMPTY_INFO), checkedAt: now(), error: error.message });
