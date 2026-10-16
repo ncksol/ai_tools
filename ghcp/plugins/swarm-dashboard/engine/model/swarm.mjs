@@ -461,11 +461,12 @@ function subagentUnitView(input, rootContext, root, sub, evaluation, label, roll
   const startedAt = sub.startedAt ?? sub.launchedAt;
   const clockEnd = evaluation.endedAt ?? now;
   const spans = unit.runs.map(([start, end]) => [start, Math.max(start, end ?? clockEnd)]);
-  const openTool = running ? [...unit.openTools.values()].sort((a, b) => a.startedAt - b.startedAt)[0] ?? null : null;
-  const tool = openTool ? toolView(openTool, toolLimitMs(openTool, thresholds)) : null;
+  // The tool shown is the stuck one when there is one, else the oldest open call. The activity follows the tool shown.
+  const oldest = running ? [...unit.openTools.values()].sort((a, b) => a.startedAt - b.startedAt)[0] ?? null : null;
+  const tool = evaluation.tool ?? (oldest ? toolView(oldest, toolLimitMs(oldest, thresholds)) : null);
   const activity = !running ? SUBAGENT_DONE_ACTIVITY[evaluation.detail]
-    : !openTool ? 'Thinking'
-      : openTool.name === 'task' ? `Waiting for its ${unit.children.find(child => child.id === openTool.id)?.type ?? 'sub-agent'} (sync)` : `Running ${openTool.args.summary}`;
+    : !tool ? 'Thinking'
+      : tool.name === 'task' ? `Waiting for its ${unit.children.find(child => child.id === tool.id)?.type ?? 'sub-agent'} (sync)` : `Running ${tool.summary}`;
   const report = unit.lastMessage
     ? {
       status: running ? 'progress' : evaluation.detail === 'completed' ? 'complete' : 'blocked', source: 'message', at: unit.lastMessage.at,
@@ -483,7 +484,7 @@ function subagentUnitView(input, rootContext, root, sub, evaluation, label, roll
     report, progress: null,
     subagents: sortSubagentViews(unit.children.map(child => subagentView(child, rollup.get(child.id)?.nanoAiu ?? 0, stuckIds.has(child.id)))),
     timeline: {
-      segments: buildSegments({ start: startedAt, end: evaluation.endedAt, now, busy: spans, waits: [], stuckFrom: evaluation.detail === 'stuck_subagent' ? evaluation.since : null }),
+      segments: buildSegments({ start: startedAt, end: evaluation.endedAt, now, busy: spans, waits: [], stuckFrom: status === 'stuck' ? evaluation.since : null }),
       subagents: unit.children.map(child => ({ id: child.id, start: child.startedAt ?? child.launchedAt, end: child.endedAt ?? evaluation.endedAt, type: child.type })),
       marks: report && !running ? [{ at: evaluation.endedAt, kind: 'report', text: report.title || 'Report', status: report.status }] : [],
     },

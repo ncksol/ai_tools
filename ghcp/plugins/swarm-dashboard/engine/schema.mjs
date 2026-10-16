@@ -105,10 +105,12 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  *   cliSessionIds   []            branch: null                    model: the model it ran on, else the one requested
  *   status / statusDetail / bucket:
  *                   running 'busy'/'busy'/'working'; no events for longer than the sub-agent limit
- *                   'stuck'/'stuck_subagent'/'stuck'; completed 'done'/'completed'/'done'; failed 'blocked'/'failed'/'failed';
+ *                   'stuck'/'stuck_subagent'/'stuck'; an open tool call past its own limit
+ *                   'stuck'/'stuck_tool'/'stuck'; while a tool with its own limit is open, that limit applies instead of the
+ *                   silence limit; completed 'done'/'completed'/'done'; failed 'blocked'/'failed'/'failed';
  *                   cancelled 'blocked'/'cancelled'/'failed'; the orchestrator's process ended while it ran
  *                   'blocked'/'crashed'/'failed'
- *   since           start of its current run; when stuck, its last event; once finished, endedAt
+ *   since           start of its current run; when stuck, its last event, or the start of the stuck tool call; once finished, endedAt
  *   reason          stuck: the rule and its numbers; failed: the error; cancelled: when; crashed: why
  *   startedAt       when it started       endedAt: when it finished (after a follow-up: when its last turn ended, or when an
  *                                         abort or the end of the orchestrator's process stopped it);
@@ -122,7 +124,7 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  *                   once completed (its final answer), 'blocked' if it failed or was cancelled; null before its
  *                   first message
  *   progress        null          subagents: the sub-agents it started itself
- *   timeline        busy while it runs, idle between a completion and a follow-up, stuck from its last event;
+ *   timeline        busy while it runs, idle between a completion and a follow-up, stuck from when it became stuck;
  *                   bars for its own sub-agents; a 'report' mark when it finishes
  *   recent          its own feed items: started, resumed by a follow-up, finished, failed or cancelled, and its own
  *                   sub-agents

@@ -1227,3 +1227,56 @@ test('the launch numbers of older root CLI sessions come before those of the cur
   data.alive.set('cli-root-old', true);
   assert.deepEqual(subUnits(buildSnapshot(data)).map(unit => unit.label), ['explore-1', 'explore-2', 'explore-3']);
 });
+
+// --- A unit with an open tool call is judged by that call's own limit ---
+
+/** A background task with a `bash` call (initial_wait 600) that starts at minute 116. */
+function bashSwarm(now) {
+  const ids = {};
+  const { data } = quietSwarm(root => {
+    root.at(at(115)); ids.call = root.subagent({ name: 'worker', type: 'general-purpose', mode: 'background', agentId: 'ag-worker' });
+    root.at(at(116)); root.sub(ids.call, 'tool.execution_start', { toolCallId: 'inner-bash', toolName: 'bash', arguments: { command: 'long job', initial_wait: 600 } });
+  }, now);
+  return { data, ids };
+}
+
+test('a sub-agent that waits on a long bash call is busy at 11 minutes and stuck_tool at 16', () => {
+  const early = buildSnapshot(bashSwarm(at(116 + 11)).data);
+  assert.deepEqual(validateSnapshot(early), []);
+  const [busy] = subUnits(early);
+  assert.deepEqual([busy.statusDetail, busy.bucket, busy.reason], ['busy', 'working', null]);
+  assert.equal(busy.activity.label, 'Running bash: long job');
+  assert.equal(early.orchestrator.subagents.find(sub => sub.id === busy.id).status, 'running', 'the orchestrator\'s chip is not stuck');
+
+  const { data, ids } = bashSwarm(at(116 + 16));
+  const late = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(late), []);
+  const [stuck] = subUnits(late);
+  assert.deepEqual([stuck.statusDetail, stuck.status, stuck.since], ['stuck_tool', 'stuck', at(116)]);
+  assert.equal(stuck.reason, 'bash has run for 16 min with a limit of 15 min (initial_wait 10 min + 5 min).');
+  assert.deepEqual(stuck.activity.tool, { id: 'inner-bash', name: 'bash', summary: 'bash: long job', startedAt: at(116), limitMs: 15 * MINUTE });
+  assert.equal(stuck.activity.label, 'Running bash: long job');
+  assert.deepEqual(stuck.timeline.segments.at(-1), { start: at(116), end: null, state: 'stuck' });
+  assert.equal(late.orchestrator.subagents.find(sub => sub.id === ids.call).status, 'stuck');
+  assert.equal(late.run.lifecycle, 'live');
+});
+
+test('a sub-agent that waits on its sync child stays busy while the child works, and is stuck_subagent once both are silent', () => {
+  const build = now => quietSwarm(root => {
+    root.at(at(115));
+    const top = root.subagent({ name: 'top', type: 'general-purpose', mode: 'background', agentId: 'ag-top' });
+    root.at(at(116)); const kid = root.nested(top, { name: 'kid', type: 'explore', mode: 'sync', agentId: 'ag-kid' });
+    root.at(at(122)); root.sub(kid, 'assistant.message', { content: 'still going' });
+    root.at(at(128)); root.sub(kid, 'assistant.message', { content: 'nearly there' });
+  }, now).data;
+  const working = buildSnapshot(build(at(134)));
+  const [busy] = subUnits(working);
+  assert.deepEqual([busy.statusDetail, busy.reason], ['busy', null]);
+  assert.equal(busy.activity.tool?.name, 'task');
+  assert.equal(busy.activity.label, 'Waiting for its explore (sync)');
+  const silent = buildSnapshot(build(at(140)));
+  const [stuck] = subUnits(silent);
+  assert.deepEqual([stuck.statusDetail, stuck.reason], ['stuck_subagent', 'No events for 12 min; the limit is 10 min.']);
+  assert.equal(stuck.activity.tool?.name, 'task');
+  assert.deepEqual(stuck.timeline.segments.at(-1), { start: at(128), end: null, state: 'stuck' });
+});

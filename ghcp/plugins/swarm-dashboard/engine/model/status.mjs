@@ -87,11 +87,21 @@ export function busyWindowStart(state, now, windowMs) {
   return spans.length ? spans[0][0] : now;
 }
 
+/**
+ * The running sub-agents of a state that count as stuck (they make the orchestrator's chip `stuck`). One with a unit is judged by
+ * the unit rule (evaluateSubagentUnit): stuck_tool or stuck_subagent. Any other is stuck after a silence past its limit.
+ */
 function findStuckSubagents(state, now, t) {
   const stuck = new Set();
   if (!state) return stuck;
   for (const sub of state.subagents.values()) {
-    if (sub.status === 'running' && now - sub.lastEventAt > subagentLimitMs(sub, t)) stuck.add(sub.id);
+    if (sub.status !== 'running') continue;
+    if (sub.unit) {
+      const { detail } = evaluateSubagentUnit(sub, { alive: true, now, thresholds: t });
+      if (detail === 'stuck_tool' || detail === 'stuck_subagent') stuck.add(sub.id);
+    } else if (now - sub.lastEventAt > subagentLimitMs(sub, t)) {
+      stuck.add(sub.id);
+    }
   }
   return stuck;
 }
@@ -199,27 +209,45 @@ export function swarmStalled({ orchestratorDetail, unitDetails, monitorDue, last
 
 /**
  * Status of one of the root orchestrator's one-off sub-agents, from its unit (see session-state.mjs). It is running while its last
- * run is open: crashed when the orchestrator's process is gone, stuck after a silence longer than its limit, else busy. Once its
- * last run has closed it is failed, cancelled or completed, and `endedAt` is the end of that run.
- * @returns {{ detail: string, since: number, reason: string|null, endedAt: number|null }}
+ * run is open: crashed when the orchestrator's process is gone; then judged like a session is.
+ * An open tool call that has its own limit and has run past it is stuck_tool (the first such one, oldest first), with the same
+ * reason text as a session. While any open tool has its own limit, that limit applies instead of the silence limit. With none,
+ * a silence longer than the sub-agent's limit is stuck_subagent (a `task` call has no limit of its own, so a sub-agent that waits
+ * on a sync child keeps this rule, and its child's events move the clock). Otherwise it is busy.
+ * Once its last run has closed it is failed, cancelled or completed, and `endedAt` is the end of that run.
+ * `tool` is the stuck tool call (a tool view), else null.
+ * @returns {{ detail: string, since: number, reason: string|null, endedAt: number|null, tool: object|null }}
  */
 export function evaluateSubagentUnit(sub, { alive, now, thresholds }) {
   const { unit } = sub;
   const last = unit.runs[unit.runs.length - 1];
   if (last[1] === null) {
     if (alive === false) {
-      return { detail: 'crashed', since: sub.lastEventAt, reason: 'The orchestrator\'s process ended while this sub-agent was running.', endedAt: sub.lastEventAt };
+      return { detail: 'crashed', since: sub.lastEventAt, reason: 'The orchestrator\'s process ended while this sub-agent was running.', endedAt: sub.lastEventAt, tool: null };
+    }
+    let hasOwnLimit = false;
+    for (const tool of [...unit.openTools.values()].sort((a, b) => a.startedAt - b.startedAt)) {
+      const limit = toolLimitMs(tool, thresholds);
+      if (limit === null) continue;
+      hasOwnLimit = true;
+      if (now - tool.startedAt > limit) {
+        return {
+          detail: 'stuck_tool', since: tool.startedAt,
+          reason: `${tool.name} has run for ${formatDuration(now - tool.startedAt)} with a limit of ${formatDuration(limit)}${limitNote(tool, thresholds)}.`,
+          endedAt: null, tool: toolView(tool, limit),
+        };
+      }
     }
     const limit = subagentLimitMs(sub, thresholds);
-    if (now - sub.lastEventAt > limit) {
+    if (!hasOwnLimit && now - sub.lastEventAt > limit) {
       return {
         detail: 'stuck_subagent', since: Math.min(sub.lastEventAt, now),
-        reason: `No events for ${formatDuration(now - sub.lastEventAt)}; the limit is ${formatDuration(limit)}.`, endedAt: null,
+        reason: `No events for ${formatDuration(now - sub.lastEventAt)}; the limit is ${formatDuration(limit)}.`, endedAt: null, tool: null,
       };
     }
-    return { detail: 'busy', since: Math.min(last[0], now), reason: null, endedAt: null };
+    return { detail: 'busy', since: Math.min(last[0], now), reason: null, endedAt: null, tool: null };
   }
-  const ended = { since: last[1], endedAt: last[1] };
+  const ended = { since: last[1], endedAt: last[1], tool: null };
   // The outcome of the last run: a follow-up can end differently from the chip (cut off by an abort or the end of the process).
   const outcome = unit.lastOutcome ?? sub.status;
   if (outcome === 'failed') return { detail: 'failed', reason: unit.error ? `Failed: ${unit.error}` : 'Failed.', ...ended };

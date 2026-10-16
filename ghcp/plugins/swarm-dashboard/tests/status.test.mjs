@@ -268,9 +268,9 @@ test('a running sub-agent unit is busy from the start of its run until it has be
   const call = log.subagent({ name: 'scout', type: 'explore', mode: 'background' });
   log.wait(MINUTE); log.sub(call, 'assistant.message', { content: 'looking' });
   const sub = rootSub(log, call);
-  assert.deepEqual(evaluateSub(sub, T0 + 11 * MINUTE), { detail: 'busy', since: T0, reason: null, endedAt: null });
+  assert.deepEqual(evaluateSub(sub, T0 + 11 * MINUTE), { detail: 'busy', since: T0, reason: null, endedAt: null, tool: null });
   assert.deepEqual(evaluateSub(sub, T0 + 26 * MINUTE), {
-    detail: 'stuck_subagent', since: T0 + MINUTE, reason: 'No events for 25 min; the limit is 10 min.', endedAt: null,
+    detail: 'stuck_subagent', since: T0 + MINUTE, reason: 'No events for 25 min; the limit is 10 min.', endedAt: null, tool: null,
   });
   assert.equal(evaluateSub(sub, T0 + 11 * MINUTE + 1).detail, 'stuck_subagent', 'longer than the limit is stuck');
 });
@@ -290,7 +290,7 @@ test('a sub-agent unit whose orchestrator process ended while it ran is crashed 
   log.wait(2 * MINUTE); log.sub(running, 'assistant.message', { content: 'x' });
   log.wait(MINUTE); log.subagentDone(finished, { durationMs: 3 * MINUTE });
   assert.deepEqual(evaluateSub(rootSub(log, running), T0 + 90 * MINUTE, { alive: false }), {
-    detail: 'crashed', since: T0 + 2 * MINUTE, reason: 'The orchestrator\'s process ended while this sub-agent was running.', endedAt: T0 + 2 * MINUTE,
+    detail: 'crashed', since: T0 + 2 * MINUTE, reason: 'The orchestrator\'s process ended while this sub-agent was running.', endedAt: T0 + 2 * MINUTE, tool: null,
   });
   assert.equal(evaluateSub(rootSub(log, finished), T0 + 90 * MINUTE, { alive: false }).detail, 'completed');
   assert.equal(evaluateSub(rootSub(log, running), T0 + 3 * MINUTE, { alive: null }).detail, 'busy', 'an unknown liveness is not a crash');
@@ -306,9 +306,9 @@ test('a finished sub-agent unit is failed, cancelled or completed, at the end of
   log.subagentDone(bare, { failed: true, durationMs: 3 * MINUTE });
   log.subagentDone(cancelled, { cancelled: true, durationMs: 3 * MINUTE });
   const now = T0 + 60 * MINUTE;
-  assert.deepEqual(evaluateSub(rootSub(log, failed), now), { detail: 'failed', since: T0 + 3 * MINUTE, reason: 'Failed: Quota exceeded', endedAt: T0 + 3 * MINUTE });
+  assert.deepEqual(evaluateSub(rootSub(log, failed), now), { detail: 'failed', since: T0 + 3 * MINUTE, reason: 'Failed: Quota exceeded', endedAt: T0 + 3 * MINUTE, tool: null });
   assert.equal(evaluateSub(rootSub(log, bare), now).reason, 'Failed.');
-  assert.deepEqual(evaluateSub(rootSub(log, cancelled), now), { detail: 'cancelled', since: T0 + 3 * MINUTE, reason: 'Cancelled after 3 min.', endedAt: T0 + 3 * MINUTE });
+  assert.deepEqual(evaluateSub(rootSub(log, cancelled), now), { detail: 'cancelled', since: T0 + 3 * MINUTE, reason: 'Cancelled after 3 min.', endedAt: T0 + 3 * MINUTE, tool: null });
   log.wait(10 * MINUTE); log.toAgent('agent-c', 'again');
   log.wait(2 * MINUTE); log.sub(cancelled, 'assistant.turn_end');
   const resumed = evaluateSub(rootSub(log, cancelled), now);
@@ -322,9 +322,62 @@ test('a resumed sub-agent unit is busy from its follow-up, stuck when silent, an
   log.wait(MINUTE); log.subagentDone(call, { durationMs: MINUTE, agentId: 'agent-r' });
   log.wait(30 * MINUTE); log.toAgent('agent-r', 'again');
   const sub = rootSub(log, call);
-  assert.deepEqual(evaluateSub(sub, T0 + 35 * MINUTE), { detail: 'busy', since: T0 + 31 * MINUTE, reason: null, endedAt: null });
+  assert.deepEqual(evaluateSub(sub, T0 + 35 * MINUTE), { detail: 'busy', since: T0 + 31 * MINUTE, reason: null, endedAt: null, tool: null });
   assert.equal(evaluateSub(sub, T0 + 50 * MINUTE).detail, 'stuck_subagent');
   assert.equal(evaluateSub(sub, T0 + 50 * MINUTE).since, T0 + 31 * MINUTE);
   log.wait(2 * MINUTE); log.sub(call, 'assistant.turn_end');
-  assert.deepEqual(evaluateSub(rootSub(log, call), T0 + 50 * MINUTE), { detail: 'completed', since: T0 + 33 * MINUTE, reason: null, endedAt: T0 + 33 * MINUTE });
+  assert.deepEqual(evaluateSub(rootSub(log, call), T0 + 50 * MINUTE), { detail: 'completed', since: T0 + 33 * MINUTE, reason: null, endedAt: T0 + 33 * MINUTE, tool: null });
+});
+
+// --- An open tool call is judged by its own limit ---
+
+/** A background sub-agent that starts a tool call inside itself one minute in. */
+function withInnerTool(name, args) {
+  const log = busyLog();
+  const call = log.subagent({ name: 'worker', type: 'general-purpose', mode: 'background' });
+  log.wait(MINUTE); log.sub(call, 'tool.execution_start', { toolCallId: 'inner-1', toolName: name, arguments: args });
+  return { log, call };
+}
+
+test('a sub-agent unit with a long tool call open is judged by that tool\'s limit, not by silence', () => {
+  const { log, call } = withInnerTool('bash', { command: 'long job', initial_wait: 600 });
+  const sub = rootSub(log, call);
+  assert.deepEqual(evaluateSub(sub, T0 + 12 * MINUTE), { detail: 'busy', since: T0, reason: null, endedAt: null, tool: null }, 'eleven minutes of silence is not stuck');
+  assert.equal(evaluateSub(sub, T0 + 16 * MINUTE).detail, 'busy', 'the limit is 15 minutes, counted from the tool call');
+  const stuck = evaluateSub(sub, T0 + 17 * MINUTE);
+  assert.deepEqual(stuck, {
+    detail: 'stuck_tool', since: T0 + MINUTE, endedAt: null,
+    reason: 'bash has run for 16 min with a limit of 15 min (initial_wait 10 min + 5 min).',
+    tool: { id: 'inner-1', name: 'bash', summary: 'bash: long job', startedAt: T0 + MINUTE, limitMs: 15 * MINUTE },
+  });
+});
+
+test('a quick tool call that runs past 2 minutes makes the unit stuck_tool', () => {
+  const { log, call } = withInnerTool('view', { path: 'a.txt' });
+  const sub = rootSub(log, call);
+  assert.equal(evaluateSub(sub, T0 + 3 * MINUTE).detail, 'busy');
+  const stuck = evaluateSub(sub, T0 + 3 * MINUTE + 1);
+  assert.deepEqual([stuck.detail, stuck.since, stuck.tool?.name, stuck.tool?.limitMs], ['stuck_tool', T0 + MINUTE, 'view', 2 * MINUTE]);
+  assert.equal(stuck.reason, 'view has run for 2 min with a limit of 2 min.');
+});
+
+test('with no open tool that has its own limit, silence still makes the unit stuck_subagent', () => {
+  const { log, call } = withInnerTool('web_fetch', { url: 'https://example.invalid' });
+  const stuck = evaluateSub(rootSub(log, call), T0 + 12 * MINUTE);
+  assert.deepEqual([stuck.detail, stuck.since, stuck.reason, stuck.tool], ['stuck_subagent', T0 + MINUTE, 'No events for 11 min; the limit is 10 min.', null]);
+  const none = busyLog();
+  const idle = none.subagent({ name: 'plain', type: 'explore', mode: 'background' });
+  assert.equal(evaluateSub(rootSub(none, idle), T0 + 11 * MINUTE).detail, 'stuck_subagent');
+});
+
+test('the orchestrator\'s stuck flag for a sub-agent that has a unit follows the same rule', () => {
+  const stuckOf = (log, now) => evaluate(fold(log, 'cli-1', { subagentUnits: true }), now).stuckSubagents.size;
+  const bash = withInnerTool('bash', { command: 'long job', initial_wait: 600 });
+  assert.equal(stuckOf(bash.log, T0 + 12 * MINUTE), 0, 'a long tool call is not stuck at 11 minutes');
+  assert.equal(stuckOf(bash.log, T0 + 17 * MINUTE), 1, 'stuck past the tool\'s own limit');
+  const view = withInnerTool('view', { path: 'a.txt' });
+  assert.equal(stuckOf(view.log, T0 + 3 * MINUTE + 1), 1, 'a quick tool past its limit, long before the sub-agent limit');
+  const plain = withInnerTool('web_fetch', { url: 'https://example.invalid' });
+  assert.equal(stuckOf(plain.log, T0 + 12 * MINUTE), 1);
+  assert.equal(evaluate(fold(withInnerTool('view', { path: 'a.txt' }).log), T0 + 3 * MINUTE + 1).stuckSubagents.size, 0, 'a state with no unit keeps the silence rule');
 });
