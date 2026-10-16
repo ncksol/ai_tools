@@ -75,6 +75,17 @@ test('the regular view opens what the cockpit asks for in place, or loads the sw
   assert.deepEqual(showRequest({ snapshot: null }, { kind: SHOW, swarm: 'ws-1', detail: null, tab: 'board' }), { reload: '/?swarm=ws-1&tab=board' });
 });
 
+test('a finished swarm shown by default reloads pinned, so its details show instead of the placeholder', () => {
+  const ask = { kind: SHOW, swarm: 'ws-1', detail: 'u1', tab: 'board' };
+  const finished = { run: { id: 'ws-1', lifecycle: 'finished' } };
+  const live = { run: { id: 'ws-1', lifecycle: 'live' } };
+  assert.deepEqual(showRequest({ snapshot: finished, swarm: null }, ask), { reload: '/?swarm=ws-1&tab=board&detail=u1' });
+  assert.deepEqual(showRequest({ snapshot: finished }, ask), { reload: '/?swarm=ws-1&tab=board&detail=u1' });
+  assert.deepEqual(showRequest({ snapshot: finished, swarm: 'ws-1' }, ask), { detail: 'u1', tab: 'board' });
+  assert.deepEqual(showRequest({ snapshot: live, swarm: null }, ask), { detail: 'u1', tab: 'board' });
+  assert.deepEqual(showRequest({ snapshot: finished, swarm: null }, { ...ask, swarm: 'ws-2' }), { reload: '/?swarm=ws-2&tab=board&detail=u1' });
+});
+
 test('the cockpit sends its request to the regular window, or opens one when it is gone', () => {
   const regular = target(`${BASE}/?swarm=ws-1`);
   const live = page(regular, `${BASE}/cockpit?swarm=ws-1`);

@@ -74,12 +74,16 @@ export async function copyAddress(nav, doc, el, url) {
   }
 }
 
-/** What the regular view does with a cockpit's message: open a unit or tab in place, or load the swarm it names. */
+/**
+ * What the regular view does with a cockpit's message: open a unit or tab in place, or load the swarm it names (also
+ * when it is a finished swarm shown by default, which the page hides behind its placeholder).
+ */
 export function showRequest(view, data) {
   if (!data || data.kind !== SHOW || typeof data.swarm !== 'string') return null;
   const detail = typeof data.detail === 'string' ? data.detail : null;
   const tab = TABS.includes(data.tab) ? data.tab : null;
   if (view.snapshot?.run.id !== data.swarm) return { reload: regularPath({ swarm: data.swarm, detail, tab }) };
+  if (view.snapshot.run.lifecycle === 'finished' && !view.swarm) return { reload: regularPath({ swarm: data.swarm, detail, tab }) };
   return { detail, tab };
 }
 
