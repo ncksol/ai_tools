@@ -10,7 +10,7 @@ import { HOUR, MINUTE } from '../engine/time.mjs';
 import { CopilotHome } from './helpers/copilot-home.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { DAY, NO_SUCH_PID, T0, alwaysAlive, at, scenario } from './helpers/scenario.mjs';
-import { canWriteWithNode, holdExclusiveLock, openWriter } from './helpers/sqlite-writer.mjs';
+import { canWriteWithNode, execSql, holdExclusiveLock, openWriter } from './helpers/sqlite-writer.mjs';
 import { tempDir } from './helpers/temp.mjs';
 
 function fingerprint(dir) {
@@ -407,6 +407,100 @@ test('a stored summary picks up PR results that arrive later', async t => {
     await engine.refresh();
     assert.deepEqual(stat(stored), settled);
   });
+});
+
+/** The last event of ws-old in scenario(). */
+const OLD_LAST = T0 - 30 * DAY + MINUTE;
+
+/** ws-old from scenario() with 1 credit, its summary stored by an engine that then stops. reopen() makes a new engine, 30 days on. */
+async function storedOldRun() {
+  const home = scenario();
+  home.usage([{ sessionId: 'cli-old', nanoAiu: 1e9, createdAt: OLD_LAST - 30_000 }]);
+  const historyDir = path.join(tempDir('swarm-engine-'), 'history');
+  const stored = path.join(historyDir, 'runs', 'ws-old.json');
+  const reopen = () => createSwarmEngine({ copilotHome: home.root, historyDir, now: () => at(0), processProbe: alwaysAlive, prLookup: 'off' });
+  const first = reopen();
+  const summary = await first.getRunSummary('ws-old');
+  first.stop();
+  assert.deepEqual([summary.finishedAt, summary.credits], [OLD_LAST, 1]);
+  assert.deepEqual([readSummary(stored).finishedAt, readSummary(stored).credits], [OLD_LAST, 1]);
+  return { home, stored, reopen };
+}
+
+const oldItem = async engine => {
+  const item = (await engine.listHistory()).find(entry => entry.id === 'ws-old');
+  return item && [item.finishedAt, item.credits, item.summarized];
+};
+
+test('a stored summary is rebuilt when its run resumed and finished again while no engine ran', async () => {
+  const { home, stored, reopen } = await storedOldRun();
+  const resumeAt = OLD_LAST + 10 * MINUTE;
+  const finishedAt = resumeAt + 10 * MINUTE;
+  const later = new EventLog(resumeAt);
+  later.turnStart(); later.at(finishedAt); later.turnEnd();
+  home.writeEvents('cli-old', later.events, { append: true });
+  home.usage([{ sessionId: 'cli-old', nanoAiu: 2e9, createdAt: resumeAt + 5 * MINUTE }]);
+
+  const engine = reopen();
+  await engine.refresh();
+  const listed = engine.listSwarms().find(swarm => swarm.id === 'ws-old');
+  assert.deepEqual([listed.lifecycle, listed.lastActivityAt, listed.credits], ['finished', finishedAt, 3]);
+  assert.deepEqual(await oldItem(engine), [finishedAt, 3, false], 'History lists the run from the listing until it is summarised again');
+  const summary = await engine.getRunSummary('ws-old');
+  assert.deepEqual(validateRunSummary(summary), []);
+  assert.deepEqual([summary.finishedAt, summary.credits], [finishedAt, 3]);
+  assert.deepEqual([readSummary(stored).finishedAt, readSummary(stored).credits], [finishedAt, 3]);
+  assert.deepEqual(await oldItem(engine), [finishedAt, 3, true]);
+  engine.stop();
+});
+
+test('a stored summary is rebuilt when cost for the time it covers arrives later', async () => {
+  const { home, stored, reopen } = await storedOldRun();
+  home.usage([{ sessionId: 'cli-old', nanoAiu: 2e9, createdAt: OLD_LAST - 10_000 }]);
+  const engine = reopen();
+  const summary = await engine.getRunSummary('ws-old');
+  assert.deepEqual([summary.finishedAt, summary.credits], [OLD_LAST, 3]);
+  assert.equal(readSummary(stored).credits, 3);
+  assert.deepEqual(await oldItem(engine), [OLD_LAST, 3, true]);
+  engine.stop();
+});
+
+test('a stored summary with nothing newer is returned as stored, and lower cost does not replace it', async () => {
+  const { home, stored, reopen } = await storedOldRun();
+  const before = stat(stored);
+  const engine = reopen();
+  assert.deepEqual(await engine.getRunSummary('ws-old'), readSummary(stored));
+  assert.deepEqual(await oldItem(engine), [OLD_LAST, 1, true]);
+  assert.deepEqual(stat(stored), before);
+  engine.stop();
+
+  // Cleaning up logs can drop ledger rows; the stored cost then stays.
+  execSql(home.storeDb, "DELETE FROM assistant_usage_events WHERE session_id = 'cli-old'");
+  const cleaned = reopen();
+  await cleaned.refresh();
+  assert.equal(cleaned.listSwarms().find(swarm => swarm.id === 'ws-old').credits, 0);
+  assert.equal((await cleaned.getRunSummary('ws-old')).credits, 1);
+  assert.deepEqual(await oldItem(cleaned), [OLD_LAST, 1, true]);
+  assert.deepEqual(stat(stored), before);
+  cleaned.stop();
+});
+
+test('a stored summary is still returned once its run has left the listing', async () => {
+  const { home, stored, reopen } = await storedOldRun();
+  const before = stat(stored);
+  execSql(home.dataDb, `
+    DELETE FROM workspace_parent_links WHERE child_workspace_id = 'ws-old-child';
+    DELETE FROM workspace_session_aliases WHERE workspace_id IN ('ws-old', 'ws-old-child');
+    DELETE FROM workspaces WHERE id IN ('ws-old', 'ws-old-child');
+    DELETE FROM sessions WHERE id IN ('cli-old', 'cli-old-child');`);
+  rmSync(path.join(home.stateDir, 'cli-old'), { recursive: true, force: true });
+  const engine = reopen();
+  await engine.refresh();
+  assert.equal(engine.listSwarms().some(swarm => swarm.id === 'ws-old'), false);
+  assert.deepEqual(await engine.getRunSummary('ws-old'), readSummary(stored));
+  assert.deepEqual(await oldItem(engine), [OLD_LAST, 1, true]);
+  assert.deepEqual(stat(stored), before);
+  engine.stop();
 });
 
 /** A root session that has been quiet for 181 minutes. With background = true it launched a sub-agent that never reported. */

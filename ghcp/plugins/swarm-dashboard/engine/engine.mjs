@@ -17,6 +17,9 @@ import { buildSnapshot } from './model/swarm.mjs';
 
 const LIVENESS_TTL_MS = 15_000;
 const EXTRA_TRACKED = 3;
+// The listing's activity time comes from file modification times, which on real files run a few milliseconds after the last
+// event's timestamp. Without this slack every stored summary would look stale against the listing.
+const STALE_SLACK_MS = 60_000;
 const round1 = value => Math.round(value * 10) / 10;
 const shortId = id => String(id).slice(0, 8);
 
@@ -37,6 +40,17 @@ function sqliteProblem(source, error) {
 /** Digest of a run summary without its computedAt, so a rewrite happens only when something else changed. */
 function summaryDigest(summary) {
   return createHash('sha1').update(JSON.stringify({ ...summary, computedAt: 0 })).digest('hex');
+}
+
+/**
+ * True when the run's listing item shows newer activity or more cost than its stored summary, for example when the run
+ * resumed and finished again while no engine ran. Both credit values are rounded to 0.1. Lower cost is never stale: a ledger
+ * can lose rows when logs are cleaned up, and the stored summary is then kept. A run that is not listed (its logs are gone)
+ * keeps its stored summary.
+ */
+function isStale(stored, swarm) {
+  if (!swarm) return false;
+  return swarm.credits > stored.credits || swarm.lastActivityAt > stored.finishedAt + STALE_SLACK_MS;
 }
 
 function digest(snapshot) {
@@ -438,7 +452,11 @@ export function createSwarmEngine(options = {}) {
     if (!forest) await refresh();
     const items = new Map();
     const live = new Set(swarms.filter(swarm => swarm.lifecycle === 'live').map(swarm => swarm.id));
-    for (const summary of await history.list()) if (!live.has(summary.id)) items.set(summary.id, listItemOf(summary));
+    const listed = new Map(swarms.map(swarm => [swarm.id, swarm]));
+    // A stale stored summary is left out, so the run is listed below from the listing with summarized: false; getRunSummary rebuilds it.
+    for (const summary of await history.list()) {
+      if (!live.has(summary.id) && !isStale(summary, listed.get(summary.id))) items.set(summary.id, listItemOf(summary));
+    }
     for (const { snapshot } of snapshots.values()) {
       if (snapshot.run.lifecycle === 'finished' && !live.has(snapshot.run.id) && !items.has(snapshot.run.id)) {
         items.set(snapshot.run.id, listItemOf(summarizeRun(snapshot, { computedAt: now() })));
@@ -462,19 +480,23 @@ export function createSwarmEngine(options = {}) {
       if (current?.run.lifecycle === 'live') return summarizeRun(current, { computedAt: now() });
     }
     const stored = await history.get(runId);
-    if (stored) {
+    // A stored summary stands unless the listing shows newer activity or cost for the run (see isStale).
+    if (stored && !isStale(stored, swarms.find(swarm => swarm.id === runId))) {
       summaryDigests.set(runId, summaryDigest(stored));
       return stored;
     }
     const snapshot = await getSnapshot(runId);
-    if (!snapshot) return null;
+    if (!snapshot) return stored;
+    if (snapshot.run.lifecycle === 'live') return summarizeRun(snapshot, { computedAt: now() });
+    // The refresh that built the snapshot may already have stored this summary.
+    const fresh = summarizeRun(snapshot, { computedAt: 0 });
     const persisted = await history.get(runId);
-    if (persisted) {
+    if (persisted && summaryDigest(persisted) === summaryDigest(fresh)) {
       summaryDigests.set(runId, summaryDigest(persisted));
       return persisted;
     }
-    const summary = summarizeRun(snapshot, { computedAt: now() });
-    if (persist && snapshot.run.lifecycle === 'finished') {
+    const summary = { ...fresh, computedAt: now() };
+    if (persist) {
       try {
         await writeSummary(snapshot);
       } catch (error) {
