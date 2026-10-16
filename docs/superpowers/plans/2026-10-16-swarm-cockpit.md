@@ -3922,7 +3922,7 @@ Review amendments (16 October 2026), applied in follow-up commits after this tas
 - `ui/main.mjs`: `applySnapshot` drops `view.cockpitNote` when the shown swarm changes (`prev?.run.id !== next?.run.id`), so the side panel never shows an address for a swarm it no longer shows. Its own commit.
 - `checkLinks`: everything after the click sits in `try`/`finally`, which closes every new `/cockpit?` target and resets the regular page's `window.name`, so the checks after it start clean. It fails on page errors, as `checkLayout` does, and says when a tile never appeared.
 - `checkLinks` also proves "the shown swarm" on the stress server (two live swarms): in the browser host, without `swarm=` in the address, it picks the second swarm and expects the cockpit to open on it; in the canvas host, it expects the address to name the picked swarm and to disappear after picking the other one. In the opened cockpit it posts a request for an unknown unit to the regular window and expects no details and no navigation.
-- Second round: `finally` closes every new page target (not only cockpits), moves the regular page to `about:blank` before its server closes, and never throws from cleanup. The canvas part also covers the hub moving a page without `swarm=` to another swarm by itself (the shown swarm finishes while the address is up), not only the first snapshot.
+- Second round: `finally` closes every new page target (not only cockpits), moves the regular page to `about:blank` before its server closes, and never throws from cleanup. The canvas part's automatic change is now the hub moving a page without `swarm=` to another swarm by itself (the shown swarm finishes while the address is up); it replaces the earlier case where a picked swarm finishes.
 
 ---
 
