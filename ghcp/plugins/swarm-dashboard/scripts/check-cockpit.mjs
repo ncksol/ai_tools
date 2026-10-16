@@ -12,15 +12,20 @@ export const USAGE = `Usage: check-cockpit [--engine chrome|webkit] [--only <che
 Checks the swarm cockpit in a local headless Chrome, Chromium or Edge (CHROME_PATH picks one), or in Playwright's
 WebKit with --engine webkit (PLAYWRIGHT_CORE, as for check-layout), against the synthetic example swarm.
 --only runs one check: ${[...CHECKS.keys()].join(', ')}. --print-metrics prints the scene's measurements.
+--screenshots <dir> saves a picture of each state of the synthetic swarms there, for review; do not commit them.
 npm run check:layout runs these checks too.
 `;
 
 export function parseArguments(argv) {
-  const options = { engine: 'chrome', only: null, printMetrics: false, help: false };
+  const options = { engine: 'chrome', only: null, printMetrics: false, screenshots: null, help: false };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '--help' || arg === '-h') options.help = true;
     else if (arg === '--print-metrics') options.printMetrics = true;
+    else if (arg === '--screenshots') {
+      options.screenshots = argv[++index];
+      if (!options.screenshots) throw new Error('--screenshots takes a folder');
+    }
     else if (arg === '--engine') {
       options.engine = argv[++index];
       if (options.engine !== 'chrome' && options.engine !== 'webkit') throw new Error('--engine takes chrome or webkit');
@@ -61,15 +66,21 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
     }
     browser = await launchBrowser(executable);
   }
-  const server = createDashboardServer({ createEngine: () => createDemoEngine({ scenario: 'example', simulate: false }), port: 0, version: 'cockpit-check', hub: { engineIdleMs: 600000 } });
+  const servers = [];
+  const urls = {};
   try {
-    await server.listen();
+    for (const scenario of ['example', 'stress']) {
+      const server = createDashboardServer({ createEngine: () => createDemoEngine({ scenario, simulate: false }), port: 0, version: 'cockpit-check', hub: { engineIdleMs: 600000 } });
+      await server.listen();
+      servers.push(server);
+      urls[scenario] = server.url;
+    }
     stdout.write(`Browser: ${browser.product}\n`);
     const page = options.engine === 'webkit' ? await openWebKitPage(browser) : await openPage(browser);
-    const { issues } = await runCockpitChecks({ page, browser, engine: options.engine, urls: { example: server.url }, options, stdout, stderr });
+    const { issues } = await runCockpitChecks({ page, browser, engine: options.engine, urls, options, stdout, stderr });
     return issues ? 1 : 0;
   } finally {
-    await server.close();
+    for (const server of servers) await server.close();
     await browser.close();
   }
 }

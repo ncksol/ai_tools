@@ -55,8 +55,8 @@ test('a black frame fails every structural check', () => {
 });
 
 test('the cockpit check takes an engine, a check name and a metrics switch', () => {
-  assert.deepEqual(parseArguments([]), { engine: 'chrome', only: null, printMetrics: false, help: false });
-  assert.deepEqual(parseArguments(['--engine', 'webkit', '--only', 'scene', '--print-metrics']), { engine: 'webkit', only: 'scene', printMetrics: true, help: false });
+  assert.deepEqual(parseArguments([]), { engine: 'chrome', only: null, printMetrics: false, screenshots: null, help: false });
+  assert.deepEqual(parseArguments(['--engine', 'webkit', '--only', 'scene', '--print-metrics']), { engine: 'webkit', only: 'scene', printMetrics: true, screenshots: null, help: false });
   assert.throws(() => parseArguments(['--only', 'everything']), /--only takes/);
   assert.match(USAGE, /^Usage: check-cockpit/);
 });
