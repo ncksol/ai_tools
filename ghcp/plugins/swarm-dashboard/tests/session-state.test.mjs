@@ -113,7 +113,7 @@ test('an abort ends the turn and sync sub-agents but keeps background ones', () 
   const state = fold(log);
   assert.equal(state.turn, null);
   assert.equal(state.abortAt, T0 + 900_000);
-  assert.equal(state.subagents.get(sync).status, 'failed');
+  assert.equal(state.subagents.get(sync).status, 'cancelled', 'an abort is a cancellation');
   assert.equal(state.subagents.get(background).status, 'running');
   assert.deepEqual(state.feed.at(-1), { at: T0 + 900_000, kind: 'abort', text: 'turn aborted', source: `cli-1/${abortId}` });
 });
@@ -390,7 +390,7 @@ const subagentItems = state => state.feed.filter(item => item.kind.startsWith('s
 test('the new sub-agent limits are fixed', () => {
   assert.deepEqual(
     { runs: LIMITS.subagentRuns, feed: LIMITS.subagentFeed, openTools: LIMITS.subagentOpenTools, children: LIMITS.subagentChildren },
-    { runs: 50, feed: 8, openTools: 50, children: 100 },
+    { runs: 50, feed: 8, openTools: 50, children: 20 },
   );
 });
 
@@ -519,6 +519,9 @@ test('a sub-agent that starts sub-agents registers them, counts them once, and i
   const grand = log.nested(child, { name: 'deep', type: 'explore', mode: 'background', agentId: 'agent-g' });
   let state = foldRoot(log);
   assert.deepEqual([...state.descendants].map(([id, entry]) => [id, entry.root, entry.parent]), [[child, parent, parent], [grand, parent, child]]);
+  assert.deepEqual(state.descendants.get(grand), {
+    root: parent, parent: child, bucket: 'explore', status: 'running', mode: 'background', agentId: 'agent-g', launchedAt: T0 + 120_000, startedAt: T0 + 120_000,
+  }, 'a descendant entry keeps only what it needs: no task text, no full record');
   assert.equal(state.subagents.size, 1);
   assert.equal(state.subagentCount, 3);
   assert.deepEqual([...state.subagentStats].map(([type, entry]) => [type, entry.runs]).sort(), [['explore', 2], ['general-purpose', 1]]);
@@ -536,16 +539,17 @@ test('a sub-agent that starts sub-agents registers them, counts them once, and i
   log.wait(30_000); log.sub(grand, 'assistant.message', { content: 'y' });
   state = foldRoot(log);
   assert.equal(state.subagents.get(parent).lastEventAt, T0 + 180_000);
-  assert.equal(state.descendants.get(child).sub.lastEventAt, T0 + 180_000);
+  assert.equal(unitOf(state, parent).children[0].lastEventAt, T0 + 180_000);
   log.wait(10_000); log.push('session.usage_record', { usage: { model: 'claude-sonnet-5' } }, { agentId: 'agent-g' });
   state = foldRoot(log);
   assert.equal(state.subagents.get(parent).lastEventAt, T0 + 190_000);
-  assert.equal(state.descendants.get(grand).sub.lastEventAt, T0 + 190_000);
+  assert.equal(unitOf(state, parent).children[0].lastEventAt, T0 + 190_000, 'an event of a grandchild reaches its parent and the top sub-agent');
 
   log.wait(1000); log.subagentDone(child, { durationMs: 90_000, agentId: 'agent-c' });
   state = foldRoot(log);
-  const finishedChild = state.descendants.get(child).sub;
+  const finishedChild = unitOf(state, parent).children[0];
   assert.deepEqual({ status: finishedChild.status, endedAt: finishedChild.endedAt, durationMs: finishedChild.durationMs }, { status: 'completed', endedAt: T0 + 191_000, durationMs: 90_000 });
+  assert.equal(state.descendants.get(child).status, 'completed');
   unit = unitOf(state, parent);
   assert.deepEqual(unit.feed.at(-1), { at: T0 + 191_000, kind: 'subagent-done', text: 'completed explore: helper', source: `cli-1/${child}` });
   assert.deepEqual(unit.feed.map(item => item.text), ['started general-purpose: lead', 'started explore: helper (sync)', 'completed explore: helper']);
@@ -560,7 +564,7 @@ test('a sub-agent that starts sub-agents registers them, counts them once, and i
 
   log.wait(1000); log.subagentDone(grand, { durationMs: 5000, failed: true, agentId: 'agent-g' });
   state = foldRoot(log);
-  assert.equal(state.descendants.get(grand).sub.status, 'failed');
+  assert.equal(state.descendants.get(grand).status, 'failed');
   assert.equal(state.subagentStats.get('explore').durationMs, 95_000);
   assert.equal(unitOf(state, parent).feed.length, 3, 'a grandchild adds nothing to the unit feed');
   assert.equal(state.subagents.get(parent).status, 'running');
@@ -578,9 +582,9 @@ test('a nested sub-agent finishes through its task call when it has no lifecycle
   log.sub(parent, 'tool.execution_complete', { toolCallId: 'quiet-1', success: true });
   log.sub(parent, 'tool.execution_complete', { toolCallId: 'quiet-2', success: false });
   const state = foldRoot(log);
-  assert.equal(state.descendants.get('quiet-1').sub.status, 'completed');
-  assert.equal(state.descendants.get('quiet-1').sub.durationMs, 5000);
-  assert.equal(state.descendants.get('quiet-2').sub.status, 'failed');
+  assert.equal(state.descendants.get('quiet-1').status, 'completed');
+  assert.equal(unitOf(state, parent).children[0].durationMs, 5000);
+  assert.equal(state.descendants.get('quiet-2').status, 'failed');
   assert.equal(state.descendants.has('ghost-1'), false);
   assert.equal(state.subagentCount, 3);
   assert.deepEqual(unitOf(state, parent).children.map(sub => sub.status), ['completed', 'failed']);
@@ -638,14 +642,14 @@ test('an abort stops the sync sub-agents and their runs; the end of the process 
   log.abort();
   let state = foldRoot(log);
   const aborted = state.subagents.get(sync);
-  assert.equal(aborted.status, 'failed');
-  assert.equal(aborted.unit.error, 'Stopped when the orchestrator\'s turn was aborted.');
+  assert.equal(aborted.status, 'cancelled', 'an abort is a cancellation');
+  assert.equal(aborted.unit.error, null);
   assert.deepEqual(aborted.unit.runs, [[T0, T0 + 900_000]]);
-  assert.deepEqual(aborted.unit.feed.find(item => item.kind === 'subagent-done'), { at: T0 + 900_000, kind: 'subagent-done', text: 'failed explore: s', source: `cli-1/${sync}` });
-  assert.equal(aborted.unit.feed.at(-1).text, 'failed explore: sc', 'then its sync child');
+  assert.deepEqual(aborted.unit.feed.find(item => item.kind === 'subagent-done'), { at: T0 + 900_000, kind: 'subagent-done', text: 'cancelled explore: s', source: `cli-1/${sync}` });
+  assert.equal(aborted.unit.feed.at(-1).text, 'cancelled explore: sc', 'then its sync child');
   assert.equal(aborted.unit.openTools.size, 0);
-  assert.equal(state.descendants.get(syncChild).sub.status, 'failed', 'its sync child stops with it');
-  assert.equal(state.descendants.get(leadChild).sub.status, 'running', 'a child of a sub-agent that keeps running goes on');
+  assert.equal(state.descendants.get(syncChild).status, 'cancelled', 'its sync child stops with it');
+  assert.equal(state.descendants.get(leadChild).status, 'running', 'a child of a sub-agent that keeps running goes on');
   assert.equal(state.subagents.get(background).status, 'running');
   assert.equal(state.subagents.get(background).unit.error, null);
   assert.deepEqual(state.subagents.get(background).unit.runs, [[T0, null]]);
@@ -661,9 +665,60 @@ test('an abort stops the sync sub-agents and their runs; the end of the process 
   assert.deepEqual(state.subagents.get(done).unit.runs, [[T0, T0 + 1000], [T0 + 2000, T0 + 901_000]]);
   assert.equal(state.subagents.get(done).status, 'completed');
   assert.equal(state.subagents.get(done).unit.error, null);
-  assert.equal(state.descendants.get(leadChild).sub.status, 'failed');
-  assert.equal(state.subagents.get(sync).unit.error, 'Stopped when the orchestrator\'s turn was aborted.', 'an earlier stop keeps its text');
-  assert.deepEqual(state.subagentOutcomes, { completed: 1, failed: 3, cancelled: 0 });
+  assert.equal(state.descendants.get(leadChild).status, 'failed', 'the end of the process fails what it ends');
+  assert.equal(state.subagents.get(sync).status, 'cancelled');
+  assert.equal(state.subagents.get(sync).unit.error, null);
+  assert.deepEqual(state.subagentOutcomes, { completed: 1, failed: 2, cancelled: 1 });
+});
+
+test('an abort keeps the sync sub-agents of a top sub-agent that is still working, even a resumed one', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const lead = log.subagent({ name: 'l', type: 'explore', mode: 'background', agentId: 'agent-l' });
+  log.wait(1000); log.subagentDone(lead, { durationMs: 1000, agentId: 'agent-l' });
+  log.wait(1000); log.toAgent('agent-l', 'again');
+  const child = log.nested(lead, { name: 'c', type: 'explore', mode: 'sync' });
+  log.wait(1000);
+  log.abort();
+  const state = foldRoot(log);
+  assert.equal(state.subagents.get(lead).status, 'completed');
+  assert.deepEqual(unitOf(state, lead).runs, [[T0, T0 + 1000], [T0 + 2000, null]]);
+  assert.equal(state.descendants.get(child).status, 'running');
+  assert.equal(unitOf(state, lead).children[0].status, 'running');
+  const sync = new EventLog(T0);
+  sync.start(); sync.turnStart();
+  const top = sync.subagent({ name: 't', type: 'explore', mode: 'sync' });
+  const syncChild = sync.nested(top, { name: 'tc', type: 'explore', mode: 'sync' });
+  sync.wait(1000); sync.abort();
+  assert.equal(foldRoot(sync).descendants.get(syncChild).status, 'cancelled', 'with its top sub-agent ended, a sync child ends too');
+});
+
+test('a unit keeps its label base from launch: the name argument, else the description, else nothing', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const named = log.tool('task', { name: 'Named one', description: 'a description', agent_type: 'explore', mode: 'background' });
+  const described = log.tool('task', { description: 'Only a description', agent_type: 'explore', mode: 'background' });
+  const bare = log.tool('task', { agent_type: 'explore', mode: 'background' });
+  log.push('subagent.started', { toolCallId: described, agentType: 'explore', agentDisplayName: 'Display Name', executionMode: 'background' }, { agentId: 'agent-d' });
+  const state = foldRoot(log);
+  assert.deepEqual([named, described, bare].map(id => unitOf(state, id).labelName), ['Named one', 'Only a description', null]);
+  assert.equal(state.subagents.get(described).name, 'Display Name', 'the display name replaces the chip name, not the label base');
+});
+
+test('a unit keeps its full busy time when old runs drop out of the bounded list', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const call = log.subagent({ name: 'busy', type: 'explore', mode: 'background', agentId: 'agent-b' });
+  log.wait(1000); log.subagentDone(call, { durationMs: 1000, agentId: 'agent-b' });
+  for (let i = 0; i < 55; i += 1) {
+    log.wait(1000); log.toAgent('agent-b', `follow-up ${i}`);
+    log.wait(1000); log.sub(call, 'assistant.turn_end');
+  }
+  const unit = unitOf(foldRoot(log), call);
+  assert.equal(unit.runs.length, LIMITS.subagentRuns);
+  assert.equal(unit.droppedBusyMs, 6 * 1000, 'six runs of one second left the list');
+  const kept = unit.runs.reduce((sum, [start, end]) => sum + end - start, 0);
+  assert.equal(kept + unit.droppedBusyMs, 56 * 1000);
 });
 
 test('the runs, unit feed, open tools and children of a sub-agent stay at their limits', () => {
@@ -687,7 +742,7 @@ test('the runs, unit feed, open tools and children of a sub-agent stay at their 
   assert.equal(unit.openTools.has('inner-0'), false);
   assert.equal(unit.openTools.has('inner-10'), true);
   assert.equal(unit.children.length, LIMITS.subagentChildren);
-  assert.equal(unit.children[0].name, 'kid-5');
+  assert.equal(unit.children[0].name, 'kid-85');
   assert.equal(state.descendants.size, 105);
   assert.equal(state.subagentCount, 106);
 });

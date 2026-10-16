@@ -43,8 +43,10 @@ export function createSessionState(id, { subagentUnits = false } = {}) {
     // Whole-session sub-agent totals that the capped detail list never changes: launches, per type runs and finished
     // duration, and each task tool-call id's type (to attribute ledger credits by type).
     subagentCount: 0, subagentStats: new Map(), subagentIndex: new Map(), evictedRunning: new Map(),
-    // Sub-agents started by a sub-agent: task id -> { root: the top sub-agent's id, parent: its direct parent's id, sub: its detail
-    // record }. Bounded like subagentIndex. Outcomes count the details and their evicted records the first time each leaves running.
+    // Sub-agents started by a sub-agent: task id -> { root: the top sub-agent's id, parent: its direct parent's id, bucket, status,
+    // mode, agentId, launchedAt, startedAt }, enough to count them and end them once. Bounded like subagentIndex. A direct child of a
+    // root sub-agent also has a full record in that sub-agent's unit. Outcomes count the details and their evicted records the
+    // first time each leaves running.
     descendants: new Map(), subagentOutcomes: { completed: 0, failed: 0, cancelled: 0 },
     sent: [], inbound: [], lastInboundAt: null, lastHumanAt: null, taskCompletes: [],
     automation: { saves: [], wakes: [] },
@@ -273,17 +275,31 @@ function taskNameOf(args) {
   return (typeof args.name === 'string' ? oneLine(args.name, 80) : '') || null;
 }
 
+/** What a unit's label is made from, fixed at launch: the name argument, else the description. The display name that arrives with subagent.started never changes it. */
+function labelNameOf(args) {
+  return taskNameOf(args) ?? ((typeof args.description === 'string' ? oneLine(args.description, 80) : '') || null);
+}
+
 function newUnit(args, at) {
   return {
-    taskName: taskNameOf(args), runs: [[at, null]], turnOpen: false, lastTurnEndAt: null, openTools: new Map(), lastMessage: null,
-    error: null, feed: [], children: [], firstFinishAt: null,
+    taskName: taskNameOf(args), labelName: labelNameOf(args), runs: [[at, null]], droppedBusyMs: 0, turnOpen: false, lastTurnEndAt: null,
+    openTools: new Map(), lastMessage: null, error: null, feed: [], children: [], firstFinishAt: null,
   };
 }
 
+/** Adds a run to a unit. A run that leaves the bounded list adds its length to `droppedBusyMs`, so the busy total stays whole. */
+function pushRun(unit, run) {
+  unit.runs.push(run);
+  while (unit.runs.length > LIMITS.subagentRuns) {
+    const [start, end] = unit.runs.shift();
+    unit.droppedBusyMs += (end ?? start) - start;
+  }
+}
+
 /**
- * The single place a sub-agent leaves 'running'. Adds its duration to the per-type totals, once, and counts its outcome (the
+ * The single place a detail leaves 'running'. Adds its duration to the per-type totals, once, and counts its outcome (the
  * outcomes cover the session's own sub-agents, not the ones they started). A root state's sub-agent unit ends its first run
- * and gets its feed item and error; a direct child of a unit gets its feed item in that unit.
+ * and gets its feed item and error.
  */
 function finishSubagent(state, sub, at, status, durationMs, error = null) {
   if (sub.status !== 'running') return;
@@ -291,18 +307,36 @@ function finishSubagent(state, sub, at, status, durationMs, error = null) {
   sub.endedAt = Math.max(at, sub.launchedAt);
   sub.durationMs = Number.isFinite(durationMs) ? Math.max(0, Math.round(durationMs)) : Math.max(0, sub.endedAt - (sub.startedAt ?? sub.launchedAt));
   statsEntry(state.subagentStats, sub.bucket).durationMs += sub.durationMs;
-  const nested = state.descendants.get(sub.id);
-  if (!nested) state.subagentOutcomes[status] += 1;
+  state.subagentOutcomes[status] += 1;
   if (sub.unit) {
     closeRun(sub.unit, sub.endedAt);
     sub.unit.firstFinishAt ??= sub.endedAt;
     sub.unit.openTools.clear();
     if (error) sub.unit.error = error;
     addUnitFeed(state, sub, sub.endedAt, 'subagent-done', `${status} ${subLabel(sub)}`, `${state.id}/${sub.id}`);
-  } else if (nested) {
-    const parent = state.subagents.get(nested.parent);
-    if (parent?.unit) addUnitFeed(state, parent, sub.endedAt, 'subagent-done', `${status} ${subLabel(sub)}`, `${state.id}/${sub.id}`);
   }
+}
+
+/** The detail of a direct child of a root sub-agent, while that sub-agent's unit still keeps it. */
+function childOf(state, id, entry) {
+  if (entry.parent !== entry.root) return null;
+  const list = state.subagents.get(entry.root)?.unit?.children;
+  return list ? list.find(child => child.id === id) ?? null : null;
+}
+
+/** The same for a nested sub-agent: its duration reaches the totals once, and its kept detail and its parent's unit feed are updated. */
+function finishNested(state, id, entry, at, status, durationMs) {
+  if (entry.status !== 'running') return;
+  entry.status = status;
+  const ended = Math.max(at, entry.launchedAt);
+  const duration = Number.isFinite(durationMs) ? Math.max(0, Math.round(durationMs)) : Math.max(0, ended - (entry.startedAt ?? entry.launchedAt));
+  statsEntry(state.subagentStats, entry.bucket).durationMs += duration;
+  const child = childOf(state, id, entry);
+  if (!child) return;
+  child.status = status;
+  child.endedAt = ended;
+  child.durationMs = duration;
+  addUnitFeed(state, state.subagents.get(entry.root), ended, 'subagent-done', `${status} ${subLabel(child)}`, `${state.id}/${id}`);
 }
 
 /** The same for a running sub-agent that was evicted from the details: adds its duration once, then forgets the record. */
@@ -314,41 +348,61 @@ function finishEvicted(state, record, at, durationMs, status) {
   statsEntry(state.subagentStats, record.bucket).durationMs += duration;
 }
 
-/** Moves a sub-agent's run (and finished duration) to another type when its start event names a different one. */
-function retypeSubagent(state, sub, type) {
-  sub.type = type;
-  if (typeBucket(state.subagentStats, type) === sub.bucket) return;
-  const from = statsEntry(state.subagentStats, sub.bucket);
+/** Moves a sub-agent's run (and finished duration) to another type when its start event names a different one. `holder.bucket` is updated. */
+function moveBucket(state, id, holder, type, durationMs) {
+  if (typeBucket(state.subagentStats, type) === holder.bucket) return;
+  const from = statsEntry(state.subagentStats, holder.bucket);
   from.runs -= 1;
-  if (sub.durationMs !== null) from.durationMs -= sub.durationMs;
+  if (durationMs !== null) from.durationMs -= durationMs;
   // An old type with no runs left is dropped, so it neither shows in the totals nor holds one of the type slots.
-  if (from.runs <= 0) state.subagentStats.delete(sub.bucket);
+  if (from.runs <= 0) state.subagentStats.delete(holder.bucket);
   const bucket = typeBucket(state.subagentStats, type);
   const to = statsEntry(state.subagentStats, bucket);
   to.runs += 1;
-  if (sub.durationMs !== null) to.durationMs += sub.durationMs;
-  sub.bucket = bucket;
-  if (state.subagentIndex.has(sub.id)) state.subagentIndex.set(sub.id, bucket);
+  if (durationMs !== null) to.durationMs += durationMs;
+  holder.bucket = bucket;
+  if (state.subagentIndex.has(id)) state.subagentIndex.set(id, bucket);
 }
 
-/** Work that cannot outlive the turn or process: open waits, tools and running sub-agents. */
+function retypeSubagent(state, sub, type) {
+  sub.type = type;
+  moveBucket(state, sub.id, sub, type, sub.durationMs);
+}
+
+/** A nested sub-agent has no type of its own; its bucket (and its kept detail, if any) follows the new type. */
+function retypeNested(state, id, entry, type) {
+  const child = childOf(state, id, entry);
+  moveBucket(state, id, entry, type, null);
+  if (child) {
+    child.type = type;
+    child.bucket = entry.bucket;
+  }
+}
+
+/** Work that cannot outlive the turn or process: open waits, tools and running sub-agents. An abort cancels them; the end of the process fails them. */
 function endOpenWork(state, at, keepBackground) {
   for (const [id, wait] of state.waits) closeWait(state, id, wait, at);
   state.openTools.clear();
-  const error = keepBackground ? 'Stopped when the orchestrator\'s turn was aborted.' : 'Stopped when the orchestrator\'s process ended.';
+  const status = keepBackground ? 'cancelled' : 'failed';
+  const error = keepBackground ? null : 'Stopped when the orchestrator\'s process ended.';
   for (const sub of state.subagents.values()) {
     if (sub.status !== 'running' || (keepBackground && sub.mode === 'background')) continue;
-    finishSubagent(state, sub, at, 'failed', null, error);
+    finishSubagent(state, sub, at, status, null, error);
   }
-  // Sub-agents started by a sub-agent end with the process. An abort ends a sync one only when its top sub-agent has ended.
-  for (const { root, sub } of state.descendants.values()) {
-    if (sub.status !== 'running') continue;
-    if (keepBackground && (sub.mode === 'background' || state.subagents.get(root)?.status === 'running' || state.evictedRunning.has(root))) continue;
-    finishSubagent(state, sub, at, 'failed', null);
+  // Sub-agents started by a sub-agent end with the process. An abort ends a sync one only when its top sub-agent has ended:
+  // one that is running, runs in the background, or was resumed (its last run is open) goes on.
+  for (const [id, entry] of state.descendants) {
+    if (entry.status !== 'running') continue;
+    if (keepBackground) {
+      const top = state.subagents.get(entry.root);
+      const lastRun = top?.unit?.runs[top.unit.runs.length - 1];
+      if (entry.mode === 'background' || top?.mode === 'background' || top?.status === 'running' || (lastRun && lastRun[1] === null) || state.evictedRunning.has(entry.root)) continue;
+    }
+    finishNested(state, id, entry, at, status, null);
   }
   for (const record of [...state.evictedRunning.values()]) {
     if (keepBackground && record.mode === 'background') continue;
-    finishEvicted(state, record, at, null, 'failed');
+    finishEvicted(state, record, at, null, status);
   }
 }
 
@@ -398,14 +452,9 @@ function evictSubagent(state) {
   }
 }
 
-/**
- * A sub-agent is counted once per task tool-call id. A repeated start for an id that is still known (a detail, or a nested
- * sub-agent) updates it and leaves the counts alone (the start handlers ignore a repeated start for an id that has left them).
- * `parentId` is the id of the sub-agent that started it: it is then kept in `state.descendants` (and in its parent's unit when
- * the parent is a root sub-agent), not in the details.
- */
-function newSubagent(state, id, at, args, parentId = null) {
-  const fields = {
+/** The fields a task call gives a sub-agent. */
+function subagentFields(args) {
+  return {
     name: oneLine(args.name ?? args.description ?? 'sub-agent', 80) || 'sub-agent',
     type: oneLine(args.agent_type ?? 'task', 60) || 'task',
     mode: args.mode === 'background' ? 'background' : 'sync',
@@ -413,27 +462,37 @@ function newSubagent(state, id, at, args, parentId = null) {
     effort: typeof args.reasoning_effort === 'string' ? args.reasoning_effort : null,
     task: typeof args.description === 'string' ? oneLine(args.description, 200) : null,
   };
-  const known = state.subagents.get(id) ?? state.descendants.get(id)?.sub;
-  if (known) {
-    const { type, ...rest } = fields;
-    Object.assign(known, rest);
-    if (known.unit) known.unit.taskName = taskNameOf(args);
-    retypeSubagent(state, known, type);
-    return known;
-  }
+}
+
+/** A new sub-agent record, counted once in the session totals and the task index. */
+function countSubagent(state, id, at, fields) {
   const sub = { id, ...fields, launchedAt: at, startedAt: null, endedAt: null, durationMs: null, status: 'running', lastEventAt: at, agentId: null };
   sub.bucket = typeBucket(state.subagentStats, sub.type);
   state.subagentCount += 1;
   statsEntry(state.subagentStats, sub.bucket).runs += 1;
   state.subagentIndex.set(id, sub.bucket);
   while (state.subagentIndex.size > LIMITS.subagentIndex) state.subagentIndex.delete(state.subagentIndex.keys().next().value);
-  if (parentId !== null) {
-    state.descendants.set(id, { root: state.descendants.get(parentId)?.root ?? parentId, parent: parentId, sub });
-    while (state.descendants.size > LIMITS.subagentIndex) dropDescendant(state);
-    const parent = state.subagents.get(parentId);
-    if (parent?.unit) pushBounded(parent.unit.children, sub, LIMITS.subagentChildren);
-    return sub;
+  return sub;
+}
+
+/**
+ * A sub-agent of the session itself is counted once per task tool-call id. A repeated start for an id that is still in the details
+ * updates them and leaves the counts alone (onToolStart ignores a repeated start for an id that has left the details).
+ */
+function newSubagent(state, id, at, args) {
+  const fields = subagentFields(args);
+  const known = state.subagents.get(id);
+  if (known) {
+    const { type, ...rest } = fields;
+    Object.assign(known, rest);
+    if (known.unit) {
+      known.unit.taskName = taskNameOf(args);
+      known.unit.labelName = labelNameOf(args);
+    }
+    retypeSubagent(state, known, type);
+    return known;
   }
+  const sub = countSubagent(state, id, at, fields);
   if (state.subagentUnits) sub.unit = newUnit(args, at);
   state.subagents.set(id, sub);
   while (state.subagents.size > LIMITS.subagents) evictSubagent(state);
@@ -444,17 +503,36 @@ function newSubagent(state, id, at, args, parentId = null) {
 function dropDescendant(state) {
   const [id, entry] = state.descendants.entries().next().value;
   state.descendants.delete(id);
-  const agentId = entry.sub.agentId;
-  if (agentId && state.agentToTask.get(agentId) === id) state.agentToTask.delete(agentId);
+  if (entry.agentId && state.agentToTask.get(entry.agentId) === id) state.agentToTask.delete(entry.agentId);
 }
 
-/** A `task` call made by a sub-agent: registers the nested sub-agent, and tells the parent's unit about it. */
+/**
+ * A `task` call made by a sub-agent. The nested sub-agent is counted once and kept as a small entry in `state.descendants`; only
+ * a direct child of a root sub-agent also gets a full record, in that sub-agent's unit (the last LIMITS.subagentChildren of them).
+ */
 function onNestedTaskStart(state, id, parentId, args, at) {
-  if (state.subagents.has(id) || (!state.descendants.has(id) && state.subagentIndex.has(id))) return;
-  const repeated = state.descendants.has(id);
-  const sub = newSubagent(state, id, at, args, parentId);
+  if (state.subagents.has(id)) return;
+  const entry = state.descendants.get(id);
+  if (!entry && state.subagentIndex.has(id)) return;
+  const fields = subagentFields(args);
+  if (entry) {
+    entry.mode = fields.mode;
+    const { type, ...rest } = fields;
+    const child = childOf(state, id, entry);
+    if (child) Object.assign(child, rest);
+    retypeNested(state, id, entry, type);
+    return;
+  }
+  const sub = countSubagent(state, id, at, fields);
+  state.descendants.set(id, {
+    root: state.descendants.get(parentId)?.root ?? parentId, parent: parentId, bucket: sub.bucket, status: 'running', mode: sub.mode,
+    agentId: null, launchedAt: at, startedAt: null,
+  });
+  while (state.descendants.size > LIMITS.subagentIndex) dropDescendant(state);
   const parent = state.subagents.get(parentId);
-  if (!repeated && parent?.unit) addUnitFeed(state, parent, at, 'subagent-start', `started ${subLabel(sub)}${sub.mode === 'sync' ? ' (sync)' : ''}`, `${state.id}/${id}`);
+  if (!parent?.unit) return;
+  pushBounded(parent.unit.children, sub, LIMITS.subagentChildren);
+  addUnitFeed(state, parent, at, 'subagent-start', `started ${subLabel(sub)}${sub.mode === 'sync' ? ' (sync)' : ''}`, `${state.id}/${id}`);
 }
 
 function onToolStart(state, data, at) {
@@ -533,15 +611,17 @@ function onToolComplete(state, data, at) {
 
 /** The completion of the task call that started a nested sub-agent: it ends a failed or sync one that no lifecycle event covers. */
 function onNestedTaskComplete(state, id, data, at) {
-  const sub = state.descendants.get(id)?.sub;
-  if (!sub) return;
+  const entry = state.descendants.get(id);
+  if (!entry) return;
   const agentId = data.toolTelemetry?.restrictedProperties?.agent_id;
   if (typeof agentId === 'string') {
-    sub.agentId = agentId;
+    entry.agentId = agentId;
+    const child = childOf(state, id, entry);
+    if (child) child.agentId = agentId;
     state.agentToTask.set(agentId, id);
   }
-  if (sub.status === 'running' && (data.success === false || (sub.mode === 'sync' && sub.startedAt === null))) {
-    finishSubagent(state, sub, at, data.success === false ? 'failed' : 'completed', null);
+  if (entry.status === 'running' && (data.success === false || (entry.mode === 'sync' && entry.startedAt === null))) {
+    finishNested(state, id, entry, at, data.success === false ? 'failed' : 'completed', null);
   }
 }
 
@@ -597,7 +677,7 @@ function onOwnedEvent(state, event, data, owner, agentId, at) {
       if (!unit || data.parentToolCallId || agentId === null) break;
       const last = unit.runs[unit.runs.length - 1];
       if (!last || last[1] === null) break;
-      pushBounded(unit.runs, [at, null], LIMITS.subagentRuns);
+      pushRun(unit, [at, null]);
       unit.openTools.clear();
       addUnitFeed(state, parent, at, 'subagent-start', `resumed ${subLabel(parent)}`);
       break;
@@ -613,9 +693,9 @@ function onSubagentLifecycle(state, event, data, at) {
   // Only subagent.configured has no tool-call id; it names the sub-agent by its agent id.
   const key = id ?? (event.type === 'subagent.configured' && agentId ? state.agentToTask.get(agentId) ?? null : null);
   if (!key) return;
-  const nested = state.descendants.get(key) ?? null;
-  const sub = state.subagents.get(key) ?? nested?.sub ?? null;
-  if (!sub) {
+  const entry = state.descendants.get(key) ?? null;
+  const sub = state.subagents.get(key) ?? null;
+  if (!sub && !entry) {
     const record = id ? state.evictedRunning.get(id) : null;
     if (!record) return;
     if (event.type === 'subagent.started') record.startedAt = at;
@@ -624,37 +704,51 @@ function onSubagentLifecycle(state, event, data, at) {
     }
     return;
   }
+  // The record that carries the fields: the detail, or a direct child's kept detail. A deeper nested sub-agent has only its entry.
+  const target = sub ?? childOf(state, key, entry);
   if (agentId !== null) {
-    sub.agentId = agentId;
+    (sub ?? entry).agentId = agentId;
+    if (target) target.agentId = agentId;
     state.agentToTask.set(agentId, key);
   }
   touchSubagent(state, key, at);
   if (event.type === 'subagent.configured') {
-    if (typeof data.model === 'string') sub.model = data.model;
-    if (typeof data.reasoningEffort === 'string') sub.effort = data.reasoningEffort;
+    if (target && typeof data.model === 'string') target.model = data.model;
+    if (target && typeof data.reasoningEffort === 'string') target.effort = data.reasoningEffort;
   } else if (event.type === 'subagent.started') {
-    sub.startedAt = at;
-    if (typeof data.model === 'string') sub.model = data.model;
-    if (typeof data.agentType === 'string' && data.agentType) retypeSubagent(state, sub, oneLine(data.agentType, 60));
-    if (typeof data.agentDisplayName === 'string' && data.agentDisplayName) sub.name = oneLine(data.agentDisplayName, 80);
-    if (data.executionMode === 'background' || data.executionMode === 'sync') sub.mode = data.executionMode;
-  } else if ((event.type === 'subagent.completed' || event.type === 'subagent.failed') && sub.status === 'running') {
+    (sub ?? entry).startedAt = at;
+    if (target) {
+      if (typeof data.model === 'string') target.model = data.model;
+      if (typeof data.agentDisplayName === 'string' && data.agentDisplayName) target.name = oneLine(data.agentDisplayName, 80);
+      if (data.executionMode === 'background' || data.executionMode === 'sync') target.mode = data.executionMode;
+      target.startedAt = at;
+    }
+    if (entry && (data.executionMode === 'background' || data.executionMode === 'sync')) entry.mode = data.executionMode;
+    if (typeof data.agentType === 'string' && data.agentType) {
+      if (sub) retypeSubagent(state, sub, oneLine(data.agentType, 60));
+      else retypeNested(state, key, entry, oneLine(data.agentType, 60));
+    }
+  } else if (event.type === 'subagent.completed' || event.type === 'subagent.failed') {
     const status = event.type === 'subagent.failed' ? 'failed' : data.cancelled === true ? 'cancelled' : 'completed';
-    const error = status === 'failed' && typeof data.error === 'string' ? oneLine(data.error, 200) : '';
-    finishSubagent(state, sub, at, status, data.durationMs, error || null);
-    // A root state reports its sub-agents in their units, and a nested one never reaches the session feed.
-    if (!nested && !state.subagentUnits) addFeed(state, at, 'subagent-done', `${sub.type} ${sub.name} ${status === 'completed' ? 'finished' : status}`);
+    if (!sub) {
+      finishNested(state, key, entry, at, status, data.durationMs);
+    } else if (sub.status === 'running') {
+      const error = status === 'failed' && typeof data.error === 'string' ? oneLine(data.error, 200) : '';
+      finishSubagent(state, sub, at, status, data.durationMs, error || null);
+      // A root state reports its sub-agents in their units.
+      if (!state.subagentUnits) addFeed(state, at, 'subagent-done', `${sub.type} ${sub.name} ${status === 'completed' ? 'finished' : status}`);
+    }
   }
 }
 
-/** Moves the clock of a sub-agent and of every sub-agent above it, up to its top one. */
+/** Moves the clock of a sub-agent and of every sub-agent above it, up to its top one. Only the top one and its kept children have a clock. */
 function touchSubagent(state, owner, at) {
   let id = owner;
   for (let hops = 0; id && hops < MAX_NESTING; hops += 1) {
-    const nested = state.descendants.get(id);
-    const sub = nested ? nested.sub : state.subagents.get(id);
+    const entry = state.descendants.get(id);
+    const sub = entry ? childOf(state, id, entry) : state.subagents.get(id);
     if (sub && at > sub.lastEventAt) sub.lastEventAt = at;
-    id = nested ? nested.parent : null;
+    id = entry ? entry.parent : null;
   }
 }
 

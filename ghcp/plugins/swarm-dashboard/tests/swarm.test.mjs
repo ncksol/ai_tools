@@ -639,17 +639,21 @@ test('labels come from the task names, made safe, unique against every label, an
     root.at(at(100));
     for (const name of ['api', 'Fix the bug!', 'fix the bug', '***', 'API', 'x'.repeat(40), 'x'.repeat(40), 'ss']) start(name);
     root.wait(MINUTE);
-    root.tool('task', { description: 'Do things!', agent_type: 'explore', mode: 'background' });
+    const described = root.tool('task', { description: 'Do things!', agent_type: 'explore', mode: 'background' });
+    root.push('subagent.started', { toolCallId: described, agentType: 'explore', agentDisplayName: 'Renamed at start', executionMode: 'background' });
     root.wait(MINUTE);
     root.tool('task', { agent_type: 'review', mode: 'background' });
+    start('export');
   });
   const snapshot = buildSnapshot(data);
   assert.deepEqual(validateSnapshot(snapshot), []);
   assert.equal(snapshot.orchestrator.label, 'SS');
+  assert.deepEqual(snapshot.planned.map(entry => entry.label), ['export']);
   assert.deepEqual(subUnits(snapshot).map(unit => unit.label), [
-    'api-2', 'Fix-the-bug', 'fix-the-bug-2', 'explore-4', 'API-3', 'x'.repeat(32), `${'x'.repeat(30)}-2`, 'ss-2', 'Do-things', 'sub-agent',
+    'api-2', 'Fix-the-bug', 'fix-the-bug-2', 'explore-4', 'API-3', 'x'.repeat(32), `${'x'.repeat(30)}-2`, 'ss-2', 'Do-things', 'review-10', 'export-2',
   ]);
-  const labels = [snapshot.orchestrator.label, ...snapshot.units.map(unit => unit.label)].map(label => label.toLowerCase());
+  assert.equal(subUnits(snapshot)[8].name, 'Do things!', 'the unit is named by its description; the display name does not change its label');
+  const labels = [snapshot.orchestrator.label, ...snapshot.units.map(unit => unit.label), ...snapshot.planned.map(entry => entry.label)].map(label => label.toLowerCase());
   assert.equal(new Set(labels).size, labels.length);
   assert.ok(subUnits(snapshot).every(unit => /^[A-Za-z0-9._-]{1,32}$/.test(unit.label)));
 });
@@ -787,6 +791,48 @@ test('completed and cancelled sub-agent units do not keep a swarm from stalling,
   }, at(130)).data);
   assert.equal(subUnits(busyToo).at(-1).statusDetail, 'busy');
   assert.equal(busyToo.run.stalled, null);
+});
+
+test('a sub-agent left running in an older root CLI session whose process is gone is crashed, and does not keep the run live', () => {
+  const swarm = alive => {
+    const { data } = quietSwarm(() => {}, at(261));
+    data.app.aliases.push({ sessionId: 'cli-root-old', workspaceId: 'ws-root', createdAt: T0 - MINUTE });
+    data.forest = buildForest(data.app);
+    assert.deepEqual(data.forest.nodes.get('ws-root').cliSessionIds, ['cli-root-old', 'cli-root']);
+    const old = new EventLog(T0);
+    old.calls = 200;
+    old.start();
+    old.at(at(60));
+    old.subagent({ name: 'orphan', type: 'explore', mode: 'background', agentId: 'ag-orphan' });
+    old.at(at(61));
+    old.sub('call-201', 'assistant.message', { content: 'Working' });
+    data.states.set('cli-root-old', fold(old, 'cli-root-old', ROOT_STATE));
+    data.alive.set('cli-root-old', alive);
+    return buildSnapshot(data);
+  };
+  const gone = swarm(false);
+  assert.deepEqual(validateSnapshot(gone), []);
+  const [unit] = subUnits(gone);
+  assert.deepEqual([unit.label, unit.statusDetail, unit.bucket, unit.endedAt, unit.alive], ['orphan', 'crashed', 'failed', at(61), true]);
+  assert.equal(gone.run.lifecycle, 'finished');
+  assert.equal(gone.counts.failed, 1);
+  const running = swarm(true);
+  assert.equal(subUnits(running)[0].statusDetail, 'stuck_subagent', 'a live older session is judged like the current one');
+  assert.equal(running.run.lifecycle, 'live');
+});
+
+test('a unit counts the busy time of runs that dropped out of its bounded list', () => {
+  const { data } = withSubagents(root => {
+    root.at(at(10));
+    const call = root.subagent({ name: 'many', type: 'explore', mode: 'background', agentId: 'ag-many' });
+    root.wait(1000); root.subagentDone(call, { durationMs: 1000, agentId: 'ag-many' });
+    for (let i = 0; i < 55; i += 1) {
+      root.wait(1000); root.toAgent('ag-many', `again ${i}`);
+      root.wait(1000); root.sub(call, 'assistant.turn_end');
+    }
+  });
+  const [unit] = subUnits(buildSnapshot(data));
+  assert.equal(unit.busyMs, 56_000);
 });
 
 test('the run summary leaves sub-agent units out of its children, units and busy time, and counts every sub-agent once', () => {

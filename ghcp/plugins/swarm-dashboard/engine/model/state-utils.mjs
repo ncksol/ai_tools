@@ -5,7 +5,7 @@ export const LIMITS = Object.freeze({
   feed: 120, marks: 400, sent: 40, inbound: 80, taskCompletes: 20, recent: 200, spans: 5000, saves: 50, wakes: 500, subagents: 500, subagentIndex: 20_000,
   subagentTypes: 100, prMentions: 200,
   // Per sub-agent unit (root states only): runs, its own feed, open tool calls, and the sub-agents it started itself.
-  subagentRuns: 50, subagentFeed: 8, subagentOpenTools: 50, subagentChildren: 100,
+  subagentRuns: 50, subagentFeed: 8, subagentOpenTools: 50, subagentChildren: 20,
 });
 
 export function pushBounded(list, item, max) {

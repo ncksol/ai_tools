@@ -407,7 +407,7 @@ function assignSubagentLabels(subs, taken) {
   const used = new Set([...taken].map(label => label.toLowerCase()));
   const labels = new Map();
   subs.forEach((sub, index) => {
-    const base = safeLabel(sub.unit.taskName ?? sub.name) || `${safeLabel(sub.type).slice(0, 28) || 'agent'}-${index + 1}`;
+    const base = safeLabel(sub.unit.labelName) || `${safeLabel(sub.type).slice(0, 28) || 'agent'}-${index + 1}`;
     let label = base;
     for (let n = 2; used.has(label.toLowerCase()); n += 1) label = `${base.slice(0, LABEL_MAX - `-${n}`.length)}-${n}`;
     used.add(label.toLowerCase());
@@ -442,12 +442,11 @@ function subagentUnitView(input, rootContext, root, sub, evaluation, label, roll
   const startedAt = sub.startedAt ?? sub.launchedAt;
   const clockEnd = evaluation.endedAt ?? now;
   const spans = unit.runs.map(([start, end]) => [start, Math.max(start, end ?? clockEnd)]);
-  const nested = rootContext.all.descendants;
   const openTool = running ? [...unit.openTools.values()].sort((a, b) => a.startedAt - b.startedAt)[0] ?? null : null;
   const tool = openTool ? toolView(openTool, toolLimitMs(openTool, thresholds)) : null;
   const activity = !running ? SUBAGENT_DONE_ACTIVITY[evaluation.detail]
     : !openTool ? 'Thinking'
-      : openTool.name === 'task' ? `Waiting for its ${nested.get(openTool.id)?.sub.type ?? 'sub-agent'} (sync)` : `Running ${openTool.args.summary}`;
+      : openTool.name === 'task' ? `Waiting for its ${unit.children.find(child => child.id === openTool.id)?.type ?? 'sub-agent'} (sync)` : `Running ${openTool.args.summary}`;
   const report = unit.lastMessage
     ? {
       status: running ? 'progress' : evaluation.detail === 'completed' ? 'complete' : 'blocked', source: 'message', at: unit.lastMessage.at,
@@ -459,7 +458,7 @@ function subagentUnitView(input, rootContext, root, sub, evaluation, label, roll
     id: sub.id, kind: 'subagent', label, name: sub.task || sub.name, cliSessionIds: [], branch: null, model: sub.model,
     status, statusDetail: evaluation.detail, bucket, since: evaluation.since, reason: evaluation.reason,
     startedAt, endedAt: evaluation.endedAt, lastEventAt: sub.lastEventAt,
-    busyMs: Math.max(0, Math.round(spans.reduce((sum, [start, end]) => sum + end - start, 0))), waitingOnUserMs: 0, alive: rootContext.alive,
+    busyMs: Math.max(0, Math.round(unit.droppedBusyMs + spans.reduce((sum, [start, end]) => sum + end - start, 0))), waitingOnUserMs: 0, alive: rootContext.alive,
     cost: { credits: credits(rollup.get(sub.id)?.nanoAiu ?? 0), calls: rollup.get(sub.id)?.calls ?? 0 },
     activity: { label: activity, tool, lastEventAt: sub.lastEventAt },
     report, progress: null,
@@ -485,8 +484,16 @@ function buildSubagentUnits(input, rootContext, root, takenLabels, extraFeed) {
   const labels = assignSubagentLabels(subs, takenLabels);
   const rollup = rollupCost(rootContext.cost.byParentToolCall, all.descendants);
   const startOf = sub => sub.startedAt ?? sub.launchedAt;
+  // A sub-agent is judged by the liveness of the CLI session whose log holds it. One in an older session counts as gone unless
+  // that session is alive: its process may have died without a shutdown event, leaving the run open for good.
+  const holder = new Map();
+  for (const state of rootContext.states) for (const id of state.subagents.keys()) holder.set(id, state.id);
+  const aliveFor = sub => {
+    const cliId = holder.get(sub.id);
+    return cliId === undefined || cliId === rootContext.node.currentCliSessionId ? rootContext.alive : input.alive.get(cliId) === true;
+  };
   const entries = subs.map(sub => {
-    const evaluation = evaluateSubagentUnit(sub, { alive: rootContext.alive, now: input.now, thresholds: input.thresholds });
+    const evaluation = evaluateSubagentUnit(sub, { alive: aliveFor(sub), now: input.now, thresholds: input.thresholds });
     for (const item of sub.unit.feed) {
       extraFeed.push({ id: `${sub.id}:${item.kind}:${item.source}`, at: item.at, unitId: sub.id, label: labels.get(sub.id), kind: item.kind, text: item.text });
     }
@@ -607,7 +614,8 @@ export function buildSnapshot(input) {
   });
   const orchestrator = sessionView(input, rootContext, labels.get(root.id), evaluation, null, null, []);
   const needs = buildNeeds(contexts, root.id, labels, flags);
-  const subagents = buildSubagentUnits(input, rootContext, root, labels.values(), extraFeed);
+  const planned = plannedEntries(plan);
+  const subagents = buildSubagentUnits(input, rootContext, root, [...labels.values(), ...planned.map(entry => entry.label)], extraFeed);
   const everyUnit = [...units, ...subagents.units];
   const { summary: cost, lastAt: lastCostAt } = costSummary(input.ledger, [root, ...nodes].flatMap(node => node.cliSessionIds), everyUnit);
   const counts = { working: 0, stuck: 0, waiting: 0, idle: 0, done: 0, failed: 0 };
@@ -638,7 +646,7 @@ export function buildSnapshot(input) {
     },
     orchestrator,
     units: everyUnit,
-    planned: plannedEntries(plan),
+    planned,
     needs,
     feed,
     counts,
