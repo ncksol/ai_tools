@@ -1366,3 +1366,75 @@ test('a sub-agent unit\'s report has repliedAt null, the follow-up\'s time after
   });
   assert.deepEqual(reports.map(report => [report.title, report.repliedAt]), [['First answer', null], ['First answer', at(118)], ['Second answer', null]]);
 });
+
+// --- A reply stays recorded when later messages fill the rolling inbound list ---
+
+const fromParent = log => log.crossSession({ fromSessionId: 'cli-root', fromProjectSessionId: 'ws-root', name: 'Sample story', content: 'A message from the parent.' });
+const fromSibling = log => log.crossSession({ fromSessionId: 'cli-ui', fromProjectSessionId: 'ws-ui', name: 'Sample u1 ui', content: 'A message from a sibling.' });
+
+/** The heuristic swarm where the api session reports needs_input at minute 30, then `build` adds what follows (from minute 40). */
+function replyLogSwarm(build) {
+  const data = input(false);
+  const api = new EventLog(at(5));
+  api.start(); api.turnStart();
+  api.at(at(30)); api.report('ws-root', 'Need a decision before publishing PR !4711.', 'needs_input');
+  api.at(at(31)); api.turnEnd();
+  build(api);
+  data.states.set('cli-api', fold(api, 'cli-api'));
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  return { snapshot, unit: snapshot.units.find(item => item.id === 'ws-api'), data };
+}
+
+test('a reply stays recorded after 81 unrelated messages, and after 81 later messages from the parent itself', () => {
+  for (const sender of [fromSibling, fromParent]) {
+    const { unit } = replyLogSwarm(api => {
+      api.at(at(40)); fromParent(api);
+      api.at(at(41));
+      for (let i = 0; i < 81; i += 1) { api.wait(1000); sender(api); }
+    });
+    assert.equal(unit.report.status, 'needs_input');
+    assert.equal(unit.report.repliedAt, at(40), `after 81 messages from ${sender === fromParent ? 'the parent' : 'a sibling'}`);
+    assert.notEqual(unit.statusDetail, 'blocked_on_orchestrator');
+  }
+});
+
+test('a new needs_input report after the reply is unanswered until the parent replies again', () => {
+  const asked = replyLogSwarm(api => {
+    api.at(at(40)); fromParent(api);
+    api.at(at(50)); api.report('ws-root', 'One more decision before publishing PR !4711.', 'needs_input');
+    api.at(at(51)); api.turnEnd();
+  });
+  assert.deepEqual([asked.unit.report.at, asked.unit.report.repliedAt, asked.unit.statusDetail], [at(50), null, 'blocked_on_orchestrator']);
+  const answered = replyLogSwarm(api => {
+    api.at(at(40)); fromParent(api);
+    api.at(at(50)); api.report('ws-root', 'One more decision before publishing PR !4711.', 'needs_input');
+    api.at(at(51)); api.turnEnd();
+    api.at(at(60)); fromParent(api);
+    api.at(at(61)); fromParent(api);
+  });
+  assert.equal(answered.unit.report.repliedAt, at(60));
+  assert.notEqual(answered.unit.statusDetail, 'blocked_on_orchestrator');
+});
+
+test('a reply that is the first message of a later CLI session of the unit still counts after 81 other messages', () => {
+  const { data } = replyLogSwarm(() => {});
+  data.app.aliases.push({ sessionId: 'cli-api-old', workspaceId: 'ws-api', createdAt: T0 });
+  data.forest = buildForest(data.app);
+  assert.deepEqual(data.forest.nodes.get('ws-api').cliSessionIds, ['cli-api-old', 'cli-api']);
+  const old = new EventLog(at(5));
+  old.calls = 300;
+  old.start(); old.turnStart();
+  old.at(at(30)); old.report('ws-root', 'Need a decision before publishing PR !4711.', 'needs_input');
+  old.at(at(31)); old.turnEnd();
+  data.states.set('cli-api-old', fold(old, 'cli-api-old'));
+  data.alive.set('cli-api-old', false);
+  const current = new EventLog(at(35));
+  current.start();
+  current.at(at(40)); fromParent(current);
+  current.at(at(41));
+  for (let i = 0; i < 81; i += 1) { current.wait(1000); fromSibling(current); }
+  data.states.set('cli-api', fold(current, 'cli-api'));
+  const unit = buildSnapshot(data).units.find(item => item.id === 'ws-api');
+  assert.deepEqual([unit.report.status, unit.report.at, unit.report.repliedAt], ['needs_input', at(30), at(40)]);
+});

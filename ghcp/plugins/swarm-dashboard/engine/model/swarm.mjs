@@ -296,17 +296,18 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
   }
   const lastTask = c.all.taskCompletes[c.all.taskCompletes.length - 1];
   if (lastTask && (!report || lastTask.at > report.at + TASK_OVERRIDE_MS)) report = reportFromTask(lastTask);
-  let parentRepliedAt = null;
-  for (const item of c.all.inbound) {
-    if (parent.ids.has(item.fromSessionId) || parent.ids.has(item.fromProjectSessionId)) parentRepliedAt = maxTime(parentRepliedAt, item.at);
-  }
-  // When the parent first sent a message after the final report (the same test as parentRepliedAt, which takes the latest one).
+  // When the parent first sent a message after the final report. The reply index holds the first message after each of the unit's own
+  // outbound events, so it never loses the reply to later messages; the rolling inbound list stays as a fallback (a received copy).
+  const fromParent = item => parent.ids.has(item.fromSessionId) || parent.ids.has(item.fromProjectSessionId);
   if (report) {
     report.repliedAt = null;
-    for (const item of c.all.inbound) {
-      if (item.at > report.at && (parent.ids.has(item.fromSessionId) || parent.ids.has(item.fromProjectSessionId))) report.repliedAt = minTime(report.repliedAt, item.at);
+    for (const id of parent.ids) {
+      const first = c.all.replyIndex.get(id)?.times.find(time => time > report.at);
+      if (first !== undefined) report.repliedAt = minTime(report.repliedAt, first);
     }
+    for (const item of c.all.inbound) if (item.at > report.at && fromParent(item)) report.repliedAt = minTime(report.repliedAt, item.at);
   }
+  const parentRepliedAt = report ? report.repliedAt : null;
 
   const host = hostOf(c.workspaceFile, (node.projectId ? input.app.projects.get(node.projectId) : null) ?? project);
   const identity = resolvePr({ registry: row, statusLines, createdPr: node.createdPr, mentions: c.all.prMentions, host });

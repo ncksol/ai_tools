@@ -55,6 +55,10 @@ export function createSessionState(id, { subagentUnits = false } = {}) {
     // first time each leaves running.
     descendants: new Map(), subagentOutcomes: { completed: 0, failed: 0, cancelled: 0 },
     sent: [], inbound: [], lastInboundAt: null, lastHumanAt: null, taskCompletes: [],
+    // Reply index: `outboundSeq` counts the session's own outbound events (a sent session message, a task completion); `replyIndex`
+    // maps each sender id to { seq, times }: the time of the first message from it after each such event, ascending and bounded.
+    // Unlike the rolling `inbound` list, later messages never push a recorded reply out (see messages.mjs).
+    outboundSeq: 0, replyIndex: new Map(),
     automation: { saves: [], wakes: [] },
     shutdownAt: null, abortAt: null, lastErrorAt: null,
     recent: { failures: [], calls: [], compactions: [], denials: [] }, prompts: 0,
@@ -908,6 +912,12 @@ export function mergeStates(states) {
     }
     merged.sent.push(...state.sent);
     merged.inbound.push(...state.inbound);
+    // Reply times per sender across the CLI sessions (`seq` has no meaning in the merged view); sorted and bounded after the loop.
+    for (const [sender, entry] of state.replyIndex) {
+      const target = merged.replyIndex.get(sender) ?? { seq: -1, times: [] };
+      target.times.push(...entry.times);
+      merged.replyIndex.set(sender, target);
+    }
     merged.taskCompletes.push(...state.taskCompletes);
     merged.automation.saves.push(...state.automation.saves);
     merged.automation.wakes.push(...state.automation.wakes);
@@ -929,6 +939,11 @@ export function mergeStates(states) {
   while (merged.subagentIndex.size > LIMITS.subagentIndex) merged.subagentIndex.delete(merged.subagentIndex.keys().next().value);
   while (merged.descendants.size > LIMITS.subagentIndex) merged.descendants.delete(merged.descendants.keys().next().value);
   const byAt = (a, b) => a.at - b.at;
+  for (const entry of merged.replyIndex.values()) {
+    entry.times.sort((a, b) => a - b);
+    if (entry.times.length > LIMITS.replyTimes) entry.times.splice(0, entry.times.length - LIMITS.replyTimes);
+  }
+  while (merged.replyIndex.size > LIMITS.replySenders) merged.replyIndex.delete(merged.replyIndex.keys().next().value);
   capSubagents(merged);
   for (const list of [merged.sent, merged.inbound, merged.taskCompletes, merged.feed, merged.marks, merged.automation.saves]) list.sort(byAt);
   merged.automation.wakes.sort((a, b) => a - b);

@@ -1165,3 +1165,64 @@ test('a unit records when a message was sent to its sub-agent after its latest m
   unit = unitOf(foldRoot(log), call);
   assert.deepEqual([unit.repliedAt, unit.lastMessage.text], [null, 'second']);
 });
+
+// --- The reply index: the first message from each sender after each of the unit's own outbound events ---
+
+const parentMessage = (log, from = 'cli-root') => log.crossSession({ fromSessionId: from, fromProjectSessionId: `ws-${from}`, name: 'Sample', content: 'hello' });
+
+test('the reply index records only the first message of each sender after each outbound event, within its bounds', () => {
+  const log = new EventLog(T0);
+  log.start();
+  log.wait(1000); parentMessage(log);
+  log.wait(1000); parentMessage(log);
+  log.wait(1000); log.report('ws-root', 'first report', 'handoff');
+  log.wait(1000); parentMessage(log);
+  log.wait(1000); parentMessage(log);
+  log.wait(1000); parentMessage(log, 'cli-other');
+  log.wait(1000); log.taskComplete('done');
+  log.wait(1000); parentMessage(log);
+  const state = fold(log);
+  assert.deepEqual(state.replyIndex.get('cli-root').times, [T0 + 1000, T0 + 4000, T0 + 8000]);
+  assert.deepEqual(state.replyIndex.get('ws-cli-root').times, [T0 + 1000, T0 + 4000, T0 + 8000], 'the project session id is a sender too');
+  assert.deepEqual(state.replyIndex.get('cli-other').times, [T0 + 6000]);
+  assert.equal(state.outboundSeq, 2);
+
+  const many = new EventLog(T0);
+  many.start();
+  for (let i = 0; i < 250; i += 1) {
+    many.wait(1000); many.report('ws-root', `report ${i}`, 'handoff');
+    many.wait(1000); parentMessage(many);
+  }
+  for (let i = 0; i < 60; i += 1) { many.wait(1000); parentMessage(many, `cli-sender-${i}`); }
+  const bounded = fold(many);
+  assert.equal(LIMITS.replySenders, 50);
+  assert.equal(LIMITS.replyTimes, 200);
+  assert.ok(bounded.replyIndex.size <= LIMITS.replySenders, `${bounded.replyIndex.size} senders`);
+  assert.equal(bounded.replyIndex.has('cli-sender-59'), true);
+  assert.equal(bounded.replyIndex.has('cli-root'), false, 'the oldest sender was dropped');
+  const solo = new EventLog(T0);
+  solo.start();
+  for (let i = 0; i < 250; i += 1) {
+    solo.wait(1000); solo.report('ws-root', `report ${i}`, 'handoff');
+    solo.wait(1000); parentMessage(solo);
+  }
+  const times = fold(solo).replyIndex.get('cli-root').times;
+  assert.equal(times.length, LIMITS.replyTimes);
+  assert.equal(times.at(-1), T0 + 500_000, 'the latest ones are kept');
+});
+
+test('merged states keep each sender\'s reply times from every CLI session, and the first message of a later session counts', () => {
+  const first = new EventLog(T0);
+  first.start();
+  first.wait(1000); first.report('ws-root', 'a report', 'needs_input');
+  const second = new EventLog(T0 + 60_000);
+  second.start();
+  second.wait(1000); parentMessage(second);
+  second.wait(1000); parentMessage(second);
+  const merged = mergeStates([fold(first, 'cli-a'), fold(second, 'cli-b')]);
+  assert.deepEqual(merged.replyIndex.get('cli-root').times, [T0 + 61_000]);
+  const both = new EventLog(T0);
+  both.start();
+  both.wait(1000); parentMessage(both);
+  assert.deepEqual(mergeStates([fold(both, 'cli-c'), fold(second, 'cli-b')]).replyIndex.get('cli-root').times, [T0 + 1000, T0 + 61_000]);
+});

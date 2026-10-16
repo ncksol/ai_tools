@@ -74,13 +74,31 @@ export function recordUserMessage(state, data, at) {
   if (envelope) {
     const content = typeof data.content === 'string' ? data.content : '';
     pushBounded(state.inbound, { at, ...envelope, content: clip(content, 8000) ?? '' }, LIMITS.inbound);
+    noteReply(state, envelope, at);
     return;
   }
   if (data.source === undefined || data.source === null) state.lastHumanAt = at;
 }
 
+/** Notes the first message from each sender (its session id and its project session id) after the session's latest outbound event. */
+function noteReply(state, envelope, at) {
+  for (const id of new Set([envelope.fromSessionId, envelope.fromProjectSessionId])) {
+    if (!id) continue;
+    let entry = state.replyIndex.get(id);
+    if (!entry) {
+      if (state.replyIndex.size >= LIMITS.replySenders) state.replyIndex.delete(state.replyIndex.keys().next().value);
+      entry = { seq: -1, times: [] };
+      state.replyIndex.set(id, entry);
+    }
+    if (entry.seq === state.outboundSeq) continue;
+    entry.seq = state.outboundSeq;
+    pushBounded(entry.times, at, LIMITS.replyTimes);
+  }
+}
+
 export function recordToolStart(state, name, args, callId, at) {
   if (name === 'send_session_message') {
+    state.outboundSeq += 1;
     const message = clip(typeof args.message === 'string' ? args.message : '', 8000) ?? '';
     pushBounded(state.sent, {
       at, toolCallId: callId, source: state.source, target: typeof args.session_id === 'string' ? args.session_id : null,
@@ -103,6 +121,7 @@ export function recordToolComplete(state, callId, data) {
 }
 
 export function recordTaskComplete(state, data, at) {
+  state.outboundSeq += 1;
   const summary = clip(typeof data.summary === 'string' ? data.summary : '', 4000) ?? '';
   const success = data.success !== false;
   pushBounded(state.taskCompletes, { at, success, summary }, LIMITS.taskCompletes);
