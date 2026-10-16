@@ -11,12 +11,16 @@ import { findPlaywright, launchWebKit, openWebKitPage } from './lib/webkit.mjs';
 
 export const WIDTHS = [480, 560, 640, 800, 1024, 1280, 1440, 1600, 1920];
 export const CANVAS_WIDTHS = [480, 560, 640];
-/** What each scenario shows in the detail and run views; the stress scenario has no history. */
-const SCENARIOS = { example: { detail: 'ws-0005-i1', run: 'ws-1000-root' }, stress: { detail: 'ws-9001-stress', run: null } };
+/** What each scenario shows in the detail, sub-agent detail and run views; the stress scenario has no history. */
+const SCENARIOS = {
+  example: { detail: 'ws-0005-i1', subagent: 'call-root-24', run: 'ws-1000-root' },
+  stress: { detail: 'ws-9001-stress', subagent: 'call-9101-sub', run: null },
+};
 /** Every dashboard view as URL parameters. Activity exists only in narrow mode; history views need a finished run. */
 export const VIEWS = [
   { name: 'cards', params: {} },
   { name: 'detail', params: { detail: 'DETAIL' } },
+  { name: 'detail-subagent', params: { detail: 'SUBAGENT' } },
   { name: 'activity', params: { tab: 'activity' }, narrowOnly: true },
   { name: 'timeline', params: { tab: 'timeline', span: '12h' } },
   { name: 'timeline-run', params: { tab: 'timeline', span: 'run' } },
@@ -81,7 +85,7 @@ export function parseArguments(argv) {
   return options;
 }
 
-/** targets: per scenario, the swarm to pin (optional), the unit for the detail view and the finished run, or null. */
+/** targets: per scenario, the swarm to pin (optional), the units for the detail views and the finished run, or null. */
 export function buildStates({ scenarios, widths, canvasWidths, targets = SCENARIOS }) {
   const states = [];
   for (const scenario of scenarios) {
@@ -89,9 +93,10 @@ export function buildStates({ scenarios, widths, canvasWidths, targets = SCENARI
     for (const [host, list] of [['browser', widths], ['canvas', canvasWidths]]) {
       for (const width of list) {
         for (const view of VIEWS) {
-          if ((view.history && !target.run) || (view.name === 'detail' && !target.detail)) continue;
+          if ((view.history && !target.run) || (view.name === 'detail' && !target.detail) || (view.name === 'detail-subagent' && !target.subagent)) continue;
           const params = { host, ...(target.swarm ? { swarm: target.swarm } : {}), ...view.params };
           if (params.detail === 'DETAIL') params.detail = target.detail;
+          if (params.detail === 'SUBAGENT') params.detail = target.subagent;
           if (params.run === 'RUN') params.run = target.run;
           states.push({ scenario, host, width, view: view.name, narrowOnly: Boolean(view.narrowOnly), params });
         }
@@ -116,6 +121,7 @@ async function describeLive(base) {
     const target = {
       swarm: snapshot?.run.id ?? null,
       detail: snapshot ? (snapshot.units[0] ?? snapshot.orchestrator).id : null,
+      subagent: snapshot?.units.find(unit => unit.kind === 'subagent')?.id ?? null,
       run: history[0]?.id ?? null,
     };
     const summary = `${snapshot ? `a ${snapshot.run.lifecycle} swarm with ${snapshot.units.length} units` : 'no swarm'}, ${history.length} finished runs`;

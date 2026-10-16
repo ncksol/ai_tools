@@ -16,13 +16,16 @@ const sink = () => {
 test('every view is checked at the nine widths in the browser layout and three in the canvas layout', () => {
   assert.deepEqual(WIDTHS, [480, 560, 640, 800, 1024, 1280, 1440, 1600, 1920]);
   assert.deepEqual(CANVAS_WIDTHS, [480, 560, 640]);
-  assert.deepEqual(VIEWS.map(view => view.name), ['cards', 'detail', 'activity', 'timeline', 'timeline-run', 'plan', 'board', 'history', 'run']);
+  assert.deepEqual(VIEWS.map(view => view.name), ['cards', 'detail', 'detail-subagent', 'activity', 'timeline', 'timeline-run', 'plan', 'board', 'history', 'run']);
   const example = buildStates({ scenarios: ['example'], widths: WIDTHS, canvasWidths: CANVAS_WIDTHS });
-  assert.equal(example.length, (9 + 3) * 9);
+  assert.equal(example.length, 120);
   const stress = buildStates({ scenarios: ['stress'], widths: WIDTHS, canvasWidths: CANVAS_WIDTHS });
-  assert.equal(stress.length, (9 + 3) * 7, 'history views are checked with the example only');
+  assert.equal(stress.length, 96, 'history views are checked with the example only');
   const detail = example.find(state => state.view === 'detail' && state.host === 'canvas' && state.width === 560);
   assert.deepEqual(detail.params, { host: 'canvas', detail: 'ws-0005-i1' });
+  const subagent = example.find(state => state.view === 'detail-subagent' && state.host === 'canvas' && state.width === 560);
+  assert.deepEqual(subagent.params, { host: 'canvas', detail: 'call-root-24' });
+  assert.deepEqual(stress.find(state => state.view === 'detail-subagent' && state.host === 'browser' && state.width === 480).params, { host: 'browser', detail: 'call-9101-sub' });
   assert.equal(example.find(state => state.view === 'activity').narrowOnly, true);
 });
 
@@ -47,10 +50,11 @@ test('a running dashboard is checked with the swarm, unit and run it shows', () 
   assert.throws(() => parseArguments(['--live', 'https://example.com/']), /--live/);
   assert.throws(() => parseArguments(['--live', 'http://127.0.0.1:7927/', '--scenario', 'stress']), /--live/);
   assert.throws(() => parseArguments(['--live', 'http://127.0.0.1:7927/', '--screenshots', '/tmp/shots']), /--screenshots/);
-  const targets = { live: { swarm: 'ws-a', detail: 'ws-b', run: null } };
+  const targets = { live: { swarm: 'ws-a', detail: 'ws-b', subagent: 'call-c', run: null } };
   const states = buildStates({ scenarios: ['live'], widths: [1280], canvasWidths: [], targets });
-  assert.deepEqual(states.map(state => state.view), ['cards', 'detail', 'activity', 'timeline', 'timeline-run', 'plan', 'board']);
+  assert.deepEqual(states.map(state => state.view), ['cards', 'detail', 'detail-subagent', 'activity', 'timeline', 'timeline-run', 'plan', 'board']);
   assert.deepEqual(states.find(state => state.view === 'detail').params, { host: 'browser', swarm: 'ws-a', detail: 'ws-b' });
+  assert.deepEqual(states.find(state => state.view === 'detail-subagent').params, { host: 'browser', swarm: 'ws-a', detail: 'call-c' });
   const empty = buildStates({ scenarios: ['live'], widths: [1280], canvasWidths: [], targets: { live: { swarm: null, detail: null, run: 'ws-r' } } });
   assert.deepEqual(empty.map(state => state.view), ['cards', 'activity', 'timeline', 'timeline-run', 'plan', 'board', 'history', 'run']);
   assert.deepEqual(empty.find(state => state.view === 'run').params, { host: 'browser', page: 'run', run: 'ws-r' });

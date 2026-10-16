@@ -89,7 +89,7 @@ test('activity is simulated only between start() and stop()', async () => {
   assert.equal(none.length, 0);
 });
 
-test('the stress scenario is valid and covers every status, a stalled run, a warning and two live swarms', async () => {
+test('the stress scenario is valid and covers every status, a stalled run, a warning, two live swarms and many sub-agent units', async () => {
   const engine = createDemoEngine({ scenario: 'stress', now: () => T, simulate: false });
   const snapshot = await engine.getSnapshot();
   assert.deepEqual(validateSnapshot(snapshot), []);
@@ -104,6 +104,25 @@ test('the stress scenario is valid and covers every status, a stalled run, a war
   assert.ok(snapshot.units.some(unit => unit.subagents.filter(sub => sub.status === 'running').length >= 6));
   assert.equal(engine.listSwarms().filter(swarm => swarm.lifecycle === 'live').length, 2);
   assert.throws(() => createDemoEngine({ scenario: 'nope' }), /scenario/);
+  // The orchestrator's sub-agents: 23 units after every session unit, oldest first, and the orchestrator's view of them.
+  const kinds = snapshot.units.map(unit => unit.kind);
+  const firstSubagent = kinds.indexOf('subagent');
+  assert.equal(kinds.filter(kind => kind === 'subagent').length, 23);
+  assert.ok(kinds.slice(firstSubagent).every(kind => kind === 'subagent'), 'every session unit comes first');
+  const subagents = snapshot.units.slice(firstSubagent);
+  subagents.slice(1).forEach((unit, index) => assert.ok(unit.startedAt >= subagents[index].startedAt, `${unit.label} starts after the one before`));
+  assert.equal(new Set(snapshot.units.map(unit => unit.label)).size, snapshot.units.length, 'labels are unique');
+  const listed = bucket => snapshot.units.filter(unit => unit.bucket === bucket).length;
+  assert.deepEqual(snapshot.omittedSubagents, { done: 37, failed: 4 });
+  assert.equal(snapshot.counts.done, listed('done') + 37);
+  assert.equal(snapshot.counts.failed, listed('failed') + 4);
+  const unitIds = new Set(snapshot.units.map(unit => unit.id));
+  const barIds = new Set(snapshot.orchestrator.timeline.subagents.map(sub => sub.id));
+  const viewIds = new Set(snapshot.orchestrator.subagents.map(sub => sub.id));
+  for (const unit of subagents) assert.ok(barIds.has(unit.id) && viewIds.has(unit.id), `${unit.label} has a bar and a view`);
+  const notUnits = snapshot.orchestrator.timeline.subagents.filter(sub => !unitIds.has(sub.id));
+  assert.deepEqual(notUnits.map(sub => sub.id).sort(), ['call-9190-omitted', 'call-9191-omitted']);
+  assert.ok(notUnits.every(sub => sub.end !== null), 'only finished sub-agents are left out of units');
 });
 
 test('every reference in a scenario swarm points inside that swarm', async () => {

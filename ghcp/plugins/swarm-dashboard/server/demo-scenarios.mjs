@@ -21,6 +21,97 @@ const EXTRA = [
   { label: 'MM-1', name: 'a four-character label too wide for its ring', status: 'idle', statusDetail: 'idle', bucket: 'idle' },
 ];
 
+/**
+ * The orchestrator's one-off sub-agents for the stress scenario: every sub-agent status, a 32-character label, a long
+ * name, crowded chips, an open tool call, no report, and finished ones inside and outside the 12-hour window.
+ * start and end are minutes before the snapshot time; end is null while the sub-agent runs.
+ */
+const SUBAGENT_UNITS = [
+  { label: 'investigate-flaky-integration-te', state: 'running', type: 'general-purpose', mode: 'background', effort: 'high', start: 25, end: null, name: 'Investigate the flaky integration tests in the export pipeline, with a description long enough to need an ellipsis' },
+  { label: 'review-api-diff', state: 'running', type: 'code-review', mode: 'sync', effort: null, start: 8, end: null, name: 'Review the API diff for breaking changes', crowd: 4 },
+  { label: 'trace-import-callers', state: 'running', type: 'explore', mode: 'background', effort: 'low', start: 3, end: null, name: 'Trace who calls the import service', tool: true },
+  { label: 'draft-release-notes', state: 'running', type: 'task', mode: 'background', effort: 'medium', start: 1, end: null, name: 'Draft the release notes for the export changes', report: null },
+  { label: 'rubber-duck-plan', state: 'running', type: 'rubber-duck', mode: 'sync', effort: 'high', start: 14, end: null, name: 'Talk through the migration plan' },
+  { label: 'compare-grid-libraries', state: 'running', type: 'research', mode: 'background', effort: 'medium', start: 40, end: null, name: 'Compare three grid libraries for the report view', title: 'Compared the first two grid libraries on bundle size, sorting, virtual scrolling and keyboard support so far' },
+  { label: 'measure-render-cost', state: 'stuck', type: 'explore', mode: 'background', effort: 'low', start: 50, end: null, name: 'Measure the render cost of the report table', silent: 16, reason: 'Sub-agent rule: no events for 16 min (limit 10 min).' },
+  { label: 'check-lint-config', state: 'stuck', type: 'task', mode: 'sync', effort: null, start: 75, end: null, name: 'Check the lint configuration against the style guide', silent: 12, reason: 'Sub-agent rule: no events for 12 min (limit 10 min).' },
+  { label: 'audit-feed-ids', state: 'completed', type: 'general-purpose', mode: 'sync', effort: 'high', start: 200, end: 170, name: 'Audit the feed item ids for duplicates' },
+  { label: 'list-dead-code', state: 'completed', type: 'explore', mode: 'background', effort: 'low', start: 400, end: 380, name: 'List the functions that nothing calls' },
+  { label: 'old-schema-survey', state: 'completed', type: 'research', mode: 'background', effort: 'medium', start: 1500, end: 1450, name: 'Survey where the old schema is still read' },
+  { label: 'old-fixture-scan', state: 'completed', type: 'explore', mode: 'background', effort: 'low', start: 900, end: 880, name: 'Scan the old fixtures for unused fields' },
+  { label: 'summarise-reviews', state: 'completed', type: 'code-review', mode: 'sync', effort: null, start: 60, end: 45, name: 'Summarise the open review comments' },
+  { label: 'write-migration-notes', state: 'completed', type: 'task', mode: 'background', effort: 'medium', start: 130, end: 100, name: 'Write the notes for the data migration' },
+  { label: 'retry-model-call', state: 'failed', type: 'task', mode: 'background', effort: null, start: 300, end: 290, name: 'Retry the summary step', reason: 'Failed: the model request failed after 3 retries.' },
+  { label: 'probe-cache-sizes', state: 'failed', type: 'explore', mode: 'background', effort: 'low', start: 800, end: 790, name: 'Probe the cache sizes on the sample data', reason: 'Failed: the tool call timed out.' },
+  { label: 'scan-test-names', state: 'cancelled', type: 'orchestrator-worker', mode: 'background', effort: 'medium', start: 90, end: 70, name: 'Scan the test names for duplicates', reason: 'Cancelled after 20 min.' },
+  { label: 'map-old-endpoints', state: 'crashed', type: 'explore', mode: 'background', effort: 'low', start: 35, end: 20, name: 'Map the old endpoints to the new ones', reason: 'Ended rule: the orchestrator process ended while it ran.' },
+];
+/** Per sub-agent state: status, statusDetail, bucket, the orchestrator's SubagentView status, report status, activity and feed verb. */
+const SUBAGENT_STATES = {
+  running: ['busy', 'busy', 'working', 'running', 'progress', 'Thinking', null],
+  stuck: ['stuck', 'stuck_subagent', 'stuck', 'stuck', 'progress', 'Thinking', null],
+  completed: ['done', 'completed', 'done', 'completed', 'complete', 'Done', 'completed'],
+  failed: ['blocked', 'failed', 'failed', 'failed', 'blocked', 'Failed', 'failed'],
+  cancelled: ['blocked', 'cancelled', 'failed', 'cancelled', 'blocked', 'Cancelled', 'cancelled'],
+  // The contract has no 'crashed' sub-agent status or feed text, so the orchestrator's view and the feed say failed.
+  crashed: ['blocked', 'crashed', 'failed', 'failed', 'blocked', 'Stopped', 'failed'],
+};
+
+function subagentUnit(template, spec, index, t, parentId) {
+  const unit = structuredClone(template);
+  const [status, statusDetail, bucket, , reportStatus, activityLabel, verb] = SUBAGENT_STATES[spec.state];
+  const id = `call-91${String(index + 1).padStart(2, '0')}-sub`;
+  const startedAt = t - spec.start * MIN;
+  const endedAt = spec.end === null ? null : t - spec.end * MIN;
+  const lastEventAt = endedAt ?? t - (spec.silent ?? 1) * MIN;
+  const since = endedAt ?? (spec.silent ? lastEventAt : startedAt);
+  Object.assign(unit, {
+    id, kind: 'subagent', label: spec.label, name: spec.name, cliSessionIds: [], branch: null,
+    status, statusDetail, bucket, since, reason: spec.reason ?? null, startedAt, endedAt, lastEventAt,
+    busyMs: (endedAt ?? t) - startedAt, waitingOnUserMs: 0, alive: true,
+    cost: { credits: round1(20 + 13.7 * index), calls: 5 + index },
+    parentId, depth: 1, stage: 'subagent', pr: null,
+    monitor: { state: 'none', lastCheckAt: null, nextCheckAt: null, everyMinutes: null, since: null },
+    progress: null, outcome: null, closedWithoutMerge: false, dependsOn: null, todoId: null,
+    agent: { type: spec.type, mode: spec.mode, effort: spec.effort },
+  });
+  unit.activity = spec.tool
+    ? { label: 'Running grep: ImportService', tool: { id: `${id}-tool`, name: 'grep', summary: 'grep: ImportService', startedAt: lastEventAt, limitMs: 120000 }, lastEventAt }
+    : { label: activityLabel, tool: null, lastEventAt };
+  unit.report = 'report' in spec ? spec.report : {
+    status: reportStatus, source: 'message', at: lastEventAt,
+    title: spec.title ?? `${spec.name}: ${{ progress: 'work continues.', complete: 'finished.', blocked: 'stopped early.' }[reportStatus]}`,
+    summary: null, evidence: [], blockers: null, body: null, unit: spec.label, commit: null,
+  };
+  unit.subagents = Array.from({ length: spec.crowd ?? 0 }, (_, k) => ({
+    id: `${id}-${k + 1}`, name: `helper-${k + 1}`, type: TYPES[k % TYPES.length], model: 'gpt-5.4-mini', mode: 'background', status: 'running',
+    startedAt: t - (k + 2) * MIN, endedAt: null, durationMs: null, credits: 3 + k, task: `Check ${k + 1} of the API diff`,
+  }));
+  const segments = spec.silent
+    ? [{ start: startedAt, end: lastEventAt, state: 'busy' }, { start: lastEventAt, end: null, state: 'stuck' }]
+    : [{ start: startedAt, end: endedAt, state: 'busy' }];
+  unit.timeline = {
+    segments,
+    subagents: unit.subagents.map(sub => ({ id: sub.id, start: sub.startedAt, end: sub.endedAt, type: sub.type })),
+    marks: endedAt !== null && unit.report ? [{ at: endedAt, kind: 'report', text: unit.report.title, status: unit.report.status }] : [],
+  };
+  const item = (kind, at, text) => ({ id: `${id}:${kind}:stress`, at, unitId: id, label: spec.label, kind, text });
+  unit.recent = [
+    ...(endedAt !== null ? [item('subagent-done', endedAt, `${verb} ${spec.type}: ${spec.label}`)] : []),
+    item('subagent-start', startedAt, `started ${spec.type}: ${spec.label}`),
+  ];
+  return unit;
+}
+
+function subagentView(unit) {
+  const spec = SUBAGENT_UNITS.find(entry => entry.label === unit.label);
+  return {
+    id: unit.id, name: unit.label, type: unit.agent.type, model: unit.model, mode: unit.agent.mode, status: SUBAGENT_STATES[spec.state][3],
+    startedAt: unit.startedAt, endedAt: unit.endedAt, durationMs: unit.endedAt === null ? null : unit.endedAt - unit.startedAt,
+    credits: unit.cost.credits, task: unit.name,
+  };
+}
+
 function monitorFor(spec, stage, t) {
   if (spec.monitor === 'paused') return { state: 'paused', lastCheckAt: t - 70 * MIN, nextCheckAt: null, everyMinutes: 10, since: t - 50 * MIN };
   if (stage === 'merged' || spec.outcome === 'closed') return { state: 'ended', lastCheckAt: t - 25 * MIN, nextCheckAt: null, everyMinutes: 10, since: null };
@@ -79,15 +170,38 @@ function stressUnit(template, spec, index, t, parentId) {
 /**
  * A crowded synthetic swarm for layout checks, built from the example fixtures so it stays inside the schema: every
  * status and status detail, long names and labels, crowded chips, missing reports and task lists, an eight-level plan,
- * a stalled run, a data warning and a second live swarm for the picker.
+ * a stalled run, a data warning, many of the orchestrator's one-off sub-agents and a second live swarm for the picker.
  */
 export function stressScenario(fixtures) {
   const example = fixtures.snapshots[0];
   const snapshot = structuredClone(example);
   const t = snapshot.generatedAt;
   const template = snapshot.units.find(unit => unit.label === 'B1');
-  const extra = EXTRA.map((spec, index) => stressUnit(template, spec, index, t, snapshot.orchestrator.id));
-  snapshot.units.push(...extra);
+  const orchestrator = snapshot.orchestrator;
+  const extra = EXTRA.map((spec, index) => stressUnit(template, spec, index, t, orchestrator.id));
+  const subTemplate = snapshot.units.find(unit => unit.id === 'call-root-41');
+  const subs = SUBAGENT_UNITS.map((spec, index) => subagentUnit(subTemplate, spec, index, t, orchestrator.id));
+  // Session units first, in their current order, then every sub-agent unit, oldest start first.
+  const sessions = snapshot.units.filter(unit => unit.kind !== 'subagent');
+  const subagentUnits = [...snapshot.units.filter(unit => unit.kind === 'subagent'), ...subs].sort((a, b) => a.startedAt - b.startedAt);
+  snapshot.units = [...sessions, ...extra, ...subagentUnits];
+  // The orchestrator still lists every sub-agent, two omitted finished ones included, so its lane keeps drawing them.
+  const omitted = [
+    { id: 'call-9190-omitted', name: 'old-cache-check', type: 'explore', model: subTemplate.model, mode: 'background', status: 'completed', startedAt: t - 310 * MIN, endedAt: t - 300 * MIN, durationMs: 10 * MIN, credits: 12, task: 'Check the old cache keys' },
+    { id: 'call-9191-omitted', name: 'old-schema-probe', type: 'task', model: subTemplate.model, mode: 'background', status: 'failed', startedAt: t - 520 * MIN, endedAt: t - 500 * MIN, durationMs: 20 * MIN, credits: 9, task: 'Probe the old schema' },
+  ];
+  const running = status => status === 'running' || status === 'stuck';
+  orchestrator.subagents = [...orchestrator.subagents, ...subs.map(subagentView), ...omitted]
+    .sort((a, b) => Number(running(b.status)) - Number(running(a.status)) || b.startedAt - a.startedAt);
+  const bar = (id, start, end, type) => ({ id, start, end, type });
+  orchestrator.timeline.subagents = [
+    ...orchestrator.timeline.subagents,
+    ...subs.map(unit => bar(unit.id, unit.startedAt, unit.endedAt, unit.agent.type)),
+    ...omitted.map(sub => bar(sub.id, sub.startedAt, sub.endedAt, sub.type)),
+  ].sort((a, b) => a.start - b.start);
+  const subCredits = round1(subs.reduce((sum, unit) => sum + unit.cost.credits, 0));
+  orchestrator.cost.credits = round1(orchestrator.cost.credits + subCredits);
+  snapshot.omittedSubagents = { done: 37, failed: 4 };
   snapshot.planned.push({ label: 'Z10', name: 'final clean-up once everything else has merged', dependsOn: 'N5', canStart: false, waitsOn: 'N5', todoId: null });
   snapshot.needs.push(
     { id: 'stress:need:question', kind: 'question', unitIds: [], labels: [], fromId: snapshot.orchestrator.id, text: 'Should the export keep the old CSV column order for existing users, or move everyone to the new order at once?', since: t - 95 * MIN, tagged: true },
@@ -96,14 +210,19 @@ export function stressScenario(fixtures) {
   snapshot.needs.sort((a, b) => a.since - b.since);
   snapshot.run.stalled = { since: t - 32 * MIN, reason: 'Swarm rule: the orchestrator and every open child are idle, and no monitor is due.' };
   snapshot.diagnostics.push({ level: 'warn', source: 'pr-lookup', message: 'gh is not signed in, so GitHub PR states are not known.' });
-  snapshot.feed = [...extra.flatMap(unit => unit.recent), ...snapshot.feed].sort((a, b) => b.at - a.at).slice(0, 200);
+  snapshot.feed = [...[...extra, ...subs].flatMap(unit => unit.recent), ...snapshot.feed].sort((a, b) => b.at - a.at).slice(0, 200);
   snapshot.counts = Object.fromEntries(BUCKETS.map(bucket => [bucket, snapshot.units.filter(unit => unit.bucket === bucket).length]));
+  snapshot.counts.done += snapshot.omittedSubagents.done;
+  snapshot.counts.failed += snapshot.omittedSubagents.failed;
+  // New spending: the extra sessions, and the new sub-agents once (their cost is part of the orchestrator's).
   const added = round1(extra.reduce((sum, unit) => sum + unit.cost.credits, 0));
-  snapshot.cost.credits = round1(snapshot.cost.credits + added);
+  snapshot.cost.credits = round1(snapshot.cost.credits + added + subCredits);
   snapshot.cost.usd = Math.round(snapshot.cost.credits) / 100;
   snapshot.cost.maxUnitCredits = Math.max(...snapshot.units.map(unit => unit.cost.credits));
-  const model = snapshot.cost.byModel.find(entry => entry.model === template.model);
-  if (model) model.credits = round1(model.credits + added);
+  for (const [modelName, credits] of [[template.model, added], [subTemplate.model, subCredits]]) {
+    const model = snapshot.cost.byModel.find(entry => entry.model === modelName);
+    if (model) model.credits = round1(model.credits + credits);
+  }
   const last = snapshot.cost.series[snapshot.cost.series.length - 1];
   snapshot.cost.series.push({ at: last.at + 5 * MIN, credits: snapshot.cost.credits });
 
