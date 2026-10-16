@@ -39,7 +39,7 @@ export function needsHtml(snapshot, now) {
     + `<span class="ck-side ck-big ck-mono">${count(total)}</span></header>`;
   if (!rows.length) return header + empty('Nothing waiting');
   const items = rows.map(item => `<li data-key="${esc(item.id)}"><button type="button" class="ck-need st-${item.state}"${item.unitId ? ` data-detail="${esc(item.unitId)}"` : ''}>`
-    + `<span class="ck-mono ck-lab">${esc(item.who)}</span><span class="ck-kind">${esc(item.word)}</span><span class="ck-mono ck-age">${liveTime(item.since, now)}</span>`
+    + `<span class="ck-mono ck-lab" title="${esc(item.who)}">${esc(item.who)}</span><span class="ck-kind">${esc(item.word)}</span><span class="ck-mono ck-age">${liveTime(item.since, now)}</span>`
     + `<span class="ck-txt" title="${esc(item.text)}">${esc(item.text)}</span></button></li>`).join('');
   return `${header}<ul class="ck-needs">${items}</ul>`;
 }
@@ -58,7 +58,7 @@ export function activityHtml(snapshot) {
   // long sub-agent label does not squeeze every row's text.
   const width = Math.min(6, Math.max(2, ...rows.map(item => item.label.length)));
   const items = rows.map(item => {
-    const inner = `<span class="ck-mono ck-time">${timeText(item.at)}</span><span class="ck-mono ck-lab">${esc(item.label)}</span><span class="ck-txt" title="${esc(item.text)}">${esc(item.text)}</span>`;
+    const inner = `<span class="ck-mono ck-time">${timeText(item.at)}</span><span class="ck-mono ck-lab" title="${esc(item.label)}">${esc(item.label)}</span><span class="ck-txt" title="${esc(item.text)}">${esc(item.text)}</span>`;
     const cls = `ck-log-row${item.status ? ` st-${item.status}` : ''}`;
     return `<li data-key="${esc(item.id)}">${item.unitId ? `<button type="button" class="${cls}" data-detail="${esc(item.unitId)}">${inner}</button>` : `<div class="${cls}">${inner}</div>`}</li>`;
   }).join('');

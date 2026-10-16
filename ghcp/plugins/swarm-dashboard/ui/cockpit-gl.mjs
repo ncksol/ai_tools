@@ -46,6 +46,8 @@ export function createRenderer(canvas) {
   let width = 0;
   let height = 0;
   let holeView = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+  /** Whether the black hole target holds a frame: a new one is empty. */
+  let holeFresh = false;
 
   function target(w, h) {
     const tex = gl.createTexture();
@@ -74,6 +76,7 @@ export function createRenderer(canvas) {
     targets.hole = null;
     targets.down = [];
     targets.up = [];
+    holeFresh = false;
   }
 
   /** The black hole target and the bloom chain below it; on failure nothing is left allocated. */
@@ -191,12 +194,16 @@ export function createRenderer(canvas) {
       }
       return { holeWidth: hw, holeHeight: hh, width, height, hdr };
     },
-    /** Draw a frame. Without drawHole the last black hole frame is reused, turned to the camera's current view. */
+    /**
+     * Draw a frame. Without drawHole the last black hole frame is reused, turned to the camera's current view; a new
+     * target has no frame yet, so then the black hole is drawn anyway.
+     */
     render(view, drawHole = true) {
       gl.bindVertexArray(vao);
-      if (drawHole) {
+      if (drawHole || !holeFresh) {
         hole(view);
         bloom();
+        holeFresh = true;
       }
       final(view);
     },
@@ -220,6 +227,7 @@ export function createRenderer(canvas) {
       sync(targets.hole);
       const t1 = performance.now();
       bloom();
+      holeFresh = true;
       sync(targets.up[0]);
       const t2 = performance.now();
       final(view);

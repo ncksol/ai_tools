@@ -36,7 +36,7 @@ test('needs you lights up, counts and lists the first two, each leading to its u
   const html = needsHtml(example(), NOW);
   assert.match(html, /<span class="ck-light"><\/span><button type="button" class="ck-t" data-tab="cards">Needs you<\/button>/);
   assert.match(html, /<span class="ck-side ck-big ck-mono">2<\/span>/);
-  assert.match(html, /<button type="button" class="ck-need st-plan" data-detail="ws-0004-b2"><span class="ck-mono ck-lab">B2<\/span><span class="ck-kind">Plan to approve<\/span>/);
+  assert.match(html, /<button type="button" class="ck-need st-plan" data-detail="ws-0004-b2"><span class="ck-mono ck-lab" title="B2">B2<\/span><span class="ck-kind">Plan to approve<\/span>/);
   assert.match(html, /class="ck-need st-pr" data-detail="ws-0007-d5"/);
   const quiet = exampleSnapshot();
   quiet.needs = [];
@@ -54,7 +54,7 @@ test('activity lists nine rows, newest last; rows of units lead to their details
   const html = activityHtml(example());
   assert.equal(countOf(html, /<li data-key=/g), 9);
   assert.match(html, /<div class="ck-log-window" style="--lab:6ch"><ol class="ck-log">/);
-  assert.match(html, /<div class="ck-log-row st-question"><span class="ck-mono ck-time">\d\d:\d\d<\/span><span class="ck-mono ck-lab">SB<\/span>/);
+  assert.match(html, /<div class="ck-log-row st-question"><span class="ck-mono ck-time">\d\d:\d\d<\/span><span class="ck-mono ck-lab" title="SB">SB<\/span>/);
   assert.match(html, /<button type="button" class="ck-log-row st-busy" data-detail="call-root-41">[\s\S]*started explore<\/span><\/button><\/li><\/ol>/);
   assert.match(html, /16 recent events/);
 });
@@ -86,6 +86,11 @@ test('text from the snapshot is escaped', () => {
   const s = exampleSnapshot();
   s.units[2].name = '<img src=x onerror=alert(1)>';
   assert.doesNotMatch(unitsHtml(s, NOW, new Set()) + prsHtml(s), /<img/);
+  const labels = exampleSnapshot();
+  labels.needs[0].labels = ['"B2<'];
+  for (const item of labels.feed) item.label = '"F1<';
+  assert.match(needsHtml(labels, NOW), /<span class="ck-mono ck-lab" title="&quot;B2&lt;">&quot;B2&lt;<\/span>/);
+  assert.match(activityHtml(labels), /<span class="ck-mono ck-lab" title="&quot;F1&lt;">&quot;F1&lt;<\/span>/);
 });
 
 test('without a swarm every panel says so', () => {

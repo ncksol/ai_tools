@@ -39,18 +39,32 @@ const state = {
 const now = () => Date.now() + state.offset;
 
 let renderer = null;
-try {
-  if (params.get('gl') === '0') throw new Error('WebGL is turned off in the address');
-  renderer = createRenderer(canvas);
-  root.dataset.gl = 'on';
-} catch (error) {
+function withoutGl(error) {
+  renderer = null;
   root.dataset.gl = 'off';
   console.warn(`The cockpit shows its panels without the black hole: ${error.message}`);
 }
+function buildRenderer() {
+  try {
+    if (params.get('gl') === '0') throw new Error('WebGL is turned off in the address');
+    renderer = createRenderer(canvas);
+    root.dataset.gl = 'on';
+  } catch (error) {
+    withoutGl(error);
+  }
+}
+buildRenderer();
 canvas.addEventListener('webglcontextlost', event => {
   event.preventDefault();
   renderer = null;
   root.dataset.gl = 'off';
+});
+canvas.addEventListener('webglcontextrestored', () => {
+  if (params.get('gl') === '0') return;
+  buildRenderer();
+  if (!renderer) return;
+  layout();
+  start();
 });
 
 function renderPanels() {
@@ -117,14 +131,21 @@ const adaptive = createAdaptive();
 let raf = 0;
 let last = null;
 let frame = 0;
+let draws = 0;
 const started = performance.now();
 const running = () => loopRuns({ hidden: document.hidden, reduced: reduced.matches });
 const sceneView = time => ({ design: [fit.stage.designWidth, DESIGN_HEIGHT], focal: FOCAL, time, view: viewMatrix(cam.yaw, cam.pitch), cam: [cam.x, cam.y, 0], exposure: SCENE.exposure, bloom: SCENE.bloom });
 
+function draw(view, drawHole) {
+  if (!renderer) return;
+  renderer.render(view, drawHole);
+  draws += 1;
+}
+
 function drawStill() {
   cam = { ...REST };
   world.style.transform = worldCss(cam);
-  renderer?.render(sceneView(STILL_TIME), true);
+  if (!document.hidden) draw(sceneView(STILL_TIME), true);
 }
 
 function layout() {
@@ -141,11 +162,8 @@ function layout() {
     renderer?.resize(innerWidth, innerHeight, devicePixelRatio || 1, adaptive.scale);
   } catch (error) {
     // The device refused the render targets: keep the panels on the plain backdrop.
-    renderer = null;
-    root.dataset.gl = 'off';
-    console.warn(`The cockpit shows its panels without the black hole: ${error.message}`);
+    withoutGl(error);
   }
-  if (!running()) drawStill();
 }
 
 function step(time) {
@@ -156,7 +174,7 @@ function step(time) {
   const seconds = (time - started) / 1000 + 20;
   cam = easeCamera(cam, cameraTarget(seconds, pointer.x, pointer.y), interval === null ? 0 : Math.min(0.1, interval / 1000));
   world.style.transform = worldCss(cam);
-  renderer?.render(sceneView(seconds), drawsHole(state.quality, frame, time, pointer.at));
+  draw(sceneView(seconds), drawsHole(state.quality, frame, time, pointer.at));
   frame += 1;
   if (adaptive.frame(interval) !== null) layout();
 }
@@ -229,7 +247,10 @@ root.addEventListener('pointerleave', () => {
 let resizeTimer = null;
 addEventListener('resize', () => {
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(layout, 120);
+  resizeTimer = setTimeout(() => {
+    layout();
+    if (!running()) drawStill();
+  }, 120);
 });
 document.addEventListener('visibilitychange', start);
 reduced.addEventListener('change', () => {
@@ -256,6 +277,7 @@ if (params.get('debug') === '1') {
   window.cockpitDebug = {
     fit: () => fit,
     frames: () => frame,
+    draws: () => draws,
     info: () => renderer?.info() ?? null,
     setCamera(next) {
       cancelAnimationFrame(raf);
@@ -263,9 +285,9 @@ if (params.get('debug') === '1') {
       world.style.transform = worldCss(cam);
       return true;
     },
-    readFrame() {
+    readFrame(drawHole = true) {
       if (!renderer) return null;
-      renderer.render(sceneView(STILL_TIME), true);
+      renderer.render(sceneView(STILL_TIME), drawHole);
       return renderer.readFrame();
     },
     resume: () => start(),

@@ -31,14 +31,75 @@ async function renderStill(analyse) {
   return { info: renderer.info(), still, reused };
 }
 
-async function checkScene({ page, urls, options, stdout, stderr }) {
+/** Change the window's size without reloading the page. */
+async function setViewport({ page, browser }, width, height) {
+  if (page.send) await page.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+  else await browser.playwright.contexts().at(-1).pages().at(-1).setViewportSize({ width, height });
+}
+
+/** Runs in the page: lose the cockpit's WebGL context, wait for the page to notice, then restore it and wait for the black hole. */
+async function loseAndRestore() {
+  const lose = document.getElementById('ck-gl').getContext('webgl2')?.getExtension('WEBGL_lose_context');
+  if (!lose) return 'missing';
+  const until = async gl => {
+    for (let i = 0; i < 100 && document.documentElement.dataset.gl !== gl; i += 1) await new Promise(resolve => setTimeout(resolve, 50));
+    return document.documentElement.dataset.gl === gl;
+  };
+  lose.loseContext();
+  if (!(await until('off'))) return 'the page did not notice a lost WebGL context';
+  lose.restoreContext();
+  if (!(await until('on'))) return 'the black hole did not come back after the WebGL context was restored';
+  return 'ok';
+}
+
+/** The cockpit page's own frames: right after a resize, and after a lost and restored WebGL context. */
+async function checkRecovery(context) {
+  const { page, urls } = context;
+  const url = `${Object.values(urls)[0]}cockpit?debug=1&quality=high`;
+  await page.goto(url, 1440, 900);
+  await page.waitFor(`location.href === ${JSON.stringify(url)} && document.documentElement.dataset.ready === '1'`);
+  const problems = [];
+  const frameProblems = async (drawHole, when) => {
+    const metrics = await page.evaluate(`(() => { const frame = cockpitDebug.readFrame(${drawHole}); return frame && (${analyseFrame})(frame); })()`);
+    return metrics ? sceneProblems(metrics).map(problem => `${when}, ${problem}`) : [`${when}, no frame`];
+  };
+  const stage = "JSON.stringify(cockpitDebug.fit().stage)";
+  let lost = 'ok';
+  // With motion on a resize draws no still frame, so the next frame that reuses the black hole meets a new, empty target.
+  const frames = await page.evaluate('cockpitDebug.frames()');
+  await page.setReducedMotion(false);
+  try {
+    await page.waitFor(`cockpitDebug.frames() > ${frames}`);
+    await page.evaluate(`cockpitDebug.setCamera(${JSON.stringify(REST)})`);
+    const before = await page.evaluate(stage);
+    await setViewport(context, 1280, 800);
+    await page.waitFor(`${stage} !== ${JSON.stringify(before)}`);
+    problems.push(...await frameProblems(false, 'right after a resize'));
+    await setViewport(context, 1440, 900);
+    await page.waitFor(`${stage} === ${JSON.stringify(before)}`);
+    await page.evaluate('cockpitDebug.resume()');
+    lost = await page.evaluate(`(${loseAndRestore})()`);
+    if (lost !== 'ok' && lost !== 'missing') problems.push(lost);
+    if (lost === 'ok') {
+      problems.push(...await frameProblems(true, 'after a lost WebGL context'));
+      await page.evaluate('cockpitDebug.resume()');
+      if ((await framesOver(page, 500)) === 0) problems.push('after a lost WebGL context no frames are drawn');
+    }
+  } finally {
+    await page.setReducedMotion(true);
+  }
+  return { problems, skipped: lost === 'missing' };
+}
+
+async function checkScene(context) {
+  const { page, urls, options, stdout, stderr } = context;
   const url = `${Object.values(urls)[0]}?host=browser`;
   page.errors.length = 0;
   await page.goto(url, 1440, 900);
   await page.waitFor(`location.href === ${JSON.stringify(url)} && document.readyState === 'complete'`);
   const result = await page.evaluate(`(${renderStill})(${analyseFrame})`);
-  const consoleProblems = page.errors.map(message => `console: ${message}`);
   if (result.error) {
+    const consoleProblems = page.errors.map(message => `console: ${message}`);
     for (const problem of [result.error, ...consoleProblems]) stderr.write(`scene: ${problem}\n`);
     return 1 + consoleProblems.length;
   }
@@ -46,9 +107,11 @@ async function checkScene({ page, urls, options, stdout, stderr }) {
   const drift = Math.abs(result.reused.mean - result.still.mean) / result.still.mean;
   if (drift > 0.25) problems.push(`a frame that reuses the black hole differs in brightness by ${(drift * 100).toFixed(0)}%`);
   for (const problem of sceneProblems(result.reused)) problems.push(`a frame that reuses the black hole: ${problem}`);
-  problems.push(...consoleProblems);
+  const recovery = await checkRecovery(context);
+  problems.push(...recovery.problems, ...page.errors.map(message => `console: ${message}`));
   if (options.printMetrics) stdout.write(`scene metrics: ${JSON.stringify(result.still)}\n`);
-  stdout.write(`Scene (${result.info.renderer}, ${result.info.hdr ? 'HDR' : '8-bit'} targets): ${problems.length ? `${problems.length} problems` : 'shadow, ring, ceiling line, stars and desk in place'}.\n`);
+  const after = recovery.skipped ? 'also after a resize (WEBGL_lose_context is missing, so the lost context part is skipped)' : 'also after a resize and a lost WebGL context';
+  stdout.write(`Scene (${result.info.renderer}, ${result.info.hdr ? 'HDR' : '8-bit'} targets): ${problems.length ? `${problems.length} problems` : `shadow, ring, ceiling line, stars and desk in place, ${after}`}.\n`);
   for (const problem of problems) stderr.write(`scene: ${problem}\n`);
   return problems.length;
 }
@@ -246,6 +309,18 @@ async function framesOver(page, ms) {
   return (await page.evaluate('cockpitDebug.frames()')) - before;
 }
 
+/** Runs in the page: make the page believe the window is hidden, or visible again, and tell it. */
+function setHidden(hidden) {
+  if (hidden) {
+    Object.defineProperty(document, 'hidden', { get: () => true, configurable: true });
+    Object.defineProperty(document, 'visibilityState', { get: () => 'hidden', configurable: true });
+  } else {
+    delete document.hidden;
+    delete document.visibilityState;
+  }
+  document.dispatchEvent(new Event('visibilitychange'));
+}
+
 async function checkMotion({ page, urls, engine, stdout, stderr }) {
   if (engine !== 'chrome') {
     stdout.write('Cockpit motion: measured in Chrome only.\n');
@@ -255,18 +330,33 @@ async function checkMotion({ page, urls, engine, stdout, stderr }) {
   await page.goto(url, 1440, 900);
   await page.waitFor(`location.href === ${JSON.stringify(url)} && document.documentElement.dataset.ready === '1'`);
   const problems = [];
+  const draws = () => page.evaluate('cockpitDebug.draws()');
+  const first = await draws();
+  if (first !== 1) problems.push(`under reduced motion the page drew ${first} frames at start, not 1`);
   const still = await framesOver(page, 600);
   if (still !== 0) problems.push(`under reduced motion the scene drew ${still} frames in 600 ms`);
-  await page.setReducedMotion(false);
   let moving = 0;
+  let hidden = false;
   try {
+    const before = await draws();
+    hidden = true;
+    await page.evaluate(`(${setHidden})(true)`);
+    await page.setReducedMotion(false);
+    await new Promise(resolve => setTimeout(resolve, 600));
+    await page.evaluate("dispatchEvent(new Event('resize'))");
+    await new Promise(resolve => setTimeout(resolve, 300));
+    const drawn = (await draws()) - before;
+    if (drawn !== 0) problems.push(`while the window was hidden the page drew ${drawn} frames`);
+    hidden = false;
+    await page.evaluate(`(${setHidden})(false)`);
     await framesOver(page, 300);
     moving = await framesOver(page, 1000);
   } finally {
+    if (hidden) await page.evaluate(`(${setHidden})(false)`);
     await page.setReducedMotion(true);
   }
   if (moving < 20 || moving > 33) problems.push(`with motion on the scene drew ${moving} frames in a second, outside 20–33`);
-  stdout.write(`Cockpit motion: ${problems.length ? `${problems.length} problems` : `still under reduced motion; ${moving} frames a second otherwise`}.\n`);
+  stdout.write(`Cockpit motion: ${problems.length ? `${problems.length} problems` : `one still frame under reduced motion, none while hidden; ${moving} frames a second otherwise`}.\n`);
   for (const problem of problems) stderr.write(`motion: ${problem}\n`);
   return problems.length;
 }
