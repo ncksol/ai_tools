@@ -296,6 +296,36 @@ test('registry labels are assigned before derived labels', () => {
   assert.equal(snapshot.units.find(unit => unit.id === 'ws-api').label, 'a1-2');
 });
 
+const caseFolded = snapshot => [snapshot.orchestrator.label, ...snapshot.units.map(unit => unit.label), ...snapshot.planned.map(entry => entry.label)].map(label => label.toLowerCase());
+
+test('a session whose derived label equals the orchestrator\'s takes the suffix', () => {
+  const data = input(false);
+  data.app.workspaces.get('ws-api').name = 'Some stuff';
+  data.forest = buildForest(data.app);
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  assert.equal(snapshot.orchestrator.label, 'SS');
+  assert.equal(snapshot.units.find(unit => unit.id === 'ws-api').label, 'SS-2');
+  assert.equal(new Set(caseFolded(snapshot)).size, caseFolded(snapshot).length);
+});
+
+test('a registry label equal to the orchestrator\'s stays with its unit, the orchestrator takes the suffix, and a tagged question still routes', () => {
+  const data = input(true);
+  const registry = data.sessionDbs.get('cli-root');
+  registry.children = registry.children.map(row => (row.unit === 'ui' ? { ...row, unit: 'ss' } : row));
+  const root = new EventLog(T0);
+  root.start();
+  root.at(at(100)); root.turnStart();
+  root.ask('[unit=ss] Ship the UI now?');
+  data.states.set('cli-root', fold(root, 'cli-root'));
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  assert.equal(snapshot.units.find(unit => unit.id === 'ws-ui').label, 'ss');
+  assert.equal(snapshot.orchestrator.label, 'SS-2');
+  assert.deepEqual(snapshot.needs.map(need => [need.kind, need.unitIds, need.labels, need.tagged]), [['question', ['ws-ui'], ['ss'], true]]);
+  assert.equal(new Set(caseFolded(snapshot)).size, caseFolded(snapshot).length, caseFolded(snapshot).join(' '));
+});
+
 test('an unarchived unit whose PR was closed has an ended monitor', () => {
   const data = input(true);
   const lookup = data.prInfo;

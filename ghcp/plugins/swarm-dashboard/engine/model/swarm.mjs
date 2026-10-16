@@ -214,8 +214,17 @@ function readRegistry(input, root) {
   return { present: units.size > 0, rows: units, byNode, invalid };
 }
 
+/**
+ * The label of the orchestrator and of each session, unique ignoring case, in this order:
+ * 1. registry labels, as the registry gives them (a registry key never changes);
+ * 2. the orchestrator: the initials of its name, with a `-n` suffix when a registry label already has them;
+ * 3. the labels that retained sub-agents already show (`remembered`), except one equal to the orchestrator's final label, a
+ *    registry label or a planned label: those always win, and the sub-agent gives its label up (see assignSubagentLabels);
+ * 4. the derived session labels, with a `-n` suffix when one of the labels above already has them.
+ */
 function assignLabels(root, nodes, registry, remembered = [], planned = []) {
-  const labels = new Map([[root.id, initials(root.name)]]);
+  // The orchestrator's entry comes first, so its label is set in place once the registry labels are known.
+  const labels = new Map([[root.id, null]]);
   const derived = deriveLabels(nodes.map(node => node.name));
   const used = new Set();
   const give = (node, base) => {
@@ -225,9 +234,9 @@ function assignLabels(root, nodes, registry, remembered = [], planned = []) {
     labels.set(node.id, label);
   };
   for (const node of nodes) if (registry.byNode.has(node.id)) give(node, registry.byNode.get(node.id).unit);
+  give(root, initials(root.name));
   // The labels that retained sub-agents already show are reserved before the derived session labels are given, so a derived label
-  // that now collides takes the suffix instead. A remembered label equal to the orchestrator's, a registry label or a planned label
-  // is not reserved: those labels always win, and the sub-agent gives its label up (see assignSubagentLabels).
+  // that now collides takes the suffix instead.
   const wins = new Set([labels.get(root.id), ...planned].map(label => label.toLowerCase()));
   for (const label of remembered) if (!wins.has(label.toLowerCase())) used.add(label.toLowerCase());
   nodes.forEach((node, index) => {
