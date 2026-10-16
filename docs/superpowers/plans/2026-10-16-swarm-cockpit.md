@@ -3672,6 +3672,15 @@ git add ghcp/plugins/swarm-dashboard/ui/cockpit.mjs
 git commit -m "feat(swarm-dashboard): run the cockpit page on the live swarm"
 ```
 
+Review amendments (16 October 2026), applied in a follow-up commit after this task's review:
+- Nothing is drawn while the window is hidden: `drawStill()` resets the camera but renders only when `document.hidden` is false, so turning hidden, or a resize while hidden, draws no frame. Showing the window again draws as before.
+- Under reduced motion the page draws its still frame once at start, not twice (`layout()` and `start()` both drew it).
+- The renderer remembers whether its black hole target holds a frame. A new target (`resize`, the 8-bit fallback) is empty, and `render(view, false)` then draws the black hole anyway, so Balanced shows no blank frame after a resize.
+- After `webglcontextrestored`, the page builds a new renderer, lays it out and restarts the loop; if that fails it stays on the plain backdrop. `?gl=0` never builds one.
+- All page draws go through one counter; `cockpitDebug.draws()` returns it (debug `readFrame` and `bench` are not counted), and `cockpitDebug.readFrame(drawHole = true)` passes `drawHole` on.
+- The checks cover these: the motion check (Chrome) fails when reduced motion starts with more than one draw, or when a hidden window (emulated by overriding `document.hidden` and `visibilityState` and sending `visibilitychange`, then a `resize`) draws at all, and it confirms drawing resumes once visible. The scene check (both engines) fails when `readFrame(false)` right after a resize shows no black hole, and when a lost and restored context (`WEBGL_lose_context`) does not bring back `data-gl="on"` and a frame with the black hole; where the extension is missing, it says so and skips that part.
+- Activity and needs-you labels carry a `title` with the full label, as tiles do.
+
 - [ ] **Step 6: Early preview**
 
 Run, detached so it outlives the command: `node scripts/swarm-dashboard.mjs --demo example --port 7931`
@@ -4344,7 +4353,7 @@ Spec coverage (cockpit design, section by section):
 
 Placeholder scan: every code step has its code; the only values decided at run time are the measured numbers that Task 8 Step 8 and Task 14 Step 4 report.
 
-Type consistency: `fitPanels` returns `{ stage, fits, reason, placements, rects, problems }` in Tasks 4, 10 and 11; `cockpitDebug` has `fit`, `frames`, `info`, `setCamera`, `readFrame`, `resume` and `bench` in Task 11, and Tasks 10 and 14 use only those; `createRenderer` returns `resize`, `render`, `readFrame`, `sync`, `timed`, `info`, `size` in Task 8, used by Tasks 8, 10 and 11; `openCockpit` returns `null` or `{ url, reason, copied }`, as `cockpitAddressHtml` and Task 12 expect; `CHECKS` grows `scene` → `layout`, `motion` → `links` → `slowdown`, and `tests/cockpit-check.test.mjs` tracks it.
+Type consistency: `fitPanels` returns `{ stage, fits, reason, placements, rects, problems }` in Tasks 4, 10 and 11; `cockpitDebug` has `fit`, `frames`, `draws`, `info`, `setCamera`, `readFrame`, `resume` and `bench` in Task 11, and Tasks 10 and 14 use only those; `createRenderer` returns `resize`, `render`, `readFrame`, `sync`, `timed`, `info`, `size` in Task 8, used by Tasks 8, 10 and 11; `openCockpit` returns `null` or `{ url, reason, copied }`, as `cockpitAddressHtml` and Task 12 expect; `CHECKS` grows `scene` → `layout`, `motion` → `links` → `slowdown`, and `tests/cockpit-check.test.mjs` tracks it.
 
 Validation while writing: on 16 October 2026 the code in Tasks 1 to 14 was applied, step by step, to a scratch copy of the plugin outside the repository and run there:
 - `npm test`: 594 tests, all passing except the four that need the repository's root marketplace manifest, which a copy outside the repository cannot reach.
