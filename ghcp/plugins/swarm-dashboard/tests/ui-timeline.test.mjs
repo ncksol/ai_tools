@@ -2,11 +2,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { HOUR, MIN } from '../ui/format.mjs';
 import { findByLabel } from '../ui/model.mjs';
-import { axisSvg, costSvg, laneSvg, markSvg, timelineHtml, timelineWindow } from '../ui/timeline.mjs';
+import { axisSvg, costSvg, laneSource, laneSvg, markSvg, timelineHtml, timelineWindow } from '../ui/timeline.mjs';
 import { NOW, context, deepFreeze, exampleSnapshot } from './helpers/ui.mjs';
 
 const text = html => html.replace(/<title>[^<]*<\/title>/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 const row = (html, id) => html.split('<div class="c-row').find(part => part.includes(`data-id="${id}"`));
+/** Lane rows in order: the id of each session row, and "more" for the row of sub-agents outside the window. */
+const rowOrder = html => [...html.matchAll(/<div class="c-row (?:st-\w+(?: is-sub)?" data-id="([^"]+)"|c-more is-sub")/g)].map(match => match[1] ?? 'more');
+const subIds = html => [...html.matchAll(/<div class="c-row st-\w+ is-sub" data-id="([^"]+)"/g)].map(match => match[1]);
+const SESSION_IDS = ['ws-0001-b0', 'ws-0002-f2a', 'ws-0003-b1', 'ws-0007-d5', 'ws-0005-i1', 'ws-0006-f1', 'ws-0004-b2'];
 
 test('the window covers 3 hours, 12 hours or the whole run', () => {
   const snapshot = exampleSnapshot();
@@ -18,7 +22,8 @@ test('the window covers 3 hours, 12 hours or the whole run', () => {
 test('one row per session, orchestrator first, with the window buttons, key and cost row', () => {
   const snapshot = exampleSnapshot();
   const html = timelineHtml(context(snapshot), '12h');
-  assert.deepEqual([...html.matchAll(/class="c-row st-\w+" data-id="([^"]+)"/g)].map(match => match[1]), [snapshot.orchestrator.id, ...snapshot.units.map(unit => unit.id)]);
+  assert.deepEqual(rowOrder(html), [snapshot.orchestrator.id, 'more', 'call-root-40', 'call-root-41', ...SESSION_IDS]);
+  assert.deepEqual(SESSION_IDS, snapshot.units.filter(unit => unit.kind !== 'subagent').map(unit => unit.id));
   assert.match(html, /<button type="button" data-span="12h" aria-pressed="true">last 12h<\/button>/);
   assert.match(html, /<button type="button" data-span="run" aria-pressed="false">whole run<\/button>/);
   assert.equal((html.match(/<pattern id="cHatch2"/g) ?? []).length, 1);
@@ -117,7 +122,7 @@ test('drawing the timeline never changes the snapshot', () => {
       const { t0, t1 } = timelineWindow(snapshot, span, NOW);
       timelineHtml(context(snapshot), span);
       axisSvg(600, t0, t1);
-      for (const session of [snapshot.orchestrator, ...snapshot.units]) laneSvg(session, 600, t0, t1, NOW);
+      for (const session of [snapshot.orchestrator, ...snapshot.units]) laneSvg(laneSource(session, snapshot), 600, t0, t1, NOW);
       costSvg(snapshot.cost, 600, t0, t1, NOW);
     }
   });
@@ -141,4 +146,61 @@ test('report marks and the summary column show the report title as plain text, w
   const b1 = row(timelineHtml(context(snapshot), '12h'), 'ws-0003-b1');
   assert.match(b1, /<div class="c-rep rp-complete"><span class="dot"><\/span>Done<\/div>/);
   assert.doesNotMatch(b1, /\*\*|Status:/);
+});
+
+test('sub-agent lanes sit under the orchestrator, oldest first, before the child sessions', () => {
+  const snapshot = exampleSnapshot();
+  const html = timelineHtml(context(snapshot), 'run');
+  assert.deepEqual(rowOrder(html), [snapshot.orchestrator.id, 'call-root-12', 'call-root-18', 'call-root-24', 'call-root-40', 'call-root-41', ...SESSION_IDS]);
+  assert.deepEqual(subIds(html), ['call-root-12', 'call-root-18', 'call-root-24', 'call-root-40', 'call-root-41']);
+  assert.doesNotMatch(html, /c-more|outside this window/);
+  assert.match(row(html, 'call-root-41'), /^ st-busy is-sub" data-id="call-root-41"><div class="c-who">/);
+  assert.match(text(row(html, 'call-root-41')), /map-import-module Map the import module 4m · 51 cr/);
+  assert.match(text(row(html, 'call-root-12')), /audit-schema-usage Audit where the schema is used ran 20m · 140 cr .* · done$/);
+});
+
+test('only sub-agent lanes that overlap the window are shown; one muted row counts the rest', () => {
+  const snapshot = exampleSnapshot();
+  const more = '<div class="c-row c-more is-sub"><div class="c-who"><span class="c-meta">+3 sub-agents outside this window</span></div><div class="c-trk"></div><div class="c-sum"></div></div>';
+  for (const span of ['3h', '12h']) {
+    const html = timelineHtml(context(snapshot), span);
+    assert.deepEqual(subIds(html), ['call-root-40', 'call-root-41'], span);
+    assert.deepEqual(rowOrder(html), [snapshot.orchestrator.id, 'more', 'call-root-40', 'call-root-41', ...SESSION_IDS], span);
+    assert.equal(html.split(more).length, 2, span);
+  }
+  const twelve = timelineHtml(context(snapshot), '12h');
+  for (const id of ['call-root-12', 'call-root-18', 'call-root-24']) assert.ok(!twelve.includes(id), id);
+  for (const id of ['call-root-18', 'call-root-24']) {
+    const unit = snapshot.units.find(item => item.id === id);
+    Object.assign(unit, { startedAt: NOW - 2 * HOUR, endedAt: NOW - HOUR });
+  }
+  const one = timelineHtml(context(snapshot), '12h');
+  assert.deepEqual(subIds(one), ['call-root-18', 'call-root-24', 'call-root-40', 'call-root-41']);
+  assert.match(one, /<span class="c-meta">\+1 sub-agent outside this window<\/span>/);
+  Object.assign(snapshot.units.find(item => item.id === 'call-root-18'), { startedAt: NOW - 13 * HOUR, endedAt: NOW - 12 * HOUR });
+  assert.deepEqual(subIds(timelineHtml(context(snapshot), '12h')), ['call-root-24', 'call-root-40', 'call-root-41'], 'a lane that ends where the window starts is outside it');
+});
+
+test('the orchestrator\'s lane leaves out the bars of sub-agents that have their own lanes', () => {
+  const snapshot = exampleSnapshot();
+  snapshot.orchestrator.timeline.subagents.push({ id: 'call-root-3', start: NOW - HOUR, end: NOW - 30 * MIN, type: 'explore' });
+  deepFreeze(snapshot);
+  const lane = laneSource(snapshot.orchestrator, snapshot);
+  assert.deepEqual(lane.timeline.subagents.map(bar => bar.id), ['call-root-3']);
+  assert.equal(lane.timeline.segments, snapshot.orchestrator.timeline.segments);
+  assert.equal(lane.timeline.marks, snapshot.orchestrator.timeline.marks);
+  assert.equal(snapshot.orchestrator.timeline.subagents.length, 6);
+  const b1 = findByLabel(snapshot, 'B1');
+  assert.equal(laneSource(b1, snapshot), b1);
+  const sub = findByLabel(snapshot, 'map-import-module');
+  assert.equal(laneSource(sub, snapshot), sub);
+  const svg = laneSvg(lane, 600, NOW - 3 * HOUR, NOW, NOW, 0);
+  assert.equal((svg.match(/class="t-sub/g) ?? []).length, 1);
+  assert.match(svg, /<title>explore<\/title>/);
+});
+
+test('the orchestrator\'s lane is unchanged when none of its bars has a lane of its own', () => {
+  const snapshot = exampleSnapshot();
+  snapshot.units = snapshot.units.filter(unit => unit.kind !== 'subagent');
+  assert.equal(laneSource(snapshot.orchestrator, snapshot), snapshot.orchestrator);
 });

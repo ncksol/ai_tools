@@ -72,7 +72,7 @@ test('a unit whose PR closed without merging stays in the PR open column with th
 test('the board has one column per stage with counts, attention first', () => {
   const snapshot = exampleSnapshot();
   const html = boardHtml(context(snapshot));
-  assert.deepEqual([...html.matchAll(/<b>([^<]+)<\/b>(\d+)/g)].map(match => `${match[1]} ${match[2]}`), ['Planned 2', 'Coding 3', 'PR open 1', 'In review 1', 'Merged 1', 'Archived 1']);
+  assert.deepEqual([...html.matchAll(/<b>([^<]+)<\/b>(\d+)/g)].map(match => `${match[1]} ${match[2]}`), ['Planned 2', 'Coding 3', 'PR open 1', 'In review 1', 'Merged 1', 'Archived 1', 'Sub-agents 5']);
   const coding = html.split('<section class="bcol" aria-label="Coding">')[1].split('</section>')[0];
   assert.deepEqual([...coding.matchAll(/data-open="([^"]+)"/g)].map(match => match[1]), ['ws-0005-i1', 'ws-0004-b2', 'ws-0006-f1']);
   assert.match(text(coding), /I1 integration stuck 48m 9,702 cr · ≈\$97\.02/);
@@ -91,4 +91,42 @@ test('the plan says a PR closed without merging, in the graph and in the list', 
   const list = planListHtml(snapshot, NOW);
   assert.match(node(list, 'D5'), /<span class="pr-closed">PR closed, not merged<\/span> · on B0/);
   assert.match(text(node(list, 'B1')), /B1 API In review · busy/);
+});
+
+const SUB_LABELS = ['audit-schema-usage', 'migrate-fixtures', 'scan-docs-links', 'table-research', 'map-import-module'];
+const subColumn = html => html.split('<section class="bcol" aria-label="Sub-agents">')[1]?.split('</section>')[0];
+
+test('the Board ends with a Sub-agents column whose cards say how each sub-agent finished', () => {
+  const html = boardHtml(context(exampleSnapshot()));
+  assert.ok(html.endsWith('</section></div>'));
+  assert.match(html, /<section class="bcol" aria-label="Sub-agents"><div class="bcol-h"><i class="sw stg-subagent"><\/i><b>Sub-agents<\/b>5<\/div>/);
+  const column = subColumn(html);
+  assert.ok(html.lastIndexOf('<section class="bcol"') === html.indexOf('<section class="bcol" aria-label="Sub-agents">'), 'last column');
+  assert.deepEqual([...column.matchAll(/data-open="([^"]+)"/g)].map(match => match[1]), ['call-root-40', 'call-root-18', 'call-root-24', 'call-root-41', 'call-root-12']);
+  const words = text(column);
+  assert.match(words, /table-research DataGrid or a new table stuck 15m 102 cr/);
+  assert.match(words, /migrate-fixtures Migrate the test fixtures failed 2d 14h ago 38 cr/);
+  assert.match(words, /scan-docs-links Scan the docs for broken links cancelled 2d 13h ago 17 cr/);
+  assert.match(words, /map-import-module Map the import module busy 51 cr/);
+  assert.match(words, /audit-schema-usage Audit where the schema is used done 2d 22h ago 140 cr/);
+  assert.match(column, /<div class="mc st-done" data-open="call-root-12"/);
+  assert.doesNotMatch(column, /merged|bcol-more/);
+});
+
+test('the Sub-agents column ends with the number of earlier sub-agents the snapshot leaves out', () => {
+  const snapshot = exampleSnapshot();
+  snapshot.omittedSubagents = { done: 2, failed: 1 };
+  assert.ok(subColumn(boardHtml(context(snapshot))).endsWith('<p class="bcol-more">+3 earlier sub-agents</p>'));
+  snapshot.omittedSubagents = { done: 0, failed: 1 };
+  assert.ok(subColumn(boardHtml(context(snapshot))).endsWith('<p class="bcol-more">+1 earlier sub-agent</p>'));
+  snapshot.units = snapshot.units.filter(unit => unit.kind !== 'subagent');
+  assert.ok(subColumn(boardHtml(context(snapshot))).endsWith('<b>Sub-agents</b>0</div><span class="none">None</span><p class="bcol-more">+1 earlier sub-agent</p>'));
+});
+
+test('neither the plan graph nor the plan list shows sub-agent units', () => {
+  const snapshot = exampleSnapshot();
+  for (const html of [planGraphHtml(snapshot, NOW), planListHtml(snapshot, NOW)]) {
+    for (const label of SUB_LABELS) assert.ok(!html.includes(label), label);
+    assert.doesNotMatch(html, /call-root-/);
+  }
 });

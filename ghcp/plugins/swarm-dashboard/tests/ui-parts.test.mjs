@@ -87,7 +87,7 @@ test('feed lists escape text, cap their length and mark new items', () => {
   const snapshot = exampleSnapshot();
   const html = feedList(snapshot.feed, 3, NOW, new Set([snapshot.feed[1].id]));
   assert.equal((html.match(/<li /g) ?? []).length, 3);
-  assert.match(html, /<li class="fi" data-key="[^"]+"><span class="fi-t"><span data-t="\d+" data-f="age">4m ago<\/span><\/span><span><span class="fi-u">SB<\/span> started explore: map-import-module<\/span><\/li>/);
+  assert.match(html, /<li class="fi" data-key="[^"]+"><span class="fi-t"><span data-t="\d+" data-f="age">4m ago<\/span><\/span><span><span class="fi-u">map-import-module<\/span> started explore<\/span><\/li>/);
   assert.match(html, /<li class="fi is-new" data-key="[^"]+">/);
   assert.match(feedList([{ ...snapshot.feed[0], text: '<img onerror=x>' }], 1, NOW), /&lt;img onerror=x&gt;/);
   assert.equal(feedList([], 6, NOW, new Set(), 'No recent activity'), '<p class="none">No recent activity</p>');

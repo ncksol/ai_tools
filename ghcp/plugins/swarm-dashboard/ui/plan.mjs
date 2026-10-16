@@ -1,6 +1,7 @@
-import { costText, esc } from './format.mjs';
+import { costText, esc, plural } from './format.mjs';
 import {
-  BOARD_WORDS, PLAN_WORDS, STAGE_CLASS, STAGE_NAMES, boardColumns, closedNotMerged, findByLabel, findPlanned, flattenPlan, planForest, planLayout,
+  BOARD_WORDS, COLUMN_NAMES, PLAN_WORDS, STAGE_CLASS, STAGE_NAMES, SUBAGENT_BOARD_WORDS, boardColumns, closedNotMerged, findByLabel, findPlanned, flattenPlan,
+  isSubagent, omittedSubagents, planForest, planLayout,
 } from './model.mjs';
 import { closedBadge, fill } from './parts.mjs';
 
@@ -80,14 +81,17 @@ function miniCard(node, now) {
       + `<div class="mc-3">${entry.dependsOn ? `stacks on ${esc(entry.dependsOn)}` : 'no parent branch'}</div></div>`;
   }
   const unit = node.unit;
+  const words = isSubagent(unit) ? SUBAGENT_BOARD_WORDS[unit.statusDetail] ?? BOARD_WORDS[unit.status] : BOARD_WORDS[unit.status];
   return `<div class="mc st-${unit.status}" data-open="${esc(unit.id)}" tabindex="0" role="button" aria-label="Open details for ${esc(unit.label)}">`
     + `<div class="mc-1"><span class="dot"></span><span class="tx">${esc(unit.label)} ${esc(unit.name)}</span></div>`
-    + `<div class="mc-2">${closedNotMerged(unit) ? closedBadge : fill(BOARD_WORDS[unit.status] ?? unit.status, unit.since, now)}</div><div class="mc-3">${costText(unit.cost.credits)}</div></div>`;
+    + `<div class="mc-2">${closedNotMerged(unit) ? closedBadge : fill(words ?? unit.status, unit.since, now)}</div><div class="mc-3">${costText(unit.cost.credits)}</div></div>`;
 }
 
-/** One column per stage, including planned units. */
+/** One column per stage, including planned units, then the orchestrator's sub-agents with a count of those left out. */
 export function boardHtml({ snapshot, now }) {
-  const columns = boardColumns(snapshot).map(({ stage, nodes }) => `<section class="bcol" aria-label="${STAGE_NAMES[stage]}"><div class="bcol-h"><i class="sw stg-${STAGE_CLASS[stage]}"></i><b>${STAGE_NAMES[stage]}</b>${nodes.length}</div>`
-    + `${nodes.map(node => miniCard(node, now)).join('') || '<span class="none">None</span>'}</section>`);
+  const omitted = omittedSubagents(snapshot);
+  const more = stage => (stage === 'subagent' && omitted > 0 ? `<p class="bcol-more">+${plural(omitted, 'earlier sub-agent')}</p>` : '');
+  const columns = boardColumns(snapshot).map(({ stage, nodes }) => `<section class="bcol" aria-label="${COLUMN_NAMES[stage]}"><div class="bcol-h"><i class="sw stg-${STAGE_CLASS[stage]}"></i><b>${COLUMN_NAMES[stage]}</b>${nodes.length}</div>`
+    + `${nodes.map(node => miniCard(node, now)).join('') || '<span class="none">None</span>'}${more(stage)}</section>`);
   return `<div class="board">${columns.join('')}</div>`;
 }

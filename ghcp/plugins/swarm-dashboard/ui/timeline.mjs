@@ -1,5 +1,5 @@
-import { HOUR, MIN, ago, costHtml, costText, dur, elapsed, esc, plainText } from './format.mjs';
-import { REPORT_CLASS, TIMELINE_WORDS, reportTitle, runEnd, unitEnd, withoutStatusPrefix } from './model.mjs';
+import { HOUR, MIN, ago, costHtml, costText, dur, elapsed, esc, plainText, plural } from './format.mjs';
+import { REPORT_CLASS, TIMELINE_WORDS, isSubagent, reportTitle, runEnd, unitEnd, withoutStatusPrefix } from './model.mjs';
 import { fill, phase } from './parts.mjs';
 
 export const SPANS = Object.freeze({ '3h': 3 * HOUR, '12h': 12 * HOUR, run: null });
@@ -14,6 +14,14 @@ const pad = value => String(value).padStart(2, '0');
 export function timelineWindow(snapshot, span, now) {
   const length = SPANS[span];
   return { t0: length ? now - length : snapshot.run.startedAt - 20 * MIN, t1: now };
+}
+
+/** The orchestrator's lane leaves out the bars of sub-agents that have their own lanes; other sessions are unchanged. */
+export function laneSource(session, snapshot) {
+  if (session !== snapshot.orchestrator) return session;
+  const own = new Set(snapshot.units.map(unit => unit.id));
+  if (!session.timeline.subagents.some(bar => own.has(bar.id))) return session;
+  return { ...session, timeline: { ...session.timeline, subagents: session.timeline.subagents.filter(bar => !own.has(bar.id)) } };
 }
 
 /** One timeline marker centred on (x, y), with the mockup's shapes. */
@@ -158,13 +166,24 @@ function sumHtml(session, snapshot, now) {
     + `<div class="c-meta">${ago(session.report.at, now)}${state ? ` · ${state}` : ''}</div>`;
 }
 
+/**
+ * Lanes: the orchestrator, then its one-off sub-agents nested under it (oldest first), then the child sessions in
+ * snapshot order. Only sub-agent lanes that overlap the window are drawn; one muted row in their place counts the rest.
+ */
 export function timelineHtml(ctx, span) {
   const { snapshot, now } = ctx;
-  const sessions = [snapshot.orchestrator, ...snapshot.units];
+  const { t0, t1 } = timelineWindow(snapshot, span, now);
+  const subagents = snapshot.units.filter(isSubagent);
+  const shown = subagents.filter(unit => unit.startedAt < t1 && (unitEnd(unit, snapshot) ?? now) > t0);
+  const hidden = subagents.length - shown.length;
+  const sessionRow = (session, extra = '') => `<div class="c-row st-${session.status}${extra}" data-id="${esc(session.id)}"><div class="c-who">${whoHtml(session, snapshot, now)}</div><div class="c-trk" data-drawn></div><div class="c-sum">${sumHtml(session, snapshot, now)}</div></div>`;
   const buttons = Object.keys(SPANS).map(key => `<button type="button" data-span="${key}" aria-pressed="${key === span}">${SPAN_LABELS[key]}</button>`).join('');
   const keys = KEYS.map(([kind, label]) => `<span><svg width="10" height="10" viewBox="-5 -5 10 10" aria-hidden="true">${markSvg({ kind, status: 'complete', text: label }, 0, 0)}</svg>${label}</span>`).join('');
   const axis = '<div class="c-row c-axis"><div class="c-who"><span class="c-head">Session</span></div><div class="c-trk" data-drawn></div><div class="c-sum"><span class="c-head">Latest report</span></div></div>';
-  const rows = sessions.map(session => `<div class="c-row st-${session.status}" data-id="${esc(session.id)}"><div class="c-who">${whoHtml(session, snapshot, now)}</div><div class="c-trk" data-drawn></div><div class="c-sum">${sumHtml(session, snapshot, now)}</div></div>`).join('');
+  // The muted row has no data-id, so nothing draws in its track.
+  const more = hidden ? `<div class="c-row c-more is-sub"><div class="c-who"><span class="c-meta">+${plural(hidden, 'sub-agent')} outside this window</span></div><div class="c-trk"></div><div class="c-sum"></div></div>` : '';
+  const rows = sessionRow(snapshot.orchestrator) + more + shown.map(unit => sessionRow(unit, ' is-sub')).join('')
+    + snapshot.units.filter(unit => !isSubagent(unit)).map(unit => sessionRow(unit)).join('');
   const cost = `<div class="c-row c-cost"><div class="c-who"><div class="c-name">Swarm cost</div><div class="c-meta">all sessions</div></div><div class="c-trk" data-drawn></div><div class="c-sum"><span class="c-total">${costHtml(snapshot.cost.credits, true)}</span></div></div>`;
   return `<div class="c" data-timeline><div class="c-bar"><div class="seg" role="group" aria-label="Time window">${buttons}</div><div class="c-keys">${keys}</div></div>${HATCH}<div class="c-rows">${axis}${rows}${cost}</div></div>`;
 }

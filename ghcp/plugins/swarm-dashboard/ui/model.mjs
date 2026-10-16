@@ -1,11 +1,13 @@
 /** Data derivations for the views: no HTML and no DOM. Words and orders follow the approved mockup. */
 import { plainText } from './format.mjs';
 
-export const STATUS_ORDER = Object.freeze({ stuck: 0, question: 1, plan: 2, blocked: 3, busy: 4, idle: 5, merged: 6, archived: 7 });
+export const STATUS_ORDER = Object.freeze({ stuck: 0, question: 1, plan: 2, blocked: 3, busy: 4, idle: 5, merged: 6, done: 6, archived: 7 });
 export const UNIT_STAGES = Object.freeze(['coding', 'pr_open', 'in_review', 'merged', 'archived']);
-export const BOARD_STAGES = Object.freeze(['planned', ...UNIT_STAGES]);
-export const STAGE_NAMES = Object.freeze({ planned: 'Planned', coding: 'Coding', pr_open: 'PR open', in_review: 'In review', merged: 'Merged', archived: 'Archived' });
-export const STAGE_CLASS = Object.freeze({ planned: 'planned', coding: 'coding', pr_open: 'pr', in_review: 'review', merged: 'merged', archived: 'archived' });
+export const BOARD_STAGES = Object.freeze(['planned', ...UNIT_STAGES, 'subagent']);
+export const STAGE_NAMES = Object.freeze({ planned: 'Planned', coding: 'Coding', pr_open: 'PR open', in_review: 'In review', merged: 'Merged', archived: 'Archived', subagent: 'Sub-agent' });
+/** Board column headers: a stage name, but the column of sub-agents is plural. */
+export const COLUMN_NAMES = Object.freeze({ ...STAGE_NAMES, subagent: 'Sub-agents' });
+export const STAGE_CLASS = Object.freeze({ planned: 'planned', coding: 'coding', pr_open: 'pr', in_review: 'review', merged: 'merged', archived: 'archived', subagent: 'subagent' });
 export const REPORT_LABELS = Object.freeze({ complete: 'complete', progress: 'progress', needs_input: 'needs input', blocked: 'blocked' });
 export const REPORT_CLASS = Object.freeze({ complete: 'complete', progress: 'progress', needs_input: 'needs', blocked: 'blocked' });
 export const NEED_LABELS = Object.freeze({ stalled: 'Swarm stalled', question: 'Question', plan: 'Plan to approve', pr: 'PR to approve' });
@@ -36,11 +38,21 @@ export const STATE_LINES = Object.freeze({
   stopped: 'Stopped · {a}',
   merged: 'Merged · {a}',
   archived: 'Archived · {a}',
+  completed: 'Done · {a}',
+  cancelled: 'Cancelled · {a}',
 });
 /** Shorter words from the mockup, by status: timeline summary column, plan nodes, board cards. */
-export const TIMELINE_WORDS = Object.freeze({ stuck: 'stuck {t}', plan: 'waiting on plan {t}', question: 'question {t}', blocked: 'blocked {t}', idle: 'idle {t}', merged: 'merged', archived: 'archived' });
+export const TIMELINE_WORDS = Object.freeze({ stuck: 'stuck {t}', plan: 'waiting on plan {t}', question: 'question {t}', blocked: 'blocked {t}', idle: 'idle {t}', merged: 'merged', done: 'done', archived: 'archived' });
 export const PLAN_WORDS = Object.freeze({ busy: 'busy', idle: 'idle', plan: 'plan waiting', question: 'question', stuck: 'stuck {t}', blocked: 'blocked' });
-export const BOARD_WORDS = Object.freeze({ busy: 'busy', idle: 'idle {t}', plan: 'plan waiting {t}', question: 'question {t}', stuck: 'stuck {t}', blocked: 'blocked', merged: 'merged {a}', archived: 'archived {a}' });
+export const BOARD_WORDS = Object.freeze({ busy: 'busy', idle: 'idle {t}', plan: 'plan waiting {t}', question: 'question {t}', stuck: 'stuck {t}', blocked: 'blocked', merged: 'merged {a}', done: 'done {a}', archived: 'archived {a}' });
+/** Board words for finished sub-agents, by statusDetail; other states use BOARD_WORDS. */
+export const SUBAGENT_BOARD_WORDS = Object.freeze({ completed: 'done {a}', failed: 'failed {a}', cancelled: 'cancelled {a}', crashed: 'crashed {a}' });
+export const MODE_WORDS = Object.freeze({ background: 'Background', sync: 'Sync' });
+
+/** One of the orchestrator's one-off sub-agents, listed as a unit. */
+export const isSubagent = unit => unit.kind === 'subagent';
+/** Finished sub-agents the snapshot leaves out (it lists the 20 most recent). */
+export const omittedSubagents = snapshot => (snapshot.omittedSubagents?.done ?? 0) + (snapshot.omittedSubagents?.failed ?? 0);
 
 /** When a finished run ended (null while it is live). */
 export const runEnd = snapshot => (snapshot.run.lifecycle === 'finished' ? snapshot.run.finishedAt ?? snapshot.run.lastActivityAt : null);
@@ -68,7 +80,10 @@ export function feedText(item) {
   }
   const text = plainText(item.text);
   // A sub-agent whose name equals its type would read "explore explore finished".
-  return item.kind === 'subagent-done' ? text.replace(/^(\S+) \1(?= )/, '$1') : text;
+  const once = item.kind === 'subagent-done' ? text.replace(/^(\S+) \1(?= )/, '$1') : text;
+  // A sub-agent unit's item already starts with its label: "started explore: map-import-module" names it twice.
+  const ending = `: ${item.label}`;
+  return item.kind.startsWith('subagent-') && item.label && once.endsWith(ending) ? once.slice(0, -ending.length) : once;
 }
 
 /** Its PR closed without merging and it is not archived: it stays in its PR stage, with a badge (approved decision 5). */
@@ -76,11 +91,14 @@ export const closedNotMerged = unit => Boolean(unit.closedWithoutMerge && unit.p
 
 export const stateLine = session => STATE_LINES[session.statusDetail] ?? STATE_LINES[session.status] ?? '{t}';
 
-/** Units shown as cards: attention first, then creation order; archived units leave the Cards tab. */
+/**
+ * Units shown as cards: attention first, then creation order. Archived units leave the Cards tab, and sub-agent units
+ * stay on it only while they run or are stuck; the Board shows them all.
+ */
 export function cardUnits(snapshot) {
   return snapshot.units
     .map((unit, index) => ({ unit, index }))
-    .filter(({ unit }) => unit.status !== 'archived')
+    .filter(({ unit }) => unit.status !== 'archived' && (!isSubagent(unit) || unit.status === 'busy' || unit.status === 'stuck'))
     .sort((a, b) => (STATUS_ORDER[a.unit.status] ?? 9) - (STATUS_ORDER[b.unit.status] ?? 9) || a.index - b.index)
     .map(({ unit }) => unit);
 }
@@ -111,10 +129,13 @@ function needFrom(snapshot, need) {
   }).join(', ');
 }
 
-/** Units and planned entries as a forest of stacked branches. A cycle or an unknown parent makes a node a root. */
+/**
+ * Session units and planned entries as a forest of stacked branches. A cycle or an unknown parent makes a node a root.
+ * Sub-agent units are left out: they have no todo or branch to stack on, so they would only add lone nodes.
+ */
 export function planForest(snapshot) {
   const nodes = [
-    ...snapshot.units.map(unit => ({ key: unit.label.toLowerCase(), label: unit.label, name: unit.name, stage: unit.stage, status: unit.status, dependsOn: unit.dependsOn, unit, planned: null, children: [] })),
+    ...snapshot.units.filter(unit => !isSubagent(unit)).map(unit => ({ key: unit.label.toLowerCase(), label: unit.label, name: unit.name, stage: unit.stage, status: unit.status, dependsOn: unit.dependsOn, unit, planned: null, children: [] })),
     ...snapshot.planned.map(entry => ({ key: entry.label.toLowerCase(), label: entry.label, name: entry.name, stage: 'planned', status: 'planned', dependsOn: entry.dependsOn, unit: null, planned: entry, children: [] })),
   ];
   const byKey = new Map();

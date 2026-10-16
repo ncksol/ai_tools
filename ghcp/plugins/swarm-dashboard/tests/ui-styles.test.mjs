@@ -78,3 +78,11 @@ test('the Cards note takes its inset from the same tokens as a card and adds no 
   assert.match(note, /border-right: var\(--card-border\) solid transparent;/);
   assert.doesNotMatch(note, /margin/);
 });
+
+test('finished sub-agents use the merged mint, and the Sub-agents column a neutral swatch', () => {
+  assert.match(css, /--stg-subagent: var\(--sunk\);/);
+  assert.equal(block('.st-done').trim(), '--c: var(--merged); --c-ink: var(--merged-ink); --c-soft: var(--merged-soft);');
+  assert.equal(block('.stg-subagent').trim(), 'background: var(--stg-subagent);');
+  assert.equal(block('.c-row.is-sub .c-who').trim(), 'padding-left: 16px;');
+  assert.equal(block('.bcol-more').trim(), 'font-size: 12px; line-height: 16px; color: var(--ink-2);');
+});

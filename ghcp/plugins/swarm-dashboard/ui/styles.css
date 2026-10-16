@@ -43,6 +43,7 @@
   --stg-review: oklch(0.895 0.06 178);
   --stg-merged: var(--merged);
   --stg-archived: var(--archived);
+  --stg-subagent: var(--sunk);
   --stg-ink: oklch(0.62 0.07 185);
 }
 *, *::before, *::after { box-sizing: border-box; }
@@ -70,6 +71,7 @@ a { color: var(--busy-ink); }
 .st-blocked { --c: var(--blocked); --c-ink: var(--blocked-ink); --c-soft: var(--blocked-soft); }
 .st-merged { --c: var(--merged); --c-ink: var(--merged-ink); --c-soft: var(--merged-soft); }
 .st-archived { --c: var(--archived); --c-ink: var(--archived-ink); --c-soft: var(--archived-soft); }
+.st-done { --c: var(--merged); --c-ink: var(--merged-ink); --c-soft: var(--merged-soft); }
 .st-planned { --c: var(--surface); --c-ink: var(--ink-2); --c-soft: var(--surface); }
 .st-pr { --c: var(--stg-pr); --c-ink: oklch(0.45 0.07 190); --c-soft: var(--stg-coding); }
 .rp-complete { --r: var(--merged-ink); }
@@ -235,6 +237,7 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 .stg-review { background: var(--stg-review); }
 .stg-merged { background: var(--stg-merged); }
 .stg-archived { background: var(--stg-archived); }
+.stg-subagent { background: var(--stg-subagent); }
 .plan-g { position: relative; }
 .plan-g svg { position: absolute; left: 0; top: 0; overflow: visible; }
 .plan-g path { fill: none; stroke: var(--ink-3); stroke-width: 1; }
@@ -255,6 +258,7 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 .bcol { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .bcol-h { display: flex; align-items: center; gap: 8px; font-size: 12px; line-height: 16px; color: var(--ink-2); white-space: nowrap; }
 .bcol-h b { font-weight: 500; color: var(--ink); }
+.bcol-more { font-size: 12px; line-height: 16px; color: var(--ink-2); }
 .mc { display: flex; flex-direction: column; padding: 12px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; background: var(--surface); }
 .mc[data-open] { cursor: pointer; }
 .mc[data-open]:hover { border-color: var(--ink-3); }
@@ -284,6 +288,7 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
   .c-row.c-axis .c-who, .c-row.c-axis .c-sum { display: block; }
 }
 .c-who { grid-area: who; min-width: 0; display: flex; flex-direction: column; }
+.c-row.is-sub .c-who { padding-left: 16px; }
 .c-trk { grid-area: trk; min-width: 0; position: relative; }
 .c-trk svg { display: block; overflow: visible; }
 .c-sum { grid-area: sum; min-width: 0; display: flex; flex-direction: column; text-align: right; }

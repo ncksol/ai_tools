@@ -4,7 +4,7 @@ import { morph } from './morph.mjs';
 import { runEnd, unitEnd } from './model.mjs';
 import { shortLabel } from './parts.mjs';
 import { planFits, planGraphHtml, planListHtml } from './plan.mjs';
-import { axisSvg, costSvg, laneSvg, timelineWindow } from './timeline.mjs';
+import { axisSvg, costSvg, laneSource, laneSvg, timelineWindow } from './timeline.mjs';
 
 const STORE = 'swarm-dashboard:ui';
 const TABS = ['cards', 'activity', 'timeline', 'plan', 'board'];
@@ -220,7 +220,7 @@ function drawTimeline(root) {
     const session = sessions.get(row.dataset.id);
     if (session) {
       const end = session === view.snapshot.orchestrator ? runEnd(view.snapshot) : unitEnd(session, view.snapshot);
-      morph(row.querySelector('.c-trk'), laneSvg(session, width, t0, t1, t, phaseMs, end));
+      morph(row.querySelector('.c-trk'), laneSvg(laneSource(session, view.snapshot), width, t0, t1, t, phaseMs, end));
     }
   }
   morph(root.querySelector('.c-cost .c-trk'), costSvg(view.snapshot.cost, width, t0, t1, t));

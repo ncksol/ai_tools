@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  BOARD_STAGES, STATE_LINES, archivedUnits, boardColumns, cardUnits, closedNotMerged, feedText, findByLabel, findPlanned, flattenPlan, needItems,
-  planForest, planLayout, progressPercent, reportTitle, runEnd, sharePercent, stateLine, unitEnd, withoutStatusPrefix,
+  BOARD_STAGES, STATE_LINES, UNIT_STAGES, archivedUnits, boardColumns, cardUnits, closedNotMerged, feedText, findByLabel, findPlanned, flattenPlan, isSubagent,
+  needItems, omittedSubagents, planForest, planLayout, progressPercent, reportTitle, runEnd, sharePercent, stateLine, unitEnd, withoutStatusPrefix,
 } from '../ui/model.mjs';
 import { createDemoEngine } from '../server/demo-engine.mjs';
 import { NOW, closedSnapshot, exampleSnapshot } from './helpers/ui.mjs';
@@ -11,7 +11,7 @@ const labels = units => units.map(unit => unit.label);
 
 test('cards sort stuck, question, plan, blocked, busy, idle, merged and hide archived units', () => {
   const snapshot = exampleSnapshot();
-  assert.deepEqual(labels(cardUnits(snapshot)), ['I1', 'B2', 'F1', 'B1', 'D5', 'F2a']);
+  assert.deepEqual(labels(cardUnits(snapshot)), ['I1', 'table-research', 'B2', 'F1', 'B1', 'map-import-module', 'D5', 'F2a']);
   assert.deepEqual(labels(archivedUnits(snapshot)), ['B0']);
 });
 
@@ -49,7 +49,25 @@ test('a finished run ends at finishedAt, else at its last activity, and a sessio
 test('cards put a status the view does not know last', () => {
   const snapshot = exampleSnapshot();
   findByLabel(snapshot, 'B1').status = 'something_new';
-  assert.deepEqual(labels(cardUnits(snapshot)), ['I1', 'B2', 'F1', 'D5', 'F2a', 'B1']);
+  assert.deepEqual(labels(cardUnits(snapshot)), ['I1', 'table-research', 'B2', 'F1', 'map-import-module', 'D5', 'F2a', 'B1']);
+});
+
+test('cards show sub-agent units only while they run or are stuck', () => {
+  const snapshot = exampleSnapshot();
+  const shown = labels(cardUnits(snapshot).filter(isSubagent));
+  assert.deepEqual(shown, ['table-research', 'map-import-module']);
+  for (const label of ['audit-schema-usage', 'migrate-fixtures', 'scan-docs-links']) assert.ok(!labels(cardUnits(snapshot)).includes(label), label);
+  findByLabel(snapshot, 'map-import-module').status = 'done';
+  assert.deepEqual(labels(cardUnits(snapshot).filter(isSubagent)), ['table-research']);
+});
+
+test('omitted sub-agents add up the finished ones the snapshot leaves out', () => {
+  const snapshot = exampleSnapshot();
+  assert.equal(omittedSubagents(snapshot), 0);
+  snapshot.omittedSubagents = { done: 2, failed: 1 };
+  assert.equal(omittedSubagents(snapshot), 3);
+  delete snapshot.omittedSubagents;
+  assert.equal(omittedSubagents(snapshot), 0);
 });
 
 test('a blank report title reads "Untitled report"', () => {
@@ -80,6 +98,16 @@ test('activity text is plain text without the engine\'s repetitions', () => {
   assert.equal(feedText({ kind: 'report', text: 'reported complete: Status: complete.' }), 'reported complete');
   assert.equal(feedText({ kind: 'question', text: 'asked: keep the **v1** format?' }), 'asked: keep the v1 format?');
   assert.equal(feedText({ kind: 'report', text: 'reported complete: ## Summary' }), 'reported complete: Summary');
+});
+
+test('a sub-agent item drops a trailing ": <its own label>", and only that', () => {
+  assert.equal(feedText({ kind: 'subagent-start', label: 'map-import-module', text: 'started explore: map-import-module' }), 'started explore');
+  assert.equal(feedText({ kind: 'subagent-done', label: 'scan-docs-links', text: 'cancelled orchestrator-worker: scan-docs-links' }), 'cancelled orchestrator-worker');
+  assert.equal(feedText({ kind: 'subagent-start', label: 'B1', text: 'started code-review: review-pr-418' }), 'started code-review: review-pr-418');
+  assert.equal(feedText({ kind: 'subagent-start', label: 'docs', text: 'started explore: map-docs' }), 'started explore: map-docs');
+  assert.equal(feedText({ kind: 'subagent-start', label: 'a.b', text: 'started explore: aXb' }), 'started explore: aXb');
+  assert.equal(feedText({ kind: 'report', label: 'B1', text: 'reported complete: B1' }), 'reported complete: B1');
+  assert.equal(feedText({ kind: 'subagent-done', label: 'explore', text: 'explore explore finished' }), 'explore finished');
 });
 
 test('state lines follow statusDetail and fall back to status', () => {
@@ -121,6 +149,13 @@ test('the plan forest stacks units and planned entries on their parents, case-in
   assert.deepEqual(flattenPlan(roots).map(({ node, depth }) => `${node.label}:${depth}`), ['B0:0', 'F2a:1', 'B1:1', 'I1:2', 'I2:3', 'F1:2', 'B3:2', 'D5:1', 'B2:1']);
 });
 
+test('the plan forest leaves out sub-agent units', () => {
+  const snapshot = exampleSnapshot();
+  const nodes = flattenPlan(planForest(snapshot)).map(({ node }) => node);
+  assert.ok(nodes.every(node => !node.unit || !isSubagent(node.unit)));
+  assert.equal(nodes.length, snapshot.units.filter(unit => !isSubagent(unit)).length + snapshot.planned.length);
+});
+
 test('the plan layout gives leaves their own rows and centres parents on their children', () => {
   const roots = planForest(exampleSnapshot());
   const { pos, rows, maxDepth } = planLayout(roots);
@@ -142,7 +177,7 @@ test('dependency cycles and unknown parents become roots instead of vanishing', 
   ];
   const all = flattenPlan(planForest(snapshot)).map(({ node }) => node.label);
   for (const label of ['X1', 'X2', 'X3']) assert.ok(all.includes(label), label);
-  assert.equal(all.length, snapshot.units.length + 3);
+  assert.equal(all.length, snapshot.units.filter(unit => !isSubagent(unit)).length + 3);
 });
 
 test('the board has one column per stage, attention first', () => {
@@ -155,6 +190,12 @@ test('the board has one column per stage, attention first', () => {
   assert.deepEqual(at('in_review'), ['B1']);
   assert.deepEqual(at('merged'), ['F2a']);
   assert.deepEqual(at('archived'), ['B0']);
+  assert.deepEqual(at('subagent'), ['table-research', 'migrate-fixtures', 'scan-docs-links', 'map-import-module', 'audit-schema-usage']);
+});
+
+test('the board ends with the Sub-agents column; the stage track keeps the session pipeline', () => {
+  assert.deepEqual(BOARD_STAGES, ['planned', 'coding', 'pr_open', 'in_review', 'merged', 'archived', 'subagent']);
+  assert.deepEqual(UNIT_STAGES, ['coding', 'pr_open', 'in_review', 'merged', 'archived']);
 });
 
 test('every unit the Cards tab leaves out is on the Board', async () => {

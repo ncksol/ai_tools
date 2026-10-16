@@ -9,7 +9,7 @@ const items = html => (html.match(/<li class="fi/g) ?? []).length;
 test('the rail and the Activity tab list the swarm feed, latest first', () => {
   const snapshot = exampleSnapshot();
   const rail = railHtml(context(snapshot));
-  assert.match(text(rail), /^Activity all units, latest first 4m ago SB started explore: map-import-module/);
+  assert.match(text(rail), /^Activity all units, latest first 4m ago map-import-module started explore 6m ago B1 started code-review: review-pr-418 /);
   assert.equal(items(rail), Math.min(16, snapshot.feed.length));
   const tab = activityHtml(context(snapshot));
   assert.doesNotMatch(tab, /all units, latest first/);

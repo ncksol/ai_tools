@@ -20,10 +20,10 @@ test('the header shows the run, its running time, swarm cost and counts by bucke
   const html = headerHtml(context(exampleSnapshot()));
   assert.match(text(html), /Sample story B Orchestrator · sample-project Running 2d 23h 12m 00s Swarm cost 97,652 cr · ≈\$977/);
   assert.match(html, /<span class="ring st-question" title="SB">/);
-  assert.match(html, /<div class="d-counts" role="group" aria-label="Child sessions by state">/);
+  assert.match(html, /<div class="d-counts" role="group" aria-label="Child sessions and sub-agents by state">/);
   assert.match(html, /data-t="1791809280000" data-f="clock"/);
   const tiles = [...html.matchAll(/<div class="tile st-(\w+)"><span class="v">(\d+)<\/span><span class="k"><span class="dot"><\/span>(\w+)<\/span><\/div>/g)].map(match => match.slice(1));
-  assert.deepEqual(tiles, [['busy', '1', 'working'], ['stuck', '1', 'stuck'], ['plan', '2', 'waiting'], ['idle', '1', 'idle'], ['merged', '2', 'done'], ['blocked', '0', 'failed']]);
+  assert.deepEqual(tiles, [['busy', '2', 'working'], ['stuck', '2', 'stuck'], ['plan', '2', 'waiting'], ['idle', '1', 'idle'], ['merged', '3', 'done'], ['blocked', '2', 'failed']]);
 });
 
 test('a finished run shows how long it ran, with no ticking clock', () => {
@@ -85,17 +85,61 @@ test('a stalled swarm is the first Needs you item, in stuck colours', () => {
 
 test('cards sort by attention, hide archived units and point to the Board for them', () => {
   const html = cardsHtml(context(exampleSnapshot()));
-  assert.deepEqual(cardIds(html), ['ws-0005-i1', 'ws-0004-b2', 'ws-0006-f1', 'ws-0003-b1', 'ws-0007-d5', 'ws-0002-f2a']);
+  assert.deepEqual(cardIds(html), ['ws-0005-i1', 'call-root-40', 'ws-0004-b2', 'ws-0006-f1', 'ws-0003-b1', 'call-root-41', 'ws-0007-d5', 'ws-0002-f2a']);
   const note = '<p class="cards-note">Archived and hidden sessions are on the <button type="button" class="link" data-tab="board">Board tab</button>.</p>';
   assert.ok(html.startsWith('<div class="b-grid">') && html.endsWith(`${note}</div>`), html);
   assert.equal(html.split('class="cards-note"').length, 2, html);
-  assert.doesNotMatch(html, /\bB0\b|schema/);
+  assert.doesNotMatch(html, /\bB0\b|schema|audit-schema-usage|migrate-fixtures|scan-docs-links/);
 });
 
-test('cards show no Board note when nothing is hidden', () => {
+/** The example without its archived unit and its finished sub-agent units: the Cards tab leaves out no unit. */
+function nothingHidden() {
   const snapshot = exampleSnapshot();
-  snapshot.units = snapshot.units.filter(unit => unit.status !== 'archived');
-  assert.ok(!cardsHtml(context(snapshot)).includes('cards-note'));
+  snapshot.units = snapshot.units.filter(unit => unit.status !== 'archived' && !(unit.kind === 'subagent' && !['busy', 'stuck'].includes(unit.status)));
+  return snapshot;
+}
+
+test('cards show no Board note when nothing is hidden', () => {
+  assert.ok(!cardsHtml(context(nothingHidden())).includes('cards-note'));
+});
+
+test('cards point to the Board when the snapshot leaves out finished sub-agents, even with no other unit left out', () => {
+  const snapshot = nothingHidden();
+  snapshot.omittedSubagents = { done: 2, failed: 0 };
+  const html = cardsHtml(context(snapshot));
+  assert.equal(cardIds(html).length, snapshot.units.length);
+  assert.ok(html.endsWith('<p class="cards-note">Archived and hidden sessions are on the <button type="button" class="link" data-tab="board">Board tab</button>.</p></div>'), html);
+});
+
+test('a sub-agent card shows its type and mode in place of stage and monitor', () => {
+  const html = card(cardsHtml(context(exampleSnapshot())), 'call-root-41');
+  assert.match(html, /class="b-card st-busy" data-open="call-root-41" tabindex="0" role="button" aria-label="Open details for map-import-module Map the import module"/);
+  assert.match(html, /<div class="b-rows st-busy"><span class="k">Progress<\/span><span class="none-r">No task list<\/span><span class="k">Type<\/span><span class="none-r">Sub-agent · explore<\/span><span class="k">Mode<\/span><span class="none-r">Background<\/span><\/div>/);
+  assert.doesNotMatch(text(html), /Stage|Monitor/);
+  const sync = exampleSnapshot();
+  Object.assign(findByLabel(sync, 'table-research').agent, { mode: 'sync', type: '<x>' });
+  const research = card(cardsHtml(context(sync)), 'call-root-40');
+  assert.match(text(research), /Type Sub-agent · &lt;x&gt; Mode Sync/);
+  assert.match(research, /class="b-card st-stuck"/);
+});
+
+test('a session card still shows its stage and monitor rows', () => {
+  const html = card(cardsHtml(context(exampleSnapshot())), 'ws-0005-i1');
+  assert.match(text(html), /Progress 56% Stage Coding Monitor/);
+  assert.doesNotMatch(text(html), /Type|Mode|Sub-agent ·/);
+});
+
+test('the detail panel shows a sub-agent\'s type, mode and effort in place of its PR and monitor', () => {
+  const snapshot = exampleSnapshot();
+  const html = detailHtml('call-root-24', false, context(snapshot));
+  const words = text(html);
+  assert.match(html, /<section class="detail" aria-label="Details for scan-docs-links">/);
+  assert.match(html, /<div class="dt-sec"><h4>Sub-agent<\/h4><div class="dt-kv"><span class="k">Type<\/span><span>orchestrator-worker<\/span><span class="k">Mode<\/span><span>Background<\/span><span class="k">Effort<\/span><span>medium<\/span><\/div><\/div>/);
+  assert.doesNotMatch(html, /PR and monitor/);
+  assert.match(html, /<div class="dt-why st-blocked"><h4>Why this counts as cancelled<\/h4><p>Cancelled after 12 min\.<\/p><\/div>/);
+  assert.match(words, /Stage Sub-agent Model claude-sonnet-5/);
+  assert.match(text(detailHtml('call-root-18', false, context(snapshot))), /Sub-agent Type task Mode Background Effort not set/);
+  assert.match(text(detailHtml('ws-0005-i1', false, context(snapshot))), /PR and monitor/);
 });
 
 test('a card shows state, clock, cost bar, report, progress, stage, monitor and chips', () => {
