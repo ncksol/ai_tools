@@ -3690,9 +3690,12 @@ Check: `curl -s http://127.0.0.1:7931/api/health` answers with `"app":"swarm-das
 
 ### Task 12: The Cockpit control in the regular view
 
-The hooks in `ui/app.mjs`, `ui/main.mjs` and `ui/styles.css` go in one commit of their own; the link check in another.
+The hooks in `ui/app.mjs`, `ui/main.mjs` and `ui/styles.css` go in one commit of their own; the audit's height pin in another; the link check in a third.
+
+Amendment after the rebase onto PR 2's header (16 October 2026): the top bar is `.d-top`, with the Live/History switch on the left and `.d-top-r` on the right (the swarm picker when there is a choice, then "Disconnected · retrying" or the data warnings and "Sample data"; "Watch-only" is gone). The control goes last in `.d-top-r`, after `statusHtml(view)`, so it stays when "Disconnected · retrying" replaces the warnings. `.d-top .seg > button` already holds it to 28 px; the control also gets its own pin, `'.ck-open > button': 28`, in `AUDIT_DEFAULTS.heights` (`scripts/lib/page-audit.mjs`), so the pin stays if its markup moves. The stress scenario shows the picker (two live swarms) and "Sample data", so `npm run check:layout` covers the fullest top bar at every width, including the canvas widths 480, 560 and 640.
 
 **Files:**
+- Modify: `scripts/lib/page-audit.mjs` (one entry in `AUDIT_DEFAULTS.heights`)
 - Modify: `ui/app.mjs` (`topHtml`)
 - Modify: `ui/main.mjs` (the view object, `act()`, the swarm picker's change handler, a message listener)
 - Modify: `ui/styles.css` (two rules, after `.pick select:hover`)
@@ -3725,6 +3728,7 @@ test('the Live page\'s top bar ends with the Cockpit control once a swarm shows'
   assert.match(renderApp(view()), /<div class="d-top-r">[\s\S]*<div class="seg ck-open"><button type="button" data-cockpit>Cockpit<\/button><\/div><\/div><\/div>/);
   assert.doesNotMatch(renderApp(view({ page: 'history', runs: [] })), /data-cockpit/);
   assert.doesNotMatch(renderApp(view({ snapshot: null })), /data-cockpit/);
+  assert.match(renderApp(view({ connection: 'retrying' })), /Disconnected · retrying<\/span><div class="seg ck-open"><button type="button" data-cockpit>Cockpit<\/button><\/div><\/div><\/div>/);
 });
 
 test('the cockpit\'s address shows under the top bar on the Live page only', () => {
@@ -3817,6 +3821,15 @@ Expected: the Node tests pass (the `links` check-list test still fails until Ste
 ```bash
 git add ghcp/plugins/swarm-dashboard/ui/app.mjs ghcp/plugins/swarm-dashboard/ui/main.mjs ghcp/plugins/swarm-dashboard/ui/styles.css ghcp/plugins/swarm-dashboard/tests/cockpit-control.test.mjs
 git commit -m "feat(swarm-dashboard): open the cockpit from the regular view's top bar"
+```
+
+- [ ] **Step 5b: Pin the control's height in the audit**
+
+In `scripts/lib/page-audit.mjs`, add `'.ck-open > button': 28` to `AUDIT_DEFAULTS.heights`, after `'.pick select': 28`. Run `npm test && npm run check:layout` (0 issues), then:
+
+```bash
+git add ghcp/plugins/swarm-dashboard/scripts/lib/page-audit.mjs
+git commit -m "test(swarm-dashboard): pin the Cockpit control's height in the layout audit"
 ```
 
 - [ ] **Step 6: Add the link check**
