@@ -8,7 +8,8 @@ export function createFakeEngine({ snapshots = [], swarms = null, history = [], 
   const byId = new Map(snapshots.map(snapshot => [snapshot.run.id, structuredClone(snapshot)]));
   const toItem = snapshot => ({
     id: snapshot.run.id, name: snapshot.run.name, project: snapshot.run.project, startedAt: snapshot.run.startedAt,
-    lastActivityAt: snapshot.run.lastActivityAt, lifecycle: snapshot.run.lifecycle,     units: snapshot.units.filter(unit => unit.kind !== 'subagent').length,
+    lastActivityAt: snapshot.run.lastActivityAt, lifecycle: snapshot.run.lifecycle,
+    units: snapshot.units.filter(unit => unit.kind !== 'subagent').length,
     credits: snapshot.cost.credits, alive: snapshot.run.lifecycle === 'live',
   });
   // Live swarms first, then most recently active first, as the real engine sorts listSwarms().
