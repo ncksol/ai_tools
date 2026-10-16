@@ -6736,6 +6736,17 @@ The whole-branch review after Task 21 found no Critical issue. One fix wave foll
 - Layout check: the live-update phase opens the page at 1440 × 600, reports re-created activity items, and names any check it could not measure (an error on the synthetic run); `DASHBOARD_FILES` includes the self-test pages.
 - Docs: the only network requests are read-only `gh` and `az` queries; the port is 7927 by default; the stalled-child stuck rule; the port and sample-data messages; a demo beside your own dashboard needs `--port`.
 
+## Follow-up after the hand-off
+
+The coordinator's decisions after the hand-off, and the owner's requests after he looked at the preview, were carried out as Tasks 22 to 25, each with a review:
+
+- Task 22: report, activity, question and timeline-mark text is shown as plain text (`plainText` in `ui/format.mjs`). Inline Markdown markers go and the words stay; snake_case, paths, globs, arithmetic, unpaired asterisks and code spans keep their characters, and numbered list markers stay because they carry order. A "Status: <status>." prefix that repeats the report's badge is removed (`withoutStatusPrefix`, `reportTitle`), and a finished sub-agent whose name equals its type is named once (`feedText`). The review round replaced a link pattern that backtracked exponentially on cut-off links.
+- Task 23: on the Plan tab, the second line of a unit whose PR closed without merging reads "PR closed, not merged" in the blocked colour. Every `/api/` endpoint refuses requests that another website starts in the browser (`Sec-Fetch-Site` of `cross-site` or `same-site`, or a foreign `Origin`); requests without those headers, such as curl and the probes in Node, stay allowed. Restricting who may frame the page waits for the in-app check.
+- Task 24: `npm run check:layout -- --engine webkit` runs the same checks in Playwright's WebKit, the engine of the app's panel, with Playwright installed outside the repository (`PLAYWRIGHT_CORE`); without it the check says why and skips. The review round made each skip message name its cause.
+- Task 25: at the bottom of the Cards tab, one muted line, "Archived and hidden sessions are on the Board tab.", replaces the list of archived units, and its "Board tab" link opens the Board. It shows only when the Cards tab leaves something out; the Board shows every unit in its stage column.
+- Decision 4 stands: buttons look as the approved mockup renders them.
+- Install layout, from read-only evidence on the build machine: `copilot plugin install` copies the whole plugin folder, and the CLI runs extensions in place, so the extension's `../../../server/` imports stay inside the installed plugin. The first install after merge confirms it.
+
 ## Self-review
 
 Spec coverage, by the spec section that sets each requirement:
