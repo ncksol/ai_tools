@@ -1,4 +1,4 @@
-import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, baseSearch, coalesced, isNarrow, lifecycleKey, reloadDecision, reloadSearch, renderApp, staleChoice, startSwarm } from './app.mjs';
+import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, baseSearch, coalesced, historyReloadWanted, isNarrow, lifecycleKey, reloadDecision, reloadSearch, renderApp, staleChoice, startSwarm } from './app.mjs';
 import { tickText } from './format.mjs';
 import { morph } from './morph.mjs';
 import { nextCardChange, runEnd, unitEnd } from './model.mjs';
@@ -123,9 +123,10 @@ function connect() {
   });
   source.addEventListener('swarms', event => {
     view.swarms = JSON.parse(event.data);
-    // A run that finishes moves into History, so reload it in place when the swarms' lifecycles change.
+    // A run that finishes moves into History, so reload it in place when the swarms' lifecycles change,
+    // and once on the first event, because History may have answered before this state.
     const key = lifecycleKey(view.swarms);
-    if (lifecycle !== null && key !== lifecycle && historyAsked) reloadHistory();
+    if (historyReloadWanted({ asked: historyAsked, previousKey: lifecycle, key })) reloadHistory();
     lifecycle = key;
     if (staleChoice(view.swarm, swarmFromUrl, view.swarms)) {
       view.swarm = null;

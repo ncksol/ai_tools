@@ -87,3 +87,11 @@ test('at start-up the page restores a picked swarm and cleans the address only a
   for (const needle of ['startSwarm(', 'baseSearch(', 'sessionStorage.removeItem(PICK_KEY)', 'sessionStorage.removeItem(RESTORED_KEY)']) assert.ok(main.includes(needle), needle);
   assert.match(main, /if \(restored\) history\.replaceState\(/);
 });
+
+test('the swarms handler reloads History through historyReloadWanted, so the first event after load reloads it too', () => {
+  const main = readFileSync(file('main.mjs'), 'utf8');
+  const handler = main.slice(main.indexOf("addEventListener('swarms'"));
+  const body = handler.slice(0, handler.indexOf('});'));
+  assert.match(body, /historyReloadWanted\(\{ asked: historyAsked, previousKey: lifecycle, key \}\)/);
+  assert.ok(body.includes('reloadHistory()'));
+});

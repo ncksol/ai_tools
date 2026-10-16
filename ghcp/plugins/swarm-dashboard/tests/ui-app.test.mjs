@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, baseSearch, coalesced, isNarrow, lifecycleKey, reloadDecision, reloadSearch, renderApp, staleChoice, startSwarm } from '../ui/app.mjs';
+import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, baseSearch, coalesced, historyReloadWanted, isNarrow, lifecycleKey, reloadDecision, reloadSearch, renderApp, staleChoice, startSwarm } from '../ui/app.mjs';
 import { NOW, deepFreeze, exampleSnapshot, fixture } from './helpers/ui.mjs';
 
 const view = (overrides = {}) => ({
@@ -26,6 +26,15 @@ test('lifecycleKey changes when a swarm starts, finishes or goes away, and not f
   assert.notEqual(lifecycleKey([a, b, { id: 'c', lifecycle: 'live' }]), key);
   assert.equal(lifecycleKey([{ ...a, name: 'y', lastActivityAt: 5 }, { ...b, lastActivityAt: 6 }]), key);
   assert.equal(typeof lifecycleKey([]), 'string');
+});
+
+test('History reloads on a swarms event only once asked: on the first event after load and when a lifecycle changes', () => {
+  for (const [previousKey, key] of [[null, 'a:live'], ['a:live', 'a:live'], ['a:live', 'a:finished']]) {
+    assert.equal(historyReloadWanted({ asked: false, previousKey, key }), false);
+  }
+  assert.equal(historyReloadWanted({ asked: true, previousKey: null, key: 'a:live' }), true);
+  assert.equal(historyReloadWanted({ asked: true, previousKey: 'a:live', key: 'a:live' }), false);
+  assert.equal(historyReloadWanted({ asked: true, previousKey: 'a:live', key: 'a:finished' }), true);
 });
 
 test('coalesced runs one load at a time and once more if asked again meanwhile', async () => {

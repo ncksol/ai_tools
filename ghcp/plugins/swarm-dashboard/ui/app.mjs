@@ -14,6 +14,9 @@ export const staleChoice = (swarm, fromUrl, swarms) => Boolean(swarm) && !fromUr
 /** A key that changes when a swarm starts, finishes or goes away; History lists finished runs, so it may then be stale. */
 export const lifecycleKey = swarms => swarms.map(swarm => `${swarm.id}:${swarm.lifecycle}`).sort().join('|');
 
+/** Whether a swarms event should reload History: once it has been asked for, on the first event after load (it may have answered before this state) and whenever a lifecycle changes. */
+export const historyReloadWanted = ({ asked, previousKey, key }) => asked && (previousKey === null || key !== previousKey);
+
 /** sessionStorage key: the server UI fingerprint this tab last reloaded for. */
 export const RELOAD_KEY = 'swarm-dashboard:reloaded-for';
 /** sessionStorage key: a swarm picked in the picker, carried through a self-reload in this tab only. */
