@@ -51,6 +51,29 @@ test('the page, its assets and health answer only to the dashboard\'s own host',
   }
 });
 
+test('the data and live-update endpoints refuse requests that another website starts', async () => {
+  const { createEngine, calls } = spyEngine();
+  const server = await started(createEngine);
+  const port = server.port;
+  try {
+    assert.equal((await get(port, '/api/swarms', { 'Sec-Fetch-Site': 'cross-site' })).status, 403);
+    assert.equal((await get(port, '/api/swarms', { 'Sec-Fetch-Site': 'same-site' })).status, 403);
+    assert.equal((await get(port, '/api/events', { 'Sec-Fetch-Site': 'cross-site' })).status, 403);
+    assert.equal((await get(port, '/api/health', { Origin: 'http://evil.example' })).status, 403);
+    assert.equal((await get(port, '/api/snapshot', { Origin: 'null' })).status, 403);
+    assert.equal(calls.created, 0, 'a refused request starts no engine');
+    assert.equal((await get(port, '/', { 'Sec-Fetch-Site': 'cross-site' })).status, 200);
+    assert.equal(calls.created, 0, 'a document load starts no engine');
+    assert.equal((await get(port, '/api/swarms', { 'Sec-Fetch-Site': 'same-origin' })).status, 200);
+    assert.equal((await get(port, '/api/swarms', { 'Sec-Fetch-Site': 'none' })).status, 200);
+    assert.equal((await get(port, '/api/swarms', { Origin: `http://127.0.0.1:${port}` })).status, 200);
+    assert.equal((await get(port, '/api/swarms', { Origin: `http://localhost:${port}` })).status, 200);
+    assert.equal((await get(port, '/api/swarms')).status, 200);
+  } finally {
+    await server.close();
+  }
+});
+
 test('health says which sample data the server shows, if any', async () => {
   const { createEngine } = spyEngine();
   const plain = await started(createEngine);

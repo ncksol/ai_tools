@@ -11,9 +11,18 @@ const SECURITY = {
 };
 const TEXT = 'text/plain; charset=utf-8';
 
+/** A browser request that another website started: Sec-Fetch-Site says so, or it carries a foreign Origin. */
+function fromOtherSite(req, origins) {
+  const site = req.headers['sec-fetch-site'];
+  if (site === 'cross-site' || site === 'same-site') return true;
+  const origin = req.headers.origin;
+  return origin !== undefined && !origins.includes(origin);
+}
+
 /**
  * The dashboard's HTTP server: the page, its assets, a JSON API and the live event stream. Loopback only, GET and HEAD
- * only, and only for requests addressed to its own host and port. Writes nothing to stdout or disk.
+ * only, and only for requests addressed to its own host and port; the API and event stream also refuse requests that
+ * another website starts. Writes nothing to stdout or disk.
  */
 export function createDashboardServer({ createEngine, host = '127.0.0.1', port = 0, version = '0.0.0', now = Date.now, log = () => {}, hub: hubOptions = {}, onIdle = () => {}, demo = null }) {
   const assets = loadAssets();
@@ -33,6 +42,9 @@ export function createDashboardServer({ createEngine, host = '127.0.0.1', port =
     if (req.method !== 'GET' && req.method !== 'HEAD') return reply(res, 405, TEXT, 'Method not allowed', { Allow: 'GET, HEAD' });
     const url = new URL(req.url, `http://127.0.0.1:${boundPort}`);
     const path = url.pathname;
+    // The data and live-update endpoints answer only the dashboard's own pages and local tools: a request that another
+    // website starts in the browser could otherwise start an engine. Tools such as curl send neither header.
+    if (path.startsWith('/api/') && fromOtherSite(req, [`http://127.0.0.1:${boundPort}`, `http://localhost:${boundPort}`])) return reply(res, 403, TEXT, 'Forbidden');
     const param = name => url.searchParams.get(name) || null;
     if (path === '/api/health') return json(res, { app: APP_ID, version, pid: process.pid, startedAt, demo });
     if (path === '/api/events') {
