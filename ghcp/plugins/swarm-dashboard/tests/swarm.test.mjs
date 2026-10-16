@@ -1454,3 +1454,84 @@ test('a fallback label fits within 32 characters from the 1,000th launch, even w
   assert.match(label, /^[A-Za-z0-9._-]{1,32}$/);
   assert.ok(label.startsWith('general-purpose-with-a-r'), 'the type is cut to make room for the number');
 });
+
+// --- Reasoning effort ---
+
+/** An app session row (data.db) as the app-db reader gives it, with only the effort set. */
+const sessionRow = (id, reasoningEffort) => ({
+  id, title: '', mode: null, model: null, reasoningEffort, isRunning: false, wasInterrupted: false, createdAt: null, archivedAt: null,
+});
+
+/** A log whose start asks for 'low' and whose later model change says 'medium', or one that never names an effort. */
+function effortLog(start, withEffort) {
+  const log = new EventLog(start);
+  log.push('session.start', { copilotVersion: '1.0.95-3', selectedModel: 'claude-sonnet-5', ...(withEffort ? { reasoningEffort: 'low' } : {}) });
+  log.wait(1000);
+  log.push('session.model_change', { newModel: 'claude-opus-5', ...(withEffort ? { reasoningEffort: 'medium' } : {}) });
+  return log;
+}
+
+test('a session shows the app\'s effort for it, else the latest effort in its log, else null; the orchestrator follows the same rule', () => {
+  const effortsFor = ({ row, withEffort }) => {
+    const data = input(true);
+    data.states.set('cli-root', fold(effortLog(T0, withEffort), 'cli-root'));
+    data.states.set('cli-api', fold(effortLog(at(5), withEffort), 'cli-api'));
+    if (row !== undefined) for (const id of ['cli-root', 'cli-api']) data.app.sessions.set(id, sessionRow(id, row));
+    const snapshot = buildSnapshot(data);
+    assert.deepEqual(validateSnapshot(snapshot), []);
+    assert.equal(snapshot.units.find(unit => unit.id === 'ws-ui').effort, null, 'a session with neither shows null');
+    return [snapshot.orchestrator.effort, snapshot.units.find(unit => unit.id === 'ws-api').effort];
+  };
+  assert.deepEqual(effortsFor({ row: 'high', withEffort: true }), ['high', 'high'], 'the app\'s setting wins over the log');
+  assert.deepEqual(effortsFor({ row: null, withEffort: true }), ['medium', 'medium'], 'a null row falls back to the log\'s latest effort');
+  assert.deepEqual(effortsFor({ row: undefined, withEffort: true }), ['medium', 'medium'], 'no row falls back to the log\'s latest effort');
+  assert.deepEqual(effortsFor({ row: null, withEffort: false }), [null, null], 'neither gives null');
+});
+
+test('a sub-agent unit, its agent and the orchestrator\'s chip show the configured effort, else the requested one, else null', () => {
+  for (const repeat of [false, true]) {
+    const { data, ids } = withSubagents(root => {
+      const configured = root.subagent({ name: 'configured', type: 'explore', mode: 'background', effort: 'low', agentId: 'ag-configured' });
+      root.wait(1000);
+      root.push('subagent.configured', { model: 'claude-sonnet-5', reasoningEffort: 'max' }, { agentId: 'ag-configured' });
+      if (repeat) {
+        root.wait(1000);
+        root.push('tool.execution_start', {
+          toolCallId: configured, toolName: 'task',
+          arguments: { name: 'configured', agent_type: 'explore', mode: 'background', description: 'configured work', reasoning_effort: 'low' },
+        });
+      }
+      root.wait(1000);
+      const requested = root.subagent({ name: 'requested', type: 'explore', mode: 'background', effort: 'low', agentId: 'ag-requested' });
+      root.wait(1000);
+      const plain = root.subagent({ name: 'plain', type: 'explore', mode: 'background', agentId: 'ag-plain' });
+      return { configured, requested, plain };
+    });
+    const snapshot = buildSnapshot(data);
+    assert.deepEqual(validateSnapshot(snapshot), []);
+    const efforts = id => {
+      const unit = snapshot.units.find(item => item.id === id);
+      const chip = snapshot.orchestrator.subagents.find(item => item.id === id);
+      return [unit.effort, unit.agent.effort, chip.effort];
+    };
+    assert.deepEqual(efforts(ids.configured), ['max', 'max', 'max'], repeat ? 'a repeated task start keeps the configured effort' : 'the configured effort wins');
+    assert.deepEqual(efforts(ids.requested), ['low', 'low', 'low'], 'without subagent.configured, the requested effort');
+    assert.deepEqual(efforts(ids.plain), [null, null, null], 'with neither, null');
+  }
+});
+
+test('a child session\'s chip shows its sub-agent\'s configured effort', () => {
+  const { data } = withSubagents(() => {});
+  const api = new EventLog(at(5));
+  api.start(); api.turnStart(); api.at(at(20));
+  const reviewer = api.subagent({ name: 'reviewer', type: 'code-review', mode: 'background', effort: 'low', agentId: 'agent-r' });
+  api.wait(1000);
+  api.push('subagent.configured', { model: 'claude-sonnet-5', reasoningEffort: 'high' }, { agentId: 'agent-r' });
+  const helper = api.subagent({ name: 'helper', type: 'explore', mode: 'background', effort: 'medium', agentId: 'agent-h' });
+  data.states.set('cli-api', fold(api, 'cli-api'));
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  const chips = snapshot.units.find(unit => unit.id === 'ws-api').subagents;
+  assert.equal(chips.find(chip => chip.id === reviewer).effort, 'high');
+  assert.equal(chips.find(chip => chip.id === helper).effort, 'medium');
+});

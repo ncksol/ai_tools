@@ -55,9 +55,10 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  *   `blockers` is null when the report has no Blockers field and [] for "Blockers: none". `body` is free text outside the fields.
  *   `repliedAt` is when the unit's parent first sent it a message after `at` (for a session, the orchestrator's reply; for a
  *   sub-agent unit, a follow-up), else null.
- * @typedef {{ id: string, name: string, type: string, model: string|null, mode: 'sync'|'background',
+ * @typedef {{ id: string, name: string, type: string, model: string|null, effort: string|null, mode: 'sync'|'background',
  *   status: 'running'|'completed'|'failed'|'stuck'|'cancelled', startedAt: EpochMs, endedAt: EpochMs|null, durationMs: number|null,
  *   credits: number, task: string|null }} SubagentView
+ *   `effort` is the reasoning effort the sub-agent ran with (subagent.configured), else the one its task call requested, else null.
  * @typedef {{ start: EpochMs, end: EpochMs|null, state: 'busy'|'idle'|'plan'|'question'|'stuck' }} Segment  end null = ongoing
  * @typedef {{ id: string, start: EpochMs, end: EpochMs|null, type: string }} SubagentBar
  * @typedef {{ at: EpochMs, kind: string, text: string, status: string|null }} Mark  kind is one of MARK_KINDS
@@ -71,6 +72,10 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  * @property {string[]} cliSessionIds    Oldest first; the last one is current
  * @property {string|null} branch
  * @property {string|null} model
+ * @property {string|null} effort        The reasoning effort it runs with; null when unknown. A session: the app's setting
+ *   for it (data.db), else the latest effort in its log (session.start, session.resume, session.model_change). A
+ *   sub-agent unit: the effort it ran with (subagent.configured), else the one its task call requested; the same value as
+ *   agent.effort.
  * @property {string} status             One of DISPLAY_STATES (colour)
  * @property {string} statusDetail       One of STATUS_DETAILS (detector result)
  * @property {string} bucket             One of COUNT_BUCKETS (header count)
@@ -105,6 +110,8 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  *                   ('-2', '-3'...); else '<type>-<n>'
  *   name            the task's description, else its name
  *   cliSessionIds   []            branch: null                    model: the model it ran on, else the one requested
+ *   effort          the effort it ran with (subagent.configured), else the one its task call requested; the same value as
+ *                   agent.effort
  *   status / statusDetail / bucket:
  *                   running 'busy'/'busy'/'working'; no events for longer than the sub-agent limit
  *                   'stuck'/'stuck_subagent'/'stuck'; an open tool call past its own limit
@@ -293,7 +300,7 @@ const REPORT = {
   unit: OPT_TEXT, commit: OPT_TEXT, repliedAt: OPT_TIME,
 };
 const SUBAGENT = {
-  id: is.id, name: is.text, type: is.text, model: OPT_TEXT, mode: oneOf(SUBAGENT_MODES), status: oneOf(SUBAGENT_STATUSES),
+  id: is.id, name: is.text, type: is.text, model: OPT_TEXT, effort: OPT_TEXT, mode: oneOf(SUBAGENT_MODES), status: oneOf(SUBAGENT_STATUSES),
   startedAt: TIME, endedAt: OPT_TIME, durationMs: nullable(is.count), credits: is.number, task: OPT_TEXT,
 };
 const TIMELINE = {
@@ -304,7 +311,7 @@ const TIMELINE = {
 const FEED_ITEM = { id: is.id, at: TIME, unitId: is.id, label: is.id, kind: oneOf(FEED_KINDS), text: is.text };
 const SESSION = {
   id: is.id, kind: oneOf(SESSION_KINDS), label: is.id, name: is.text, cliSessionIds: arrayOf(is.id),
-  branch: OPT_TEXT, model: OPT_TEXT,
+  branch: OPT_TEXT, model: OPT_TEXT, effort: OPT_TEXT,
   status: oneOf(DISPLAY_STATES), statusDetail: oneOf(STATUS_DETAILS), bucket: oneOf(COUNT_BUCKETS), since: TIME, reason: OPT_TEXT,
   startedAt: TIME, endedAt: OPT_TIME, lastEventAt: OPT_TIME, busyMs: is.count, waitingOnUserMs: is.count, alive: nullable(is.bool),
   cost: { credits: is.number, calls: is.count },

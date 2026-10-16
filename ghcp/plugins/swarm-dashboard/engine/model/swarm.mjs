@@ -135,7 +135,7 @@ function progressOf(db) {
 
 function subagentView(sub, nanoAiu, stuck) {
   return {
-    id: sub.id, name: sub.name, type: sub.type, model: sub.model, mode: sub.mode,
+    id: sub.id, name: sub.name, type: sub.type, model: sub.model, effort: sub.effort ?? null, mode: sub.mode,
     status: sub.status === 'running' && stuck ? 'stuck' : sub.status,
     startedAt: sub.startedAt ?? sub.launchedAt, endedAt: sub.endedAt, durationMs: sub.durationMs,
     credits: credits(nanoAiu), task: sub.task,
@@ -246,6 +246,7 @@ function sessionView(input, c, label, evaluation, report, title, extraMarks, out
   return {
     id: node.id, kind: node.kind, label, name: title ?? node.name ?? '', cliSessionIds: [...node.cliSessionIds],
     branch: node.branch ?? null, model: current?.model ?? c.sessionRow?.model ?? all.model ?? null,
+    effort: c.sessionRow?.reasoningEffort ?? (current ? current.effort : all.effort) ?? null,
     status, statusDetail: evaluation.detail, bucket, since: evaluation.since, reason: evaluation.reason,
     startedAt, endedAt, lastEventAt: all.lastEventAt,
     busyMs: Math.max(0, Math.round(all.busyMs + (current?.turn ? openEnd(current.turn.startedAt) - current.turn.startedAt : 0))),
@@ -490,7 +491,7 @@ function subagentUnitView(input, rootContext, root, sub, evaluation, label, roll
     : null;
   const stuckIds = new Set(unit.children.filter(child => child.status === 'running' && now - child.lastEventAt > subagentLimitMs(child, thresholds)).map(child => child.id));
   return {
-    id: sub.id, kind: 'subagent', label, name: sub.task || sub.name, cliSessionIds: [], branch: null, model: sub.model,
+    id: sub.id, kind: 'subagent', label, name: sub.task || sub.name, cliSessionIds: [], branch: null, model: sub.model, effort: sub.effort ?? null,
     status, statusDetail: evaluation.detail, bucket, since: evaluation.since, reason: evaluation.reason,
     startedAt, endedAt: evaluation.endedAt, lastEventAt: sub.lastEventAt,
     busyMs: Math.max(0, Math.round(unit.droppedBusyMs + spans.reduce((sum, [start, end]) => sum + end - start, 0))), waitingOnUserMs: 0, alive: rootContext.alive,

@@ -357,6 +357,50 @@ test('every report has repliedAt: null or a time, and a report without it fails 
   assert.ok(errorsFor('later').some(error => error.startsWith(`snapshot.units[${target}].report.repliedAt: invalid value`)));
 });
 
+test('the validator requires effort on the orchestrator, on every unit and on every chip, as null or text', () => {
+  const snapshot = fixture('example-snapshot.json');
+  const chipOwner = snapshot.units.findIndex(unit => unit.subagents.length > 0);
+  const errorsFor = (edit) => {
+    const copy = structuredClone(snapshot);
+    edit(copy);
+    return validateSnapshot(copy);
+  };
+  const missing = errorsFor(copy => {
+    delete copy.orchestrator.effort;
+    delete copy.units[0].effort;
+    delete copy.units[chipOwner].subagents[0].effort;
+    delete copy.orchestrator.subagents[0].effort;
+  });
+  for (const path of ['snapshot.orchestrator.effort', 'snapshot.units[0].effort', `snapshot.units[${chipOwner}].subagents[0].effort`, 'snapshot.orchestrator.subagents[0].effort']) {
+    assert.ok(missing.includes(`${path}: missing`), missing.join('\n'));
+  }
+  const set = value => copy => {
+    copy.orchestrator.effort = value;
+    copy.units[0].effort = value;
+    copy.units[chipOwner].subagents[0].effort = value;
+  };
+  assert.deepEqual(errorsFor(set(null)), []);
+  assert.deepEqual(errorsFor(set('xhigh')), []);
+  assert.ok(errorsFor(set(3)).some(error => error.startsWith('snapshot.orchestrator.effort: invalid value')));
+});
+
+test('the example snapshot shows null and set efforts, and a sub-agent\'s effort agrees across its unit, its agent and its chip', () => {
+  const snapshot = fixture('example-snapshot.json');
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  const sessions = [snapshot.orchestrator, ...snapshot.units.filter(unit => !isSubagentUnit(unit))];
+  assert.ok(sessions.some(session => session.effort === null), 'at least one session effort is null');
+  assert.ok(sessions.some(session => session.effort !== null), 'at least one session effort is set');
+  assert.ok(sessions.some(session => session.effort === 'xhigh' || session.effort === 'max'), 'at least one session runs at xhigh or max');
+  const units = snapshot.units.filter(isSubagentUnit);
+  assert.ok(units.length > 0);
+  for (const unit of units) {
+    assert.ok(Object.hasOwn(unit, 'effort'), `${unit.id} has an effort`);
+    assert.equal(unit.effort, unit.agent.effort, `${unit.id}: effort equals agent.effort`);
+    const chip = snapshot.orchestrator.subagents.find(sub => sub.id === unit.id);
+    if (chip) assert.equal(chip.effort, unit.effort, `${unit.id}: the orchestrator's chip carries the unit's effort`);
+  }
+});
+
 test('the example snapshot has an answered and an unanswered needs_input report, and the answered one reads consistently', () => {
   const snapshot = fixture('example-snapshot.json');
   const asking = snapshot.units.filter(unit => unit.report?.status === 'needs_input');

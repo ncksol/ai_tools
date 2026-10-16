@@ -37,7 +37,7 @@ const numberOrNull = value => (value === null || value === undefined || value ==
 export function createSessionState(id, { subagentUnits = false } = {}) {
   return {
     id, subagentUnits, lines: 0, parseErrors: 0, firstEventAt: null, lastEventAt: null, lastEventType: null, lastMainAt: null,
-    copilotVersion: null, model: null, mode: null,
+    copilotVersion: null, model: null, effort: null, mode: null,
     turn: null, busySince: null, lastTurnEndAt: null, busySpans: [], busyMs: 0,
     openTools: new Map(), waits: new Map(), waitSpans: [], waitingMs: 0,
     subagents: new Map(), agentToTask: new Map(),
@@ -164,6 +164,16 @@ export function applyEvent(state, event) {
   state.lastMainAt = at;
 }
 
+/**
+ * The session's reasoning effort from a start, resume or model change that names one. A null or empty value clears it (a model
+ * change can drop the effort); an event without the key (older CLI versions) leaves it as it is.
+ */
+function setEffort(state, data) {
+  if (!Object.hasOwn(data, 'reasoningEffort')) return;
+  const effort = typeof data.reasoningEffort === 'string' ? oneLine(data.reasoningEffort, 40) : '';
+  state.effort = effort || null;
+}
+
 function onMainEvent(state, type, data, at) {
   switch (type) {
     case 'session.start':
@@ -171,9 +181,11 @@ function onMainEvent(state, type, data, at) {
       endProcess(state, state.lastMainAt ?? at);
       if (typeof data.copilotVersion === 'string') state.copilotVersion = data.copilotVersion;
       if (typeof data.selectedModel === 'string') state.model = data.selectedModel;
+      setEffort(state, data);
       break;
     case 'session.model_change':
       if (typeof data.newModel === 'string') state.model = data.newModel;
+      setEffort(state, data);
       break;
     case 'session.mode_changed':
       if (typeof data.newMode === 'string') state.mode = data.newMode;
@@ -553,13 +565,15 @@ function countSubagent(state, id, at, fields) {
 
 /**
  * A sub-agent of the session itself is counted once per task tool-call id. A repeated start for an id that is still in the details
- * updates them and leaves the counts alone (onToolStart ignores a repeated start for an id that has left the details).
+ * updates them and leaves the counts alone (onToolStart ignores a repeated start for an id that has left the details). It keeps an
+ * effort that subagent.configured set (`effortConfigured`) over the one the task call requests; so does onNestedTaskStart.
  */
 function newSubagent(state, id, at, args) {
   const fields = subagentFields(args);
   const known = state.subagents.get(id);
   if (known) {
     const { type, ...rest } = fields;
+    if (known.effortConfigured) delete rest.effort;
     Object.assign(known, rest);
     if (known.unit) {
       known.unit.taskName = taskNameOf(args);
@@ -599,7 +613,10 @@ function onNestedTaskStart(state, id, parentId, args, at) {
     entry.mode = fields.mode;
     const { type, ...rest } = fields;
     const child = childOf(state, id, entry);
-    if (child) Object.assign(child, rest);
+    if (child) {
+      if (child.effortConfigured) delete rest.effort;
+      Object.assign(child, rest);
+    }
     retypeNested(state, id, entry, type);
     return;
   }
@@ -811,7 +828,10 @@ function onSubagentLifecycle(state, event, data, at) {
   touchSubagent(state, key, at);
   if (event.type === 'subagent.configured') {
     if (target && typeof data.model === 'string') target.model = data.model;
-    if (target && typeof data.reasoningEffort === 'string') target.effort = data.reasoningEffort;
+    if (target && typeof data.reasoningEffort === 'string') {
+      target.effort = data.reasoningEffort;
+      target.effortConfigured = true;
+    }
   } else if (event.type === 'subagent.started') {
     (sub ?? entry).startedAt = at;
     if (target) {
@@ -891,6 +911,7 @@ export function mergeStates(states) {
     }
     merged.copilotVersion = state.copilotVersion ?? merged.copilotVersion;
     merged.model = state.model ?? merged.model;
+    merged.effort = state.effort ?? merged.effort;
     merged.busyMs += state.busyMs;
     merged.waitingMs += state.waitingMs;
     merged.busySpans.push(...state.busySpans);

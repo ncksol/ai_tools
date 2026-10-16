@@ -652,6 +652,54 @@ test('subagent.configured sets the effort and model through the tool call or the
   }
 });
 
+test('the session effort follows session.start, session.model_change and session.resume, and a null clears it', () => {
+  const log = new EventLog(T0);
+  log.push('session.start', { copilotVersion: '1.0.95-3', selectedModel: 'claude-sonnet-5', reasoningEffort: 'medium' });
+  assert.equal(fold(log).effort, 'medium', 'session.start sets it');
+  log.wait(1000); log.push('session.model_change', { newModel: 'claude-opus-5', reasoningEffort: 'xhigh' });
+  assert.equal(fold(log).effort, 'xhigh', 'a model change changes it');
+  log.wait(1000); log.resume();
+  assert.equal(fold(log).effort, 'xhigh', 'a resume without the key leaves it as it is');
+  log.wait(1000); log.push('session.model_change', { newModel: 'claude-haiku-5.5', reasoningEffort: null });
+  assert.equal(fold(log).effort, null, 'a model change with a null effort clears it');
+  log.wait(1000); log.push('session.resume', { selectedModel: 'claude-sonnet-5', reasoningEffort: 'low' });
+  assert.equal(fold(log).effort, 'low', 'a resume with the key sets it');
+  assert.equal(createSessionState('cli-x').effort, null);
+});
+
+test('a merge of CLI states takes the latest non-null effort', () => {
+  const withEffort = effort => {
+    const log = new EventLog(T0);
+    log.push('session.start', { selectedModel: 'claude-sonnet-5', ...(effort === undefined ? {} : { reasoningEffort: effort }) });
+    return fold(log);
+  };
+  assert.equal(mergeStates([withEffort('medium'), withEffort('high')]).effort, 'high');
+  assert.equal(mergeStates([withEffort('medium'), withEffort(null)]).effort, 'medium');
+  assert.equal(mergeStates([withEffort('medium'), withEffort(undefined)]).effort, 'medium');
+  assert.equal(mergeStates([withEffort(undefined)]).effort, null);
+});
+
+test('a configured sub-agent effort survives a repeated task start, for a root sub-agent and a nested one', () => {
+  for (const options of [undefined, ROOT]) {
+    const log = new EventLog(T0);
+    log.start(); log.turnStart();
+    const lead = log.subagent({ name: 'lead', type: 'explore', mode: 'background', effort: 'low', agentId: 'agent-l' });
+    const kid = log.nested(lead, { name: 'kid', type: 'explore', mode: 'background', agentId: 'agent-k' });
+    log.push('subagent.configured', { model: 'claude-opus-5', reasoningEffort: 'max' }, { agentId: 'agent-l' });
+    log.push('subagent.configured', { reasoningEffort: 'high' }, { agentId: 'agent-k' });
+    log.push('tool.execution_start', { toolCallId: lead, toolName: 'task', arguments: { name: 'lead', agent_type: 'explore', mode: 'background', reasoning_effort: 'low' } });
+    log.sub(lead, 'tool.execution_start', { toolCallId: kid, toolName: 'task', arguments: { name: 'kid', agent_type: 'explore', mode: 'background', reasoning_effort: 'low' } });
+    const state = fold(log, 'cli-1', options);
+    assert.equal(state.subagents.get(lead).effort, 'max', 'the root sub-agent keeps its configured effort');
+    if (options) assert.equal(unitOf(state, lead).children.find(child => child.id === kid).effort, 'high', 'the nested sub-agent keeps its configured effort');
+  }
+  const unconfigured = new EventLog(T0);
+  unconfigured.start(); unconfigured.turnStart();
+  const call = unconfigured.subagent({ name: 'plain', type: 'explore', mode: 'background', effort: 'low' });
+  unconfigured.push('tool.execution_start', { toolCallId: call, toolName: 'task', arguments: { name: 'plain', agent_type: 'explore', mode: 'background', reasoning_effort: 'medium' } });
+  assert.equal(fold(unconfigured).subagents.get(call).effort, 'medium', 'without a configured effort, a repeated start still updates the requested one');
+});
+
 test('an abort stops the sync sub-agents and their runs; the end of the process stops everything left', () => {
   const log = new EventLog(T0);
   log.start(); log.turnStart();
