@@ -520,7 +520,7 @@ test('a sub-agent that starts sub-agents registers them, counts them once, and i
   let state = foldRoot(log);
   assert.deepEqual([...state.descendants].map(([id, entry]) => [id, entry.root, entry.parent]), [[child, parent, parent], [grand, parent, child]]);
   assert.deepEqual(state.descendants.get(grand), {
-    root: parent, parent: child, bucket: 'explore', status: 'running', mode: 'background', agentId: 'agent-g', launchedAt: T0 + 120_000, startedAt: T0 + 120_000,
+    root: parent, parent: child, bucket: 'explore', status: 'running', mode: 'background', agentId: 'agent-g', launchedAt: T0 + 120_000, startedAt: T0 + 120_000, durationMs: null,
   }, 'a descendant entry keeps only what it needs: no task text, no full record');
   assert.equal(state.subagents.size, 1);
   assert.equal(state.subagentCount, 3);
@@ -691,6 +691,72 @@ test('an abort keeps the sync sub-agents of a top sub-agent that is still workin
   const syncChild = sync.nested(top, { name: 'tc', type: 'explore', mode: 'sync' });
   sync.wait(1000); sync.abort();
   assert.equal(foldRoot(sync).descendants.get(syncChild).status, 'cancelled', 'with its top sub-agent ended, a sync child ends too');
+});
+
+const statsOf = state => [...state.subagentStats].map(([type, entry]) => [type, entry.runs, entry.durationMs]).sort();
+
+test('a finished nested sub-agent keeps its duration when it is retyped by a repeated task start', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const lead = log.subagent({ name: 'lead', type: 'general-purpose', mode: 'background', agentId: 'agent-l' });
+  const child = log.nested(lead, { name: 'kid', type: 'explore', mode: 'background', agentId: 'agent-k' });
+  log.wait(5000); log.subagentDone(child, { durationMs: 5000, agentId: 'agent-k' });
+  assert.deepEqual(statsOf(foldRoot(log)), [['explore', 1, 5000], ['general-purpose', 1, 0]]);
+  log.sub(lead, 'tool.execution_start', { toolCallId: child, toolName: 'task', arguments: { name: 'kid', agent_type: 'review', mode: 'background' } });
+  const state = foldRoot(log);
+  assert.deepEqual(statsOf(state), [['general-purpose', 1, 0], ['review', 1, 5000]], 'the run and its full duration move; the old type is gone');
+  assert.equal(state.descendants.get(child).bucket, 'review');
+  assert.equal(state.descendants.get(child).durationMs, 5000);
+  assert.equal(state.subagentIndex.get(child), 'review');
+});
+
+test('a sync nested sub-agent finished by its task call keeps its duration when a late start event retypes it', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const lead = log.subagent({ name: 'lead', type: 'general-purpose', mode: 'background', agentId: 'agent-l' });
+  log.sub(lead, 'tool.execution_start', { toolCallId: 'quiet-1', toolName: 'task', arguments: { name: 'n', agent_type: 'explore', mode: 'sync' } });
+  log.wait(4000); log.sub(lead, 'tool.execution_complete', { toolCallId: 'quiet-1', success: true });
+  log.push('subagent.started', { toolCallId: 'quiet-1', agentType: 'review', agentDisplayName: 'n', executionMode: 'sync' }, { agentId: 'agent-q' });
+  for (const options of [undefined, ROOT]) {
+    const state = fold(log, 'cli-1', options);
+    assert.deepEqual(statsOf(state), [['general-purpose', 1, 0], ['review', 1, 4000]]);
+  }
+});
+
+test('a running nested sub-agent that is retyped moves only its run', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  const lead = log.subagent({ name: 'lead', type: 'general-purpose', mode: 'background', agentId: 'agent-l' });
+  const child = log.nested(lead, { name: 'kid', type: 'explore', mode: 'background', agentId: 'agent-k' });
+  log.sub(lead, 'tool.execution_start', { toolCallId: child, toolName: 'task', arguments: { name: 'kid', agent_type: 'review', mode: 'background' } });
+  const state = foldRoot(log);
+  assert.deepEqual(statsOf(state), [['general-purpose', 1, 0], ['review', 1, 0]]);
+  log.wait(3000); log.subagentDone(child, { durationMs: 3000, agentId: 'agent-k' });
+  assert.deepEqual(statsOf(foldRoot(log)), [['general-purpose', 1, 0], ['review', 1, 3000]]);
+});
+
+test('an abort ends a sync child of an evicted sync top sub-agent with it, and keeps the child of an evicted background one', () => {
+  const run = topMode => {
+    const log = new EventLog(T0);
+    log.start(); log.turnStart();
+    const top = log.subagent({ name: 'top', type: 'general-purpose', mode: topMode, agentId: 'agent-top' });
+    const child = log.nested(top, { name: 'kid', type: 'explore', mode: 'sync', agentId: 'agent-kid' });
+    for (let i = 0; i < 500; i += 1) log.subagent({ name: `filler-${i}`, type: 'filler', mode: 'background' });
+    log.wait(60_000);
+    log.abort();
+    const state = foldRoot(log);
+    assert.equal(state.subagents.has(top), false, 'the top sub-agent was evicted while running');
+    return { state, child, top };
+  };
+  const sync = run('sync');
+  assert.equal(sync.state.descendants.get(sync.child).status, 'cancelled');
+  assert.deepEqual(sync.state.subagentOutcomes, { completed: 0, failed: 0, cancelled: 1 }, 'the evicted top is cancelled once');
+  assert.equal(sync.state.evictedRunning.has(sync.top), false);
+  assert.deepEqual(statsOf(sync.state).filter(([type]) => type !== 'filler'), [['explore', 1, 60_000], ['general-purpose', 1, 60_000]], 'each duration reaches the totals once');
+  const background = run('background');
+  assert.equal(background.state.descendants.get(background.child).status, 'running');
+  assert.equal(background.state.evictedRunning.has(background.top), true);
+  assert.deepEqual(background.state.subagentOutcomes, { completed: 0, failed: 0, cancelled: 0 });
 });
 
 test('a unit keeps its label base from launch: the name argument, else the description, else nothing', () => {

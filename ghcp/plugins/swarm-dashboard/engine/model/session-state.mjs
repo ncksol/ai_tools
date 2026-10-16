@@ -331,6 +331,7 @@ function finishNested(state, id, entry, at, status, durationMs) {
   const ended = Math.max(at, entry.launchedAt);
   const duration = Number.isFinite(durationMs) ? Math.max(0, Math.round(durationMs)) : Math.max(0, ended - (entry.startedAt ?? entry.launchedAt));
   statsEntry(state.subagentStats, entry.bucket).durationMs += duration;
+  entry.durationMs = duration;
   const child = childOf(state, id, entry);
   if (!child) return;
   child.status = status;
@@ -372,7 +373,7 @@ function retypeSubagent(state, sub, type) {
 /** A nested sub-agent has no type of its own; its bucket (and its kept detail, if any) follows the new type. */
 function retypeNested(state, id, entry, type) {
   const child = childOf(state, id, entry);
-  moveBucket(state, id, entry, type, null);
+  moveBucket(state, id, entry, type, entry.durationMs);
   if (child) {
     child.type = type;
     child.bucket = entry.bucket;
@@ -390,13 +391,13 @@ function endOpenWork(state, at, keepBackground) {
     finishSubagent(state, sub, at, status, null, error);
   }
   // Sub-agents started by a sub-agent end with the process. An abort ends a sync one only when its top sub-agent has ended:
-  // one that is running, runs in the background, or was resumed (its last run is open) goes on.
+  // one that is running, runs in the background (also when evicted from the details), or was resumed (its last run is open) goes on.
   for (const [id, entry] of state.descendants) {
     if (entry.status !== 'running') continue;
     if (keepBackground) {
       const top = state.subagents.get(entry.root);
       const lastRun = top?.unit?.runs[top.unit.runs.length - 1];
-      if (entry.mode === 'background' || top?.mode === 'background' || top?.status === 'running' || (lastRun && lastRun[1] === null) || state.evictedRunning.has(entry.root)) continue;
+      if (entry.mode === 'background' || top?.mode === 'background' || top?.status === 'running' || (lastRun && lastRun[1] === null) || state.evictedRunning.get(entry.root)?.mode === 'background') continue;
     }
     finishNested(state, id, entry, at, status, null);
   }
@@ -526,7 +527,7 @@ function onNestedTaskStart(state, id, parentId, args, at) {
   const sub = countSubagent(state, id, at, fields);
   state.descendants.set(id, {
     root: state.descendants.get(parentId)?.root ?? parentId, parent: parentId, bucket: sub.bucket, status: 'running', mode: sub.mode,
-    agentId: null, launchedAt: at, startedAt: null,
+    agentId: null, launchedAt: at, startedAt: null, durationMs: null,
   });
   while (state.descendants.size > LIMITS.subagentIndex) dropDescendant(state);
   const parent = state.subagents.get(parentId);
