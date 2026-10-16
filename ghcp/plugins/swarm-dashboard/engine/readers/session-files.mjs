@@ -48,21 +48,25 @@ export const SESSION_DB_QUERIES = Object.freeze({
     created_at, updated_at, ended_at FROM children`,
 });
 
-/** `source` is either openReadOnly's options or a reader from createSqliteReader (which holds live WAL connections). */
+/**
+ * `source` is either openReadOnly's options or a reader from createSqliteReader (which holds live WAL connections).
+ * A table that is absent gives its empty value (`[]`, or `null` for children). A query that fails, such as one that finds the
+ * database busy or locked, rejects with an Error naming the query, so a caller never takes a failed read for empty tables.
+ */
 export async function readSessionDb(file, source = {}) {
   const run = typeof source.read === 'function' ? fn => source.read(file, fn) : fn => withReadOnly(file, source, fn);
   return run(async db => {
-    const safe = async sql => {
+    const query = async name => {
       try {
-        return await db.all(sql);
-      } catch {
-        return null;
+        return (await db.all(SESSION_DB_QUERIES[name])) ?? [];
+      } catch (error) {
+        throw new Error(`session.db ${name}: ${error?.message ?? error}`, { cause: error });
       }
     };
     // Ask which tables exist first, so a normal read never runs a statement that fails (a failed statement discards a pooled connection).
-    const present = new Set(((await safe(SESSION_DB_QUERIES.tables)) ?? []).map(row => row.name));
-    const todos = present.has('todos') ? (await safe(SESSION_DB_QUERIES.todos)) ?? [] : [];
-    const deps = present.has('todo_deps') ? (await safe(SESSION_DB_QUERIES.deps)) ?? [] : [];
+    const present = new Set((await query('tables')).map(row => row.name));
+    const todos = present.has('todos') ? await query('todos') : [];
+    const deps = present.has('todo_deps') ? await query('deps') : [];
     const hasChildren = present.has('children');
     return {
       todos: todos.map(todo => ({
@@ -70,11 +74,15 @@ export async function readSessionDb(file, source = {}) {
         status: String(todo.status ?? 'pending'),
       })),
       deps: deps.map(dep => ({ todoId: String(dep.todo_id), dependsOn: String(dep.depends_on) })),
-      children: hasChildren ? await safe(SESSION_DB_QUERIES.children) : null,
+      children: hasChildren ? await query('children') : null,
     };
   });
 }
 
+/**
+ * Caches each file's last successful read under its stamps. A read that throws stores nothing: the last good entry stays for
+ * get.last(file), and its stamps no longer match, so the next get reads again even when the file has not changed since.
+ */
 export function createSessionDbCache(read = readSessionDb) {
   const cache = new Map();
   async function get(file, sqliteOptions) {

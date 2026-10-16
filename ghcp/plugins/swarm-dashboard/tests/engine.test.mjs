@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, utimesSync } from 'node:fs';
 import path from 'node:path';
 import { createSwarmEngine } from '../engine/engine.mjs';
 import { createPrLookup } from '../engine/model/pr-lookup.mjs';
@@ -10,7 +10,7 @@ import { HOUR, MINUTE } from '../engine/time.mjs';
 import { CopilotHome } from './helpers/copilot-home.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { DAY, NO_SUCH_PID, T0, alwaysAlive, at, scenario } from './helpers/scenario.mjs';
-import { canWriteWithNode, openWriter } from './helpers/sqlite-writer.mjs';
+import { canWriteWithNode, holdExclusiveLock, openWriter } from './helpers/sqlite-writer.mjs';
 import { tempDir } from './helpers/temp.mjs';
 
 function fingerprint(dir) {
@@ -613,6 +613,30 @@ test('data.db with log data but no shared-memory file keeps the last good data a
   assert.equal(warning.level, 'warn');
   assert.equal(warning.message, 'data.db: its write-ahead log has data but no shared-memory file, so it cannot be read safely now.');
   assert.equal(existsSync(`${home.dataDb}-shm`), false);
+});
+
+test('a locked session.db keeps the last good todos with a warning, and the next refresh reads it again', { skip: !canWriteWithNode }, async () => {
+  const home = scenario();
+  const engine = createSwarmEngine({ copilotHome: home.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => at(60), processProbe: alwaysAlive, prLookup: 'off' });
+  const progress = async () => (await engine.getSnapshot('ws-root')).units.find(unit => unit.label === 'a1').progress;
+  const warnings = () => engine.diagnostics().filter(item => item.source === 'session.db');
+  assert.deepEqual(await progress(), { done: 1, total: 2 });
+  const file = path.join(home.stateDir, 'cli-api', 'session.db');
+  // A writer in another process holds an exclusive lock while the file's stamps change, so the next read fails as busy.
+  const lock = await holdExclusiveLock(file);
+  try {
+    utimesSync(file, new Date(), new Date(Date.now() + 9000));
+    await engine.refresh();
+    assert.deepEqual(await progress(), { done: 1, total: 2 });
+    assert.equal(warnings().length, 1);
+    assert.equal(warnings()[0].level, 'warn');
+    assert.match(warnings()[0].message, /^cli-api: session\.db tables: .*database is locked/);
+  } finally {
+    await lock.release();
+  }
+  await engine.refresh();
+  assert.deepEqual(await progress(), { done: 1, total: 2 });
+  assert.deepEqual(warnings(), []);
 });
 
 test('stop() closes the reader connections, so a closing writer can remove its side files', { skip: !canWriteWithNode }, async () => {

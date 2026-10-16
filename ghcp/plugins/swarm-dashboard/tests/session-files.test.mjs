@@ -2,10 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { appendFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { createSessionDbCache, listLocks, readSessionDb, readWorkspaceYaml } from '../engine/readers/session-files.mjs';
+import { SESSION_DB_QUERIES, createSessionDbCache, listLocks, readSessionDb, readWorkspaceYaml } from '../engine/readers/session-files.mjs';
 import { createProcessProbe, parsePsOutput } from '../engine/readers/process-probe.mjs';
 import { CopilotHome } from './helpers/copilot-home.mjs';
-import { TEST_BACKENDS } from './helpers/sqlite-writer.mjs';
+import { TEST_BACKENDS, canWriteWithNode, holdExclusiveLock } from './helpers/sqlite-writer.mjs';
 
 const home = new CopilotHome();
 
@@ -49,7 +49,89 @@ for (const backend of TEST_BACKENDS) {
     const file = home.sessionDb(`cli-plain-${backend}`, { todos: [] });
     assert.deepEqual(await readSessionDb(file, { backend }), { todos: [], deps: [], children: null });
   });
+
+  test(`${backend}: a session.db that a writer holds locked rejects instead of reading as empty`, { skip: !canWriteWithNode }, async () => {
+    const file = home.sessionDb(`cli-locked-${backend}`, { todos: [{ id: 'a' }] });
+    const lock = await holdExclusiveLock(file);
+    try {
+      await assert.rejects(readSessionDb(file, { backend }), /^Error: session\.db tables: .*database is locked/);
+    } finally {
+      await lock.release();
+    }
+    assert.equal((await readSessionDb(file, { backend })).todos.length, 1);
+  });
 }
+
+/** A session.db source whose query for `failing` fails, as a busy or locked database does; the other queries see `tables`. */
+function failingSource(failing, tables = ['todos', 'todo_deps', 'children']) {
+  const rows = {
+    tables: tables.map(name => ({ name })),
+    todos: [{ id: 'a', title: 'First', description: null, status: 'done' }],
+    deps: [],
+    children: [],
+  };
+  const db = {
+    async all(sql) {
+      const name = Object.keys(SESSION_DB_QUERIES).find(key => SESSION_DB_QUERIES[key] === sql);
+      if (name === failing) throw new Error('database is locked');
+      return rows[name];
+    },
+  };
+  return { read: (file, fn) => fn(db) };
+}
+
+test('a failed session.db query rejects with the query name instead of giving empty tables', async () => {
+  await assert.rejects(readSessionDb('session.db', failingSource('todos')), /^Error: session\.db todos: database is locked$/);
+  await assert.rejects(readSessionDb('session.db', failingSource('tables')), /^Error: session\.db tables: database is locked$/);
+  await assert.rejects(readSessionDb('session.db', failingSource('children')), /^Error: session\.db children: database is locked$/);
+});
+
+test('a missing optional session.db table is not an error', async () => {
+  assert.deepEqual(await readSessionDb('session.db', failingSource(null, ['todos', 'todo_deps'])), {
+    todos: [{ id: 'a', title: 'First', description: '', status: 'done' }], deps: [], children: null,
+  });
+  // A query for an absent table never runs, so its failure cannot show.
+  assert.deepEqual(await readSessionDb('session.db', failingSource('children', ['todos'])), {
+    todos: [{ id: 'a', title: 'First', description: '', status: 'done' }], deps: [], children: null,
+  });
+});
+
+test('a failed first session.db read caches nothing, and the next get retries with unchanged stamps', async () => {
+  const file = home.sessionDb('cli-first-fails', { todos: [{ id: 'a' }] });
+  let reads = 0;
+  const get = createSessionDbCache(async () => {
+    reads += 1;
+    if (reads === 1) throw new Error('session.db tables: database is locked');
+    return { read: reads };
+  });
+  await assert.rejects(get(file), /database is locked/);
+  assert.equal(get.last(file), undefined);
+  assert.deepEqual(await get(file), { read: 2 });
+  assert.deepEqual(await get(file), { read: 2 });
+  assert.equal(reads, 2);
+});
+
+test('a failed session.db read keeps the last good value and retries on the next get', async () => {
+  const file = home.sessionDb('cli-fails-later', { todos: [{ id: 'a' }] });
+  let reads = 0;
+  let failing = false;
+  const get = createSessionDbCache(async () => {
+    reads += 1;
+    if (failing) throw new Error('session.db todos: database is locked');
+    return { read: reads };
+  });
+  assert.deepEqual(await get(file), { read: 1 });
+  utimesSync(file, new Date(), new Date(Date.now() + 7000));
+  failing = true;
+  await assert.rejects(get(file), /database is locked/);
+  assert.deepEqual(get.last(file), { read: 1 });
+  await assert.rejects(get(file), /database is locked/);
+  assert.equal(reads, 3);
+  failing = false;
+  assert.deepEqual(await get(file), { read: 4 });
+  assert.deepEqual(await get(file), { read: 4 });
+  assert.deepEqual(get.last(file), { read: 4 });
+});
 
 test('the session.db cache re-reads only after a change', async () => {
   const file = home.sessionDb('cli-cache', { todos: [{ id: 'a' }] });

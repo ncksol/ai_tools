@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
@@ -43,4 +43,33 @@ export function execSql(file, sql) {
 /** Keep a writable connection open, so a WAL database keeps its -wal and -shm files (node:sqlite only). */
 export function openWriter(file) {
   return nodeSqlite ? new nodeSqlite.DatabaseSync(file) : null;
+}
+
+const LOCK_HOLDER = `
+const db = new (require('node:sqlite').DatabaseSync)(process.argv[1]);
+db.exec('BEGIN EXCLUSIVE');
+process.stdout.write('locked\\n');
+process.stdin.on('end', () => { db.exec('ROLLBACK'); db.close(); });
+process.stdin.resume();
+`;
+
+/**
+ * Hold an exclusive lock on a rollback-journal database from a separate process (node:sqlite only), as a writer does.
+ * The holder must be another process: POSIX locks belong to the process, and closing any of its descriptors for the file
+ * (the readers' header check does) would drop a lock held in this one. Resolves { release() } once the lock is taken.
+ */
+export async function holdExclusiveLock(file) {
+  const child = spawn(process.execPath, ['--no-warnings', '-e', LOCK_HOLDER, file], { stdio: ['pipe', 'pipe', 'inherit'] });
+  await new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('exit', code => reject(new Error(`the lock holder exited with code ${code}`)));
+    child.stdout.once('data', () => resolve());
+  });
+  return {
+    release: () => new Promise(resolve => {
+      child.removeAllListeners('exit');
+      child.once('exit', () => resolve());
+      child.stdin.end();
+    }),
+  };
 }
