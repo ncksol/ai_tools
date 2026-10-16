@@ -103,6 +103,23 @@ test('a resume ends the work of the previous process at its last main event', ()
   assert.equal(state.lastEventType, 'session.resume');
 });
 
+test('waits that the bounded wait history drops still count in waitDroppedMs, and merging sums it', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  for (const ms of [1000, 2000, 3000, ...new Array(LIMITS.spans).fill(60_000)]) {
+    const question = log.ask('Go on?');
+    log.wait(ms);
+    log.done(question, { result: 'Yes' });
+  }
+  const state = fold(log, 'cli-a');
+  assert.equal(state.waitSpans.length, LIMITS.spans);
+  assert.equal(state.waitDroppedMs, 6000, 'the three oldest waits: 1, 2 and 3 seconds');
+  assert.deepEqual(state.waitSpans[0], [T0 + 6000, T0 + 66_000, 'question']);
+  assert.equal(state.waitingMs, 6000 + LIMITS.spans * 60_000);
+  assert.equal(createSessionState('cli-b').waitDroppedMs, 0);
+  assert.equal(mergeStates([state, fold(log, 'cli-c'), createSessionState('cli-d')]).waitDroppedMs, 12_000);
+});
+
 test('an abort ends the turn and sync sub-agents but keeps background ones', () => {
   const log = new EventLog(T0);
   log.start(); log.turnStart();

@@ -40,6 +40,8 @@ export function createSessionState(id, { subagentUnits = false } = {}) {
     copilotVersion: null, model: null, effort: null, mode: null,
     turn: null, busySince: null, lastTurnEndAt: null, busySpans: [], busyMs: 0,
     openTools: new Map(), waits: new Map(), waitSpans: [], waitingMs: 0,
+    // Total length of the closed waits that waitSpans no longer holds (it keeps the latest LIMITS.spans).
+    waitDroppedMs: 0,
     subagents: new Map(), agentToTask: new Map(),
     // Root states only: closed units that left `subagents` (see evictSubagent), by the bucket their current outcome gives.
     unitsEvicted: { done: 0, failed: 0 },
@@ -268,7 +270,12 @@ function closeTurn(state, at) {
 function closeWait(state, id, wait, at) {
   state.waits.delete(id);
   const end = Math.max(at, wait.startedAt);
-  pushBounded(state.waitSpans, [wait.startedAt, end, wait.kind], LIMITS.spans);
+  state.waitSpans.push([wait.startedAt, end, wait.kind]);
+  // The oldest spans leave the bounded list; their time is kept in waitDroppedMs, so totals built from spans stay exact.
+  while (state.waitSpans.length > LIMITS.spans) {
+    const [start, stop] = state.waitSpans.shift();
+    state.waitDroppedMs += stop - start;
+  }
   state.waitingMs += end - wait.startedAt;
 }
 
@@ -922,6 +929,7 @@ export function mergeStates(states) {
     merged.effort = state.effort ?? merged.effort;
     merged.busyMs += state.busyMs;
     merged.waitingMs += state.waitingMs;
+    merged.waitDroppedMs += state.waitDroppedMs;
     merged.busySpans.push(...state.busySpans);
     merged.waitSpans.push(...state.waitSpans);
     for (const [id, sub] of state.subagents) merged.subagents.set(id, sub);

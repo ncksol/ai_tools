@@ -8,6 +8,7 @@ import { buildSegments, buildSnapshot, deriveLabels, runLifecycle, splitFeed } f
 import { ACTIVE_DETAILS } from '../engine/model/status.mjs';
 import { summarizeRun } from '../engine/model/history.mjs';
 import { createPrLookup } from '../engine/model/pr-lookup.mjs';
+import { LIMITS } from '../engine/model/state-utils.mjs';
 import { HOUR, MINUTE } from '../engine/time.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { fold } from './helpers/fold.mjs';
@@ -425,6 +426,41 @@ test('a sub-agent that is retyped by its start event appears under its final typ
   const summary = summarizeRun(buildSnapshot(data), { computedAt: at(120) });
   assert.deepEqual(summary.subagentTypes.map(entry => entry.type).sort(), ['code-review', 'explore']);
   assert.equal(summary.subagents, 2);
+});
+
+/** A root orchestrator log that asks `count` one-minute questions back to back from at(from). */
+function askingLog(start, count, from) {
+  const log = new EventLog(start);
+  log.start(); log.turnStart();
+  log.at(at(from));
+  for (let i = 0; i < count; i += 1) {
+    const question = log.ask('Go on?');
+    log.wait(MINUTE);
+    log.done(question, { result: 'Yes' });
+  }
+  return log;
+}
+
+test('a run summary counts waiting time that the bounded wait history dropped', () => {
+  const data = input(true);
+  const count = LIMITS.spans + 1;
+  data.states.set('cli-root', fold(askingLog(T0, count, 200), 'cli-root'));
+  data.now = at(200 + count + 10);
+  const snapshot = buildSnapshot(data);
+  const summary = summarizeRun(snapshot, { computedAt: data.now });
+  assert.deepEqual(validateRunSummary(summary), []);
+  assert.equal(snapshot.orchestrator.waitingOnUserMs, count * MINUTE);
+  assert.equal(summary.waitingOnUserMs, count * MINUTE);
+});
+
+test('a wait that two sessions share counts once in the run summary', () => {
+  const data = input(true);
+  data.states.set('cli-root', fold(askingLog(T0, 1, 40), 'cli-root'));
+  data.states.set('cli-ui', fold(askingLog(at(6), 1, 40), 'cli-ui'));
+  const snapshot = buildSnapshot(data);
+  const ui = snapshot.units.find(unit => unit.id === 'ws-ui');
+  assert.deepEqual([snapshot.orchestrator.waitingOnUserMs, ui.waitingOnUserMs], [MINUTE, MINUTE]);
+  assert.equal(summarizeRun(snapshot, { computedAt: at(120) }).waitingOnUserMs, MINUTE);
 });
 
 // --- Sub-agent units: the orchestrator's one-off sub-agents ---

@@ -63,7 +63,10 @@ export function summarizeRun(snapshot, { computedAt }) {
     finishedAt,
     tookMs: Math.max(0, finishedAt - run.startedAt),
     busyMs: sessions.reduce((sum, session) => sum + session.busyMs, 0),
-    waitingOnUserMs: unionMs(waits),
+    // The union of the retained wait spans, so two sessions waiting at once count once, plus the waits each CLI session's
+    // bounded history dropped (beyond LIMITS.spans). Those dropped waits are added as they are, without merging any overlap
+    // with other sessions' waits at those times. Without run stats (fake engine, fixtures) only the union counts.
+    waitingOnUserMs: unionMs(waits) + (stats?.waitDroppedMs ?? 0),
     credits: snapshot.cost.credits,
     usd: snapshot.cost.usd,
     children: {

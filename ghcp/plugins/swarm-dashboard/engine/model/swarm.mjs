@@ -152,10 +152,14 @@ function subagentViews(all, cost, stuckIds) {
   return sortSubagentViews([...all.subagents.values()].map(sub => subagentView(sub, cost.byParentToolCall.get(sub.id)?.nanoAiu ?? 0, stuckIds.has(sub.id))));
 }
 
-/** Run-level sub-agent totals from every session's uncapped counters; credits join the ledger through the task id. */
-function runSubagentStats(contexts) {
+/**
+ * Run-level totals from every session's uncapped counters: sub-agents (credits join the ledger through the task id), and the
+ * waiting time that each session's bounded wait history dropped.
+ */
+function runStats(contexts) {
   const types = new Map();
   let subagents = 0;
+  let waitDroppedMs = 0;
   const entryOf = type => {
     let entry = types.get(type);
     if (!entry) {
@@ -166,6 +170,7 @@ function runSubagentStats(contexts) {
   };
   for (const c of contexts.values()) {
     subagents += c.all.subagentCount;
+    waitDroppedMs += c.all.waitDroppedMs;
     for (const [type, item] of c.all.subagentStats) {
       const entry = entryOf(type);
       entry.runs += item.runs;
@@ -179,6 +184,7 @@ function runSubagentStats(contexts) {
   return {
     subagents,
     types: new Map([...types].map(([type, entry]) => [type, { runs: entry.runs, durationMs: entry.durationMs, credits: credits(entry.nanoAiu) }])),
+    waitDroppedMs,
   };
 }
 
@@ -716,6 +722,6 @@ export function buildSnapshot(input) {
     cost,
     diagnostics: input.diagnostics ?? [],
   };
-  setRunStats(snapshot, runSubagentStats(contexts));
+  setRunStats(snapshot, runStats(contexts));
   return snapshot;
 }
