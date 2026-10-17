@@ -125,6 +125,9 @@ export function createSwarmEngine(options = {}) {
   let timer = null;
   let generation = 0;
   let running = null;
+  // The number of the latest refresh to start. Each snapshot entry's `builtBy` is the number of the refresh that last built it,
+  // so a caller can tell a snapshot that its own refresh built from one kept after that refresh failed to rebuild it.
+  let refreshes = 0;
 
   const projectOf = node => {
     const project = node.projectId ? app.projects.get(node.projectId) : null;
@@ -349,6 +352,8 @@ export function createSwarmEngine(options = {}) {
   }
 
   async function doRefresh() {
+    // Taken before the first await, so refreshStartedNow can read it as soon as refresh() returns.
+    const sequence = ++refreshes;
     const at = now();
     const diag = [];
     if (sqlite.backend === 'auto') {
@@ -400,9 +405,10 @@ export function createSwarmEngine(options = {}) {
           snapshot.revision = entry.revision;
           entry.snapshot = snapshot;
           entry.last = cheapLast.get(rootId);
+          entry.builtBy = sequence;
         } else {
           snapshot.revision = (entry?.revision ?? revisions.get(rootId) ?? 0) + 1;
-          snapshots.set(rootId, { snapshot, hash, revision: snapshot.revision, last: cheapLast.get(rootId) });
+          snapshots.set(rootId, { snapshot, hash, revision: snapshot.revision, last: cheapLast.get(rootId), builtBy: sequence });
           revisions.set(rootId, snapshot.revision);
           changed.push(rootId);
         }
@@ -452,7 +458,10 @@ export function createSwarmEngine(options = {}) {
     return running;
   }
 
-  /** Resolves once a refresh that started after this call has finished. refresh() alone can return one that started earlier. */
+  /**
+   * Resolves once a refresh that started after this call has finished, with that refresh's number (see `refreshes`).
+   * refresh() alone can return one that started earlier.
+   */
   async function refreshStartedNow() {
     if (running) {
       try {
@@ -461,7 +470,11 @@ export function createSwarmEngine(options = {}) {
         // that refresh's failure belongs to its own caller; the refresh below reports its own
       }
     }
-    await refresh();
+    const pending = refresh();
+    // The refresh just started or joined is the latest to start: no other starts while one runs.
+    const sequence = refreshes;
+    await pending;
+    return sequence;
   }
 
   function track(id) {
@@ -535,10 +548,14 @@ export function createSwarmEngine(options = {}) {
     // refresh that starts now. That refresh also stores the summary of a finished run (persistFinished): summaries are written
     // only inside the serialized refresh, never here, so a request cannot overwrite a newer summary.
     track(runId);
-    await refreshStartedNow();
-    const snapshot = snapshots.get(runId)?.snapshot ?? null;
+    const sequence = await refreshStartedNow();
+    const entry = snapshots.get(runId);
+    const snapshot = entry?.snapshot ?? null;
     const stamp = listedStamp(runId);
     if (!snapshot) return stored;
+    // A snapshot that refresh did not build (its build failed, and the older entry was kept) is as old as the stored summary,
+    // so it proves nothing about the listing: the stored summary is returned unchecked, and a later request tries again.
+    if (entry.builtBy !== sequence) return stored ?? summarizeRun(snapshot, { computedAt: now() });
     if (snapshot.run.lifecycle === 'live') return summarizeRun(snapshot, { computedAt: now() });
     const fresh = summarizeRun(snapshot, { computedAt: 0 });
     const persisted = await history.get(runId);

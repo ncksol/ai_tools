@@ -651,6 +651,48 @@ test('a checked summary is remembered, so an unchanged run is not rebuilt again 
   engine.stop();
 });
 
+test('a summary is not marked checked by a rebuild that failed, so a later request still rebuilds it', async () => {
+  const home = scenario();
+  // ws-old's child gets a PR, so each build of ws-old asks the PR lookup about it; the lookup fails while `fault` is set.
+  execSql(home.dataDb, "UPDATE workspaces SET created_pr_repo_full_name = 'sample/repo', created_pr_number = 78, created_pr_state = 'open' WHERE id = 'ws-old-child'");
+  for (const n of [1, 2, 3]) {
+    home.workspace({ id: `ws-x${n}`, name: `Extra ${n}`, createdAt: T0 - 20 * DAY + n * MINUTE, sessionId: `cli-x${n}` });
+    home.workspace({ id: `ws-x${n}-child`, name: `Extra ${n} child`, createdAt: T0 - 20 * DAY + (n + 5) * MINUTE, sessionId: `cli-x${n}-child`, parentId: `ws-x${n}`, creatorSessionId: `cli-x${n}` });
+  }
+  home.usage([{ sessionId: 'cli-old', nanoAiu: 1e9, createdAt: OLD_LAST - 30_000 }]);
+  let fault = false;
+  const lookup = {
+    request(pr) {
+      if (fault && pr.id === 78) throw new Error('a lookup failure');
+    },
+    get: () => null,
+    errors: () => [],
+  };
+  const historyDir = path.join(tempDir('swarm-engine-'), 'history');
+  const stored = path.join(historyDir, 'runs', 'ws-old.json');
+  const engine = createSwarmEngine({ copilotHome: home.root, historyDir, now: () => at(0), processProbe: alwaysAlive, prLookup: lookup });
+  assert.equal((await engine.getRunSummary('ws-old')).credits, 1);
+  assert.equal(readSummary(stored).credits, 1, 'the run is stored, and its snapshot cached, at 1 credit');
+
+  // Cost for the time the run covers arrives later, and every rebuild of the run fails from now on.
+  home.usage([{ sessionId: 'cli-old', nanoAiu: 2e9, createdAt: OLD_LAST - 10_000 }]);
+  fault = true;
+  await engine.refresh();
+  assert.ok(engine.diagnostics().some(item => item.source === 'snapshot' && item.message === 'ws-old: a lookup failure'));
+  assert.deepEqual(await oldItem(engine), [OLD_LAST, 3, false]);
+  assert.equal((await engine.getRunSummary('ws-old')).credits, 1, 'the stored summary is returned while the run cannot be rebuilt');
+  assert.deepEqual(await oldItem(engine), [OLD_LAST, 3, false], 'the kept older snapshot does not mark the stored summary as checked');
+
+  // Three other requested runs push ws-old out of tracking, so its snapshot leaves the cache; then the fault goes away.
+  for (const n of [1, 2, 3]) assert.ok(await engine.getSnapshot(`ws-x${n}`));
+  fault = false;
+  const summary = await engine.getRunSummary('ws-old');
+  assert.equal(summary.credits, 3, 'the next request rebuilds the run');
+  assert.equal(readSummary(stored).credits, 3);
+  assert.deepEqual(await oldItem(engine), [OLD_LAST, 3, true]);
+  engine.stop();
+});
+
 /** A root session that has been quiet for 181 minutes. With background = true it launched a sub-agent that never reported. */
 function quietHome({ background }) {
   const home = new CopilotHome();
