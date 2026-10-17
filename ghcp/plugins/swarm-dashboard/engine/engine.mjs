@@ -354,17 +354,17 @@ export function createSwarmEngine(options = {}) {
   }
 
   /**
-   * Stores the summary of a finished run's snapshot. `complete` (see buildTracked) says whether this refresh read every source
-   * the snapshot uses: the summary is stored either way, as the best one known, but only a complete snapshot marks it checked
-   * for the listing, so a summary built from older inputs is rebuilt once its sources can be read again.
+   * Stores the summary of a finished run's snapshot and marks it checked for the listing. Only a `complete` snapshot (see
+   * buildTracked) does either: one built while a source could not be read holds older or missing inputs, so the stored
+   * summary, the last good one, stays as it is, unchecked, and the stale check rebuilds the run once its sources can be read.
    */
   async function persistFinished(snapshot, diag, complete) {
-    if (!persist) return;
+    if (!persist || !complete) return;
     try {
       const stamp = listedStamp(snapshot.run.id);
       const key = await writeSummary(snapshot);
       // The snapshot was built after this refresh listed the run, so the stored summary is current for that listing.
-      if (stamp && complete) verified.set(snapshot.run.id, { ...stamp, digest: key });
+      if (stamp) verified.set(snapshot.run.id, { ...stamp, digest: key });
     } catch (error) {
       diag.push({ level: 'warn', source: 'history', message: error.message });
     }

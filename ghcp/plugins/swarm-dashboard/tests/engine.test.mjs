@@ -748,6 +748,106 @@ test('a summary is not marked checked by a refresh that could not read its event
   engine.stop();
 });
 
+/**
+ * Makes `file` unreadable for this user (mode 000). Returns a function that restores its mode and times, or null, with the
+ * mode already restored, when the user can still read it (root, or a file system without modes).
+ */
+function makeUnreadable(file) {
+  const { mode, atime, mtime } = statSync(file);
+  const restore = () => {
+    chmodSync(file, mode);
+    utimesSync(file, atime, mtime);
+  };
+  chmodSync(file, 0o000);
+  try {
+    readFileSync(file);
+  } catch {
+    return restore;
+  }
+  restore();
+  return null;
+}
+
+test('a new engine that cannot read a run\'s events leaves its stored summary as it is, and stores the current one once it can', async t => {
+  const { home, stored, reopen } = await storedOldRun();
+  const finishedAt = OLD_LAST + 19 * MINUTE;
+  const later = new EventLog(OLD_LAST + 10 * MINUTE);
+  later.turnStart(); later.at(finishedAt); later.turnEnd();
+  const file = home.writeEvents('cli-old', later.events, { append: true });
+  const before = stat(stored);
+  const restore = makeUnreadable(file);
+  if (!restore) {
+    t.skip('this user can read a file with no permissions (root, or a file system without modes)');
+    return;
+  }
+  const engine = reopen();
+  try {
+    assert.equal((await engine.getRunSummary('ws-old')).finishedAt, OLD_LAST, 'the stored summary is returned while the events cannot be read');
+    await engine.refresh();
+    assert.ok(engine.diagnostics().some(item => item.source === 'events' && item.message.includes('EACCES')), 'the failed read is reported');
+    assert.deepEqual(stat(stored), before, 'the stored summary is not replaced by one built without the run\'s events');
+  } finally {
+    restore();
+  }
+  await engine.refresh();
+  assert.deepEqual([readSummary(stored).finishedAt, readSummary(stored).credits], [finishedAt, 1], 'the next complete refresh stores the current summary');
+  assert.deepEqual(await oldItem(engine), [finishedAt, 1, true]);
+  engine.stop();
+});
+
+for (const source of ['data.db', 'session-store.db']) {
+  test(`a refresh whose ${source} read fails neither stores nor marks checked a finished run's summary`, async t => {
+    const { home, stored, reopen } = await storedOldRun();
+    for (const n of [1, 2, 3]) {
+      home.workspace({ id: `ws-x${n}`, name: `Extra ${n}`, createdAt: T0 - 20 * DAY + n * MINUTE, sessionId: `cli-x${n}` });
+      home.workspace({ id: `ws-x${n}-child`, name: `Extra ${n} child`, createdAt: T0 - 20 * DAY + (n + 5) * MINUTE, sessionId: `cli-x${n}-child`, parentId: `ws-x${n}`, creatorSessionId: `cli-x${n}` });
+    }
+    const engine = reopen();
+    // The run is tracked, and a complete refresh has checked its stored summary.
+    assert.ok(await engine.getSnapshot('ws-old'));
+    assert.deepEqual(await oldItem(engine), [OLD_LAST, 1, true]);
+
+    // The run works again and finishes later, and the database is replaced by an unreadable copy (a new inode, so no
+    // connection held for the old file is reused).
+    const finishedAt = OLD_LAST + 19 * MINUTE;
+    const later = new EventLog(OLD_LAST + 10 * MINUTE);
+    later.turnStart(); later.at(finishedAt); later.turnEnd();
+    home.writeEvents('cli-old', later.events, { append: true });
+    const db = source === 'data.db' ? home.dataDb : home.storeDb;
+    const saved = `${db}.saved`;
+    renameSync(db, saved);
+    copyFileSync(saved, db);
+    const restore = makeUnreadable(db);
+    if (!restore) {
+      renameSync(saved, db);
+      engine.stop();
+      t.skip('this user can read a file with no permissions (root, or a file system without modes)');
+      return;
+    }
+    const before = stat(stored);
+    try {
+      await engine.refresh();
+      assert.ok(engine.diagnostics().some(item => item.source === source && item.level === 'warn'), `the failed ${source} read is reported`);
+      assert.deepEqual(stat(stored), before, 'the stored summary is not rewritten');
+
+      // Three other requested runs push ws-old out of tracking, so its snapshot leaves the cache, and the next poll lists it
+      // from its files. Only a stamp could then keep the older stored summary listed as summarised.
+      for (const n of [1, 2, 3]) assert.ok(await engine.getSnapshot(`ws-x${n}`));
+      await engine.refresh();
+      assert.deepEqual(stat(stored), before);
+      assert.deepEqual(await oldItem(engine), [finishedAt, 1, false], 'no stamp was recorded');
+    } finally {
+      restore();
+      renameSync(saved, db);
+    }
+    // The stale check rebuilds the run, now from sources that all read, and stores the current summary.
+    assert.equal((await engine.getRunSummary('ws-old')).finishedAt, finishedAt);
+    assert.deepEqual([readSummary(stored).finishedAt, readSummary(stored).credits], [finishedAt, 1]);
+    assert.deepEqual(await oldItem(engine), [finishedAt, 1, true]);
+    engine.stop();
+  });
+}
+
 /** A root session that has been quiet for 181 minutes. With background = true it launched a sub-agent that never reported. */
 function quietHome({ background }) {
   const home = new CopilotHome();
