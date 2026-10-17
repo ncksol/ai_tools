@@ -203,15 +203,20 @@ const installExtension = dir => folder(path.join(dir, 'azure-devops', 'azure_dev
 
 /**
  * A synthetic Azure environment in a temp folder: its own config folder, home and an empty PATH folder, so the extension check
- * never reaches the real ~/.azure or a real az. `extra` adds to or replaces variables.
+ * never reaches the real ~/.azure or a real az. AZURE_EXTENSION_SYS_DIR names an empty folder, so the system folder is known
+ * and holds nothing; set it to undefined to have the check derive it from the az launcher on PATH. `extra` adds to or
+ * replaces variables.
  */
 function azureEnv(extra = {}) {
   const dir = tempDir('swarm-azure-');
   const env = {
-    HOME: folder(path.join(dir, 'home')), AZURE_CONFIG_DIR: folder(path.join(dir, 'config')), PATH: folder(path.join(dir, 'empty-bin')), ...extra,
+    HOME: folder(path.join(dir, 'home')), AZURE_CONFIG_DIR: folder(path.join(dir, 'config')), PATH: folder(path.join(dir, 'empty-bin')),
+    AZURE_EXTENSION_SYS_DIR: folder(path.join(dir, 'system-extensions')), ...extra,
   };
   return { dir, env };
 }
+const DERIVED = { AZURE_EXTENSION_SYS_DIR: undefined };
+const posixOnly = { skip: process.platform === 'win32' || process.getuid?.() === 0 ? 'POSIX file modes, not as root' : false };
 
 /** The number of times one ADO lookup with this base environment starts az, with the default extension check. */
 async function azRuns(env) {
@@ -295,17 +300,20 @@ test('the user extension folder comes from AZURE_EXTENSION_DIR, else the config 
   assert.equal(await azRuns(env), 1, '~ in the config file');
 });
 
-test('the system extension folder is found next to the Python that the az launcher on PATH runs', async () => {
+test('the system extension folder is found next to the Python that the az launcher on PATH runs', posixOnly, async () => {
   for (const python of ['bin/python', 'bin/python3']) {
-    const { dir, env } = azureEnv();
-    // az on PATH is a link to the launcher script, as Homebrew installs it; the Linux packages' launcher names python3.
+    const { dir, env } = azureEnv(DERIVED);
+    // az on PATH is a link to the launcher script, as Homebrew installs it; the launcher's Python is in a venv (pyvenv.cfg).
     const prefix = path.join(dir, 'cellar', 'azure-cli', 'libexec');
+    folder(prefix, { 'pyvenv.cfg': 'home = /synthetic\n' });
+    folder(path.join(prefix, 'bin'), { [path.basename(python)]: '' });
     const launcher = path.join(folder(path.join(dir, 'cellar', 'azure-cli', 'bin')), 'az');
     writeFileSync(launcher, `#!/usr/bin/env bash\nAZ_INSTALLER=HOMEBREW ${path.join(prefix, python)} -Im azure.cli "$@"\n`);
     chmodSync(launcher, 0o755);
     const bin = folder(path.join(dir, 'bin'));
     symlinkSync(launcher, path.join(bin, 'az'));
-    const withAz = { ...env, PATH: [env.PATH, bin].join(path.delimiter) };
+    // /usr/bin and /bin come after the synthetic az, so that bash resolves.
+    const withAz = { ...env, PATH: [env.PATH, bin, '/usr/bin', '/bin'].join(':') };
     assert.equal(await azRuns(withAz), 0, `${python}: nothing installed yet`);
     installExtension(path.join(prefix, 'lib', 'python3.12', 'site-packages', 'azure-cli-extensions'));
     assert.equal(await azRuns(withAz), 1, `${python}: the system folder counts`);
@@ -327,25 +335,28 @@ test('an azure-devops folder without a *.*-info entry is not an installed extens
 });
 
 /**
- * A synthetic az launcher in `dir` naming `<prefix>/bin/<python>`, as Homebrew's does; `mode` is its file mode. With `version`,
- * <prefix>/bin/<python> is a link to a real python3.N file, so that its real name gives the version.
+ * A synthetic az launcher in `dir` naming `<prefix>/bin/<python>`, as Homebrew's does; `mode` is its file mode. <prefix> is a
+ * venv (pyvenv.cfg). With `version`, <prefix>/bin/<python> is a link to a real python3.N file, so that its real name gives
+ * the version; else it is a plain file.
  */
 function launcherAt(dir, prefix, { mode = 0o755, python = 'python', version = null } = {}) {
   folder(dir);
   const launcher = path.join(dir, 'az');
   writeFileSync(launcher, `#!/bin/sh\nAZ_INSTALLER=HOMEBREW ${path.join(prefix, 'bin', python)} -Im azure.cli "$@"\n`);
   chmodSync(launcher, mode);
+  folder(prefix, { 'pyvenv.cfg': 'home = /synthetic\n' });
   if (version) {
     folder(path.join(prefix, 'bin'), { [version]: '' });
     symlinkSync(version, path.join(prefix, 'bin', python));
+  } else {
+    folder(path.join(prefix, 'bin'), { [python]: '' });
   }
   return launcher;
 }
 const systemFolder = (prefix, version = 'python3.12') => path.join(prefix, 'lib', version, 'site-packages', 'azure-cli-extensions');
-const posixOnly = { skip: process.platform === 'win32' || process.getuid?.() === 0 ? 'POSIX file modes, not as root' : false };
 
 test('the system folder is the one beside the az launcher that would run: an earlier non-executable az is skipped', posixOnly, async () => {
-  const { dir, env } = azureEnv();
+  const { dir, env } = azureEnv(DERIVED);
   const withExtension = path.join(dir, 'a');
   const without = path.join(dir, 'b');
   launcherAt(path.join(dir, 'bin-a'), withExtension, { mode: 0o644 });
@@ -359,7 +370,7 @@ test('the system folder is the one beside the az launcher that would run: an ear
 });
 
 test('relative and empty PATH entries are taken from the child\'s folder, not the engine\'s', posixOnly, async () => {
-  const { dir, env } = azureEnv();
+  const { dir, env } = azureEnv(DERIVED);
   const prefix = path.join(dir, 'prefix');
   installExtension(systemFolder(prefix));
   const worktree = folder(path.join(dir, 'worktree'));
@@ -367,13 +378,13 @@ test('relative and empty PATH entries are taken from the child\'s folder, not th
   assert.equal(outcome(await adoLookup({ ...env, PATH: 'rel-bin' }, { cwd: worktree })), 'installed', 'a relative entry');
   launcherAt(worktree, prefix);
   assert.equal(outcome(await adoLookup({ ...env, PATH: `${env.PATH}:` }, { cwd: worktree })), 'installed', 'an empty entry');
-  // From another folder neither entry finds a launcher.
+  // From another folder neither entry finds a launcher, so the system folder is not known.
   const elsewhere = folder(path.join(dir, 'elsewhere'));
-  assert.equal(outcome(await adoLookup({ ...env, PATH: `rel-bin:${env.PATH}:` }, { cwd: elsewhere })), 'missing');
+  assert.equal(outcome(await adoLookup({ ...env, PATH: `rel-bin:${env.PATH}:` }, { cwd: elsewhere })), 'undetermined');
 });
 
 test('only the Python version that the launcher runs is checked, and a launcher naming two Pythons gives no system folder', posixOnly, async () => {
-  const { dir, env } = azureEnv();
+  const { dir, env } = azureEnv(DERIVED);
   const prefix = path.join(dir, 'prefix');
   launcherAt(path.join(dir, 'bin'), prefix, { version: 'python3.12' });
   folder(systemFolder(prefix, 'python3.12'));
@@ -389,7 +400,7 @@ test('only the Python version that the launcher runs is checked, and a launcher 
   const two = path.join(folder(path.join(dir, 'bin-two')), 'az');
   writeFileSync(two, `#!/bin/sh\nif true; then ${path.join(prefix, 'bin', 'python')} -Im azure.cli "$@"; else ${path.join(other, 'bin', 'python')} -Im azure.cli "$@"; fi\n`);
   chmodSync(two, 0o755);
-  assert.equal(outcome(await adoLookup({ ...env, PATH: path.join(dir, 'bin-two') })), 'missing');
+  assert.equal(outcome(await adoLookup({ ...env, PATH: path.join(dir, 'bin-two') })), 'undetermined');
 });
 
 test('the launcher the check picks is the one a spawned child runs, for each PATH shape', posixOnly, async () => {
@@ -416,6 +427,98 @@ test('the launcher the check picks is the one a spawned child runs, for each PAT
     const picked = await prLookupModule.findAzLauncher({ env, cwd });
     assert.equal(readFileSync(picked, 'utf8'), `#!/bin/sh\necho ${ran}\n`, `${shape}: the check picks the same file`);
   }
+});
+
+/**
+ * A synthetic Homebrew-shaped az in `dir`: <dir>/cellar/libexec is a venv (pyvenv.cfg; bin/python linked to bin/python3.12;
+ * lib/python3.12/site-packages), and <dir>/bin/az is its launcher. `text(python)` replaces the launcher's text. PATH has the
+ * launcher first, then /usr/bin and /bin so that bash resolves.
+ */
+function homebrewAz(dir, { text = null } = {}) {
+  const prefix = path.join(dir, 'cellar', 'libexec');
+  folder(path.join(prefix, 'bin'), { 'python3.12': '' });
+  symlinkSync('python3.12', path.join(prefix, 'bin', 'python'));
+  folder(prefix, { 'pyvenv.cfg': 'home = /synthetic\n' });
+  folder(path.join(prefix, 'lib', 'python3.12', 'site-packages'));
+  const python = path.join(prefix, 'bin', 'python');
+  const bin = folder(path.join(dir, 'bin'));
+  writeFileSync(path.join(bin, 'az'), text ? text(python) : `#!/usr/bin/env bash\nAZ_INSTALLER=HOMEBREW ${python} -Im azure.cli "$@"\n`);
+  chmodSync(path.join(bin, 'az'), 0o755);
+  return { prefix, bin, system: systemFolder(prefix), PATH: `${bin}:/usr/bin:/bin` };
+}
+
+/** The outcome with a Homebrew-shaped az whose derived system folder has the extension, the user folder with or without it. */
+async function derivedOutcome({ text = null, change = () => {}, extra = {}, userHas = false } = {}) {
+  const { dir, env } = azureEnv(DERIVED);
+  const az = homebrewAz(dir, { text });
+  installExtension(az.system);
+  change(az);
+  if (userHas) installExtension(path.join(env.AZURE_CONFIG_DIR, 'cliextensions'));
+  return outcome(await adoLookup({ ...env, PATH: az.PATH, ...extra }));
+}
+
+test('the system folder is derived only from a launcher of the exact Homebrew form; any other gives an unknown system folder', posixOnly, async () => {
+  // Positive controls: the derived folder decides when the user folder lacks the extension.
+  assert.equal(await derivedOutcome(), 'installed', 'Homebrew form, extension in the derived folder');
+  assert.equal(await derivedOutcome({ change: az => rmSync(path.join(az.system, 'azure-devops'), { recursive: true }) }), 'missing',
+    'Homebrew form, derived folder without the extension');
+  const line = python => `AZ_INSTALLER=HOMEBREW ${python} -Im azure.cli "$@"`;
+  const shapes = [
+    ['-sm instead of -Im', { text: python => `#!/usr/bin/env bash\nAZ_INSTALLER=HOMEBREW ${python} -sm azure.cli "$@"\n` }],
+    ['two active lines', { text: python => `#!/usr/bin/env bash\nexport SYNTHETIC=1\n${line(python)}\n` }],
+    ['__PYVENV_LAUNCHER__ in the environment', { extra: { __PYVENV_LAUNCHER__: '/synthetic/python' } }],
+    ['no pyvenv.cfg', { change: az => rmSync(path.join(az.prefix, 'pyvenv.cfg')) }],
+    ['pyvenv.cfg also in bin', { change: az => writeFileSync(path.join(az.prefix, 'bin', 'pyvenv.cfg'), 'home = /synthetic\n') }],
+    ['CRLF line ends', { text: python => `#!/usr/bin/env bash\r\n${line(python)}\r\n` }],
+    ['bash not on PATH', { change: az => { az.PATH = az.bin; } }],
+    ['a shebang that is not one of the four', { text: python => `#!/bin/zsh\n${line(python)}\n` }],
+    ['a python named otherwise', { text: python => `#!/usr/bin/env bash\nAZ_INSTALLER=HOMEBREW ${python}3.12-debug -Im azure.cli "$@"\n` }],
+  ];
+  for (const [shape, options] of shapes) {
+    assert.equal(await derivedOutcome({ ...options, userHas: false }), 'undetermined', `${shape}: user folder without the extension`);
+    assert.equal(await derivedOutcome({ ...options, userHas: true }), 'installed', `${shape}: user folder with it`);
+  }
+});
+
+test('a wrapper with a commented-out python command is not the Homebrew form', posixOnly, async () => {
+  const { dir, env } = azureEnv(DERIVED);
+  const az = homebrewAz(dir, {
+    text: python => `#!/bin/sh\n# AZ_INSTALLER=HOMEBREW ${python} -Im azure.cli "$@"\nPY=/synthetic/other/bin/python\n"$PY" -Im azure.cli "$@"\n`,
+  });
+  installExtension(az.system);
+  assert.equal(outcome(await adoLookup({ ...env, PATH: az.PATH })), 'undetermined');
+});
+
+test('the first executable az decides the system folder, and one whose interpreter cannot start gives none, not the next one\'s', posixOnly, async () => {
+  for (const firstHas of [true, false]) {
+    const { dir, env } = azureEnv(DERIVED);
+    // The first az names a venv but its interpreter does not exist; the second is a valid Homebrew launcher.
+    const first = homebrewAz(path.join(dir, 'first'), { text: python => `#!/synthetic-missing/sh\nAZ_INSTALLER=HOMEBREW ${python} -Im azure.cli "$@"\n` });
+    const second = homebrewAz(path.join(dir, 'second'));
+    if (firstHas) installExtension(first.system);
+    else installExtension(second.system);
+    const PATH = `${first.bin}:${second.bin}:/usr/bin:/bin`;
+    assert.equal(outcome(await adoLookup({ ...env, PATH })), 'undetermined', `extension beside the ${firstHas ? 'first' : 'second'} az`);
+  }
+  // Why: a spawned child skips a first az whose interpreter is missing and runs the next one.
+  const { dir } = azureEnv();
+  const script = (where, firstLine, name) => {
+    folder(where);
+    writeFileSync(path.join(where, 'az'), `${firstLine}\necho ${name}\n`);
+    chmodSync(path.join(where, 'az'), 0o755);
+  };
+  script(path.join(dir, 'one'), '#!/synthetic-missing/sh', 'one');
+  script(path.join(dir, 'two'), '#!/bin/sh', 'two');
+  const env = { PATH: `${path.join(dir, 'one')}:${path.join(dir, 'two')}` };
+  assert.equal((await runCommand('az', [], { timeoutMs: 20_000, env })).trim(), 'two');
+  assert.equal(await prLookupModule.findAzLauncher({ env }), path.join(dir, 'one', 'az'), 'the check still selects the first, and derives nothing from it');
+});
+
+test('with no system folder known and no extension in the user folder, the check cannot tell', async () => {
+  const { env } = azureEnv(DERIVED);
+  assert.equal(outcome(await adoLookup(env)), 'undetermined', 'no az on PATH');
+  installExtension(path.join(env.AZURE_CONFIG_DIR, 'cliextensions'));
+  assert.equal(outcome(await adoLookup(env)), 'installed', 'the user folder alone can say installed');
 });
 
 const UNDETERMINED = 'lookup unavailable: could not tell whether the azure-devops extension is installed';

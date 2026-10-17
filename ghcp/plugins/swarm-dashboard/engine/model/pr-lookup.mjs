@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { constants, existsSync } from 'node:fs';
-import { access, readFile, readdir, realpath, stat } from 'node:fs/promises';
+import { access, open, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { userInfo } from 'node:os';
 import { MINUTE, parseTime } from '../time.mjs';
 
@@ -189,62 +189,124 @@ function extensionSetting(env, config, option) {
   return value ? pyExpandUser(value, env) : null;
 }
 
+/** Whether `file` is a regular file (after links) that this user may execute. */
+async function isExecutableFile(file) {
+  if (!(await statOf(file))?.isFile()) return false;
+  try {
+    await access(file, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * The az program that a child spawned with `env` from `cwd` would run, or null, by libuv's search (what execFile does): PATH
- * from `env` (unset: /usr/bin:/bin), split on ':'; an empty entry is the child's folder and a relative one is taken from it;
- * the first <entry>/az that is a regular file (after links) and executable. Others are skipped. Null on Windows.
+ * The first `name` that a child spawned with `env` from `cwd` finds on PATH by libuv's search (what execFile does): PATH from
+ * `env` (unset: /usr/bin:/bin), split on ':'; an empty entry is the child's folder and a relative one is taken from it; the
+ * first <entry>/<name> that is a regular file (after links) and executable.
  */
-export async function findAzLauncher({ env = process.env, cwd = null } = {}) {
-  if (process.platform === 'win32') return null;
+async function findOnPath(name, { env, cwd }) {
   const base = cwd ?? process.cwd();
   const search = env.PATH === undefined ? '/usr/bin:/bin' : String(env.PATH);
   for (const entry of search.split(':')) {
-    const candidate = pyJoin(base, pyJoin(entry, 'az'));
-    if (!(await statOf(candidate))?.isFile()) continue;
-    try {
-      await access(candidate, constants.X_OK);
-      return candidate;
-    } catch {
-      // not executable: the search goes on
-    }
+    const candidate = pyJoin(base, pyJoin(entry, name));
+    if (await isExecutableFile(candidate)) return candidate;
   }
   return null;
 }
 
-/** The Python a launcher's text names in the known launcher shape (`<absolute python> <flags> azure.cli`), when it names one. */
-const LAUNCHER_PYTHON = /(\/[^\s"']*\/python[\d.]*)["']?(?:\s+-\w+)+\s+azure\.cli\b/g;
+/**
+ * The first az that a child spawned with `env` from `cwd` would try, or null (see findOnPath). The child runs it unless its
+ * interpreter cannot start: execve then fails and the search goes on to the next candidate, so the system folder is derived
+ * from this candidate only when its interpreter is known to start (see defaultSystemFolder), and never from a later one.
+ * Null on Windows.
+ */
+export async function findAzLauncher({ env = process.env, cwd = null } = {}) {
+  if (process.platform === 'win32') return null;
+  return findOnPath('az', { env, cwd });
+}
+
+/** Whether `file` starts with `#!` (an unreadable file counts as one, which is the safe answer). */
+async function startsWithShebang(file) {
+  let handle;
+  try {
+    handle = await open(file, 'r');
+    const { bytesRead, buffer } = await handle.read(Buffer.alloc(2), 0, 2, 0);
+    return bytesRead === 2 && buffer.toString('latin1') === '#!';
+  } catch {
+    return true;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
+/** The first lines of the launchers the check reads: Homebrew's and the plain shells. */
+const LAUNCHER_SHEBANGS = new Set(['#!/usr/bin/env bash', '#!/bin/bash', '#!/usr/bin/bash', '#!/bin/sh']);
+/** Homebrew's launcher command: an optional AZ_INSTALLER=..., an optional exec, an absolute python, -Im azure.cli "$@". */
+const LAUNCHER_LINE = /^(?:AZ_INSTALLER=[A-Za-z0-9_]+[ \t]+)?(?:exec[ \t]+)?(\/[A-Za-z0-9._/+-]+)[ \t]+-Im[ \t]+azure\.cli[ \t]+"\$@"[ \t]*$/;
 
 /**
- * az's system extension folder when no setting names one: azure-cli-extensions in the purelib of the Python that az runs, or
- * null. Only the launcher that would run (see findAzLauncher), followed to its real file, is read. It must be a script that
- * names exactly one Python in the launcher shape of Homebrew and the Linux packages; the folder is then
- * <dirname(dirname(python))>/lib/<version>/site-packages/azure-cli-extensions, where the version is the Python's real file
- * name when that is python3.N, else the only python3.N folder in that lib. Null when any step fails.
+ * Whether the interpreter of a launcher whose first line is `shebang` (one of LAUNCHER_SHEBANGS) can start: an executable
+ * regular file that is not itself a script. For `/usr/bin/env bash`, /usr/bin/env must be executable and the first bash found
+ * on the same PATH must be such a file.
+ */
+async function interpreterStarts(shebang, { env, cwd }) {
+  let interpreter = shebang.slice(2);
+  if (interpreter === '/usr/bin/env bash') {
+    if (!(await isExecutableFile('/usr/bin/env'))) return false;
+    interpreter = await findOnPath('bash', { env, cwd });
+    if (!interpreter) return false;
+  }
+  return (await isExecutableFile(interpreter)) && !(await startsWithShebang(interpreter));
+}
+
+/**
+ * az's system extension folder when no setting names one, derived only from a launcher of the exact Homebrew form, or null
+ * (unknown). All of these must hold, else it is unknown:
+ * - the first executable az on PATH (see findAzLauncher), followed to its real file, has no \r; its first line is one of
+ *   LAUNCHER_SHEBANGS and that interpreter starts (see interpreterStarts);
+ * - after the first line, without blank lines and lines whose first non-blank character is #, exactly one line remains, and it
+ *   fully matches LAUNCHER_LINE;
+ * - the python's name is python, python3 or python3.N, and its real path resolves;
+ * - <dirname(dirname(python))>/pyvenv.cfg exists (a venv, whose purelib is in its own lib) and <dirname(python)>/pyvenv.cfg
+ *   does not; the prefix is the path as written, not the real path;
+ * - the version is the real python's name when that is python3.N, else the only python3.N folder in <prefix>/lib;
+ * - __PYVENV_LAUNCHER__ is not set in the child's environment.
+ * The folder is then <prefix>/lib/<version>/site-packages/azure-cli-extensions.
  */
 async function defaultSystemFolder({ env, cwd }) {
+  if (env.__PYVENV_LAUNCHER__ !== undefined) return null;
   const launcher = await findAzLauncher({ env, cwd });
   if (!launcher) return null;
   let text;
   try {
     const file = await realpath(launcher);
     if ((await statOf(file)).size > 64 * 1024) return null;
-    text = await readFile(file, 'utf8');
+    text = await readFile(file, 'latin1');
   } catch {
     return null;
   }
-  if (!text.startsWith('#!')) return null;
-  const pythons = new Set([...text.matchAll(LAUNCHER_PYTHON)].map(match => match[1]));
-  if (pythons.size !== 1) return null;
-  const [python] = pythons;
-  const lib = pyJoin(pyDirname(pyDirname(python)), 'lib');
-  const isVersion = name => /^python3\.\d+$/.test(name);
-  let version = null;
+  if (text.includes('\r')) return null;
+  const [shebang, ...rest] = text.split('\n');
+  if (!LAUNCHER_SHEBANGS.has(shebang) || !(await interpreterStarts(shebang, { env, cwd }))) return null;
+  const active = rest.filter(line => !/^[ \t]*$/.test(line) && !/^[ \t]*#/.test(line));
+  if (active.length !== 1) return null;
+  const match = LAUNCHER_LINE.exec(active[0]);
+  if (!match) return null;
+  const python = match[1];
+  if (!/^python(?:3(?:\.\d+)?)?$/.test(pyBasename(python))) return null;
+  let real;
   try {
-    const name = pyBasename(await realpath(python));
-    if (isVersion(name)) version = name;
+    real = await realpath(python);
   } catch {
-    // no real file: the lib folder decides
+    return null;
   }
+  const bin = pyDirname(python);
+  const prefix = pyDirname(bin);
+  if (!(await statOf(pyJoin(prefix, 'pyvenv.cfg'))) || (await statOf(pyJoin(bin, 'pyvenv.cfg')))) return null;
+  const isVersion = name => /^python3\.\d+$/.test(name);
+  const lib = pyJoin(prefix, 'lib');
+  let version = isVersion(pyBasename(real)) ? pyBasename(real) : null;
   if (!version) {
     try {
       const found = (await readdir(lib)).filter(isVersion);
@@ -285,19 +347,22 @@ async function hasExtension(dir) {
 }
 
 /**
- * Whether az, run with `env` from `cwd`, has the azure-devops extension installed, judged as az 2.71 does from the folders it
- * reads: the user extension folder (AZURE_EXTENSION_DIR, else [extension] dir in the config file, else
- * <config folder>/cliextensions) and the system one (AZURE_EXTENSION_SYS_DIR, else [extension] sys_dir, else beside the Python
- * that the az launcher which would run names; see defaultSystemFolder). As az takes them: the config file is
- * <AZURE_CONFIG_DIR>/config when that variable is set (even empty, then
- * `config` in the child's folder), else ~/.azure/config, read as ConfigParser reads it (see readAzConfig); the default
- * extension folder's parent is AZURE_CONFIG_DIR when it is not empty, else ~/.azure; relative paths are taken from `cwd` (the
- * child's folder; null is this process's). Paths are built as Python builds them (see pyJoin) and passed to the file system
- * unchanged, so links and `..` resolve as they do for az; a folder path with a glob character is not modelled, and folders are
- * listed as az lists them (see hasExtension). Every setting az reads when it loads its extensions (dir, sys_dir, dev_sources) is
- * resolved before any folder is checked. Resolves true or false; throws when it cannot tell what az would do (a config file
- * az would fail to read or that the check does not model, dev_sources set, `~name`), so that a false "installed" is never given.
- * Read-only: it only stats, lists and reads these paths.
+ * Whether az, run with `env` from `cwd`, would list the azure-devops extension (WheelExtension.get_all in az 2.71), for setups
+ * the check can model exactly; anything else throws (could not tell), so that a false "installed" is never given. Whether the
+ * extension is compatible or loads is not checked: az then runs and fails, and the lookup reports that.
+ * - Folders: the user extension folder (AZURE_EXTENSION_DIR, else [extension] dir in the config file, else
+ *   <AZURE_CONFIG_DIR, or ~/.azure when that is empty or unset>/cliextensions) and the system one (AZURE_EXTENSION_SYS_DIR,
+ *   else [extension] sys_dir, else derived from a Homebrew-form launcher; see defaultSystemFolder).
+ * - The config file is <AZURE_CONFIG_DIR>/config when that variable is set (even empty, then `config` in the child's
+ *   folder), else ~/.azure/config; see readAzConfig for the files it refuses.
+ * - Every setting az reads when it loads its extensions (dir, sys_dir, dev_sources) is resolved, and every folder path
+ *   built, before any folder is checked. dev_sources set, `~name`, or a folder path with a glob character: could not tell.
+ * - Paths are built as Python builds them (see pyJoin; relative ones from `cwd`, the child's folder, null being this
+ *   process's) and passed to the file system unchanged, so links and `..` resolve as they do for az. Folders are listed as az
+ *   lists them (see hasExtension).
+ * Resolves true when the user folder, or a known system folder, holds the extension; false when the user folder does not and
+ * the system folder is known and does not; throws when the system folder is unknown and the user folder does not hold it.
+ * Read-only: it only stats, lists and reads files.
  */
 export async function azureExtensionInstalled({ env = process.env, cwd = null } = {}) {
   const base = cwd ?? process.cwd();
@@ -312,7 +377,9 @@ export async function azureExtensionInstalled({ env = process.env, cwd = null } 
   const systemDir = sysDir ? absolute(sysDir) : await defaultSystemFolder({ env, cwd: base });
   for (const dir of [userDir, systemDir]) if (dir !== null && GLOB_MAGIC.test(dir)) throw undetermined(`${dir} has a glob character`);
   if (await hasExtension(userDir)) return true;
-  return systemDir !== null && hasExtension(systemDir);
+  // Without a known system folder the extension could still be there: the check cannot tell.
+  if (systemDir === null) throw undetermined("az's system extension folder is not known");
+  return hasExtension(systemDir);
 }
 
 export function runCommand(command, args, { cwd, timeoutMs, env }) {
