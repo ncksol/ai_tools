@@ -49,3 +49,17 @@ test('shipped code avoids APIs newer than Node 18', () => {
   const newer = /\.toSorted\(|\.toReversed\(|\.toSpliced\(|Object\.groupBy|Map\.groupBy|Promise\.withResolvers|Array\.fromAsync|\.isSubsetOf\(|\.union\(|\.intersection\(/;
   for (const file of shipped) assert.doesNotMatch(readFileSync(file, 'utf8'), newer, name(file));
 });
+
+test('tests avoid node:test APIs newer than Node 18.0', () => {
+  const self = fileURLToPath(import.meta.url);
+  const testFiles = ['tests', path.join('tests', 'helpers')].flatMap(dir => {
+    const full = path.join(root, dir);
+    return readdirSync(full).filter(file => file.endsWith('.mjs')).map(file => path.join(full, file));
+  }).filter(file => file !== self);
+  assert.ok(testFiles.length > 0);
+  for (const file of testFiles) {
+    const text = readFileSync(file, 'utf8');
+    assert.doesNotMatch(text, /\bt\.(after|before)\(/, name(file));
+    assert.doesNotMatch(text, /import\s*\{[^}]*\bmock\b[^}]*\}\s*from\s*'node:test'/, name(file));
+  }
+});

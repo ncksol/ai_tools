@@ -132,20 +132,23 @@ test('pending is true from the request until its lookup resolves or fails', asyn
   assert.equal(lookup.pending(null), false);
 });
 
-test('az and gh run with logs, telemetry, installs, upgrades, surveys and prompts turned off, and the rest of the environment kept', async t => {
+test('az and gh run with logs, telemetry, installs, upgrades, surveys and prompts turned off, and the rest of the environment kept', async () => {
   process.env.SWARM_PR_LOOKUP_SENTINEL = 'kept';
-  t.after(() => { delete process.env.SWARM_PR_LOOKUP_SENTINEL; });
-  const calls = [];
-  const lookup = createPrLookup({ run: async (command, args, options) => { calls.push({ command, env: options.env }); return '{}'; } });
-  lookup.request({ provider: 'ado', id: 7, repo: 'org/project/repo' });
-  lookup.request({ provider: 'github', id: 3, repo: 'o/r' });
-  await lookup.settle();
-  const az = calls.find(call => call.command === 'az');
-  const gh = calls.find(call => call.command === 'gh');
-  assert.deepEqual(pick(az.env, Object.keys(AZ_OVERRIDES)), AZ_OVERRIDES);
-  assert.deepEqual(pick(gh.env, Object.keys(GH_OVERRIDES)), GH_OVERRIDES);
-  assert.equal(az.env.SWARM_PR_LOOKUP_SENTINEL, 'kept');
-  assert.equal(gh.env.SWARM_PR_LOOKUP_SENTINEL, 'kept');
+  try {
+    const calls = [];
+    const lookup = createPrLookup({ run: async (command, args, options) => { calls.push({ command, env: options.env }); return '{}'; } });
+    lookup.request({ provider: 'ado', id: 7, repo: 'org/project/repo' });
+    lookup.request({ provider: 'github', id: 3, repo: 'o/r' });
+    await lookup.settle();
+    const az = calls.find(call => call.command === 'az');
+    const gh = calls.find(call => call.command === 'gh');
+    assert.deepEqual(pick(az.env, Object.keys(AZ_OVERRIDES)), AZ_OVERRIDES);
+    assert.deepEqual(pick(gh.env, Object.keys(GH_OVERRIDES)), GH_OVERRIDES);
+    assert.equal(az.env.SWARM_PR_LOOKUP_SENTINEL, 'kept');
+    assert.equal(gh.env.SWARM_PR_LOOKUP_SENTINEL, 'kept');
+  } finally {
+    delete process.env.SWARM_PR_LOOKUP_SENTINEL;
+  }
 });
 
 test('runCommand hands its environment to the child process', async () => {
