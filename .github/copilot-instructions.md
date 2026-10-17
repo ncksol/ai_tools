@@ -37,7 +37,7 @@ Research skills:
 **Plugins:**
 
 - `adr-authoring` — evidence-led ADR authoring in Microsoft Learn-inspired style. Bundles the `adr-writer` agent, `adr-write` skill, template, style profile, review rubric, four original example pairs, structural validators, and fourteen evaluation briefs. Writes authorized ADR files and separately requested supporting notes, preserves accepted records, and never mutates PRs. Decision relevance and audience fit are hard review gates; structural tests do not establish semantic quality or runtime consistency.
-- `swarm-dashboard` — watch-only dashboard for agentic swarms, shown as a canvas in the Copilot app or in a browser. Bundles a read-only engine over Copilot's local data (`engine/`), a loopback server shared on port 7927 (`server/`), a no-build UI (`ui/`), the canvas extension (`com.github.copilot/extensions/swarm-dashboard/`), and a launcher, snapshot command and headless layout check (`scripts/`). No skills or agents and no npm dependencies; the layout check needs a local Chrome, Chromium or Edge, and its optional WebKit mode uses Playwright installed outside the repository.
+- `swarm-dashboard` — watch-only dashboard for agentic swarms, shown as a canvas in the Copilot app or in a browser. Bundles a read-only engine over Copilot's local data (`engine/`), a loopback server shared on port 7927 (`server/`), a no-build UI (`ui/`) with a regular view and a WebGL2 cockpit view, the canvas extension (`com.github.copilot/extensions/swarm-dashboard/`), and a launcher, snapshot command, headless layout check and dev-only GPU frame-time test (`scripts/`). No skills or agents and no npm dependencies; the layout check needs a local Chrome, Chromium or Edge, and its optional WebKit mode uses Playwright installed outside the repository.
 
 When adding a new skill, create `ghcp/skills/<kebab-name>/SKILL.md`. When adding a new agent, create `ghcp/agents/<kebab-name>.agent.md`. When adding a new plugin, see the plugin conventions below.
 
@@ -114,5 +114,5 @@ Agent files (`ghcp/agents/<name>.agent.md`) are simpler than skills:
 
 - Skills and agents have nothing to build, test, or lint. Validation = read the changed `SKILL.md` / `.agent.md` and any supporting files it links to, and confirm frontmatter parses, links resolve and the structure matches the conventions above.
 - Plugins **do** have tests. After touching anything under `ghcp/plugins/<name>/` or the root `.github/plugin/marketplace.json`, run `npm test && npm run validate` from that plugin's directory.
-- For `swarm-dashboard`, also run `npm run check:layout` from its directory after any change under `ui/`; every view must report 0 issues.
+- For `swarm-dashboard`, also run `npm run check:layout` from its directory after any change under `ui/`; every view and every cockpit state must report 0 issues.
 - Commits in this repo follow the user's global policy (no `Co-authored-by` trailers).

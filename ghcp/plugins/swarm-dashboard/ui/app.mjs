@@ -1,3 +1,4 @@
+import { cockpitAddressHtml, cockpitControlHtml } from './cockpit-link.mjs';
 import { ago, esc } from './format.mjs';
 import { historyHtml, runHtml } from './history.mjs';
 import { activityHtml, cardsHtml, detailHtml, headerHtml, needsHtml, railHtml } from './live.mjs';
@@ -172,7 +173,8 @@ export function renderApp(view) {
 function topHtml(view) {
   const current = view.page === 'run' ? 'history' : view.page;
   const pages = ['live', 'history'].map(page => `<button type="button" data-page="${page}" aria-pressed="${current === page}">${page === 'live' ? 'Live' : 'History'}</button>`).join('');
-  return `<div class="d-top"><div class="seg" role="group" aria-label="Dashboard">${pages}</div><div class="d-top-r">${pickerHtml(view)}${statusHtml(view)}</div></div>`;
+  return `<div class="d-top"><div class="seg" role="group" aria-label="Dashboard">${pages}</div><div class="d-top-r">${pickerHtml(view)}${statusHtml(view)}${cockpitControlHtml(view)}</div></div>`
+    + (view.page === 'live' ? cockpitAddressHtml(view.cockpitNote ?? null) : '');
 }
 
 function pickerHtml(view) {

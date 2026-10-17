@@ -11,6 +11,8 @@ const SECURITY = {
   'Cross-Origin-Resource-Policy': 'same-origin',
 };
 const TEXT = 'text/plain; charset=utf-8';
+/** Pages with their own address, and the asset each one serves. */
+const PAGES = new Map([['/', '/index.html'], ['/cockpit', '/ui/cockpit.html']]);
 
 /** A browser request that another website started: Sec-Fetch-Site says so, or it carries a foreign Origin. */
 function fromOtherSite(req, origins) {
@@ -70,7 +72,7 @@ export function createDashboardServer({ createEngine, host = '127.0.0.1', port =
       const summary = await hub.withEngine(engine => engine.getRunSummary(id));
       return summary ? json(res, summary) : reply(res, 404, TEXT, 'Not found');
     }
-    const asset = assets.get(path === '/' ? '/index.html' : path);
+    const asset = assets.get(PAGES.get(path) ?? path);
     if (asset) return reply(res, 200, asset.type, asset.body, { 'Cache-Control': 'no-store' });
     return reply(res, 404, TEXT, 'Not found');
   }

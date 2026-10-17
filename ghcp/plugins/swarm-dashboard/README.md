@@ -37,6 +37,18 @@ npm start
 
 `npm start -- --demo` serves a synthetic swarm with simulated activity instead of your data, `--demo stress` a crowded one, and `--still` stops the simulation. The launcher reuses a dashboard that already runs on the port, but never one with other data: to run the sample data beside your own dashboard, give it another port, for example `npm start -- --demo --port 7928`.
 
+## The cockpit
+
+The cockpit is a second, dark look at the same swarm: a seat at a mission control desk, looking through a curved window at a black hole, with the swarm on curved glass panels. It shows what the regular view shows, without new data or actions: the clock and run timer, what needs you, a tile per child session and per running sub-agent, the activity, the cost and the pull requests. Click a panel to see the details in the regular view.
+
+The cockpit is made for Chrome and Edge. In the app's canvas, Cockpit shows its address to open in one of them.
+
+Open it with **Cockpit** in the top bar of the Live page. It opens in its own browser window on the swarm you are watching, at `http://127.0.0.1:<port>/cockpit?swarm=<root session id>`.
+
+- Quality: **High** (the default) draws the black hole on every frame, at most 30 frames a second. **Balanced** draws it on every second frame, and on every frame while the pointer moves. The choice is kept in the browser. High keeps the GPU busy about a fifth of the time at 1440 × 900 and a quarter at 1920 × 1080 on an Apple M5 Pro, and may make a fanless laptop warm.
+- The cockpit stops drawing while its window is hidden, shows one still frame when the system asks to reduce motion, and lowers the black hole's resolution when frames run late.
+- It needs a window of at least 1100 × 800, about 1.3 times as wide as it is tall, and WebGL2. Without WebGL2 it shows the panels on a plain dark background.
+
 ## The port
 
 The dashboard uses `http://127.0.0.1:7927/` by default. One dashboard server runs on the machine, shared by every canvas and browser: the first canvas you open, or the launcher, starts it, and everything else reuses it. If the session that hosts it ends, another open canvas takes the port over within a few seconds and the pages reconnect by themselves. A server started by a canvas stops a few minutes after the last canvas closes and no page is connected; the launcher runs until you press Ctrl+C. Before reusing a server on the port, the launcher and the canvas ask it who it is, and accept only a direct answer from that port: a server that redirects the question counts as another program.
@@ -66,6 +78,8 @@ Run these from the plugin folder.
 | `npm test` | Run the unit tests |
 | `npm run validate` | Check the plugin's manifests, files and marketplace entry |
 | `npm run check:layout` | Check every view for overlap, clipped text, type, spacing and contrast at every width, and that live updates leave the page steady, and that History refreshes in place when a run finishes or the page reconnects, in a local headless Chrome, Chromium or Edge (set `CHROME_PATH` to choose one); `-- --live <url>` checks a running dashboard, and `-- --engine webkit` runs the same checks in WebKit (see below) |
+| `node scripts/check-cockpit.mjs` | Run only the cockpit's checks: the scene, the panels' arrangement, type, spacing and contrast, motion, the links between the windows and the regular view's speed, in a local headless Chrome, Chromium or Edge (set `CHROME_PATH` to choose one) (`--engine webkit`, `--only <check>`, `--screenshots <dir>`); `npm run check:layout` runs them too |
+| `node scripts/cockpit-gpu.mjs` | Measure the cockpit's GPU time per frame on this machine for High and Balanced (`--engine webkit`) |
 
 ### Check the layout in WebKit (optional)
 

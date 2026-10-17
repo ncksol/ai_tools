@@ -1,4 +1,5 @@
 import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, historyReloadWanted, isNarrow, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, retryBudget, staleChoice, staleShown, startShown, startSwarm } from './app.mjs';
+import { copyAddress, openCockpit, showRequest } from './cockpit-link.mjs';
 import { tickText } from './format.mjs';
 import { morph } from './morph.mjs';
 import { nextCardChange, runEnd, unitEnd } from './model.mjs';
@@ -64,6 +65,8 @@ const view = {
   connection: 'connecting',
   demo: false,
   fresh: emptyFresh(),
+  host: document.documentElement.dataset.host,
+  cockpitNote: null,
 };
 if (view.page === 'run' && !view.runId) view.page = 'history';
 // The self-reload carried the page's state in the address; drop it now, so a later manual reload shows the saved state.
@@ -217,6 +220,7 @@ function freshKeys(prev, next) {
 
 function applySnapshot(next) {
   const prev = view.snapshot;
+  if (prev?.run.id !== next?.run.id) view.cockpitNote = null;
   const found = prev && next && prev.run.id === next.run.id && !justConnected ? freshKeys(prev, next) : emptyFresh();
   const t = performance.now();
   const carried = t < freshUntil && !justConnected ? view.fresh : emptyFresh();
@@ -430,7 +434,7 @@ async function loadRun(id) {
 }
 
 function act(target) {
-  const el = target.closest('[data-page],[data-tab],[data-span],[data-close],[data-open],[data-run]');
+  const el = target.closest('[data-page],[data-tab],[data-span],[data-close],[data-open],[data-run],[data-cockpit],[data-cockpit-copy]');
   if (!el || !dash.contains(el)) return;
   if (el.dataset.page) {
     view.page = el.dataset.page;
@@ -456,6 +460,18 @@ function act(target) {
     view.runId = el.dataset.run;
     view.run = null;
     loadRun(view.runId);
+  } else if (el.dataset.cockpit !== undefined) {
+    view.cockpitNote = view.snapshot ? openCockpit(window, { swarm: view.snapshot.run.id, host: view.host }) : null;
+  } else if (el.dataset.cockpitCopy !== undefined) {
+    const note = view.cockpitNote;
+    if (note) {
+      copyAddress(navigator, document, dash.querySelector('.ck-addr-url'), note.url).then(copied => {
+        if (view.cockpitNote !== note) return;
+        view.cockpitNote = { ...note, copied };
+        render();
+      });
+    }
+    return;
   }
   save();
   render();
@@ -479,6 +495,7 @@ dash.addEventListener('change', event => {
   view.snapshot = null;
   view.loaded = false;
   view.detail = null;
+  view.cockpitNote = null;
   save();
   event.target.blur();
   connect();
@@ -501,6 +518,23 @@ setInterval(() => {
   // A full render, not only a redraw of the lanes: which sub-agent rows exist depends on the window, which moves with now.
   if (ticks % 15 === 0 && view.page === 'live' && view.tab === 'timeline' && view.snapshot) scheduleRender();
 }, 1000);
+
+// The cockpit asks this window to show a unit's details or a tab, in place; a request for another swarm loads its address.
+window.addEventListener('message', event => {
+  if (event.origin !== location.origin) return;
+  const request = showRequest(view, event.data);
+  if (!request) return;
+  if (request.reload) {
+    location.assign(request.reload);
+    return;
+  }
+  view.page = 'live';
+  if (request.tab) view.tab = request.tab;
+  view.detail = request.detail && view.snapshot.units.some(unit => unit.id === request.detail) ? request.detail : null;
+  save();
+  render();
+  if (view.narrow && view.detail) dash.querySelector('.detail')?.scrollIntoView({ block: 'start' });
+});
 
 // Browsers allow few connections per host, so free the live connection when the page is unloaded or kept in the back-forward cache.
 window.addEventListener('pagehide', () => {

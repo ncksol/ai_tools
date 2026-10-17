@@ -306,7 +306,7 @@ export const AUDIT_DEFAULTS = Object.freeze({
   kindBorders: { selector: '.b-card[data-open], .mc[data-open]', skip: '.is-sel', colours: { subagent: 'var(--busy)', project: 'var(--merged)', chat: 'var(--merged)' } },
   padding: { '.dash': 16, '.b-card': 16, '.rail': 16, '.detail': 16, '.need': 12, '.pn': 12, '.pl-row': 12, '.mc': 12 },
   heights: {
-    '.chip': 24, '.badge': 20, '.pill': 20, '.d-top .seg > button': 28, '.c-bar .seg > button': 24, '.x': 28, '.pick select': 28,
+    '.chip': 24, '.badge': 20, '.pill': 20, '.d-top .seg > button': 28, '.c-bar .seg > button': 24, '.x': 28, '.pick select': 28, '.ck-open > button': 28,
     '.ring': 40, '.meter': 4, '.bar': 4, '.stage': 4, '.g-track': 12,
   },
 });
