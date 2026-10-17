@@ -463,7 +463,6 @@ test('the system folder is derived only from a launcher of the exact Homebrew fo
   const shapes = [
     ['-sm instead of -Im', { text: python => `#!/usr/bin/env bash\nAZ_INSTALLER=HOMEBREW ${python} -sm azure.cli "$@"\n` }],
     ['two active lines', { text: python => `#!/usr/bin/env bash\nexport SYNTHETIC=1\n${line(python)}\n` }],
-    ['__PYVENV_LAUNCHER__ in the environment', { extra: { __PYVENV_LAUNCHER__: '/synthetic/python' } }],
     ['no pyvenv.cfg', { change: az => rmSync(path.join(az.prefix, 'pyvenv.cfg')) }],
     ['pyvenv.cfg also in bin', { change: az => writeFileSync(path.join(az.prefix, 'bin', 'pyvenv.cfg'), 'home = /synthetic\n') }],
     ['CRLF line ends', { text: python => `#!/usr/bin/env bash\r\n${line(python)}\r\n` }],
@@ -565,6 +564,48 @@ test('a BASH_ENV hook cannot change the extension folder az sees: the check and 
   await lookup.settle();
   assert.equal(calls.length, 1, 'installed, for the AZURE settings as given');
   assert.equal(Object.hasOwn(calls[0], 'BASH_ENV'), false, 'az runs without the hook');
+});
+
+const PYTHON_OVERRIDES = {
+  PYTHONEXECUTABLE: '/synthetic/b/bin/python', PYTHONHOME: '/synthetic/home', PYTHONPATH: '/synthetic/path', PYTHONSTARTUP: '/synthetic/startup',
+  __PYVENV_LAUNCHER__: '/synthetic/launcher',
+};
+
+test('az\'s environment has no Python start-up overrides; gh\'s is left as it is', () => {
+  const kept = { PATH: '/synthetic/bin', AZURE_CONFIG_DIR: '/synthetic/config', AZURE_EXTENSION_DIR: '/synthetic/ext', MYPYTHON: 'kept', PYVENV: 'kept' };
+  const base = { ...kept, ...PYTHON_OVERRIDES };
+  const az = cliEnv('az', base);
+  for (const key of Object.keys(PYTHON_OVERRIDES)) assert.equal(Object.hasOwn(az, key), false, key);
+  assert.deepEqual(az, { ...kept, ...CLI_ENV.az });
+  assert.deepEqual(cliEnv('gh', base), { ...base, ...CLI_ENV.gh });
+});
+
+test('PYTHONEXECUTABLE cannot move az to another venv: the check and az get the same environment, without it', posixOnly, async () => {
+  const { dir, env } = azureEnv(DERIVED);
+  // Venv A is the one the launcher names, and only its system folder has the extension; B is another venv.
+  const a = homebrewAz(path.join(dir, 'a'));
+  const b = homebrewAz(path.join(dir, 'b'));
+  installExtension(a.system);
+  const calls = [];
+  const lookup = createPrLookup({
+    run: async (command, args, options) => { calls.push(options.env); return '{"status":"active"}'; },
+    env: { ...env, PATH: a.PATH, PYTHONEXECUTABLE: path.join(b.prefix, 'bin', 'python'), __PYVENV_LAUNCHER__: path.join(b.prefix, 'bin', 'python') },
+  });
+  lookup.request(ADO_PR);
+  await lookup.settle();
+  assert.equal(calls.length, 1, 'installed, judged on the environment az gets');
+  assert.equal(Object.hasOwn(calls[0], 'PYTHONEXECUTABLE'), false, 'az runs without the override');
+  assert.equal(Object.hasOwn(calls[0], '__PYVENV_LAUNCHER__'), false, 'nor __PYVENV_LAUNCHER__');
+});
+
+test('a direct check with a Python start-up override in its environment does not derive the system folder', posixOnly, async () => {
+  const { dir, env } = azureEnv(DERIVED);
+  const az = homebrewAz(dir);
+  installExtension(az.system);
+  for (const [key, value] of Object.entries(PYTHON_OVERRIDES)) {
+    await assert.rejects(prLookupModule.azureExtensionInstalled({ env: { ...env, PATH: az.PATH, [key]: value } }), /system extension folder is not known/, key);
+  }
+  assert.equal(await prLookupModule.azureExtensionInstalled({ env: { ...env, PATH: az.PATH } }), true, 'control: without one, the folder is derived');
 });
 
 test('a launcher that runs python through exec is not the Homebrew form, since an exported function could replace exec', posixOnly, async () => {

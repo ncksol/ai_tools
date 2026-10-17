@@ -9,10 +9,11 @@ export const ADO_REPO = /^[A-Za-z0-9][\w.-]*\/[^/\r\n]+\/[^/\r\n]+$/;
 const EMPTY_INFO = Object.freeze({ state: 'unknown', title: null, openedAt: null, mergedAt: null, closedAt: null, reviewNote: null, url: null });
 
 // Turns off the CLIs' telemetry, update checks, prompts, log files, error recommendations and extension installs; az runs only
-// when the azure-devops extension is already installed (see azureExtensionInstalled). Accepted exceptions: three things remain
-// that the CLIs do on their own on any use, not requests the dashboard makes: they refresh their own sign-in caches; az keeps its
-// config folder up to date (its session and cache files and its command index); and after az is installed or upgraded, while
-// its version cache is empty, az fetches version metadata from GitHub.
+// when the azure-devops extension is already installed (see azureExtensionInstalled), and without shell start-up hooks or
+// Python start-up overrides (see cliEnv). Accepted exceptions: three things remain that the CLIs do on their own on any use,
+// not requests the dashboard makes: they refresh their own sign-in caches; az keeps its config folder up to date (its session
+// and cache files and its command index); and after az is installed or upgraded, while its version cache is empty, az fetches
+// version metadata from GitHub.
 export const CLI_ENV = Object.freeze({
   az: Object.freeze({
     AZURE_EXTENSION_USE_DYNAMIC_INSTALL: 'no',
@@ -30,13 +31,22 @@ export const CLI_ENV = Object.freeze({
 const SHELL_HOOKS = new Set(['BASH_ENV', 'ENV', 'SHELLOPTS', 'BASHOPTS', 'PS4', 'BASH_XTRACEFD']);
 
 /**
- * The environment `command` runs with: `base` with CLI_ENV's settings. For az, shell start-up hooks are removed (SHELL_HOOKS
- * and every exported bash function, BASH_FUNC_*), so the launcher's shell runs the line the extension check read, with the
- * environment the check saw. gh's is not changed.
+ * A variable that can change how Python starts: every PYTHON* key (on macOS framework builds PYTHONEXECUTABLE moves the
+ * executable and prefix even under -I) and __PYVENV_LAUNCHER__. az runs without them.
+ */
+const isPythonOverride = key => key.startsWith('PYTHON') || key === '__PYVENV_LAUNCHER__';
+
+/**
+ * The environment `command` runs with: `base` with CLI_ENV's settings. For az, shell start-up hooks (SHELL_HOOKS and every
+ * exported bash function, BASH_FUNC_*) and Python start-up overrides (see isPythonOverride) are removed, so the launcher's
+ * shell runs the line the extension check read, its Python starts as the check derived, and both see the same environment.
+ * The launcher runs Python with -I, which is meant to ignore those, so az loses nothing. gh's is not changed.
  */
 export function cliEnv(command, base = process.env) {
   const env = { ...base, ...CLI_ENV[command] };
-  if (command === 'az') for (const key of Object.keys(env)) if (SHELL_HOOKS.has(key) || key.startsWith('BASH_FUNC_')) delete env[key];
+  if (command === 'az') {
+    for (const key of Object.keys(env)) if (SHELL_HOOKS.has(key) || key.startsWith('BASH_FUNC_') || isPythonOverride(key)) delete env[key];
+  }
   return env;
 }
 
@@ -287,11 +297,13 @@ async function interpreterStarts(shebang, { env, cwd }) {
  *   does not; the prefix is the path as written, not the real path;
  * - the version 3.N is confirmed three ways: the real python's name is python3.N, pyvenv.cfg's version (and version_info,
  *   when given) is 3.N or starts with 3.N. (see pyvenvVersions), and <prefix>/lib/python3.N is a folder;
- * - __PYVENV_LAUNCHER__ is not set in the child's environment.
+ * - no Python start-up override (any PYTHON* key or __PYVENV_LAUNCHER__; see isPythonOverride) is set in the environment the
+ *   check receives (the lookup's cliEnv removes them, so this guards direct callers).
  * The folder is then <prefix>/lib/python3.N/site-packages/azure-cli-extensions.
  */
 async function defaultSystemFolder({ env, cwd }) {
-  if (env.__PYVENV_LAUNCHER__ !== undefined) return null;
+  // for...in, as Node's spawn reads the environment (inherited keys included).
+  for (const key in env) if (isPythonOverride(key) && env[key] !== undefined) return null;
   const launcher = await findAzLauncher({ env, cwd });
   if (!launcher) return null;
   let text;
