@@ -1203,6 +1203,48 @@ test('a sub-agent whose own events keep using its lifecycle id never drops that 
   }
 });
 
+for (const nested of [false, true]) {
+  for (const recovered of [false, true]) {
+    const mode = `${nested ? 'nested' : 'top level'}${recovered ? ', recovered lines' : ''}`;
+    test(`a lifecycle id stays current while events that also name the parent task use it (${mode})`, () => {
+      const log = new EventLog(T0);
+      log.start(); log.turnStart();
+      const lead = nested ? log.subagent({ name: 'lead', type: 'explore', mode: 'background', agentId: 'agent-lead' }) : null;
+      const call = lead ? log.nested(lead, { name: 'kid', type: 'explore', mode: 'background', agentId: 'L' }) : aliasedSubagent(log, 'L', 'T-1', { finish: false });
+      const telemetry = id => (lead
+        ? log.sub(lead, 'tool.execution_complete', { toolCallId: call, success: true, result: { content: 'Agent started in background' }, toolTelemetry: telemetryOf(id) })
+        : log.done(call, { result: 'Agent started in background', telemetry: telemetryOf(id) }));
+      if (lead) telemetry('T-1');
+      // The sub-agent's own events carry both its task (parentToolCallId) and L, while telemetry ids T-2, T-3 and T-4 are mapped in turn.
+      for (const id of ['T-2', 'T-3', 'T-4']) {
+        log.wait(MINUTE);
+        log.push('hook.start', { hookType: 'preToolUse', parentToolCallId: call }, { agentId: 'L' });
+        log.push('assistant.message', { content: 'still working', parentToolCallId: call }, { agentId: 'L' });
+        log.wait(MINUTE); telemetry(id);
+      }
+      // A quiet spell past the limit, then an event that names the sub-agent by L alone.
+      const quietFrom = log.t;
+      log.wait(30 * MINUTE);
+      log.usage('claude-sonnet-5', { agentId: 'L' });
+      const lastAt = log.t;
+
+      const state = createSessionState('cli-1', ROOT);
+      for (const event of log.events) {
+        if (recovered && event.agentId === 'L' && !event.type.startsWith('subagent.')) applyRecovered(state, event);
+        else applyLine(state, JSON.stringify(event));
+      }
+      const owner = lead ? state.descendants.get(call) : state.subagents.get(call);
+      assert.deepEqual(owner.agentIds, ['T-2', 'T-3', 'T-4', 'L'], `${mode}: L stays, the cap of four holds, and T-1 is the one dropped`);
+      assert.equal(state.agentToTask.get('L'), call, `${mode}: L is still mapped`);
+      // The clock that moves: the sub-agent's own detail, or for a nested one its top-level ancestor's.
+      const top = state.subagents.get(lead ?? call);
+      assert.equal(top.lastEventAt, lastAt, `${mode}: the event that names L alone is attributed`);
+      assert.ok(lastAt - quietFrom > subagentLimitMs(top, DEFAULT_THRESHOLDS), `${mode}: the quiet spell is longer than the limit`);
+      assert.equal(evaluateSubagentUnit(top, { alive: true, now: lastAt + MINUTE, thresholds: DEFAULT_THRESHOLDS }).detail, 'busy', mode);
+    });
+  }
+}
+
 test('outcomes count sub-agents that were evicted from the details when they finish', () => {
   const log = new EventLog(T0);
   log.start(); log.turnStart();

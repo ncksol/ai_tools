@@ -121,7 +121,9 @@ export function applyRecovered(state, event) {
   }
   touch(state, at, SKIP_NAMES.get(event.type) ?? event.type);
   const agentId = event.agentId === undefined || event.agentId === null ? null : String(event.agentId);
-  const owner = event.data?.parentToolCallId ?? (agentId ? ownerByAgent(state, agentId) : null);
+  // Looked up first, so that the id is refreshed (see ownerByAgent) even when the parent id names the owner.
+  const byAgent = agentId ? ownerByAgent(state, agentId) : null;
+  const owner = event.data?.parentToolCallId ?? byAgent;
   touchSubagent(state, owner, at);
 }
 
@@ -159,7 +161,9 @@ export function applyEvent(state, event) {
     return;
   }
   const agentId = event.agentId === undefined || event.agentId === null ? null : String(event.agentId);
-  const owner = data.parentToolCallId ?? (agentId ? ownerByAgent(state, agentId) : null);
+  // Looked up first, so that the id is refreshed (see ownerByAgent) even when the parent id names the owner.
+  const byAgent = agentId ? ownerByAgent(state, agentId) : null;
+  const owner = data.parentToolCallId ?? byAgent;
   if (owner || agentId) {
     onOwnedEvent(state, event, data, owner, agentId, at);
     return;
