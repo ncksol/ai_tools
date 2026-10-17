@@ -565,6 +565,53 @@ test('every setting is resolved before any folder is checked: a % anywhere, or d
   assert.equal(await withUserExtension('[extension]\ndev_sources =\n'), 'installed');
 });
 
+test('folder paths are not normalised: link/.. is resolved by the file system, as az\'s calls resolve it', posixOnly, async () => {
+  const { dir, env } = azureEnv();
+  // <root>/extensions has the extension, but <root>/link points to <elsewhere>/sub, so <root>/link/../extensions is
+  // <elsewhere>/extensions, which is empty.
+  const root = folder(path.join(dir, 'root'));
+  installExtension(path.join(root, 'extensions'));
+  folder(path.join(dir, 'elsewhere', 'sub'));
+  folder(path.join(dir, 'elsewhere', 'extensions'));
+  symlinkSync(path.join(dir, 'elsewhere', 'sub'), path.join(root, 'link'));
+  const tricky = `${root}/link/../extensions`;
+  const known = { ...env, AZURE_EXTENSION_SYS_DIR: folder(path.join(dir, 'empty-system')) };
+  assert.equal(outcome(await adoLookup({ ...known, AZURE_EXTENSION_DIR: tricky })), 'missing', 'AZURE_EXTENSION_DIR');
+  writeFileSync(path.join(env.AZURE_CONFIG_DIR, 'config'), `[extension]\ndir = ${tricky}\n`);
+  assert.equal(outcome(await adoLookup(known)), 'missing', '[extension] dir');
+  rmSync(path.join(env.AZURE_CONFIG_DIR, 'config'));
+  assert.equal(outcome(await adoLookup({ ...env, AZURE_EXTENSION_SYS_DIR: tricky })), 'missing', 'AZURE_EXTENSION_SYS_DIR');
+});
+
+test('a folder path with a glob character is not modelled, since az globs inside it unescaped', async () => {
+  for (const name of ['extensions[local]', 'extensions*', 'extensions?']) {
+    const { dir, env } = azureEnv();
+    const odd = path.join(dir, name);
+    installExtension(odd);
+    const known = { ...env, AZURE_EXTENSION_SYS_DIR: folder(path.join(dir, 'empty-system')) };
+    assert.equal(outcome(await adoLookup({ ...known, AZURE_EXTENSION_DIR: odd })), 'undetermined', `user folder ${name}`);
+    assert.equal(outcome(await adoLookup({ ...env, AZURE_EXTENSION_SYS_DIR: odd })), 'undetermined', `system folder ${name}`);
+  }
+});
+
+test('an extension folder is listed as az lists it: a folder that cannot be listed is not modelled, and the name must match exactly', posixOnly, async () => {
+  const { dir, env } = azureEnv();
+  const known = { ...env, AZURE_EXTENSION_SYS_DIR: folder(path.join(dir, 'empty-system')) };
+  // Searchable but not listable: az's os.listdir would raise.
+  const sealed = path.join(dir, 'sealed');
+  installExtension(sealed);
+  chmodSync(sealed, 0o111);
+  try {
+    assert.equal(outcome(await adoLookup({ ...known, AZURE_EXTENSION_DIR: sealed })), 'undetermined');
+  } finally {
+    chmodSync(sealed, 0o755);
+  }
+  // On a case-insensitive disk, Azure-DevOps can be opened as azure-devops, but az looks for the listed name.
+  const cased = path.join(dir, 'cased');
+  folder(path.join(cased, 'Azure-DevOps', 'azure_devops-1.0.1.dist-info'));
+  assert.equal(outcome(await adoLookup({ ...known, AZURE_EXTENSION_DIR: cased })), 'missing');
+});
+
 test('GitHub lookups never check for the Azure extension', async () => {
   let checks = 0;
   const calls = [];

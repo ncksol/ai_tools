@@ -2,7 +2,6 @@ import { execFile } from 'node:child_process';
 import { constants, existsSync } from 'node:fs';
 import { access, readFile, readdir, realpath, stat } from 'node:fs/promises';
 import { userInfo } from 'node:os';
-import path from 'node:path';
 import { MINUTE, parseTime } from '../time.mjs';
 
 export const GITHUB_REPO = /^[A-Za-z0-9][\w.-]*\/[\w.-]+$/;
@@ -52,6 +51,15 @@ const pyStrip = text => pyRstrip(text.replace(PY_LEADING, ''));
 
 /** Python's os.path.join for two parts, without the normalising that path.join does (the OS resolves the result). */
 const pyJoin = (a, b) => (b.startsWith('/') || a === '' ? b : a.endsWith('/') ? a + b : `${a}/${b}`);
+
+/** Python's posixpath.dirname, without normalising. */
+function pyDirname(file) {
+  const head = file.slice(0, file.lastIndexOf('/') + 1);
+  return head && !/^\/+$/.test(head) ? head.replace(/\/+$/, '') : head;
+}
+
+/** Python's posixpath.basename. */
+const pyBasename = file => file.slice(file.lastIndexOf('/') + 1);
 
 /**
  * Python's os.path.expanduser as az runs it: `~` alone or `~/...` takes HOME from the child's environment when it is set (even
@@ -228,11 +236,11 @@ async function defaultSystemFolder({ env, cwd }) {
   const pythons = new Set([...text.matchAll(LAUNCHER_PYTHON)].map(match => match[1]));
   if (pythons.size !== 1) return null;
   const [python] = pythons;
-  const lib = path.join(path.dirname(path.dirname(python)), 'lib');
+  const lib = pyJoin(pyDirname(pyDirname(python)), 'lib');
   const isVersion = name => /^python3\.\d+$/.test(name);
   let version = null;
   try {
-    const name = path.basename(await realpath(python));
+    const name = pyBasename(await realpath(python));
     if (isVersion(name)) version = name;
   } catch {
     // no real file: the lib folder decides
@@ -245,15 +253,32 @@ async function defaultSystemFolder({ env, cwd }) {
       return null;
     }
   }
-  return version ? path.join(lib, version, 'site-packages', 'azure-cli-extensions') : null;
+  return version ? pyJoin(pyJoin(pyJoin(lib, version), 'site-packages'), 'azure-cli-extensions') : null;
 }
 
-/** Whether `<dir>/azure-devops` is a folder holding an entry that az's glob `*.*-info` matches (glob skips names that start with a dot). */
+/** Python's glob.has_magic: a folder path with one of these is not modelled, since az globs inside it without escaping. */
+const GLOB_MAGIC = /[*?[]/;
+
+/**
+ * Whether the extension folder `dir` holds azure-devops the way az's WheelExtension.get_all lists it, on the path exactly as
+ * given (the file system resolves links and `..`): `dir` must be a folder (any stat failure means it holds nothing, as
+ * os.path.isdir); it is then listed, and a listing failure is undetermined (os.listdir raises in az); the listing must hold
+ * exactly the name azure-devops, which must be a folder whose listing has a name that does not start with a dot and matches
+ * `*.*-info` (a failure to list it is no match, as glob gives).
+ */
 async function hasExtension(dir) {
-  const folder = path.join(dir, 'azure-devops');
-  if (!(await statOf(folder))?.isDirectory()) return false;
+  if (!(await statOf(dir))?.isDirectory()) return false;
+  let names;
   try {
-    return (await readdir(folder)).some(name => !name.startsWith('.') && /\..*-info$/s.test(name));
+    names = await readdir(dir);
+  } catch {
+    throw undetermined(`${dir} cannot be listed`);
+  }
+  if (!names.includes('azure-devops')) return false;
+  const extension = pyJoin(dir, 'azure-devops');
+  if (!(await statOf(extension))?.isDirectory()) return false;
+  try {
+    return (await readdir(extension)).some(name => !name.startsWith('.') && /\..*-info$/s.test(name));
   } catch {
     return false;
   }
@@ -267,7 +292,9 @@ async function hasExtension(dir) {
  * <AZURE_CONFIG_DIR>/config when that variable is set (even empty, then
  * `config` in the child's folder), else ~/.azure/config, read as ConfigParser reads it (see readAzConfig); the default
  * extension folder's parent is AZURE_CONFIG_DIR when it is not empty, else ~/.azure; relative paths are taken from `cwd` (the
- * child's folder; null is this process's). Every setting az reads when it loads its extensions (dir, sys_dir, dev_sources) is
+ * child's folder; null is this process's). Paths are built as Python builds them (see pyJoin) and passed to the file system
+ * unchanged, so links and `..` resolve as they do for az; a folder path with a glob character is not modelled, and folders are
+ * listed as az lists them (see hasExtension). Every setting az reads when it loads its extensions (dir, sys_dir, dev_sources) is
  * resolved before any folder is checked. Resolves true or false; throws when it cannot tell what az would do (a config file
  * az would fail to read or that the check does not model, dev_sources set, `~name`), so that a false "installed" is never given.
  * Read-only: it only stats, lists and reads these paths.
@@ -282,8 +309,9 @@ export async function azureExtensionInstalled({ env = process.env, cwd = null } 
   if (rawExtensionSetting(env, config, 'dev_sources')) throw undetermined('dev_sources is set');
   const userDir = absolute(extensionSetting(env, config, 'dir') ?? pyJoin(env.AZURE_CONFIG_DIR || azureDir(), 'cliextensions'));
   const sysDir = extensionSetting(env, config, 'sys_dir');
-  if (await hasExtension(userDir)) return true;
   const systemDir = sysDir ? absolute(sysDir) : await defaultSystemFolder({ env, cwd: base });
+  for (const dir of [userDir, systemDir]) if (dir !== null && GLOB_MAGIC.test(dir)) throw undetermined(`${dir} has a glob character`);
+  if (await hasExtension(userDir)) return true;
   return systemDir !== null && hasExtension(systemDir);
 }
 
