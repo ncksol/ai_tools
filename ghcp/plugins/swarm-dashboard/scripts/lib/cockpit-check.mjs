@@ -100,16 +100,16 @@ async function checkScene(context) {
   await page.waitFor(`location.href === ${JSON.stringify(url)} && document.readyState === 'complete'`);
   const result = await page.evaluate(`(${renderStill})(${analyseFrame})`);
   if (result.error) {
-    const consoleProblems = page.errors.map(message => `console: ${message}`);
-    for (const problem of [result.error, ...consoleProblems]) stderr.write(`scene: ${problem}\n`);
-    return 1 + consoleProblems.length;
+    const errors = consoleProblems(page.errors);
+    for (const problem of [result.error, ...errors]) stderr.write(`scene: ${problem}\n`);
+    return 1 + errors.length;
   }
   const problems = sceneProblems(result.still);
   const drift = Math.abs(result.reused.mean - result.still.mean) / result.still.mean;
   if (drift > 0.25) problems.push(`a frame that reuses the black hole differs in brightness by ${(drift * 100).toFixed(0)}%`);
   for (const problem of sceneProblems(result.reused)) problems.push(`a frame that reuses the black hole: ${problem}`);
   const recovery = await checkRecovery(context);
-  problems.push(...recovery.problems, ...page.errors.map(message => `console: ${message}`));
+  problems.push(...recovery.problems, ...consoleProblems(page.errors));
   if (options.printMetrics) stdout.write(`scene metrics: ${JSON.stringify(result.still)}\n`);
   const after = recovery.skipped ? 'also after a resize (WEBGL_lose_context is missing, so the lost context part is skipped)' : 'also after a resize and a lost WebGL context';
   stdout.write(`Scene (${result.info.renderer}, ${result.info.hdr ? 'HDR' : '8-bit'} targets): ${problems.length ? `${problems.length} problems` : `shadow, ring, ceiling line, stars and desk in place, ${after}`}.\n`);
@@ -140,6 +140,8 @@ const normalise = family => family.replace(/["'\s]/g, '').toLowerCase();
 /** The audit's issues without the single-font rule's complaints about monospace, which cockpitExtras() polices instead. */
 export const cockpitIssues = issues => issues.filter(issue => !(issue.rule === 'font-family' && normalise(issue.detail) === MONO));
 
+/** Browser errors as problems: the page wrappers record { message, url }; a plain string is kept as it is. */
+export const consoleProblems = errors => errors.map(error => `console: ${typeof error === 'string' ? error : error.message}`);
 export const expandAll = (rects, px) => Object.fromEntries(Object.entries(rects).map(([id, r]) => [id, { left: r.left - px, top: r.top - px, right: r.right + px, bottom: r.bottom + px }]));
 
 /** Runs in the page: the visible panels, top line, quality switch and note, in window px. */
@@ -250,7 +252,7 @@ async function checkState({ page, options }, { url, width, height, expect, label
   if (expect.gl === 'on' && Math.max(...Object.values(backdrops).map(([r, g, b]) => luminance({ r: r / 255, g: g / 255, b: b / 255 }))) < 0.01) problems.push('the scene behind the panels is black; the frame was not drawn');
   const result = await page.evaluate(`(() => { (${prepareFlat})(${JSON.stringify(backdrops)}); return { audit: ${auditScript(COCKPIT_AUDIT)}, extras: (${cockpitExtras})(${JSON.stringify(MONO)}) }; })()`);
   problems.push(...[...cockpitIssues(result.audit.issues), ...result.extras].map(issue => `${issue.rule}: ${issue.target} (${issue.detail})`));
-  problems.push(...page.errors.map(message => `console: ${message}`));
+  problems.push(...consoleProblems(page.errors));
   return { problems: [...new Set(problems)], checks: result.audit.checks };
 }
 
@@ -497,7 +499,7 @@ async function checkLinks({ page, browser, urls, engine, stdout, stderr }) {
     await page.goto('about:blank', 1440).then(() => page.waitFor("location.href === 'about:blank'")).catch(() => {});
     await changing?.close().catch(() => {});
   }
-  problems.push(...page.errors.map(message => `console: ${message}`));
+  problems.push(...consoleProblems(page.errors));
   stdout.write(`Cockpit links: ${problems.length ? `${problems.length} problems` : 'the control opens the cockpit on the picked swarm, a tile opens its details in place, unknown units do not navigate, and in the canvas the address names the shown swarm and clears when it changes'}.\n`);
   for (const problem of problems) stderr.write(`links: ${problem}\n`);
   return problems.length;
@@ -573,7 +575,7 @@ async function checkQuality({ page, browser, urls, stdout, stderr }) {
   } finally {
     await evaluate(`localStorage.removeItem(${key})`).catch(error => problems.push(`clearing the stored choice: ${error.message}`));
   }
-  problems.push(...page.errors.map(message => `console: ${message}`));
+  problems.push(...consoleProblems(page.errors));
   stdout.write(`Cockpit quality: ${problems.length ? `${problems.length} problems` : 'the High and Balanced buttons take pointer clicks in the 3D layout, and the choice is saved and kept after a reload'}.\n`);
   for (const problem of problems) stderr.write(`quality: ${problem}\n`);
   return problems.length;

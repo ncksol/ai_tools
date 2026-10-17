@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { CHECKS, COCKPIT_AUDIT, COCKPIT_SIZES, SMALL_SIZE, cockpitIssues, expandAll } from '../scripts/lib/cockpit-check.mjs';
+import { CHECKS, COCKPIT_AUDIT, COCKPIT_SIZES, SMALL_SIZE, cockpitIssues, consoleProblems, expandAll } from '../scripts/lib/cockpit-check.mjs';
 import { parseArguments } from '../scripts/check-cockpit.mjs';
 import { COCKPIT_SIZES as FIT_SIZES } from './helpers/cockpit.mjs';
 
@@ -42,4 +42,31 @@ test('the layout check runs the cockpit\'s checks after the dashboard\'s', () =>
   assert.match(source, /import \{ runCockpitChecks \} from '\.\/lib\/cockpit-check\.mjs';/);
   assert.match(source, /const cockpit = await runCockpitChecks\(/);
   assert.match(source, /historyErrorIssues\.length \|\| cockpit\.issues \? 1 : 0/);
+});
+
+test('browser errors reach the cockpit\'s diagnostics as their message', () => {
+  assert.deepEqual(consoleProblems([{ message: 'Uncaught Error: sentinel', url: null }, { message: 'Failed to load resource', url: 'http://127.0.0.1:1/x.png' }, 'plain text']), [
+    'console: Uncaught Error: sentinel',
+    'console: Failed to load resource',
+    'console: plain text',
+  ]);
+  const source = readFileSync(new URL('../scripts/lib/cockpit-check.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /page\.errors\.map\(/);
+  assert.equal(source.match(/consoleProblems\(page\.errors\)/g)?.length, 5);
+});
+
+test('a scene that cannot be drawn reports the browser\'s error message', async () => {
+  const errors = [];
+  const page = {
+    errors,
+    goto: async () => errors.push({ message: 'Uncaught Error: sentinel', url: null }),
+    waitFor: async () => {},
+    evaluate: async () => ({ error: 'WebGL2 is not available' }),
+  };
+  let text = '';
+  const stderr = { write: chunk => { text += chunk; } };
+  const issues = await CHECKS.get('scene')({ page, urls: { example: 'http://127.0.0.1:1/' }, options: {}, stdout: { write() {} }, stderr });
+  assert.equal(issues, 2);
+  assert.match(text, /scene: console: Uncaught Error: sentinel/);
+  assert.doesNotMatch(text, /\[object Object\]/);
 });
