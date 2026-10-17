@@ -37,18 +37,18 @@ This repo is also a **Copilot CLI plugin marketplace** (`ai-tools`). Plugins are
 
 | Plugin | What it does | Install |
 |---|---|---|
-| [`pr-review-graph`](./ghcp/plugins/pr-review-graph/README.md) | Reviews an **already-open** PR through a bounded multi-agent graph: captures an immutable base/head snapshot, routes slices to nine focused read-only specialists, verifies every candidate finding against the snapshot, deduplicates against existing review comments, and previews author-facing comments. Publishes nothing without explicit confirmation. GitHub and Azure DevOps, via the `gh-cli` / `azure-devops-cli` skills. | `copilot plugin install pr-review-graph@ai-tools` |
 | [`adr-authoring`](./ghcp/plugins/adr-authoring/README.md) | Writes evidence-led architecture decision records in **Microsoft Learn-inspired style**. Bundles an agent, a skill, a fixed template, four example pairs, structural validation, and fourteen evaluation briefs. Preserves accepted records and checks decision relevance and audience fit. | `copilot plugin install adr-authoring@ai-tools` |
-
-`pr-review-graph` overlaps in subject with the standalone review skills below but is a different tool: the skills are single-pass prompts you read the output of, the plugin is a verified multi-agent pipeline that can post comments back to the PR once you approve them.
+| [`swarm-dashboard`](./ghcp/plugins/swarm-dashboard/README.md) | A **watch-only dashboard** for agentic swarms: one card per child session or running sub-agent with its state, progress, cost and anything waiting for you, plus a timeline, plan, board and run history. Opens as a canvas in the Copilot app or in a browser, reads Copilot's local data read-only, and its only network requests are read-only `gh` and `az` queries about pull requests. | `copilot plugin install swarm-dashboard@ai-tools` |
 
 `adr-authoring` is a documentation workflow, not a PR-review tool. Ask it to draft an ADR in chat, write an authorized Markdown file, or review an existing ADR. It records supplied decisions by default and recommends architecture only when explicitly asked. Its structural checks do not establish factual accuracy or model-output consistency.
+
+`swarm-dashboard` is a viewer, not a workflow: it adds a canvas and a local launcher, and no skills or agents. It reads Copilot's local session data, so it shows the swarms that run on the same machine.
 
 ### Skills
 
 | Skill | What it does | When to invoke |
 |---|---|---|
-| [`strict-code-review`](./ghcp/skills/strict-code-review/SKILL.md) | First-pass strict senior-engineer PR review. Inspection only — no comments posted, no code changed. | "Review this PR: `<url>`" |
+| [`strict-code-review`](./ghcp/skills/strict-code-review/SKILL.md) | First-pass strict senior-engineer review of a GitHub or Azure DevOps PR, a local branch, or a pasted diff. Inspection only — no comments posted, no code changed. | `/strict-code-review <url>`, or "Do a strict review of my branch" |
 | [`analyse-pr-feedback`](./ghcp/skills/analyse-pr-feedback/SKILL.md) | Triages reviewer comments into a decision table (agree / disagree / needs clarification) so you can reply intentionally. | "Analyse the feedback on `<url>`" |
 | [`rereview-pr`](./ghcp/skills/rereview-pr/SKILL.md) | Focused **second-pass** review: were the previous findings actually addressed? Is the engineer's pushback valid? | "Re-review `<url>`" |
 | [`storm-research`](./ghcp/skills/storm-research/SKILL.md) | Runs the Stanford **STORM** research method — five expert perspectives, a contradiction map, a synthesised briefing, and a self-critique — grounded in real web sources. Outputs a chat briefing plus an optional self-contained HTML report. Based on [this article](https://github.com/stanford-oval/storm) that turned [official repo](https://github.com/stanford-oval/storm) into a set of prompts. | "Research `<topic>` deeply" / "STORM `<topic>`". |
@@ -65,8 +65,8 @@ Those three are **safe by design**: they only inspect and report. They will not 
 |---|---|---|
 | [`andrej`](./ghcp/agents/andrej.agent.md) | Karpathy-flavoured coding guidelines: think before coding, simplicity first, surface tradeoffs, no speculative abstractions. Useful as a delegate for any non-trivial code change where you want a more careful, less eager collaborator. | Ask Copilot to delegate to the `andrej` agent, or wire it into your own workflows. |
 | [`azure-arch-diagram`](./ghcp/agents/azure-arch-diagram.agent.md) | Expert Azure architecture diagram creator. Produces **editable draw.io (`.drawio`) files** as raw mxGraph XML, following Microsoft Azure Architecture Centre style guidelines — official Azure2 icons, directional arrows, grouping containers, and a consistent colour palette. Ships ready-made templates for system, network, data-flow, context, and deployment diagrams. | Ask Copilot to delegate to the `azure-arch-diagram` agent, e.g. "draw an Azure architecture diagram for…". |
-| [`orchestrator`](./ghcp/agents/orchestrator.agent.md) | Coordinator for multi-PR work in the GitHub Copilot app. Plans, delegates, and tracks, but has **no shell, file, search, web, or MCP tools**, so every lookup and change goes elsewhere: owned work (a branch, PR, or ongoing workstream) and jobs that need other agents to a nested child session, other one-off jobs to an `orchestrator-worker` sub-agent. Keeps its plan and a registry of child sessions in the session SQL database. Follows version 1 of the swarm dashboard data contract: each child report starts with a status line, a `children` table records each child's branch, PR and outcome, and every question to you is tagged with the units it concerns. | In the GitHub Copilot app (it relies on the app's session tools), select it as the session's agent before your first message: add the `orchestrator` chip from the composer's **+** menu, or run `/agent orchestrator`. Install `orchestrator-worker` with it. |
-| [`orchestrator-worker`](./ghcp/agents/orchestrator-worker.agent.md) | Helper for `orchestrator`. Does its one-off jobs (research, checks, reviews, documents, commands) with shell, file, search, and web tools, but has no tools to start sub-agents or create sessions. | Not invoked directly, and hidden from the agent picker. `orchestrator` starts it through the `task` tool. |
+| [`orchestrator`](./ghcp/agents/orchestrator.agent.md) | Coordinator for multi-PR work in the GitHub Copilot app. Plans, delegates, and tracks, but has **no shell, file, search, web, or MCP tools**, so every lookup and change goes elsewhere: owned work (a branch, PR, or ongoing workstream) and jobs that need other agents to a nested child session, other one-off jobs to an `orchestrator-worker` sub-agent. Keeps its plan and a registry of child sessions in the session SQL database. Picks a model and reasoning effort for every child session and sub-agent from the tiers in its "Models and effort" section; edit them to match the models you have. Follows version 1 of the swarm dashboard data contract: each child report starts with a status line, a `children` table records each child's branch, PR and outcome, and every question to you is tagged with the units it concerns. | In the GitHub Copilot app (it relies on the app's session tools), select it as the session's agent before your first message: add the `orchestrator` chip from the composer's **+** menu, or run `/agent orchestrator`. Install `orchestrator-worker` with it. |
+| [`orchestrator-worker`](./ghcp/agents/orchestrator-worker.agent.md) | Helper for `orchestrator`. Does its one-off jobs (research, checks, reviews, documents, commands) with shell, file, search, and web tools, but has no tools to start sub-agents or create sessions. Runs on Opus at high effort unless the orchestrator sets a model and effort for the job, which it normally does. | Not invoked directly, and hidden from the agent picker. `orchestrator` starts it through the `task` tool. |
 
 ---
 
@@ -80,7 +80,7 @@ Both are markdown files the [GitHub Copilot CLI](https://docs.github.com/en/copi
 ~/.copilot/skills/<skill-name>/SKILL.md
 ```
 
-The CLI auto-routes to a skill when the user's intent matches its `description`. Each `SKILL.md` is markdown with a small YAML frontmatter block:
+The CLI auto-routes to a skill when the user's intent matches its `description`, and you can also invoke a skill by name with `/<skill-name>`. Each `SKILL.md` is markdown with a small YAML frontmatter block:
 
 ```yaml
 ---
@@ -126,7 +126,7 @@ Plugins install through the Copilot CLI. Skills and agents are plain files you s
 
 ```bash
 copilot plugin marketplace add ncksol/ai_tools
-copilot plugin install pr-review-graph@ai-tools
+copilot plugin install adr-authoring@ai-tools
 copilot plugin list
 ```
 
@@ -134,10 +134,12 @@ To iterate on a plugin locally, register your clone as the marketplace instead a
 
 ```bash
 copilot plugin marketplace add ~/src/ai_tools
-copilot plugin install pr-review-graph@ai-tools
+copilot plugin install adr-authoring@ai-tools
 ```
 
-Direct installs from a repo, URL or local path (`copilot plugin install ./ghcp/plugins/pr-review-graph`) still work, but the CLI marks them deprecated in favour of `plugin@marketplace`.
+Direct installs from a repo, URL or local path (`copilot plugin install ./ghcp/plugins/adr-authoring`) still work, but the CLI marks them deprecated in favour of `plugin@marketplace`.
+
+The `swarm-dashboard` canvas loads with each session's extensions, so restart your Copilot sessions, or ask Copilot to reload extensions, after installing it.
 
 ### Option 1: Symlink (recommended — you get updates with `git pull`)
 
@@ -172,10 +174,13 @@ To update, run `git -C ai_tools pull`, then run both `cp` commands again.
 ### Option 3: Cherry-pick a single skill or agent
 
 ```bash
-# A skill
-mkdir -p ~/.copilot/skills/strict-code-review
-curl -fsSL https://raw.githubusercontent.com/ncksol/ai_tools/main/ghcp/skills/strict-code-review/SKILL.md \
-  -o ~/.copilot/skills/strict-code-review/SKILL.md
+# A skill: download SKILL.md and every file it links to.
+# strict-code-review, for example, also needs the files in its references/ directory.
+base=https://raw.githubusercontent.com/ncksol/ai_tools/main/ghcp/skills/strict-code-review
+for f in SKILL.md references/azure-devops.md references/checklist.md \
+         references/github.md references/local.md references/pasted-diff.md; do
+  curl -fsSL --create-dirs "$base/$f" -o ~/.copilot/skills/strict-code-review/"$f"
+done
 
 # An agent
 mkdir -p ~/.copilot/agents
@@ -191,10 +196,13 @@ Restart your Copilot CLI session and you're done.
 
 ## ▶️ Use the skills
 
-Once installed, you don't invoke skills by name — you describe what you want and the CLI routes to the best match:
+Once installed, describe what you want and the CLI routes to the best match, or invoke a skill by name with `/<skill-name>`:
 
 ```text
-> Review this PR: https://github.com/acme/widgets/pull/482
+> /strict-code-review https://github.com/acme/widgets/pull/482
+  → runs strict-code-review on that PR
+
+> Do a strict review of my current branch before I open a PR
   → activates strict-code-review
 
 > The reviewer left a bunch of comments on PR 482 — help me triage them
@@ -205,6 +213,16 @@ Once installed, you don't invoke skills by name — you describe what you want a
 ```
 
 Pasted diffs, local branch names, and Azure DevOps URLs all work too.
+
+For a PR URL, start the prompt with `/strict-code-review`. When many skills are installed, the CLI may describe only some of them to the model, so a prompt such as "Review this PR: `<url>`" can go to another review skill.
+
+`strict-code-review` reads files from its `references/` directory while it runs. In non-interactive runs (`copilot -p`), the CLI cannot ask for approval, so it refuses those reads unless you give it read access to the skill's resolved directory. Installed skills are often symlinks and the CLI checks the real path, so `--add-dir ~/.copilot/skills` is not enough:
+
+```bash
+copilot -p "<your request>" --add-dir "$(realpath ~/.copilot/skills/strict-code-review)"
+```
+
+Without that access, the skill stops with `Review incomplete` and says how to grant it.
 
 ---
 
@@ -220,7 +238,8 @@ ai_tools/
 └── ghcp/                              ← GitHub Copilot CLI artefacts
     ├── skills/
     │   ├── strict-code-review/
-    │   │   └── SKILL.md
+    │   │   ├── SKILL.md
+    │   │   └── references/            ← provider adapters and the review checklist
     │   ├── analyse-pr-feedback/
     │   │   └── SKILL.md
     │   ├── rereview-pr/
@@ -233,21 +252,23 @@ ai_tools/
     │   ├── orchestrator.agent.md
     │   └── orchestrator-worker.agent.md
     └── plugins/
-        ├── pr-review-graph/           ← self-contained plugin (own manifest, tests, LICENSE)
+        ├── adr-authoring/             ← self-contained plugin (own manifest, tests, LICENSE)
         │   ├── plugin.json
         │   ├── package.json
-        │   ├── agents/                ← 9 × prg-*.agent.md specialists
+        │   ├── agents/                ← adr-writer.agent.md
         │   ├── skills/
-        │   │   └── review-pull-request/
+        │   │   └── adr-write/         ← template, style, rubric, and examples
+        │   ├── evaluations/           ← ten briefs and a repeatability procedure
+        │   ├── scripts/               ← structural and packaging validators
         │   └── tests/
-        └── adr-authoring/
+        └── swarm-dashboard/
             ├── plugin.json
             ├── package.json
-            ├── agents/                ← adr-writer.agent.md
-            ├── skills/
-            │   └── adr-write/         ← template, style, rubric, and examples
-            ├── evaluations/           ← ten briefs and a repeatability procedure
-            ├── scripts/               ← structural and packaging validators
+            ├── engine/                ← reads Copilot's local data into swarm snapshots
+            ├── server/                ← local server, shared port and canvas host
+            ├── ui/                    ← the dashboard page, no build step
+            ├── com.github.copilot/    ← the canvas extension
+            ├── scripts/               ← launcher, snapshot command, layout check, validator
             └── tests/
 ```
 
@@ -265,7 +286,7 @@ The PR-related skills here all share the same shape so they feel like a coherent
 - **`description` is written for the router**, not the human reader. State *exactly when this skill should activate*, including the verbs a user is likely to say.
 - **Safety rules up top.** Be explicit about what the skill must NOT do (edit, commit, push, post comments, approve, merge, …). Inspection-only skills are the default here.
 - **Provider-neutral** for any PR/repo workflow: support GitHub *and* Azure DevOps, with adapters for local branches and pasted input.
-- **Shared severity vocabulary**: `Critical | High | Medium | Low | Info`.
+- **Shared severity vocabulary**: `Critical | High | Medium | Low`.
 - **Concrete commands, not vibes.** Show the exact `gh` / `az` invocations to use, including the GraphQL query for GitHub review-thread resolution state (REST doesn't expose it reliably).
 - **Prescribed output format** — usually a markdown table — so results are skimmable and comparable across runs.
 - **Forbid hallucination**: don't invent line numbers, don't claim a command ran when it didn't, don't claim surrounding code was inspected when only the diff was read.

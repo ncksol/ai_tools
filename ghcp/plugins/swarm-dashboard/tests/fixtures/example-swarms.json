@@ -1,0 +1,4 @@
+[
+  { "id": "ws-0000-root", "name": "Sample story B", "project": { "id": "project-0001", "name": "sample-project" }, "startedAt": 1791809280000, "lastActivityAt": 1792065540000, "lifecycle": "live", "units": 7, "credits": 97652.4, "alive": true },
+  { "id": "ws-1000-root", "name": "Sample story A", "project": { "id": "project-0001", "name": "sample-project" }, "startedAt": 1791450720000, "lastActivityAt": 1791710520000, "lifecycle": "finished", "units": 4, "credits": 49160.0, "alive": false }
+]

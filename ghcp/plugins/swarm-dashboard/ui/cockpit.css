@@ -1,0 +1,201 @@
+:root {
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  /* Text on dark glass. The layout check proves 4.5:1 over the brightest scene pixel behind each panel. */
+  --ink: oklch(0.94 0.008 250);
+  --ink-2: oklch(0.80 0.016 250);
+  --ink-3: oklch(0.72 0.018 250);
+  /* The regular view's pastel fills, as text and dot colours on dark glass; idle and archived are dimmed. */
+  --busy: oklch(0.84 0.07 238);
+  --idle: oklch(0.80 0.012 250);
+  --plan: oklch(0.89 0.08 92);
+  --question: oklch(0.85 0.07 300);
+  --stuck: oklch(0.78 0.11 25);
+  --blocked: oklch(0.85 0.085 62);
+  --merged: oklch(0.86 0.07 160);
+  --archived: oklch(0.70 0.008 250);
+  --pr: oklch(0.86 0.06 188);
+  --accent: oklch(0.84 0.07 238);
+  --glass: rgb(9 13 21 / 0.88);
+  --glass-top: rgb(9 13 21 / 0.8);
+  --line: rgb(170 196 235 / 0.14);
+  --line-2: rgb(170 196 235 / 0.28);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #020306; }
+body { color: var(--ink); font: 400 14px/20px var(--sans); font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; background: none; border: 0; text-align: inherit; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+ul, ol { list-style: none; }
+#ck-gl { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+html[data-gl="off"] #ck-gl { display: none; }
+html[data-gl="off"] body { background: radial-gradient(ellipse at 50% 38%, rgb(26 20 16) 0%, rgb(5 7 11) 55%, rgb(2 3 6) 100%); }
+
+.ck { position: fixed; inset: 0; }
+.ck-mono { font-family: var(--mono); }
+.ck-dim { color: var(--ink-3); }
+.ck-ellipsis { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The flat line at the top left, and the quality switch at the top right. */
+.ck-hud { position: fixed; left: 24px; top: 16px; height: 24px; padding: 4px 8px; border-radius: 4px; background-color: var(--glass-top); font-size: 12px; line-height: 16px; color: var(--ink-2); white-space: nowrap; pointer-events: none; }
+.ck-warn { color: var(--blocked); }
+.ck-qual { position: fixed; z-index: 1; right: 24px; top: 16px; display: flex; gap: 4px; height: 24px; }
+.ck-qual button { height: 24px; padding: 4px 8px; border-radius: 4px; background-color: var(--glass-top); font-size: 12px; line-height: 16px; color: var(--ink-2); }
+.ck-qual button[aria-pressed="true"] { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-2); }
+
+/* The 3D stage: a design space 900 px tall, scaled to the window's height; cockpit.mjs sets its size, perspective and scale. */
+.ck-stage { position: fixed; left: 0; top: 0; transform-origin: 0 0; perspective-origin: 50% 50%; }
+.ck-world { position: absolute; left: 50%; top: 50%; width: 0; height: 0; transform-style: preserve-3d; }
+.ck-panel {
+  --acc: color-mix(in oklch, var(--accent) 70%, transparent);
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  overflow: hidden;
+  border-radius: 4px;
+  background-color: var(--glass);
+  background-image:
+    linear-gradient(var(--acc), var(--acc)), linear-gradient(var(--acc), var(--acc)), linear-gradient(var(--acc), var(--acc)), linear-gradient(var(--acc), var(--acc)),
+    linear-gradient(var(--acc), var(--acc)), linear-gradient(var(--acc), var(--acc)), linear-gradient(var(--acc), var(--acc)), linear-gradient(var(--acc), var(--acc)),
+    linear-gradient(180deg, transparent, rgb(2 3 6 / 0.35));
+  background-size: 12px 1px, 1px 12px, 12px 1px, 1px 12px, 12px 1px, 1px 12px, 12px 1px, 1px 12px, 100% 100%;
+  background-position: left top, left top, right top, right top, left bottom, left bottom, right bottom, right bottom, 0 0;
+  background-repeat: no-repeat;
+  box-shadow: inset 0 0 0 1px var(--line), 0 0 0 1px rgb(0 0 0 / 0.35), 0 0 32px rgb(120 170 230 / 0.07);
+  backface-visibility: hidden;
+  cursor: pointer;
+}
+#ck-clock { width: 280px; height: 176px; left: -140px; top: -88px; }
+#ck-cost { width: 280px; height: 236px; left: -140px; top: -118px; }
+#ck-needs { width: 280px; height: 172px; left: -140px; top: -86px; --acc: color-mix(in oklch, var(--question) 70%, transparent); }
+#ck-status { width: 280px; height: 128px; left: -140px; top: -64px; }
+#ck-activity { width: 320px; height: 252px; left: -160px; top: -126px; }
+#ck-units { width: 536px; height: 252px; left: -268px; top: -126px; }
+#ck-prs { width: 320px; height: 252px; left: -160px; top: -126px; }
+
+.ck-ph { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 20px; min-width: 0; }
+.ck-t { flex: none; font-size: 12px; line-height: 16px; color: var(--ink-2); }
+.ck-t:hover { color: var(--ink); }
+.ck-side { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 16px; color: var(--ink-3); text-align: right; }
+.ck-big { font-size: 18px; line-height: 24px; font-weight: 500; color: var(--ink); }
+.ck-ph .ck-big { line-height: 20px; }
+.ck-meta { font-size: 12px; line-height: 16px; color: var(--ink-2); }
+.ck-empty { font-size: 12px; line-height: 16px; color: var(--ink-3); }
+
+/* Clock. */
+.ck-clock { display: flex; align-items: baseline; gap: 4px; height: 40px; }
+.ck-hm { font-size: 36px; line-height: 40px; font-weight: 400; color: var(--ink); }
+.ck-s { font-size: 14px; line-height: 20px; color: var(--ink-3); }
+.ck-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; height: 20px; }
+.ck-k { font-size: 12px; line-height: 16px; color: var(--ink-2); }
+.ck-v { font-size: 14px; line-height: 20px; color: var(--ink); white-space: nowrap; }
+
+/* Cost. */
+.ck-models { display: flex; flex-direction: column; gap: 8px; }
+.ck-model { display: grid; grid-template-columns: minmax(0, 1fr) auto; row-gap: 4px; column-gap: 8px; font-size: 12px; line-height: 16px; }
+.ck-model-n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+.ck-n { color: var(--ink-2); }
+.ck-bar { grid-column: 1 / -1; height: 4px; overflow: hidden; border-radius: 4px; background-color: rgb(170 196 235 / 0.1); }
+.ck-fill { display: block; height: 100%; border-radius: 4px; background-color: var(--busy); opacity: 0.75; transform: scaleX(var(--w)); transform-origin: 0 50%; transition: transform 1s ease; }
+
+/* Needs you. */
+.ck-needs-t { display: inline-flex; flex: none; align-items: center; gap: 8px; }
+.ck-light { width: 12px; height: 12px; border-radius: 50%; background-color: var(--question); box-shadow: 0 0 12px 2px color-mix(in oklch, var(--question) 55%, transparent); animation: ck-pulse 3.2s ease-in-out infinite; }
+.ck-light.is-off { background-color: var(--archived); box-shadow: none; opacity: 0.6; animation: none; }
+.ck-needs { display: flex; flex-direction: column; gap: 8px; }
+.ck-need { display: grid; grid-template-columns: fit-content(50%) minmax(0, 1fr) auto; grid-template-rows: 16px 16px; row-gap: 4px; column-gap: 8px; width: 100%; padding: 8px; border-radius: 4px; background-color: rgb(255 255 255 / 0.035); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--c) 30%, transparent); font-size: 12px; line-height: 16px; }
+.ck-need .ck-lab { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--c); }
+.ck-kind { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+.ck-age { color: var(--ink-3); text-align: right; white-space: nowrap; }
+.ck-need .ck-txt { grid-column: 1 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+
+/* Status legend. */
+.ck-leg { display: grid; grid-template-columns: 1fr 1fr; row-gap: 4px; column-gap: 16px; }
+.ck-leg li { display: flex; align-items: center; gap: 8px; height: 20px; font-size: 12px; line-height: 16px; color: var(--ink-2); }
+.ck-leg .ck-n { margin-left: auto; color: var(--ink); }
+.ck-leg li.is-zero, .ck-leg li.is-zero .ck-n { color: var(--ink-3); }
+
+.ck-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background-color: var(--c); box-shadow: 0 0 8px 1px color-mix(in oklch, var(--c) 50%, transparent); }
+.st-busy { --c: var(--busy); }
+.st-idle { --c: var(--idle); }
+.st-plan { --c: var(--plan); }
+.st-question { --c: var(--question); }
+.st-stuck { --c: var(--stuck); }
+.st-blocked { --c: var(--blocked); }
+.st-merged { --c: var(--merged); }
+.st-done { --c: var(--merged); }
+.st-archived { --c: var(--archived); }
+.st-pr { --c: var(--pr); }
+
+/* Activity: newest at the bottom; new rows slide the list up (cockpit.mjs). */
+.ck-log-window { display: flex; flex: 1; flex-direction: column; justify-content: flex-end; min-height: 0; overflow: hidden; }
+.ck-log { display: flex; flex-direction: column; }
+.ck-log-row { display: grid; grid-template-columns: 40px var(--lab) minmax(0, 1fr); column-gap: 8px; width: 100%; height: 20px; font-family: var(--mono); font-size: 12px; line-height: 20px; }
+.ck-time { color: var(--ink-3); }
+.ck-log-row .ck-lab { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--c, var(--ink-2)); }
+.ck-log-row .ck-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--sans); color: var(--ink-2); }
+button.ck-log-row:hover .ck-txt { color: var(--ink); }
+
+/* Mission control: tile density and rows follow the count (cockpit-model.mjs); a tile spans a quarter, a third or half of 12 columns. */
+.ck-tiles { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); align-content: start; gap: 8px; height: 168px; }
+.ck-w3 { grid-column: span 3; }
+.ck-w4 { grid-column: span 4; }
+.ck-w6 { grid-column: span 6; }
+.ck-tiles.d-full { grid-auto-rows: 80px; }
+.ck-tiles.d-two { grid-auto-rows: 48px; }
+.ck-tiles.d-one { grid-auto-rows: 32px; }
+.ck-tile { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; min-width: 0; border-radius: 4px; background-color: color-mix(in oklch, var(--c) 7%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--c) 16%, transparent); font-size: 12px; line-height: 16px; transition: box-shadow 0.6s ease, background-color 0.6s ease; }
+.d-full > .ck-tile { grid-template-rows: 16px 16px 16px; grid-template-areas: "id age" "name name" "state state"; row-gap: 4px; padding: 12px; }
+.d-two > .ck-tile { grid-template-rows: 16px 16px; grid-template-areas: "id age" "state state"; padding: 8px; }
+.d-one > .ck-tile { grid-template-rows: 16px; grid-template-areas: "id age"; padding: 8px; }
+.ck-tile.is-attn { background-color: color-mix(in oklch, var(--c) 13%, transparent); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--c) 42%, transparent); }
+.ck-tile:hover { box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--c) 60%, transparent); }
+.ck-tile.is-new { animation: ck-flash 1.6s cubic-bezier(0.25, 1, 0.5, 1); }
+.ck-id { display: flex; grid-area: id; align-items: center; gap: 8px; min-width: 0; }
+.ck-tile .ck-lab { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.ck-tile .ck-age { grid-area: age; color: var(--ink-2); }
+.ck-name { grid-area: name; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+.ck-state { grid-area: state; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--c); }
+.ck-tile.ck-more { --c: var(--idle); display: flex; align-items: center; color: var(--ink-2); }
+.ck-tile.st-busy .ck-dot { animation: ck-breathe 3s ease-in-out infinite; }
+.ck-tile.st-stuck .ck-dot { animation: ck-blink 2.4s ease-in-out infinite; }
+.ck-foot { height: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; line-height: 16px; color: var(--ink-3); }
+
+/* Pull requests. */
+.ck-prs { display: flex; flex-direction: column; gap: 4px; }
+.ck-pr { display: grid; grid-template-columns: minmax(40px, max-content) minmax(0, 1fr) auto; align-items: center; column-gap: 8px; width: 100%; height: 40px; padding: 4px 8px; border-radius: 4px; background-color: rgb(255 255 255 / 0.025); font-size: 12px; line-height: 16px; }
+.ck-pr:hover, .ck-need:hover { background-color: rgb(255 255 255 / 0.06); }
+.ck-num { color: var(--ink); }
+.ck-pr-t { display: flex; flex-direction: column; min-width: 0; }
+.ck-ttl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.ck-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); }
+.ck-pr-s { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; color: var(--c); }
+
+/* Below the minimum window, or too narrow for its height: the scene stays, the panels go, a note says why. */
+.ck-note { position: fixed; left: 50%; top: 50%; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; width: 400px; padding: 16px; border-radius: 4px; background-color: var(--glass); box-shadow: inset 0 0 0 1px var(--line); transform: translate(-50%, -50%); }
+.ck-note[hidden] { display: none; }
+.ck-note p { font-size: 14px; line-height: 20px; }
+.ck-note .ck-dim { font-size: 12px; line-height: 16px; }
+html[data-fit="small"] .ck-stage, html[data-fit="crowded"] .ck-stage { display: none; }
+
+/* The flat arrangement the layout check audits: the same panels side by side, without 3D. */
+html[data-flat] body { overflow: auto; }
+html[data-flat] .ck { position: static; display: flex; flex-direction: column; gap: 16px; padding: 16px; }
+html[data-flat] .ck-hud, html[data-flat] .ck-qual { position: static; align-self: flex-start; }
+html[data-flat] .ck-note { position: static; transform: none; }
+html[data-flat] #ck-gl { display: none; }
+html[data-flat] .ck-stage { position: static; width: auto !important; height: auto !important; transform: none !important; perspective: none !important; }
+html[data-flat] .ck-world { position: static; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 16px; width: auto; height: auto; transform: none !important; }
+html[data-flat] .ck-panel { position: relative; left: auto !important; top: auto !important; transform: none !important; }
+
+@keyframes ck-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+@keyframes ck-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+@keyframes ck-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+@keyframes ck-flash { from { box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--c) 60%, transparent), 0 0 24px color-mix(in oklch, var(--c) 45%, transparent); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Layout check self-test: clean page</title>
+<style>
+:root { --busy: oklch(0.84 0.07 238); --merged: oklch(0.86 0.07 160); }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 16px; font: 400 14px/20px system-ui, -apple-system, "Segoe UI", sans-serif; color: #222; background: #fff; }
+.dash { display: flex; flex-direction: column; gap: 16px; padding: 16px; border: 1px solid #ddd; }
+.b-card { display: flex; flex-direction: column; gap: 8px; padding: 16px; border: 1px solid #ddd; }
+.chip { display: inline-flex; align-items: center; height: 24px; padding: 0 8px; font-size: 12px; line-height: 16px; border: 1px solid #ddd; }
+.narrow { width: 120px; }
+.cell { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row { display: flex; align-items: center; gap: 8px; overflow: hidden; }
+.dot { flex: none; width: 8px; height: 8px; background: #222; }
+.b-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+.b-grid > .cards-note { margin: 0; padding: 0 16px; border-left: 1px solid transparent; border-right: 1px solid transparent; font-size: 12px; line-height: 16px; color: #555; }
+</style>
+</head>
+<body>
+<main class="dash">
+  <article class="b-card"><span>First card</span><span class="chip">explore 3m</span></article>
+  <article class="b-card"><span>Second card</span></article>
+  <article class="b-card narrow"><div class="cell">A long label with <span>an inline part</span> that ends in an ellipsis</div></article>
+  <article class="b-card narrow"><div class="row"><span class="dot"></span><span class="cell">A flex item that ends in an ellipsis</span></div></article>
+  <article class="b-card" data-open="good-subagent" data-kind="subagent" style="border-color: var(--busy)"><span>A sub-agent card with a blue border</span></article>
+  <article class="b-card" data-open="good-session" data-kind="project" style="border-color: var(--merged)"><span>A session card with a green border</span></article>
+  <div class="b-grid"><article class="b-card"><span>A card in a grid</span></article><p class="cards-note">A note one gap below the cards, lined up with their text</p></div>
+</main>
+</body>
+</html>
