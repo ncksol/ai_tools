@@ -588,6 +588,69 @@ test('a summary request that overlaps a refresh never overwrites the newer summa
   engine.stop();
 });
 
+/**
+ * Finished runs whose last log line has no timestamp, so each events.jsonl was modified 5 minutes after its last parsed
+ * event: their listing shows activity more than the slack after their summaries' finish time.
+ */
+function untimedTailHome(count) {
+  const home = new CopilotHome();
+  home.project({ id: 'project-1', name: 'sample-project' });
+  const runs = [];
+  for (let i = 1; i <= count; i += 1) {
+    const id = `ws-untimed-${i}`;
+    const cliId = `cli-untimed-${i}`;
+    home.workspace({ id, projectId: 'project-1', name: `Untimed story ${i}`, createdAt: at(i), sessionId: cliId });
+    home.workspace({ id: `${id}-unit`, projectId: 'project-1', name: `Untimed u${i} unit`, createdAt: at(i), sessionId: `${cliId}-unit`, parentId: id, creatorSessionId: cliId });
+    const unit = new EventLog(at(i));
+    unit.start(); unit.turnStart(); unit.turnEnd();
+    home.writeEvents(`${cliId}-unit`, unit.events);
+    const log = new EventLog(at(i));
+    log.start(); log.turnStart(); log.wait(MINUTE); log.turnEnd();
+    const lastParsed = log.t;
+    const file = home.writeEvents(cliId, [...log.events, { type: 'session.info', data: { message: 'a line without a timestamp' } }]);
+    utimesSync(file, (lastParsed + 5 * MINUTE) / 1000, (lastParsed + 5 * MINUTE) / 1000);
+    runs.push({ id, cliId, lastParsed });
+  }
+  return { home, runs };
+}
+
+test('a checked summary is remembered, so an unchanged run is not rebuilt again after its snapshot leaves the cache', async () => {
+  const { home, runs } = untimedTailHome(4);
+  const clock = at(10) + 3 * HOUR;
+  const engine = createSwarmEngine({
+    copilotHome: home.root, historyDir: path.join(tempDir('swarm-engine-'), 'history'), now: () => clock, processProbe: alwaysAlive, prLookup: 'off',
+  });
+  // A run whose snapshot is built anew (as it is when an evicted run is tracked again) is announced to subscribers.
+  const built = [];
+  engine.subscribe(change => built.push(...change.swarmIds));
+  for (const run of runs) assert.equal((await engine.getRunSummary(run.id)).finishedAt, run.lastParsed);
+  assert.deepEqual([...built].sort(), runs.map(run => run.id), 'each run was built once');
+  // Four runs, but only three requested snapshots are kept. The next refresh (as the poller runs) lists the first run from its files.
+  await engine.refresh();
+  const first = engine.listSwarms().find(swarm => swarm.id === runs[0].id);
+  assert.equal(first.lastActivityAt, runs[0].lastParsed + 5 * MINUTE, 'the listing shows the file time of the untracked run');
+
+  built.length = 0;
+  const summarized = async () => (await engine.listHistory()).map(item => [item.id, item.summarized]).sort();
+  for (let round = 0; round < 3; round += 1) {
+    await engine.refresh();
+    assert.deepEqual(await summarized(), runs.map(run => [run.id, true]), `round ${round}`);
+    for (const run of runs) assert.equal((await engine.getRunSummary(run.id)).finishedAt, run.lastParsed);
+  }
+  assert.deepEqual(built, [], 'no run was rebuilt');
+
+  // New activity makes the first run stale again, and it is rebuilt once.
+  const later = new EventLog(runs[0].lastParsed + 30 * MINUTE);
+  later.turnStart(); later.wait(MINUTE); later.turnEnd();
+  home.writeEvents(runs[0].cliId, later.events, { append: true });
+  await engine.refresh();
+  assert.deepEqual((await summarized()).find(([id]) => id === runs[0].id), [runs[0].id, false]);
+  assert.equal((await engine.getRunSummary(runs[0].id)).finishedAt, later.t);
+  assert.deepEqual(built, [runs[0].id], 'the changed run was rebuilt');
+  assert.deepEqual((await summarized()).find(([id]) => id === runs[0].id), [runs[0].id, true]);
+  engine.stop();
+});
+
 /** A root session that has been quiet for 181 minutes. With background = true it launched a sub-agent that never reported. */
 function quietHome({ background }) {
   const home = new CopilotHome();

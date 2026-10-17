@@ -47,10 +47,16 @@ function summaryDigest(summary) {
  * resumed and finished again while no engine ran. Both credit values are rounded to 0.1. Lower cost is never stale: a ledger
  * can lose rows when logs are cleaned up, and the stored summary is then kept. A run that is not listed (its logs are gone)
  * keeps its stored summary.
+ *
+ * `verified` is the stamp of the last check that rebuilt the run (see the engine's `verified` map). When the listing still
+ * shows that check's activity time and cost, and the stored summary is the one that check confirmed, nothing is newer: the
+ * summary is not stale even if the listing's file times run more than the slack after its last parsed event.
  */
-function isStale(stored, swarm) {
+function isStale(stored, swarm, verified = null) {
   if (!swarm) return false;
-  return swarm.credits > stored.credits || swarm.lastActivityAt > stored.finishedAt + STALE_SLACK_MS;
+  if (!(swarm.credits > stored.credits || swarm.lastActivityAt > stored.finishedAt + STALE_SLACK_MS)) return false;
+  return !(verified && swarm.lastActivityAt === verified.lastActivityAt && swarm.credits === verified.credits
+    && summaryDigest(stored) === verified.digest);
 }
 
 function digest(snapshot) {
@@ -104,6 +110,10 @@ export function createSwarmEngine(options = {}) {
   const cheapLast = new Map();
   const knownFinished = new Map();
   const summaryDigests = new Map();
+  // Per root id: { lastActivityAt, credits, digest } from the last check that rebuilt the run and found its stored summary
+  // (digest) current while the untracked listing showed that activity time and cost (see isStale). Kept apart from the snapshot
+  // cache, so it outlives a snapshot's eviction; dropped when the root leaves the forest.
+  const verified = new Map();
   const pendingRoots = new Set();
   const requested = [];
   const listeners = new Set();
@@ -299,7 +309,10 @@ export function createSwarmEngine(options = {}) {
     return snapshot;
   }
 
-  /** Writes the run's summary when it differs from the last one stored or read, apart from computedAt. */
+  /**
+   * Writes the run's summary when it differs from the last one stored or read, apart from computedAt. Resolves the digest of
+   * the summary that is stored afterwards.
+   */
   async function writeSummary(snapshot) {
     const id = snapshot.run.id;
     const fresh = summarizeRun(snapshot, { computedAt: 0 });
@@ -310,15 +323,26 @@ export function createSwarmEngine(options = {}) {
       known = stored ? summaryDigest(stored) : null;
       if (known !== null) summaryDigests.set(id, known);
     }
-    if (known === key) return;
+    if (known === key) return key;
     await history.put({ ...fresh, computedAt: now() });
     summaryDigests.set(id, key);
+    return key;
+  }
+
+  /** The untracked listing's activity time and cost for a root, as of the last refresh (the first two fields of a verified stamp). */
+  function listedStamp(rootId) {
+    const item = swarms.find(swarm => swarm.id === rootId);
+    const last = cheapLast.get(rootId);
+    return item && last ? { lastActivityAt: last, credits: item.credits } : null;
   }
 
   async function persistFinished(snapshot, diag) {
     if (!persist) return;
     try {
-      await writeSummary(snapshot);
+      const stamp = listedStamp(snapshot.run.id);
+      const key = await writeSummary(snapshot);
+      // The snapshot was built after this refresh listed the run, so the stored summary is current for that listing.
+      if (stamp) verified.set(snapshot.run.id, { ...stamp, digest: key });
     } catch (error) {
       diag.push({ level: 'warn', source: 'history', message: error.message });
     }
@@ -404,6 +428,7 @@ export function createSwarmEngine(options = {}) {
     for (const rootId of [...cheapLast.keys()]) if (!current.has(rootId)) cheapLast.delete(rootId);
     for (const rootId of [...knownFinished.keys()]) if (!current.has(rootId)) knownFinished.delete(rootId);
     for (const rootId of [...summaryDigests.keys()]) if (!current.has(rootId)) summaryDigests.delete(rootId);
+    for (const rootId of [...verified.keys()]) if (!current.has(rootId)) verified.delete(rootId);
     for (const rootId of [...pendingRoots]) if (!current.has(rootId)) pendingRoots.delete(rootId);
     for (const [cliId, entry] of [...liveness]) if (at - entry.checkedAt > 4 * LIVENESS_TTL_MS) liveness.delete(cliId);
     readDb.retain(dbFiles);
@@ -473,13 +498,13 @@ export function createSwarmEngine(options = {}) {
     const listed = new Map(swarms.map(swarm => [swarm.id, swarm]));
     // A stale stored summary is left out, so the run is listed below from the listing with summarized: false; getRunSummary rebuilds it.
     for (const summary of await history.list()) {
-      if (!live.has(summary.id) && !isStale(summary, listed.get(summary.id))) items.set(summary.id, listItemOf(summary));
+      if (!live.has(summary.id) && !isStale(summary, listed.get(summary.id), verified.get(summary.id))) items.set(summary.id, listItemOf(summary));
     }
     for (const { snapshot } of snapshots.values()) {
       if (snapshot.run.lifecycle === 'finished' && !live.has(snapshot.run.id) && !items.has(snapshot.run.id)) {
         const summary = summarizeRun(snapshot, { computedAt: now() });
         // A cached snapshot can be older than the listing (a refresh lists before it rebuilds); the listing item is used then.
-        if (!isStale(summary, listed.get(snapshot.run.id))) items.set(snapshot.run.id, listItemOf(summary));
+        if (!isStale(summary, listed.get(snapshot.run.id), verified.get(snapshot.run.id))) items.set(snapshot.run.id, listItemOf(summary));
       }
     }
     for (const swarm of swarms) {
@@ -501,7 +526,7 @@ export function createSwarmEngine(options = {}) {
     }
     const stored = await history.get(runId);
     // A stored summary stands unless the listing shows newer activity or cost for the run (see isStale).
-    if (stored && !isStale(stored, swarms.find(swarm => swarm.id === runId))) {
+    if (stored && !isStale(stored, swarms.find(swarm => swarm.id === runId), verified.get(runId))) {
       summaryDigests.set(runId, summaryDigest(stored));
       return stored;
     }
@@ -512,11 +537,17 @@ export function createSwarmEngine(options = {}) {
     track(runId);
     await refreshStartedNow();
     const snapshot = snapshots.get(runId)?.snapshot ?? null;
+    const stamp = listedStamp(runId);
     if (!snapshot) return stored;
     if (snapshot.run.lifecycle === 'live') return summarizeRun(snapshot, { computedAt: now() });
     const fresh = summarizeRun(snapshot, { computedAt: 0 });
     const persisted = await history.get(runId);
-    if (persisted && summaryDigest(persisted) === summaryDigest(fresh)) return persisted;
+    const key = summaryDigest(fresh);
+    if (persisted && summaryDigest(persisted) === key) {
+      // The rebuild confirmed the stored summary for the listing of the refresh that built it.
+      if (stamp) verified.set(runId, { ...stamp, digest: key });
+      return persisted;
+    }
     return { ...fresh, computedAt: now() };
   }
 
