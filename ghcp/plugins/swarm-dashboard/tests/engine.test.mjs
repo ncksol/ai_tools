@@ -353,7 +353,7 @@ const MERGED_REPLY = JSON.stringify({ status: 'completed', title: 'Sample PR', c
 function gatedLookup(clock) {
   const gate = { release: null };
   const run = () => new Promise(resolve => { gate.release = resolve; });
-  return { gate, lookup: createPrLookup({ run, now: () => clock() }) };
+  return { gate, lookup: createPrLookup({ run, now: () => clock(), azureExtensionInstalled: async () => true }) };
 }
 
 const stat = file => ({ text: readFileSync(file, 'utf8'), ino: statSync(file).ino });

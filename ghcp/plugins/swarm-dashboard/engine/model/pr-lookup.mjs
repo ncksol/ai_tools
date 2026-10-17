@@ -1,13 +1,19 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { readFile, readdir, realpath, stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import path from 'node:path';
 import { MINUTE, parseTime } from '../time.mjs';
 
 export const GITHUB_REPO = /^[A-Za-z0-9][\w.-]*\/[\w.-]+$/;
 export const ADO_REPO = /^[A-Za-z0-9][\w.-]*\/[^/\r\n]+\/[^/\r\n]+$/;
 const EMPTY_INFO = Object.freeze({ state: 'unknown', title: null, openedAt: null, mergedAt: null, closedAt: null, reviewNote: null, url: null });
 
-// Turns off what az and gh write or send on their own: logs, telemetry, extension installs, upgrades, surveys and prompts.
-// Accepted exception: the CLIs may still refresh their sign-in caches, and az may rebuild its command index after an upgrade.
+// Turns off the CLIs' telemetry, update checks, prompts, log files, error recommendations and extension installs; az runs only
+// when the azure-devops extension is already installed (see azureExtensionInstalled). Accepted exceptions: three things remain
+// that the CLIs do on their own on any use, not requests the dashboard makes: they refresh their own sign-in caches; az keeps its
+// config folder up to date (its session and cache files and its command index); and after az is installed or upgraded, while
+// its version cache is empty, az fetches version metadata from GitHub.
 export const CLI_ENV = Object.freeze({
   az: Object.freeze({
     AZURE_EXTENSION_USE_DYNAMIC_INSTALL: 'no',
@@ -15,15 +21,131 @@ export const CLI_ENV = Object.freeze({
     AZURE_LOGGING_ENABLE_LOG_FILE: 'no',
     AZURE_CORE_SURVEY_MESSAGE: 'no',
     'AZURE_AUTO-UPGRADE_ENABLE': 'no', // knack keeps the hyphen of the auto-upgrade section.
+    // az compares this value, upper-cased, with OFF: only 'off' stops the recommendation request after a failed command.
+    AZURE_CORE_ERROR_RECOMMENDATION: 'off',
   }),
   gh: Object.freeze({ GH_NO_UPDATE_NOTIFIER: '1', GH_NO_EXTENSION_UPDATE_NOTIFIER: '1', GH_PROMPT_DISABLED: '1', GH_TELEMETRY: 'false' }),
 });
 
 export const cliEnv = (command, base = process.env) => ({ ...base, ...CLI_ENV[command] });
 
-// With dynamic install off, az fails like this when the azure-devops extension is missing. The dashboard never installs it.
+// An az that still says the command is unknown has a broken extension install; it is reported like a missing extension.
 const MISSING_EXTENSION = /not recognized by the system|requires the extension|az extension add/i;
-const MISSING_EXTENSION_MESSAGE = 'Azure DevOps PR state is unavailable: the azure-devops extension for az is not installed (the dashboard never installs it).';
+const MISSING_EXTENSION_MESSAGE = 'lookup unavailable: azure-devops extension not installed';
+
+/** A file or folder's stats, or null when it cannot be read. */
+const statOf = file => stat(file).catch(() => null);
+
+/** Python's os.path.expanduser for a leading ~ alone or ~/; `home` is the HOME that az sees. */
+const expandHome = (value, home) => (value === '~' || value.startsWith('~/') ? path.join(home, value.slice(1)) : value);
+
+/**
+ * One option of an INI file, as Python's configparser reads az's config file: section names match exactly, option names in any
+ * case, `=` or `:` separates the value, lines that start with # or ; are comments, and the DEFAULT section applies to every
+ * section. Returns undefined when the option is not set.
+ */
+function iniOption(text, section, option) {
+  let current = null;
+  const found = new Map();
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#') || line.startsWith(';')) continue;
+    const header = /^\[(.+)\]$/.exec(line);
+    if (header) {
+      current = header[1];
+      continue;
+    }
+    if (current !== section && current !== 'DEFAULT') continue;
+    const separator = line.search(/[=:]/);
+    if (separator <= 0 || line.slice(0, separator).trim().toLowerCase() !== option) continue;
+    found.set(current, line.slice(separator + 1).trim());
+  }
+  return found.get(section) ?? found.get('DEFAULT');
+}
+
+/**
+ * The folders az reads for a setting of its [extension] section, as knack does: the variable AZURE_EXTENSION_<OPTION> wins, even
+ * when empty; else the option in <config folder>/config. A value has a leading ~ expanded; an empty or missing one gives null.
+ */
+function extensionSetting(env, configText, option, home) {
+  const name = `AZURE_EXTENSION_${option.toUpperCase()}`;
+  const value = Object.hasOwn(env, name) ? env[name] : configText === null ? undefined : iniOption(configText, 'extension', option);
+  return value ? expandHome(value, home) : null;
+}
+
+/**
+ * az's system extension folder when no setting names one: azure-cli-extensions in the purelib of the Python that az runs. Best
+ * effort: the first az on PATH, followed to its real file, must be a launcher script that names that Python (as Homebrew's and
+ * the Linux packages' do), or a script whose #! line is that Python; the folder is then azure-cli-extensions in
+ * <dirname(dirname(python))>/lib/python3.N/site-packages. Empty when any step fails.
+ */
+async function defaultSystemFolders(env) {
+  let launcher = null;
+  for (const dir of String(env.PATH ?? '').split(path.delimiter)) {
+    if (!dir) continue;
+    const candidate = path.join(dir, 'az');
+    if ((await statOf(candidate))?.isFile()) {
+      launcher = candidate;
+      break;
+    }
+  }
+  if (!launcher) return [];
+  let text;
+  try {
+    const file = await realpath(launcher);
+    if ((await statOf(file)).size > 64 * 1024) return [];
+    text = await readFile(file, 'utf8');
+  } catch {
+    return [];
+  }
+  if (!text.startsWith('#!')) return [];
+  const match = /(\/[^\s"']*\/python[\d.]*)["']?(?:\s+-\w+)+\s+azure\.cli\b/.exec(text) ?? /^#!\s*(\/\S*\/python[\d.]*)\s*$/m.exec(text.split('\n')[0]);
+  if (!match) return [];
+  const prefix = path.dirname(path.dirname(match[1]));
+  const lib = path.join(prefix, 'lib');
+  let versions;
+  try {
+    versions = (await readdir(lib)).filter(name => /^python3\.\d+$/.test(name));
+  } catch {
+    return [];
+  }
+  return versions.map(version => path.join(lib, version, 'site-packages', 'azure-cli-extensions'));
+}
+
+/** Whether `<dir>/azure-devops` is a folder holding an entry that az's glob `*.*-info` matches (glob skips names that start with a dot). */
+async function hasExtension(dir) {
+  const folder = path.join(dir, 'azure-devops');
+  if (!(await statOf(folder))?.isDirectory()) return false;
+  try {
+    return (await readdir(folder)).some(name => !name.startsWith('.') && /\..*-info$/s.test(name));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether az, run with `env` from `cwd`, has the azure-devops extension installed, judged as az 2.71 does from the folders it
+ * reads: the user extension folder (AZURE_EXTENSION_DIR, else [extension] dir in the config file, else
+ * <config folder>/cliextensions) and the system one (AZURE_EXTENSION_SYS_DIR, else [extension] sys_dir, else beside the Python
+ * that az runs). The config folder is AZURE_CONFIG_DIR, else ~/.azure. Read-only: it only stats, lists and reads these paths.
+ */
+export async function azureExtensionInstalled({ env = process.env, cwd = null } = {}) {
+  const home = env.HOME || homedir();
+  const base = cwd ?? process.cwd();
+  const configDir = path.resolve(base, env.AZURE_CONFIG_DIR || path.join(home, '.azure'));
+  let configText = null;
+  try {
+    configText = await readFile(path.join(configDir, 'config'), 'utf8');
+  } catch {
+    // no config file: the defaults apply
+  }
+  const userDir = extensionSetting(env, configText, 'dir', home);
+  if (await hasExtension(path.resolve(base, userDir ?? path.join(configDir, 'cliextensions')))) return true;
+  const sysDir = extensionSetting(env, configText, 'sys_dir', home);
+  const sysDirs = sysDir ? [path.resolve(base, sysDir)] : await defaultSystemFolders(env);
+  for (const dir of sysDirs) if (await hasExtension(dir)) return true;
+  return false;
+}
 
 export function runCommand(command, args, { cwd, timeoutMs, env }) {
   return new Promise((resolve, reject) => {
@@ -88,8 +210,13 @@ export function mapGithub(json) {
 /**
  * Cached, read-only PR state through `az repos pr show` and `gh pr view`. Only a merged result is final. A closed or abandoned PR can
  * be reopened or reactivated, so it is checked again after the TTL like an open one.
+ * `env` is the base environment of both CLIs (see cliEnv). An ADO lookup starts az only when `azureExtensionInstalled` finds the
+ * azure-devops extension; otherwise it fails with no process started, and a request after the TTL checks the disk again.
  */
-export function createPrLookup({ run = runCommand, now = Date.now, ttlMs = 5 * MINUTE, timeoutMs = 20_000, concurrency = 2, exists = existsSync } = {}) {
+export function createPrLookup({
+  run = runCommand, now = Date.now, ttlMs = 5 * MINUTE, timeoutMs = 20_000, concurrency = 2, exists = existsSync,
+  env = process.env, azureExtensionInstalled: hasAzureExtension = azureExtensionInstalled,
+} = {}) {
   const cache = new Map();
   const queue = [];
   const inflight = new Set();
@@ -107,9 +234,12 @@ export function createPrLookup({ run = runCommand, now = Date.now, ttlMs = 5 * M
       if (cwd && !exists(cwd)) throw new Error('its worktree is gone, so its repository is unknown');
       const ado = pr.provider === 'ado';
       const command = ado ? 'az' : 'gh';
+      const commandEnv = cliEnv(command, env);
+      // The dashboard never installs the extension, and without it az would only fail after its own start-up work.
+      if (ado && !(await hasAzureExtension({ env: commandEnv, cwd }))) throw new Error(MISSING_EXTENSION_MESSAGE);
       let stdout;
       try {
-        stdout = await run(command, ado ? adoArgs(pr) : githubArgs(pr), { cwd: cwd ?? undefined, timeoutMs, env: cliEnv(command) });
+        stdout = await run(command, ado ? adoArgs(pr) : githubArgs(pr), { cwd: cwd ?? undefined, timeoutMs, env: commandEnv });
       } catch (error) {
         if (ado && MISSING_EXTENSION.test(error.message)) throw new Error(MISSING_EXTENSION_MESSAGE);
         throw error;

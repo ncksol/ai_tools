@@ -369,7 +369,7 @@ test('the same report-inferred PR number in two worktrees keeps each worktree\'s
       calls.push(options.cwd);
       return options.cwd === '/synthetic/worktrees/api' ? '{"status":"completed","closedDate":"2026-10-15T09:50:00Z"}' : '{"status":"active"}';
     },
-    now: () => at(120), exists: () => true,
+    now: () => at(120), exists: () => true, azureExtensionInstalled: async () => true,
   });
   data.prInfo = (pr, { cwd }) => {
     lookup.request(pr, { cwd });
