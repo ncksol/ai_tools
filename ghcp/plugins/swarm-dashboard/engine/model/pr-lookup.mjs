@@ -350,6 +350,10 @@ async function hasExtension(dir) {
  * Whether az, run with `env` from `cwd`, would list the azure-devops extension (WheelExtension.get_all in az 2.71), for setups
  * the check can model exactly; anything else throws (could not tell), so that a false "installed" is never given. Whether the
  * extension is compatible or loads is not checked: az then runs and fails, and the lookup reports that.
+ * Scope: environment variables, config files, folders and launchers that a user or a tool could plausibly set up. Out of
+ * scope: a bash, env or python binary that is not what it claims; changes to az's own installed files (.pth files,
+ * sitecustomize, a modified azure-cli); dynamic-linker injection (LD_* and DYLD_* variables); files that change while the
+ * check runs; and az failing at start-up because of a setting outside the extension settings.
  * - Folders: the user extension folder (AZURE_EXTENSION_DIR, else [extension] dir in the config file, else
  *   <AZURE_CONFIG_DIR, or ~/.azure when that is empty or unset>/cliextensions) and the system one (AZURE_EXTENSION_SYS_DIR,
  *   else [extension] sys_dir, else derived from a Homebrew-form launcher; see defaultSystemFolder).
@@ -360,8 +364,9 @@ async function hasExtension(dir) {
  * - Paths are built as Python builds them (see pyJoin; relative ones from `cwd`, the child's folder, null being this
  *   process's) and passed to the file system unchanged, so links and `..` resolve as they do for az. Folders are listed as az
  *   lists them (see hasExtension).
- * Resolves true when the user folder, or a known system folder, holds the extension; false when the user folder does not and
- * the system folder is known and does not; throws when the system folder is unknown and the user folder does not hold it.
+ * Resolves true when the user folder or the system folder holds the extension, and false when neither does; both are listed
+ * before any answer, as az lists both. Throws when the system folder is unknown, even when the user folder holds the
+ * extension, and when either folder cannot be listed.
  * Read-only: it only stats, lists and reads files.
  */
 export async function azureExtensionInstalled({ env = process.env, cwd = null } = {}) {
@@ -376,10 +381,12 @@ export async function azureExtensionInstalled({ env = process.env, cwd = null } 
   const sysDir = extensionSetting(env, config, 'sys_dir');
   const systemDir = sysDir ? absolute(sysDir) : await defaultSystemFolder({ env, cwd: base });
   for (const dir of [userDir, systemDir]) if (dir !== null && GLOB_MAGIC.test(dir)) throw undetermined(`${dir} has a glob character`);
-  if (await hasExtension(userDir)) return true;
-  // Without a known system folder the extension could still be there: the check cannot tell.
+  // az lists both folders before it answers (WheelExtension.get_all), so an unknown system folder leaves the answer open even
+  // when the user folder holds the extension, and a failure in either folder is a failure of the whole check.
   if (systemDir === null) throw undetermined("az's system extension folder is not known");
-  return hasExtension(systemDir);
+  const inUser = await hasExtension(userDir);
+  const inSystem = await hasExtension(systemDir);
+  return inUser || inSystem;
 }
 
 export function runCommand(command, args, { cwd, timeoutMs, env }) {

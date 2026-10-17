@@ -476,7 +476,8 @@ test('the system folder is derived only from a launcher of the exact Homebrew fo
   ];
   for (const [shape, options] of shapes) {
     assert.equal(await derivedOutcome({ ...options, userHas: false }), 'undetermined', `${shape}: user folder without the extension`);
-    assert.equal(await derivedOutcome({ ...options, userHas: true }), 'installed', `${shape}: user folder with it`);
+    // az lists both folders before it answers, so an unknown system folder leaves the answer open even then.
+    assert.equal(await derivedOutcome({ ...options, userHas: true }), 'undetermined', `${shape}: user folder with it`);
   }
 });
 
@@ -514,11 +515,30 @@ test('the first executable az decides the system folder, and one whose interpret
   assert.equal(await prLookupModule.findAzLauncher({ env }), path.join(dir, 'one', 'az'), 'the check still selects the first, and derives nothing from it');
 });
 
-test('with no system folder known and no extension in the user folder, the check cannot tell', async () => {
+test('with no system folder known, the check cannot tell, whatever the user folder holds', async () => {
   const { env } = azureEnv(DERIVED);
   assert.equal(outcome(await adoLookup(env)), 'undetermined', 'no az on PATH');
   installExtension(path.join(env.AZURE_CONFIG_DIR, 'cliextensions'));
-  assert.equal(outcome(await adoLookup(env)), 'installed', 'the user folder alone can say installed');
+  assert.equal(outcome(await adoLookup(env)), 'undetermined', 'the user folder alone cannot say installed');
+});
+
+test('both extension folders are listed before any answer: a system folder that cannot be listed leaves it open', posixOnly, async () => {
+  const { dir, env } = azureEnv();
+  installExtension(path.join(env.AZURE_CONFIG_DIR, 'cliextensions'));
+  const sealed = folder(path.join(dir, 'sealed-system'));
+  chmodSync(sealed, 0o111);
+  try {
+    assert.equal(outcome(await adoLookup({ ...env, AZURE_EXTENSION_SYS_DIR: sealed })), 'undetermined');
+  } finally {
+    chmodSync(sealed, 0o755);
+  }
+});
+
+test('an unknown system folder leaves the answer open even with the extension in the user folder; a derived one that does not exist holds nothing', posixOnly, async () => {
+  // A launcher that is not of the Homebrew form: the system folder is unknown.
+  assert.equal(await derivedOutcome({ text: python => `#!/usr/bin/env bash\nAZ_INSTALLER=HOMEBREW ${python} -sm azure.cli "$@"\n`, userHas: true }), 'undetermined');
+  // Control: a Homebrew-form launcher whose derived folder does not exist; the user folder decides.
+  assert.equal(await derivedOutcome({ change: az => rmSync(az.system, { recursive: true }), userHas: true }), 'installed');
 });
 
 const UNDETERMINED = 'lookup unavailable: could not tell whether the azure-devops extension is installed';
