@@ -285,9 +285,10 @@ async function interpreterStarts(shebang, { env, cwd }) {
  * - the python's name is python, python3 or python3.N, and its real path resolves;
  * - <dirname(dirname(python))>/pyvenv.cfg exists (a venv, whose purelib is in its own lib) and <dirname(python)>/pyvenv.cfg
  *   does not; the prefix is the path as written, not the real path;
- * - the version is the real python's name when that is python3.N, else the only python3.N folder in <prefix>/lib;
+ * - the version 3.N is confirmed three ways: the real python's name is python3.N, pyvenv.cfg's version (and version_info,
+ *   when given) is 3.N or starts with 3.N. (see pyvenvVersions), and <prefix>/lib/python3.N is a folder;
  * - __PYVENV_LAUNCHER__ is not set in the child's environment.
- * The folder is then <prefix>/lib/<version>/site-packages/azure-cli-extensions.
+ * The folder is then <prefix>/lib/python3.N/site-packages/azure-cli-extensions.
  */
 async function defaultSystemFolder({ env, cwd }) {
   if (env.__PYVENV_LAUNCHER__ !== undefined) return null;
@@ -319,18 +320,39 @@ async function defaultSystemFolder({ env, cwd }) {
   const bin = pyDirname(python);
   const prefix = pyDirname(bin);
   if (!(await statOf(pyJoin(prefix, 'pyvenv.cfg'))) || (await statOf(pyJoin(bin, 'pyvenv.cfg')))) return null;
-  const isVersion = name => /^python3\.\d+$/.test(name);
-  const lib = pyJoin(prefix, 'lib');
-  let version = isVersion(pyBasename(real)) ? pyBasename(real) : null;
-  if (!version) {
-    try {
-      const found = (await readdir(lib)).filter(isVersion);
-      if (found.length === 1) [version] = found;
-    } catch {
-      return null;
-    }
+  // The version must be confirmed three ways: the real python's name, pyvenv.cfg and the lib folder.
+  const named = /^python(3\.\d+)$/.exec(pyBasename(real));
+  if (!named) return null;
+  const [, version] = named;
+  const recorded = await pyvenvVersions(pyJoin(prefix, 'pyvenv.cfg'));
+  if (!recorded?.length || !recorded.every(value => value === version || value.startsWith(`${version}.`))) return null;
+  const lib = pyJoin(pyJoin(prefix, 'lib'), `python${version}`);
+  if (!(await statOf(lib))?.isDirectory()) return null;
+  return pyJoin(pyJoin(lib, 'site-packages'), 'azure-cli-extensions');
+}
+
+/**
+ * The `version` and `version_info` values in a venv's pyvenv.cfg, read as CPython's site.py reads the file: strict UTF-8,
+ * universal newlines; for each line with an '=', the key is the text before the first '=', stripped and lower-cased, and the
+ * value the text after it, stripped; a later line wins. Null when the file cannot be read or decoded, or is over 64 KiB.
+ */
+async function pyvenvVersions(file) {
+  let text;
+  try {
+    const info = await stat(file);
+    if (!info.isFile() || info.size > 64 * 1024) return null;
+    text = new TextDecoder('utf-8', { fatal: true }).decode(await readFile(file));
+  } catch {
+    return null;
   }
-  return version ? pyJoin(pyJoin(pyJoin(lib, version), 'site-packages'), 'azure-cli-extensions') : null;
+  const values = new Map();
+  for (const line of text.split(/\r\n|\r|\n/)) {
+    const at = line.indexOf('=');
+    if (at < 0) continue;
+    const key = pyStrip(line.slice(0, at)).toLowerCase();
+    if (key === 'version' || key === 'version_info') values.set(key, pyStrip(line.slice(at + 1)));
+  }
+  return [...values.values()];
 }
 
 /** Python's glob.has_magic: a folder path with one of these is not modelled, since az globs inside it without escaping. */

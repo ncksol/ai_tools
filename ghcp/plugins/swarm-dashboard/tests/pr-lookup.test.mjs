@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import * as prLookupModule from '../engine/model/pr-lookup.mjs';
 import { CLI_ENV, adoArgs, cliEnv, createPrLookup, githubArgs, mapAdo, mapGithub, prKey, runCommand } from '../engine/model/pr-lookup.mjs';
@@ -305,8 +305,9 @@ test('the system extension folder is found next to the Python that the az launch
     const { dir, env } = azureEnv(DERIVED);
     // az on PATH is a link to the launcher script, as Homebrew installs it; the launcher's Python is in a venv (pyvenv.cfg).
     const prefix = path.join(dir, 'cellar', 'azure-cli', 'libexec');
-    folder(prefix, { 'pyvenv.cfg': 'home = /synthetic\n' });
-    folder(path.join(prefix, 'bin'), { [path.basename(python)]: '' });
+    folder(prefix, { 'pyvenv.cfg': 'home = /synthetic\nversion = 3.12.9\n' });
+    folder(path.join(prefix, 'bin'), { 'python3.12': '' });
+    symlinkSync('python3.12', path.join(prefix, python));
     const launcher = path.join(folder(path.join(dir, 'cellar', 'azure-cli', 'bin')), 'az');
     writeFileSync(launcher, `#!/usr/bin/env bash\nAZ_INSTALLER=HOMEBREW ${path.join(prefix, python)} -Im azure.cli "$@"\n`);
     chmodSync(launcher, 0o755);
@@ -336,21 +337,17 @@ test('an azure-devops folder without a *.*-info entry is not an installed extens
 
 /**
  * A synthetic az launcher in `dir` naming `<prefix>/bin/<python>`, as Homebrew's does; `mode` is its file mode. <prefix> is a
- * venv (pyvenv.cfg). With `version`, <prefix>/bin/<python> is a link to a real python3.N file, so that its real name gives
- * the version; else it is a plain file.
+ * venv (pyvenv.cfg with version 3.12.9), and <prefix>/bin/<python> is a link to a real `version` file (python3.12), so that
+ * its real name gives the version.
  */
-function launcherAt(dir, prefix, { mode = 0o755, python = 'python', version = null } = {}) {
+function launcherAt(dir, prefix, { mode = 0o755, python = 'python', version = 'python3.12' } = {}) {
   folder(dir);
   const launcher = path.join(dir, 'az');
   writeFileSync(launcher, `#!/bin/sh\nAZ_INSTALLER=HOMEBREW ${path.join(prefix, 'bin', python)} -Im azure.cli "$@"\n`);
   chmodSync(launcher, mode);
-  folder(prefix, { 'pyvenv.cfg': 'home = /synthetic\n' });
-  if (version) {
-    folder(path.join(prefix, 'bin'), { [version]: '' });
-    symlinkSync(version, path.join(prefix, 'bin', python));
-  } else {
-    folder(path.join(prefix, 'bin'), { [python]: '' });
-  }
+  folder(prefix, { 'pyvenv.cfg': `home = /synthetic\nversion = ${version.slice('python'.length)}.9\n` });
+  folder(path.join(prefix, 'bin'), { [version]: '' });
+  if (!existsSync(path.join(prefix, 'bin', python))) symlinkSync(version, path.join(prefix, 'bin', python));
   return launcher;
 }
 const systemFolder = (prefix, version = 'python3.12') => path.join(prefix, 'lib', version, 'site-packages', 'azure-cli-extensions');
@@ -438,7 +435,7 @@ function homebrewAz(dir, { text = null } = {}) {
   const prefix = path.join(dir, 'cellar', 'libexec');
   folder(path.join(prefix, 'bin'), { 'python3.12': '' });
   symlinkSync('python3.12', path.join(prefix, 'bin', 'python'));
-  folder(prefix, { 'pyvenv.cfg': 'home = /synthetic\n' });
+  folder(prefix, { 'pyvenv.cfg': 'home = /synthetic\nversion = 3.12.9\n' });
   folder(path.join(prefix, 'lib', 'python3.12', 'site-packages'));
   const python = path.join(prefix, 'bin', 'python');
   const bin = folder(path.join(dir, 'bin'));
@@ -593,6 +590,36 @@ test('a Homebrew-form launcher run with the lookup\'s environment does not sourc
   await lookup.settle();
   const stdout = await runCommand(passed.command, passed.args, { ...passed.options, cwd: dir });
   assert.equal(stdout, '/synthetic/original');
+});
+
+test('a copied python, whose name gives no version, does not take the only lib/python3.N folder as its own', posixOnly, async () => {
+  assert.equal(await derivedOutcome({
+    change: az => {
+      // The real binary is a copy named python (no link), and the only folder under lib is python3.11.
+      rmSync(path.join(az.prefix, 'bin', 'python'));
+      writeFileSync(path.join(az.prefix, 'bin', 'python'), '');
+      rmSync(path.join(az.prefix, 'lib', 'python3.12'), { recursive: true });
+      installExtension(systemFolder(az.prefix, 'python3.11'));
+    },
+  }), 'undetermined');
+});
+
+test('the Python version is derived only when the real name, pyvenv.cfg and lib agree', posixOnly, async () => {
+  const pyvenv = text => az => writeFileSync(path.join(az.prefix, 'pyvenv.cfg'), text);
+  // The derived folder python3.12 has the extension; the user folder is empty.
+  const cases = [
+    ['version 3.12.9 (control)', pyvenv('home = /synthetic\nversion = 3.12.9\n'), 'installed'],
+    ['version 3.12', pyvenv('home = /synthetic\nversion = 3.12\n'), 'installed'],
+    ['version_info 3.12.9.final.0, keys as site.py reads them', pyvenv('Home=/synthetic\n  VERSION_INFO =  3.12.9.final.0  \n'), 'installed'],
+    ['version 3.11.4', pyvenv('home = /synthetic\nversion = 3.11.4\n'), 'undetermined'],
+    ['version 3.120', pyvenv('home = /synthetic\nversion = 3.120\n'), 'undetermined'],
+    ['version and version_info that disagree', pyvenv('version = 3.12.9\nversion_info = 3.11.4\n'), 'undetermined'],
+    ['no version in pyvenv.cfg', pyvenv('home = /synthetic\n'), 'undetermined'],
+    ['no lib/python3.12', az => rmSync(path.join(az.prefix, 'lib', 'python3.12'), { recursive: true }), 'undetermined'],
+  ];
+  for (const [name, change, expected] of cases) assert.equal(await derivedOutcome({ change }), expected, name);
+  // Control: the same agreement, with the derived folder holding nothing.
+  assert.equal(await derivedOutcome({ change: az => rmSync(path.join(az.system, 'azure-devops'), { recursive: true }) }), 'missing');
 });
 
 const UNDETERMINED = 'lookup unavailable: could not tell whether the azure-devops extension is installed';
