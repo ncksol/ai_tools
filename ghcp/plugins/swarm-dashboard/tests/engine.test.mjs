@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, utimesSync } from 'node:fs';
 import path from 'node:path';
 import { createSwarmEngine } from '../engine/engine.mjs';
+import { createHistoryStore } from '../engine/model/history.mjs';
 import { createPrLookup } from '../engine/model/pr-lookup.mjs';
 import { validateRunListItem, validateRunSummary, validateSnapshot, validateSwarmListItem } from '../engine/schema.mjs';
 import { HOUR, MINUTE } from '../engine/time.mjs';
@@ -500,6 +501,90 @@ test('a stored summary is still returned once its run has left the listing', asy
   assert.deepEqual(await engine.getRunSummary('ws-old'), readSummary(stored));
   assert.deepEqual(await oldItem(engine), [OLD_LAST, 1, true]);
   assert.deepEqual(stat(stored), before);
+  engine.stop();
+});
+
+/**
+ * A history store that passes through, except while `armed`: then the first read of ws-old passes, and each later read of it
+ * waits until a summary with 3 credits has been saved. `firstRead` resolves once the first armed read has its value.
+ */
+function holdableHistory(dir) {
+  const store = createHistoryStore(dir);
+  const control = { armed: false, puts: [] };
+  let reads = 0;
+  let savedThree;
+  const three = new Promise(resolve => { savedThree = resolve; });
+  let firstReadDone;
+  control.firstRead = new Promise(resolve => { firstReadDone = resolve; });
+  control.store = {
+    ...store,
+    async get(id) {
+      if (!control.armed || id !== 'ws-old') return store.get(id);
+      reads += 1;
+      if (reads === 1) {
+        const value = await store.get(id);
+        firstReadDone();
+        return value;
+      }
+      await three;
+      return store.get(id);
+    },
+    async put(summary) {
+      await store.put(summary);
+      if (control.armed) control.puts.push(summary.credits);
+      if (summary.credits === 3) savedThree();
+    },
+  };
+  return control;
+}
+
+test('a summary request that overlaps a refresh never overwrites the newer summary that the refresh saves', async () => {
+  const { home, stored } = await storedOldRun();
+  // A lock on cli-old makes the refresh probe it while it rebuilds the run's snapshot: after its listing shows the new cost,
+  // and before the cached snapshot is replaced. The probe is the hook that runs the request inside that window.
+  const oldPid = NO_SUCH_PID + 30;
+  home.lock('cli-old', oldPid, OLD_LAST);
+  let duringRefresh = null;
+  const processProbe = async locks => {
+    if (duringRefresh && locks.some(lock => lock.pid === oldPid)) {
+      const hook = duringRefresh;
+      duringRefresh = null;
+      await hook();
+    }
+    return new Map(locks.map(lock => [lock.pid, lock.pid !== oldPid]));
+  };
+  const history = holdableHistory(path.dirname(path.dirname(stored)));
+  let clock = at(0);
+  const engine = createSwarmEngine({
+    copilotHome: home.root, historyDir: path.dirname(path.dirname(stored)), historyStore: history.store, now: () => clock, processProbe, prLookup: 'off',
+  });
+  assert.equal((await engine.getSnapshot('ws-old')).cost.credits, 1, 'the run is tracked, and its cached snapshot has 1 credit');
+
+  // Cost for the time the run covers arrives later; the next refresh's listing shows 3 credits.
+  home.usage([{ sessionId: 'cli-old', nanoAiu: 2e9, createdAt: OLD_LAST - 10_000 }]);
+  let request = null;
+  let listedDuring = null;
+  let overlapItem = null;
+  duringRefresh = async () => {
+    listedDuring = engine.listSwarms().find(swarm => swarm.id === 'ws-old').credits;
+    request = engine.getRunSummary('ws-old');
+    // The request's first history read completes; whatever the request does next without I/O runs before this resumes.
+    await history.firstRead;
+    await new Promise(resolve => setImmediate(resolve));
+    overlapItem = await oldItem(engine);
+  };
+  history.armed = true;
+  clock = at(0) + 20_000;
+  await engine.refresh();
+  assert.equal(listedDuring, 3, 'the hook ran after the listing showed the new cost');
+  assert.ok(request, 'the hook ran while the refresh rebuilt the run');
+  const summary = await request;
+
+  assert.equal(summary.credits, 3);
+  assert.equal(readSummary(stored).credits, 3);
+  assert.deepEqual(history.puts, [3], 'only the refresh writes, and only the newer summary');
+  assert.deepEqual(overlapItem, [OLD_LAST, 3, false], 'History does not show the older cached snapshot as summarised once the listing shows 3');
+  assert.deepEqual(await oldItem(engine), [OLD_LAST, 3, true]);
   engine.stop();
 });
 

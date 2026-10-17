@@ -69,7 +69,10 @@ const byLifecycleThenActivity = (a, b) => (a.lifecycle === b.lifecycle ? b.lastA
 
 /**
  * The swarm data engine. Strictly read-only towards Copilot data; its only write target is the history folder.
- * @param {import('./schema.mjs').EngineOptions & { processProbe?: (locks: {pid: number, mtimeMs: number}[]) => Promise<Map<number, boolean>> }} options
+ * @param {import('./schema.mjs').EngineOptions & {
+ *   processProbe?: (locks: {pid: number, mtimeMs: number}[]) => Promise<Map<number, boolean>>,
+ *   historyStore?: ReturnType<typeof createHistoryStore>,
+ * }} options `historyStore` is a test seam: the store to use instead of one on `historyDir`.
  * @returns {import('./schema.mjs').SwarmEngine}
  */
 export function createSwarmEngine(options = {}) {
@@ -89,7 +92,7 @@ export function createSwarmEngine(options = {}) {
   const probe = options.processProbe ?? createProcessProbe();
   const lookup = options.prLookup === 'off' ? null
     : options.prLookup && typeof options.prLookup === 'object' ? options.prLookup : createPrLookup({ now });
-  const history = createHistoryStore(options.historyDir ?? paths.historyDir);
+  const history = options.historyStore ?? createHistoryStore(options.historyDir ?? paths.historyDir);
   const ledger = createLedger();
   const readDb = createSessionDbCache();
   const sessions = new Map();
@@ -424,6 +427,18 @@ export function createSwarmEngine(options = {}) {
     return running;
   }
 
+  /** Resolves once a refresh that started after this call has finished. refresh() alone can return one that started earlier. */
+  async function refreshStartedNow() {
+    if (running) {
+      try {
+        await running;
+      } catch {
+        // that refresh's failure belongs to its own caller; the refresh below reports its own
+      }
+    }
+    await refresh();
+  }
+
   function track(id) {
     const index = requested.indexOf(id);
     if (index >= 0) requested.splice(index, 1);
@@ -462,7 +477,9 @@ export function createSwarmEngine(options = {}) {
     }
     for (const { snapshot } of snapshots.values()) {
       if (snapshot.run.lifecycle === 'finished' && !live.has(snapshot.run.id) && !items.has(snapshot.run.id)) {
-        items.set(snapshot.run.id, listItemOf(summarizeRun(snapshot, { computedAt: now() })));
+        const summary = summarizeRun(snapshot, { computedAt: now() });
+        // A cached snapshot can be older than the listing (a refresh lists before it rebuilds); the listing item is used then.
+        if (!isStale(summary, listed.get(snapshot.run.id))) items.set(snapshot.run.id, listItemOf(summary));
       }
     }
     for (const swarm of swarms) {
@@ -488,25 +505,19 @@ export function createSwarmEngine(options = {}) {
       summaryDigests.set(runId, summaryDigest(stored));
       return stored;
     }
-    const snapshot = await getSnapshot(runId);
+    if (!forest.roots.some(root => root.id === runId)) return stored;
+    // A cached snapshot can be older than the listing that judged the stored summary stale, so the run is rebuilt by a
+    // refresh that starts now. That refresh also stores the summary of a finished run (persistFinished): summaries are written
+    // only inside the serialized refresh, never here, so a request cannot overwrite a newer summary.
+    track(runId);
+    await refreshStartedNow();
+    const snapshot = snapshots.get(runId)?.snapshot ?? null;
     if (!snapshot) return stored;
     if (snapshot.run.lifecycle === 'live') return summarizeRun(snapshot, { computedAt: now() });
-    // The refresh that built the snapshot may already have stored this summary.
     const fresh = summarizeRun(snapshot, { computedAt: 0 });
     const persisted = await history.get(runId);
-    if (persisted && summaryDigest(persisted) === summaryDigest(fresh)) {
-      summaryDigests.set(runId, summaryDigest(persisted));
-      return persisted;
-    }
-    const summary = { ...fresh, computedAt: now() };
-    if (persist) {
-      try {
-        await writeSummary(snapshot);
-      } catch (error) {
-        log({ level: 'warn', source: 'history', message: error.message });
-      }
-    }
-    return summary;
+    if (persisted && summaryDigest(persisted) === summaryDigest(fresh)) return persisted;
+    return { ...fresh, computedAt: now() };
   }
 
   return {
