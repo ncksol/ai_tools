@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import * as prLookupModule from '../engine/model/pr-lookup.mjs';
 import { CLI_ENV, adoArgs, cliEnv, createPrLookup, githubArgs, mapAdo, mapGithub, prKey, runCommand } from '../engine/model/pr-lookup.mjs';
@@ -324,6 +324,98 @@ test('an azure-devops folder without a *.*-info entry is not an installed extens
   assert.equal(await azRuns(env), 0);
   folder(path.join(extension, 'azure_devops-1.0.1.egg-info'));
   assert.equal(await azRuns(env), 1, 'an egg-info entry counts too');
+});
+
+/**
+ * A synthetic az launcher in `dir` naming `<prefix>/bin/<python>`, as Homebrew's does; `mode` is its file mode. With `version`,
+ * <prefix>/bin/<python> is a link to a real python3.N file, so that its real name gives the version.
+ */
+function launcherAt(dir, prefix, { mode = 0o755, python = 'python', version = null } = {}) {
+  folder(dir);
+  const launcher = path.join(dir, 'az');
+  writeFileSync(launcher, `#!/bin/sh\nAZ_INSTALLER=HOMEBREW ${path.join(prefix, 'bin', python)} -Im azure.cli "$@"\n`);
+  chmodSync(launcher, mode);
+  if (version) {
+    folder(path.join(prefix, 'bin'), { [version]: '' });
+    symlinkSync(version, path.join(prefix, 'bin', python));
+  }
+  return launcher;
+}
+const systemFolder = (prefix, version = 'python3.12') => path.join(prefix, 'lib', version, 'site-packages', 'azure-cli-extensions');
+const posixOnly = { skip: process.platform === 'win32' || process.getuid?.() === 0 ? 'POSIX file modes, not as root' : false };
+
+test('the system folder is the one beside the az launcher that would run: an earlier non-executable az is skipped', posixOnly, async () => {
+  const { dir, env } = azureEnv();
+  const withExtension = path.join(dir, 'a');
+  const without = path.join(dir, 'b');
+  launcherAt(path.join(dir, 'bin-a'), withExtension, { mode: 0o644 });
+  launcherAt(path.join(dir, 'bin-b'), without);
+  installExtension(systemFolder(withExtension));
+  folder(systemFolder(without));
+  const PATH = [path.join(dir, 'bin-a'), path.join(dir, 'bin-b')].join(':');
+  assert.equal(outcome(await adoLookup({ ...env, PATH })), 'missing');
+  chmodSync(path.join(dir, 'bin-a', 'az'), 0o755);
+  assert.equal(outcome(await adoLookup({ ...env, PATH })), 'installed', 'once executable, the first az is the one that runs');
+});
+
+test('relative and empty PATH entries are taken from the child\'s folder, not the engine\'s', posixOnly, async () => {
+  const { dir, env } = azureEnv();
+  const prefix = path.join(dir, 'prefix');
+  installExtension(systemFolder(prefix));
+  const worktree = folder(path.join(dir, 'worktree'));
+  launcherAt(path.join(worktree, 'rel-bin'), prefix);
+  assert.equal(outcome(await adoLookup({ ...env, PATH: 'rel-bin' }, { cwd: worktree })), 'installed', 'a relative entry');
+  launcherAt(worktree, prefix);
+  assert.equal(outcome(await adoLookup({ ...env, PATH: `${env.PATH}:` }, { cwd: worktree })), 'installed', 'an empty entry');
+  // From another folder neither entry finds a launcher.
+  const elsewhere = folder(path.join(dir, 'elsewhere'));
+  assert.equal(outcome(await adoLookup({ ...env, PATH: `rel-bin:${env.PATH}:` }, { cwd: elsewhere })), 'missing');
+});
+
+test('only the Python version that the launcher runs is checked, and a launcher naming two Pythons gives no system folder', posixOnly, async () => {
+  const { dir, env } = azureEnv();
+  const prefix = path.join(dir, 'prefix');
+  launcherAt(path.join(dir, 'bin'), prefix, { version: 'python3.12' });
+  folder(systemFolder(prefix, 'python3.12'));
+  installExtension(systemFolder(prefix, 'python3.11'));
+  const withAz = { ...env, PATH: path.join(dir, 'bin') };
+  assert.equal(outcome(await adoLookup(withAz)), 'missing', 'python3.11 is not the version the launcher runs');
+  installExtension(systemFolder(prefix, 'python3.12'));
+  assert.equal(outcome(await adoLookup(withAz)), 'installed');
+
+  // Two distinct Pythons in one launcher: no system folder, though both would have the extension.
+  const other = path.join(dir, 'other');
+  installExtension(systemFolder(other));
+  const two = path.join(folder(path.join(dir, 'bin-two')), 'az');
+  writeFileSync(two, `#!/bin/sh\nif true; then ${path.join(prefix, 'bin', 'python')} -Im azure.cli "$@"; else ${path.join(other, 'bin', 'python')} -Im azure.cli "$@"; fi\n`);
+  chmodSync(two, 0o755);
+  assert.equal(outcome(await adoLookup({ ...env, PATH: path.join(dir, 'bin-two') })), 'missing');
+});
+
+test('the launcher the check picks is the one a spawned child runs, for each PATH shape', posixOnly, async () => {
+  const { dir } = azureEnv();
+  const script = (where, name, mode = 0o755) => {
+    folder(where);
+    writeFileSync(path.join(where, 'az'), `#!/bin/sh\necho ${name}\n`);
+    chmodSync(path.join(where, 'az'), mode);
+  };
+  const cwd = folder(path.join(dir, 'child'));
+  script(path.join(dir, 'first'), 'first', 0o644);
+  script(path.join(dir, 'second'), 'second');
+  script(path.join(cwd, 'rel'), 'relative');
+  script(cwd, 'empty-entry');
+  const shapes = [
+    ['a non-executable first entry', [path.join(dir, 'first'), path.join(dir, 'second')].join(':'), 'second'],
+    ['a relative entry', `rel:${path.join(dir, 'second')}`, 'relative'],
+    ['an empty entry', `:${path.join(dir, 'second')}`, 'empty-entry'],
+  ];
+  for (const [shape, PATH, ran] of shapes) {
+    const env = { PATH };
+    const stdout = await runCommand('az', [], { cwd, timeoutMs: 20_000, env });
+    assert.equal(stdout.trim(), ran, `${shape}: the child ran`);
+    const picked = await prLookupModule.findAzLauncher({ env, cwd });
+    assert.equal(readFileSync(picked, 'utf8'), `#!/bin/sh\necho ${ran}\n`, `${shape}: the check picks the same file`);
+  }
 });
 
 const UNDETERMINED = 'lookup unavailable: could not tell whether the azure-devops extension is installed';
