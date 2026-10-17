@@ -408,6 +408,9 @@ async function hasExtension(dir) {
  *   else [extension] sys_dir, else derived from a Homebrew-form launcher; see defaultSystemFolder).
  * - The config file is <AZURE_CONFIG_DIR>/config when that variable is set (even empty, then `config` in the child's
  *   folder), else ~/.azure/config; see readAzConfig for the files it refuses.
+ * - HOME, when set in `env`, must start with '/'; when it is not set, the account's home folder must be readable. Otherwise
+ *   could not tell: knack expands the config folder a second time, so a literal ~ or a relative HOME can make az read another
+ *   config file. This is checked before any path is built; an absolute HOME is used as Python's expanduser uses it.
  * - Every setting az reads when it loads its extensions (dir, sys_dir, dev_sources) is resolved, and every folder path
  *   built, before any folder is checked. dev_sources set, `~name`, or a folder path with a glob character: could not tell.
  * - Paths are built as Python builds them (see pyJoin; relative ones from `cwd`, the child's folder, null being this
@@ -419,6 +422,17 @@ async function hasExtension(dir) {
  * Read-only: it only stats, lists and reads files.
  */
 export async function azureExtensionInstalled({ env = process.env, cwd = null } = {}) {
+  // Checked once, before any path is built: knack expands the config folder a second time, so a HOME that is not absolute
+  // (a literal ~, a relative path, an empty value) can make az read another config file; it is not modelled.
+  if (env.HOME !== undefined) {
+    if (!String(env.HOME).startsWith('/')) throw undetermined('HOME is not an absolute path');
+  } else {
+    try {
+      userInfo();
+    } catch {
+      throw undetermined('HOME is not set and the account has no readable home folder');
+    }
+  }
   const base = cwd ?? process.cwd();
   const absolute = file => pyJoin(base, file);
   const azureDir = () => pyExpandUser('~/.azure', env);

@@ -767,6 +767,27 @@ test('settings are taken as az takes them: variables raw and first, ~ from HOME,
   assert.equal(outcome(await adoLookup(env)), 'installed');
 });
 
+test('a HOME that is not absolute is not modelled, since knack would expand the config folder a second time', async () => {
+  // The reviewer's case: HOME is a literal ~/sandbox and AZURE_CONFIG_DIR is unset. The check would read
+  // <child>/~/sandbox/.azure, whose cliextensions has the extension; knack reads <child>/~/sandbox/sandbox/.azure/config,
+  // which points az at an empty folder.
+  const { dir, env } = azureEnv();
+  const worktree = folder(path.join(dir, 'worktree'));
+  installExtension(path.join(worktree, '~', 'sandbox', '.azure', 'cliextensions'));
+  folder(path.join(worktree, '~', 'sandbox', 'sandbox', '.azure'), { config: `[extension]\ndir = ${folder(path.join(dir, 'empty'))}\n` });
+  const result = await adoLookup({ ...env, HOME: '~/sandbox', AZURE_CONFIG_DIR: undefined }, { cwd: worktree });
+  assert.deepEqual([result.runs, outcome(result)], [0, 'undetermined']);
+});
+
+test('HOME must be absolute when it is set; an absolute HOME gives the same answers as before', async () => {
+  const { env } = azureEnv();
+  installExtension(path.join(env.AZURE_CONFIG_DIR, 'cliextensions'));
+  for (const home of ['relative/home', '', '~']) assert.equal(outcome(await adoLookup({ ...env, HOME: home })), 'undetermined', `HOME=${JSON.stringify(home)}`);
+  assert.equal(outcome(await adoLookup(env)), 'installed', 'control: an absolute HOME');
+  rmSync(path.join(env.AZURE_CONFIG_DIR, 'cliextensions'), { recursive: true });
+  assert.equal(outcome(await adoLookup(env)), 'missing', 'control: an absolute HOME, no extension');
+});
+
 test('with AZURE_CONFIG_DIR empty, the config file is config in the child\'s folder, and the default extensions stay under HOME/.azure', async () => {
   const { dir, env } = azureEnv();
   const azure = path.join(env.HOME, '.azure');
