@@ -110,9 +110,10 @@ export function createSwarmEngine(options = {}) {
   const cheapLast = new Map();
   const knownFinished = new Map();
   const summaryDigests = new Map();
-  // Per root id: { lastActivityAt, credits, digest } from the last check that rebuilt the run and found its stored summary
-  // (digest) current while the untracked listing showed that activity time and cost (see isStale). Kept apart from the snapshot
-  // cache, so it outlives a snapshot's eviction; dropped when the root leaves the forest.
+  // Per root id: { lastActivityAt, credits, digest } from the last check that rebuilt the run from sources that all read
+  // successfully (see buildTracked) and found its stored summary (digest) current while the untracked listing showed that
+  // activity time and cost (see isStale). Kept apart from the snapshot cache, so it outlives a snapshot's eviction; dropped
+  // when the root leaves the forest.
   const verified = new Map();
   const pendingRoots = new Set();
   const requested = [];
@@ -126,7 +127,8 @@ export function createSwarmEngine(options = {}) {
   let generation = 0;
   let running = null;
   // The number of the latest refresh to start. Each snapshot entry's `builtBy` is the number of the refresh that last built it,
-  // so a caller can tell a snapshot that its own refresh built from one kept after that refresh failed to rebuild it.
+  // so a caller can tell a snapshot that its own refresh built from one kept after that refresh failed to rebuild it. Its
+  // `complete` says whether that refresh read every source the snapshot uses (see buildTracked).
   let refreshes = 0;
 
   const projectOf = node => {
@@ -212,6 +214,8 @@ export function createSwarmEngine(options = {}) {
   /**
    * `subagentUnits` is true for the CLI sessions of the swarm's root orchestrator. A cached entry that was built with the other
    * value is read again from the start of its log, so its state has the right shape.
+   * Resolves `{ state, read }`: `state` is null while the log is missing; `read` is false when reading the log failed, so `state`
+   * is the last good one. A line that could not be applied is skipped for good with a warning, so it does not make `read` false.
    */
   async function tailSession(cliId, diag, subagentUnits = false) {
     let entry = sessions.get(cliId);
@@ -226,6 +230,7 @@ export function createSwarmEngine(options = {}) {
       };
       sessions.set(cliId, entry);
     }
+    let read = true;
     try {
       const result = await readNewLines(entry.tail, line => applyLine(entry.state, line), {
         onReset: () => {
@@ -248,6 +253,7 @@ export function createSwarmEngine(options = {}) {
         entry.lastError = result.lastError;
       }
     } catch (error) {
+      read = false;
       diag.push({ level: 'warn', source: 'events', message: `${shortId(cliId)}: ${error.message}` });
     }
     if (entry.skipped) {
@@ -265,17 +271,24 @@ export function createSwarmEngine(options = {}) {
         message: `${shortId(cliId)}: ${failed} log line${failed === 1 ? '' : 's'} could not be applied and ${failed === 1 ? 'was' : 'were'} skipped (last error: ${lastError}).`,
       });
     }
-    return entry.missing ? null : entry.state;
+    return { state: entry.missing ? null : entry.state, read };
   }
 
-  async function buildTracked(rootId, at, diag, dbFiles) {
+  /**
+   * Builds a tracked root's snapshot. Resolves `{ snapshot, complete }`: `complete` is true only when this refresh read every
+   * source the snapshot uses, so a summary of it may be marked checked (see persistFinished). It is false when a session's log
+   * or session.db could not be read (the last good value was used), or `globalsRead` is false (data.db or the ledger failed).
+   */
+  async function buildTracked(rootId, at, diag, dbFiles, globalsRead) {
     const nodes = treeNodes(forest, rootId);
     const states = new Map();
     const alive = new Map();
     const workspaceFiles = new Map();
     const rootCliIds = new Set(nodes[0].cliSessionIds);
+    let complete = globalsRead;
     for (const cliId of new Set(nodes.flatMap(node => node.cliSessionIds))) {
-      const state = await tailSession(cliId, diag, rootCliIds.has(cliId));
+      const { state, read } = await tailSession(cliId, diag, rootCliIds.has(cliId));
+      if (!read) complete = false;
       if (state) states.set(cliId, state);
       alive.set(cliId, await livenessOf(cliId, at));
       workspaceFiles.set(cliId, readWorkspaceYaml(path.join(paths.stateDir, cliId)));
@@ -290,6 +303,7 @@ export function createSwarmEngine(options = {}) {
         // A table that is not in the data-contract shape is ignored; the cached value keeps its notes, so they show on every refresh.
         for (const note of value?.notes ?? []) diag.push({ level: 'info', source: 'session.db', message: `${shortId(cliId)}: ${note}` });
       } catch (error) {
+        complete = false;
         const lastGood = readDb.last(dbFile);
         if (lastGood) sessionDbs.set(cliId, lastGood);
         diag.push({ level: 'warn', source: 'session.db', message: `${shortId(cliId)}: ${error.message}` });
@@ -309,7 +323,7 @@ export function createSwarmEngine(options = {}) {
     });
     if (sawPending) pendingRoots.add(rootId);
     else pendingRoots.delete(rootId);
-    return snapshot;
+    return { snapshot, complete };
   }
 
   /**
@@ -339,13 +353,18 @@ export function createSwarmEngine(options = {}) {
     return item && last ? { lastActivityAt: last, credits: item.credits } : null;
   }
 
-  async function persistFinished(snapshot, diag) {
+  /**
+   * Stores the summary of a finished run's snapshot. `complete` (see buildTracked) says whether this refresh read every source
+   * the snapshot uses: the summary is stored either way, as the best one known, but only a complete snapshot marks it checked
+   * for the listing, so a summary built from older inputs is rebuilt once its sources can be read again.
+   */
+  async function persistFinished(snapshot, diag, complete) {
     if (!persist) return;
     try {
       const stamp = listedStamp(snapshot.run.id);
       const key = await writeSummary(snapshot);
       // The snapshot was built after this refresh listed the run, so the stored summary is current for that listing.
-      if (stamp) verified.set(snapshot.run.id, { ...stamp, digest: key });
+      if (stamp && complete) verified.set(snapshot.run.id, { ...stamp, digest: key });
     } catch (error) {
       diag.push({ level: 'warn', source: 'history', message: error.message });
     }
@@ -356,6 +375,8 @@ export function createSwarmEngine(options = {}) {
     const sequence = ++refreshes;
     const at = now();
     const diag = [];
+    // False once data.db or the ledger (session-store.db) fails to read; a database that is not found is not a failure.
+    let globalsRead = true;
     if (sqlite.backend === 'auto') {
       diag.push({ level: 'info', source: 'sqlite', message: (await loadNodeSqlite()) ? 'Reading SQLite through node:sqlite.' : 'Reading SQLite through the sqlite3 command-line tool.' });
     }
@@ -369,6 +390,7 @@ export function createSwarmEngine(options = {}) {
         diag.push({ level: 'warn', source: 'data.db', message: 'The Copilot app database was not found.' });
       }
     } catch (error) {
+      globalsRead = false;
       app = app ?? emptyApp();
       diag.push(sqliteProblem('data.db', error));
     }
@@ -382,6 +404,7 @@ export function createSwarmEngine(options = {}) {
       const pulled = await reader.read(paths.storeDb, db => pullLedger(db, ledger));
       if (pulled === null) diag.push({ level: 'warn', source: 'session-store.db', message: 'The Copilot session store was not found, so costs are unknown.' });
     } catch (error) {
+      globalsRead = false;
       diag.push(sqliteProblem('session-store.db', error));
     }
     for (const failure of lookup?.errors() ?? []) diag.push({ level: 'info', source: 'pr-lookup', message: `${failure.key}: ${failure.error}` });
@@ -398,7 +421,7 @@ export function createSwarmEngine(options = {}) {
     const dbFiles = new Set();
     for (const rootId of tracked) {
       try {
-        const snapshot = await buildTracked(rootId, at, diag, dbFiles);
+        const { snapshot, complete } = await buildTracked(rootId, at, diag, dbFiles, globalsRead);
         const hash = digest(snapshot);
         const entry = snapshots.get(rootId);
         if (entry && entry.hash === hash) {
@@ -406,15 +429,16 @@ export function createSwarmEngine(options = {}) {
           entry.snapshot = snapshot;
           entry.last = cheapLast.get(rootId);
           entry.builtBy = sequence;
+          entry.complete = complete;
         } else {
           snapshot.revision = (entry?.revision ?? revisions.get(rootId) ?? 0) + 1;
-          snapshots.set(rootId, { snapshot, hash, revision: snapshot.revision, last: cheapLast.get(rootId), builtBy: sequence });
+          snapshots.set(rootId, { snapshot, hash, revision: snapshot.revision, last: cheapLast.get(rootId), builtBy: sequence, complete });
           revisions.set(rootId, snapshot.revision);
           changed.push(rootId);
         }
         if (snapshot.run.lifecycle === 'finished') {
           knownFinished.set(rootId, cheapLast.get(rootId));
-          await persistFinished(snapshot, diag);
+          await persistFinished(snapshot, diag, complete);
         } else {
           knownFinished.delete(rootId);
         }
@@ -555,7 +579,8 @@ export function createSwarmEngine(options = {}) {
     if (!snapshot) return stored;
     // A snapshot that refresh did not build (its build failed, and the older entry was kept) is as old as the stored summary,
     // so it proves nothing about the listing: the stored summary is returned unchecked, and a later request tries again.
-    if (entry.builtBy !== sequence) return stored ?? summarizeRun(snapshot, { computedAt: now() });
+    // So is one built while a source could not be read (see buildTracked): it holds the last good values of that source.
+    if (entry.builtBy !== sequence || !entry.complete) return stored ?? summarizeRun(snapshot, { computedAt: now() });
     if (snapshot.run.lifecycle === 'live') return summarizeRun(snapshot, { computedAt: now() });
     const fresh = summarizeRun(snapshot, { computedAt: 0 });
     const persisted = await history.get(runId);

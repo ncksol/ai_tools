@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, utimesSync } from 'node:fs';
+import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, utimesSync } from 'node:fs';
 import path from 'node:path';
 import { createSwarmEngine } from '../engine/engine.mjs';
 import { createHistoryStore } from '../engine/model/history.mjs';
@@ -690,6 +690,61 @@ test('a summary is not marked checked by a rebuild that failed, so a later reque
   assert.equal(summary.credits, 3, 'the next request rebuilds the run');
   assert.equal(readSummary(stored).credits, 3);
   assert.deepEqual(await oldItem(engine), [OLD_LAST, 3, true]);
+  engine.stop();
+});
+
+test('a summary is not marked checked by a refresh that could not read its events, so it is rebuilt once they can be read', async t => {
+  const home = scenario();
+  for (const n of [1, 2, 3]) {
+    home.workspace({ id: `ws-x${n}`, name: `Extra ${n}`, createdAt: T0 - 20 * DAY + n * MINUTE, sessionId: `cli-x${n}` });
+    home.workspace({ id: `ws-x${n}-child`, name: `Extra ${n} child`, createdAt: T0 - 20 * DAY + (n + 5) * MINUTE, sessionId: `cli-x${n}-child`, parentId: `ws-x${n}`, creatorSessionId: `cli-x${n}` });
+  }
+  const historyDir = path.join(tempDir('swarm-engine-'), 'history');
+  const stored = path.join(historyDir, 'runs', 'ws-old.json');
+  const engine = createSwarmEngine({ copilotHome: home.root, historyDir, now: () => at(0), processProbe: alwaysAlive, prLookup: 'off' });
+  assert.equal((await engine.getRunSummary('ws-old')).finishedAt, OLD_LAST);
+  assert.equal(readSummary(stored).finishedAt, OLD_LAST, 'the run is stored, and its snapshot cached, finishing at its first finish');
+
+  // The run works again and finishes later; the helper keeps the file's time at its last event.
+  const finishedAt = OLD_LAST + 19 * MINUTE;
+  const later = new EventLog(OLD_LAST + 10 * MINUTE);
+  later.turnStart(); later.at(finishedAt); later.turnEnd();
+  const file = home.writeEvents('cli-old', later.events, { append: true });
+  const { mode, mtime } = statSync(file);
+  // The next read of the events fails, and the engine handles it with a warning.
+  chmodSync(file, 0o000);
+  let readable = true;
+  try {
+    readFileSync(file);
+  } catch {
+    readable = false;
+  }
+  if (readable) {
+    chmodSync(file, mode);
+    engine.stop();
+    t.skip('this user can read a file with no permissions (root, or a file system without modes)');
+    return;
+  }
+  try {
+    await engine.refresh();
+    assert.ok(engine.diagnostics().some(item => item.source === 'events' && item.message.includes('EACCES')), 'the failed read is reported');
+    assert.equal((await engine.getRunSummary('ws-old')).finishedAt, OLD_LAST, 'the stored summary is returned while the events cannot be read');
+
+    // Three other requested runs push ws-old out of tracking, so its snapshot leaves the cache.
+    for (const n of [1, 2, 3]) assert.ok(await engine.getSnapshot(`ws-x${n}`));
+  } finally {
+    chmodSync(file, mode);
+    utimesSync(file, mtime, mtime);
+  }
+  assert.equal(statSync(file).mtimeMs, finishedAt, 'the file time is as before the fault');
+  // The next poll lists the untracked run from its file time.
+  await engine.refresh();
+  assert.equal(engine.listSwarms().find(swarm => swarm.id === 'ws-old').lastActivityAt, finishedAt, 'the listing shows the new activity');
+
+  assert.equal((await oldItem(engine))[0], finishedAt, 'History shows the current finish time');
+  assert.equal((await engine.getRunSummary('ws-old')).finishedAt, finishedAt, 'the same engine rebuilds the run');
+  assert.equal(readSummary(stored).finishedAt, finishedAt);
+  assert.deepEqual(await oldItem(engine), [finishedAt, 0, true]);
   engine.stop();
 });
 
