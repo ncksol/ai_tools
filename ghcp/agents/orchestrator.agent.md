@@ -131,7 +131,7 @@ CREATE TABLE IF NOT EXISTS children (
 ```
 
 - If `children` already exists with other columns, an older version of this file created it. `PRAGMA table_info(children)` shows the columns. Rename it with `ALTER TABLE children RENAME TO children_old`, create the table above, and move every child session in `children_old` across, active or ended:
-  - Add one `children` row per child session. Give it a new unit label and keep its session id. Fill `title`, `todo_id`, `branch`, `base_branch` and the PR columns when you know them. Set `created_at` from the old row when it has the time, and to now otherwise.
+  - Add one `children` row per child session. Give it a new unit label and keep its session id. Fill `title` (required; use the child's old name), and fill `todo_id`, `branch`, `base_branch` and the PR columns when you know them. Set `created_at` from the old row when it has the time, and to now otherwise.
   - Set `outcome` and `ended_at` only when you know how the unit ended. Don't guess.
   - Copy the rest of the old per-child data into `child_notes`: project, model and effort, archived status, last report, review verdicts, skipped reviews and escalations.
   - Send each child that is still running its unit label and the report format below.
