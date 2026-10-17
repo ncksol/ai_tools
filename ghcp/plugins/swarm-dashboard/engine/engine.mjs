@@ -537,8 +537,10 @@ export function createSwarmEngine(options = {}) {
     for (const summary of await history.list()) {
       if (!live.has(summary.id) && !isStale(summary, listed.get(summary.id), verified.get(summary.id))) items.set(summary.id, listItemOf(summary));
     }
-    for (const { snapshot } of snapshots.values()) {
-      if (snapshot.run.lifecycle === 'finished' && !live.has(snapshot.run.id) && !items.has(snapshot.run.id)) {
+    // A snapshot built while a source could not be read (see buildTracked) is never listed as summarised: on a cold start it can
+    // even be built from empty state. Its run is listed from the stored summary above, or from the listing below.
+    for (const { snapshot, complete } of snapshots.values()) {
+      if (complete && snapshot.run.lifecycle === 'finished' && !live.has(snapshot.run.id) && !items.has(snapshot.run.id)) {
         const summary = summarizeRun(snapshot, { computedAt: now() });
         // A cached snapshot can be older than the listing (a refresh lists before it rebuilds); the listing item is used then.
         if (!isStale(summary, listed.get(snapshot.run.id), verified.get(snapshot.run.id))) items.set(snapshot.run.id, listItemOf(summary));

@@ -795,6 +795,44 @@ test('a new engine that cannot read a run\'s events leaves its stored summary as
   engine.stop();
 });
 
+for (const start of ['warm', 'cold']) {
+  test(`History never lists a summary of an incomplete build as summarised (${start} engine)`, async t => {
+    const { home, stored, reopen } = await storedOldRun();
+    let engine = start === 'warm' ? reopen() : null;
+    if (engine) assert.ok(await engine.getSnapshot('ws-old'), 'the run is tracked, built while every source read');
+    // The run works again and finishes later, and cost for it arrives, so the stored summary (1 credit) is stale against the
+    // listing (3 credits). Its events cannot be read.
+    const finishedAt = OLD_LAST + 19 * MINUTE;
+    const later = new EventLog(OLD_LAST + 10 * MINUTE);
+    later.turnStart(); later.at(finishedAt); later.turnEnd();
+    const file = home.writeEvents('cli-old', later.events, { append: true });
+    home.usage([{ sessionId: 'cli-old', nanoAiu: 2e9, createdAt: OLD_LAST - 10_000 }]);
+    const restore = makeUnreadable(file);
+    if (!restore) {
+      engine?.stop();
+      t.skip('this user can read a file with no permissions (root, or a file system without modes)');
+      return;
+    }
+    try {
+      if (engine) await engine.refresh();
+      else {
+        engine = reopen();
+        assert.ok(await engine.getSnapshot('ws-old'), 'the run is tracked, built while its events could not be read');
+      }
+      assert.ok(engine.diagnostics().some(item => item.source === 'events' && item.message.includes('EACCES')), 'the failed read is reported');
+      const listed = engine.listSwarms().find(swarm => swarm.id === 'ws-old');
+      assert.equal(listed.credits, 3);
+      assert.deepEqual(await oldItem(engine), [listed.lastActivityAt, 3, false], 'History lists the run from the listing, not summarised');
+    } finally {
+      restore();
+    }
+    await engine.refresh();
+    assert.equal(readSummary(stored).finishedAt, finishedAt);
+    assert.deepEqual(await oldItem(engine), [finishedAt, 3, true], 'after a complete refresh the run is summarised with its current finish');
+    engine.stop();
+  });
+}
+
 for (const source of ['data.db', 'session-store.db']) {
   test(`a refresh whose ${source} read fails neither stores nor marks checked a finished run's summary`, async t => {
     const { home, stored, reopen } = await storedOldRun();
