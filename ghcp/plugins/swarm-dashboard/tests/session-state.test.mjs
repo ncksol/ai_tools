@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyLine, createSessionState, mergeStates } from '../engine/model/session-state.mjs';
+import { applyLine, applyRecovered, createSessionState, mergeStates } from '../engine/model/session-state.mjs';
 import { LIMITS } from '../engine/model/state-utils.mjs';
-import { subagentLimitMs } from '../engine/model/status.mjs';
+import { evaluateSubagentUnit, subagentLimitMs } from '../engine/model/status.mjs';
 import { DEFAULT_THRESHOLDS } from '../engine/config.mjs';
 import { MINUTE } from '../engine/time.mjs';
 import { EventLog } from './helpers/event-log.mjs';
@@ -1154,6 +1154,52 @@ test('a sub-agent seen with more than four agent ids keeps the newest four, and 
     assert.equal(state.agentToTask.has('A-2'), false, `${label}: the dropped alias has no mapping`);
     for (const id of owner.agentIds) assert.equal(state.agentToTask.get(id), call, `${label}: ${id}`);
     if (nested) assert.equal(unitOf(state, lead).children.find(child => child.id === call).agentId, 'A-5', 'the kept child record follows the latest id');
+  }
+});
+
+/** Folds like foldRoot, except that the assistant messages of `agentId` arrive as oversized lines (see applyRecovered). */
+function foldRecovering(log, agentId) {
+  const state = createSessionState('cli-1', ROOT);
+  for (const event of log.events) {
+    if (event.type === 'assistant.message' && event.agentId === agentId) applyRecovered(state, event);
+    else applyLine(state, JSON.stringify(event));
+  }
+  return state;
+}
+
+test('a sub-agent whose own events keep using its lifecycle id never drops that id for newer telemetry ids', () => {
+  for (const mode of ['top level', 'top level, recovered lines', 'nested']) {
+    const log = new EventLog(T0);
+    log.start(); log.turnStart();
+    const lead = mode === 'nested' ? log.subagent({ name: 'lead', type: 'explore', mode: 'background', agentId: 'agent-lead' }) : null;
+    const call = lead ? log.nested(lead, { name: 'kid', type: 'explore', mode: 'background', agentId: 'L' }) : aliasedSubagent(log, 'L', 'T-1', { finish: false });
+    const telemetry = id => (lead
+      ? log.sub(lead, 'tool.execution_complete', { toolCallId: call, success: true, result: { content: 'Agent started in background' }, toolTelemetry: telemetryOf(id) })
+      : log.done(call, { result: 'Agent started in background', telemetry: telemetryOf(id) }));
+    if (lead) telemetry('T-1');
+    // The sub-agent's own events carry L while telemetry ids T-2, T-3 and T-4 are mapped in turn.
+    for (const id of ['T-2', 'T-3', 'T-4']) {
+      log.wait(MINUTE); log.push('assistant.message', { content: 'still working' }, { agentId: 'L' });
+      log.wait(MINUTE); telemetry(id);
+    }
+    // A quiet spell past the sub-agent's limit, then one more message from L.
+    const quietFrom = log.t;
+    log.wait(30 * MINUTE);
+    log.push('assistant.message', { content: 'nearly done' }, { agentId: 'L' });
+    const lastAt = log.t;
+
+    const state = mode === 'top level, recovered lines' ? foldRecovering(log, 'L') : foldRoot(log);
+    const owner = lead ? state.descendants.get(call) : state.subagents.get(call);
+    assert.deepEqual(owner.agentIds, ['T-2', 'T-3', 'T-4', 'L'], `${mode}: L stays (its last use is the newest), the cap of four holds, and T-1 is the one dropped`);
+    assert.equal(owner.agentId, 'T-4', `${mode}: using an id does not change the latest mapped one`);
+    assert.equal(state.agentToTask.get('L'), call, mode);
+    assert.equal(state.agentToTask.has('T-1'), false, mode);
+    const top = state.subagents.get(lead ?? call);
+    assert.equal(top.lastEventAt, lastAt, `${mode}: the later message from L is attributed`);
+    if (lead) continue;
+    assert.ok(lastAt - quietFrom > subagentLimitMs(top, DEFAULT_THRESHOLDS), 'the quiet spell is longer than the limit');
+    assert.equal(evaluateSubagentUnit(top, { alive: true, now: lastAt + MINUTE, thresholds: DEFAULT_THRESHOLDS }).detail, 'busy', mode);
+    if (mode === 'top level') assert.equal(top.unit.lastMessage.text, 'nearly done');
   }
 });
 

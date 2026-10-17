@@ -121,7 +121,7 @@ export function applyRecovered(state, event) {
   }
   touch(state, at, SKIP_NAMES.get(event.type) ?? event.type);
   const agentId = event.agentId === undefined || event.agentId === null ? null : String(event.agentId);
-  const owner = event.data?.parentToolCallId ?? (agentId ? state.agentToTask.get(agentId) ?? null : null);
+  const owner = event.data?.parentToolCallId ?? (agentId ? ownerByAgent(state, agentId) : null);
   touchSubagent(state, owner, at);
 }
 
@@ -159,7 +159,7 @@ export function applyEvent(state, event) {
     return;
   }
   const agentId = event.agentId === undefined || event.agentId === null ? null : String(event.agentId);
-  const owner = data.parentToolCallId ?? (agentId ? state.agentToTask.get(agentId) ?? null : null);
+  const owner = data.parentToolCallId ?? (agentId ? ownerByAgent(state, agentId) : null);
   if (owner || agentId) {
     onOwnedEvent(state, event, data, owner, agentId, at);
     return;
@@ -535,6 +535,25 @@ function mapAgent(state, record, agentId, taskId) {
 /** Forgets every agent id of a sub-agent that leaves the details or the descendants, unless another sub-agent has taken it since. */
 function forgetAgents(state, record, taskId) {
   for (const agentId of record.agentIds) if (state.agentToTask.get(agentId) === taskId) state.agentToTask.delete(agentId);
+}
+
+/**
+ * The task id of the sub-agent that an owned event's top-level agent id names, or null. The id is used, so it becomes the most
+ * recently seen of its owner record's `agentIds` (see mapAgent): the cap never drops an id that the sub-agent's own events still
+ * carry. Neither `record.agentId` nor the mapping changes.
+ */
+function ownerByAgent(state, agentId) {
+  const taskId = state.agentToTask.get(agentId) ?? null;
+  if (taskId === null) return null;
+  const ids = (state.subagents.get(taskId) ?? state.descendants.get(taskId))?.agentIds;
+  if (ids && ids[ids.length - 1] !== agentId) {
+    const index = ids.indexOf(agentId);
+    if (index >= 0) {
+      ids.splice(index, 1);
+      ids.push(agentId);
+    }
+  }
+  return taskId;
 }
 
 /**
