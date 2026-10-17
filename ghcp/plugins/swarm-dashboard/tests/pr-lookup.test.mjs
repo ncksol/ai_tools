@@ -541,6 +541,60 @@ test('an unknown system folder leaves the answer open even with the extension in
   assert.equal(await derivedOutcome({ change: az => rmSync(az.system, { recursive: true }), userHas: true }), 'installed');
 });
 
+const SHELL_HOOKS = {
+  BASH_ENV: '/synthetic/hook', ENV: '/synthetic/hook', SHELLOPTS: 'xtrace', BASHOPTS: 'extdebug', PS4: '+ ', BASH_XTRACEFD: '7',
+  'BASH_FUNC_x%%': '() { :; }', 'BASH_FUNC_exec%%': '() { :; }',
+};
+
+test('az\'s environment has no shell start-up hooks; gh\'s is left as it is', () => {
+  const kept = { PATH: '/synthetic/bin', KEEP: 'kept', BASH: '/synthetic/bash', ENVIRONMENT: 'kept', XBASH_ENV: 'kept' };
+  const base = { ...kept, ...SHELL_HOOKS };
+  const az = cliEnv('az', base);
+  for (const key of Object.keys(SHELL_HOOKS)) assert.equal(Object.hasOwn(az, key), false, key);
+  assert.deepEqual(az, { ...kept, ...CLI_ENV.az });
+  assert.deepEqual(cliEnv('gh', base), { ...base, ...CLI_ENV.gh });
+});
+
+test('a BASH_ENV hook cannot change the extension folder az sees: the check and az get the same environment, without it', posixOnly, async () => {
+  const { dir, env } = azureEnv({ ...DERIVED, AZURE_CONFIG_DIR: undefined });
+  const az = homebrewAz(dir);
+  // The default user folder ~/.azure/cliextensions has the extension; the hook would point az at an empty folder.
+  installExtension(path.join(env.HOME, '.azure', 'cliextensions'));
+  const hook = path.join(dir, 'hook.sh');
+  writeFileSync(hook, `export AZURE_EXTENSION_DIR='${folder(path.join(dir, 'empty'))}'\n`);
+  const calls = [];
+  const lookup = createPrLookup({ run: async (command, args, options) => { calls.push(options.env); return '{"status":"active"}'; }, env: { ...env, PATH: az.PATH, BASH_ENV: hook } });
+  lookup.request(ADO_PR);
+  await lookup.settle();
+  assert.equal(calls.length, 1, 'installed, for the AZURE settings as given');
+  assert.equal(Object.hasOwn(calls[0], 'BASH_ENV'), false, 'az runs without the hook');
+});
+
+test('a launcher that runs python through exec is not the Homebrew form, since an exported function could replace exec', posixOnly, async () => {
+  assert.equal(await derivedOutcome({ text: python => `#!/usr/bin/env bash\nAZ_INSTALLER=HOMEBREW exec ${python} -Im azure.cli "$@"\n` }), 'undetermined');
+});
+
+test('a Homebrew-form launcher run with the lookup\'s environment does not source BASH_ENV', posixOnly, async () => {
+  const { dir } = azureEnv();
+  const az = homebrewAz(dir);
+  // The launcher's "python" is a shell script, never Python or az: it prints the extension folder it was given.
+  rmSync(path.join(az.prefix, 'bin', 'python'));
+  writeFileSync(path.join(az.prefix, 'bin', 'python'), '#!/bin/sh\nprintf %s "$AZURE_EXTENSION_DIR"\n');
+  chmodSync(path.join(az.prefix, 'bin', 'python'), 0o755);
+  const hook = path.join(dir, 'hook.sh');
+  writeFileSync(hook, "export AZURE_EXTENSION_DIR='/synthetic/from-the-hook'\n");
+  let passed = null;
+  const lookup = createPrLookup({
+    run: async (command, args, options) => { passed = { command, args, options }; return '{}'; },
+    env: { PATH: az.PATH, HOME: path.join(dir, 'home'), AZURE_EXTENSION_DIR: '/synthetic/original', BASH_ENV: hook },
+    azureExtensionInstalled: async () => true,
+  });
+  lookup.request(ADO_PR);
+  await lookup.settle();
+  const stdout = await runCommand(passed.command, passed.args, { ...passed.options, cwd: dir });
+  assert.equal(stdout, '/synthetic/original');
+});
+
 const UNDETERMINED = 'lookup unavailable: could not tell whether the azure-devops extension is installed';
 
 /** One ADO lookup with the default extension check: the number of az runs and the lookup's error. */

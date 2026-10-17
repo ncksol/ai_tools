@@ -26,7 +26,19 @@ export const CLI_ENV = Object.freeze({
   gh: Object.freeze({ GH_NO_UPDATE_NOTIFIER: '1', GH_NO_EXTENSION_UPDATE_NOTIFIER: '1', GH_PROMPT_DISABLED: '1', GH_TELEMETRY: 'false' }),
 });
 
-export const cliEnv = (command, base = process.env) => ({ ...base, ...CLI_ENV[command] });
+/** Variables a shell reads at start-up, which could change what az's launcher runs or exports; az runs without them. */
+const SHELL_HOOKS = new Set(['BASH_ENV', 'ENV', 'SHELLOPTS', 'BASHOPTS', 'PS4', 'BASH_XTRACEFD']);
+
+/**
+ * The environment `command` runs with: `base` with CLI_ENV's settings. For az, shell start-up hooks are removed (SHELL_HOOKS
+ * and every exported bash function, BASH_FUNC_*), so the launcher's shell runs the line the extension check read, with the
+ * environment the check saw. gh's is not changed.
+ */
+export function cliEnv(command, base = process.env) {
+  const env = { ...base, ...CLI_ENV[command] };
+  if (command === 'az') for (const key of Object.keys(env)) if (SHELL_HOOKS.has(key) || key.startsWith('BASH_FUNC_')) delete env[key];
+  return env;
+}
 
 // An az that still says the command is unknown has a broken extension install; it is reported like a missing extension.
 const MISSING_EXTENSION = /not recognized by the system|requires the extension|az extension add/i;
@@ -242,8 +254,11 @@ async function startsWithShebang(file) {
 
 /** The first lines of the launchers the check reads: Homebrew's and the plain shells. */
 const LAUNCHER_SHEBANGS = new Set(['#!/usr/bin/env bash', '#!/bin/bash', '#!/usr/bin/bash', '#!/bin/sh']);
-/** Homebrew's launcher command: an optional AZ_INSTALLER=..., an optional exec, an absolute python, -Im azure.cli "$@". */
-const LAUNCHER_LINE = /^(?:AZ_INSTALLER=[A-Za-z0-9_]+[ \t]+)?(?:exec[ \t]+)?(\/[A-Za-z0-9._/+-]+)[ \t]+-Im[ \t]+azure\.cli[ \t]+"\$@"[ \t]*$/;
+/**
+ * Homebrew's launcher command: an optional AZ_INSTALLER=..., an absolute python, -Im azure.cli "$@". No `exec`: Homebrew does
+ * not use it, and an exported function could replace it.
+ */
+const LAUNCHER_LINE = /^(?:AZ_INSTALLER=[A-Za-z0-9_]+[ \t]+)?(\/[A-Za-z0-9._/+-]+)[ \t]+-Im[ \t]+azure\.cli[ \t]+"\$@"[ \t]*$/;
 
 /**
  * Whether the interpreter of a launcher whose first line is `shebang` (one of LAUNCHER_SHEBANGS) can start: an executable
