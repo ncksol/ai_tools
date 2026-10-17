@@ -140,8 +140,9 @@ const MAX_CONFIG_BYTES = 1024 * 1024;
 
 /**
  * az's config file, parsed (see parseAzConfig). As knack reads it: a file that does not exist or cannot be opened (including a
- * folder) counts as empty; it is decoded as strict UTF-8 with a leading byte order mark kept. A decode error, a parse error,
- * a file over MAX_CONFIG_BYTES or one that is not a regular file is undetermined.
+ * folder) counts as empty. A file the check does not model is undetermined: one with any character other than printable ASCII,
+ * tab, CR or LF (Python's case folding and whitespace differ from JavaScript's), one with a % anywhere (ConfigParser would
+ * interpolate any option az reads), one over MAX_CONFIG_BYTES, or one that is not a regular file; so is a parse error.
  */
 async function readAzConfig(file) {
   const info = await statOf(file);
@@ -155,30 +156,28 @@ async function readAzConfig(file) {
     return parseAzConfig('');
   }
   if (bytes.length > MAX_CONFIG_BYTES) throw undetermined(`${file} is too large`);
-  let text;
-  try {
-    text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
-  } catch {
-    throw undetermined(`${file} is not valid UTF-8`);
+  for (const byte of bytes) {
+    if (byte !== 0x09 && byte !== 0x0a && byte !== 0x0d && (byte < 0x20 || byte > 0x7e)) throw undetermined(`${file} has a character outside printable ASCII`);
+    if (byte === 0x25) throw undetermined(`${file} has a %`);
   }
-  return parseAzConfig(text);
+  return parseAzConfig(bytes.toString('latin1'));
 }
 
 /**
  * A setting of az's [extension] section as knack gets it: the variable AZURE_EXTENSION_<OPTION>, raw, when it is set (even
  * empty); else ConfigParser's get: nothing when the file has no [extension] section (DEFAULT does not count then), else the
- * option from [extension], else from DEFAULT. A file value with a % is undetermined (ConfigParser would interpolate it).
- * Returns the folder with `~` expanded (see pyExpandUser), or null for an empty or missing value.
+ * option from [extension], else from DEFAULT. Returns the value, or null for an empty or missing one.
  */
-function extensionSetting(env, config, option) {
+function rawExtensionSetting(env, config, option) {
   const name = `AZURE_EXTENSION_${option.toUpperCase()}`;
-  let value;
-  if (env[name] !== undefined) value = String(env[name]);
-  else {
-    const section = config.sections.get('extension');
-    value = section ? section.get(option) ?? config.defaults.get(option) : undefined;
-    if (value?.includes('%')) throw undetermined(`[extension] ${option} has a %`);
-  }
+  if (env[name] !== undefined) return String(env[name]) || null;
+  const section = config.sections.get('extension');
+  return (section ? section.get(option) ?? config.defaults.get(option) : undefined) || null;
+}
+
+/** A folder setting of az's [extension] section (see rawExtensionSetting) with `~` expanded (see pyExpandUser), or null. */
+function extensionSetting(env, config, option) {
+  const value = rawExtensionSetting(env, config, option);
   return value ? pyExpandUser(value, env) : null;
 }
 
@@ -268,8 +267,9 @@ async function hasExtension(dir) {
  * <AZURE_CONFIG_DIR>/config when that variable is set (even empty, then
  * `config` in the child's folder), else ~/.azure/config, read as ConfigParser reads it (see readAzConfig); the default
  * extension folder's parent is AZURE_CONFIG_DIR when it is not empty, else ~/.azure; relative paths are taken from `cwd` (the
- * child's folder; null is this process's). Resolves true or false; throws when it cannot tell what az would do (a config
- * file az would fail to read, a value it would interpolate, `~name`), so that a false "installed" is never given.
+ * child's folder; null is this process's). Every setting az reads when it loads its extensions (dir, sys_dir, dev_sources) is
+ * resolved before any folder is checked. Resolves true or false; throws when it cannot tell what az would do (a config file
+ * az would fail to read or that the check does not model, dev_sources set, `~name`), so that a false "installed" is never given.
  * Read-only: it only stats, lists and reads these paths.
  */
 export async function azureExtensionInstalled({ env = process.env, cwd = null } = {}) {
@@ -278,9 +278,11 @@ export async function azureExtensionInstalled({ env = process.env, cwd = null } 
   const azureDir = () => pyExpandUser('~/.azure', env);
   const configDir = env.AZURE_CONFIG_DIR !== undefined ? String(env.AZURE_CONFIG_DIR) : azureDir();
   const config = await readAzConfig(absolute(pyJoin(configDir, 'config')));
-  const userDir = extensionSetting(env, config, 'dir') ?? pyJoin(env.AZURE_CONFIG_DIR || azureDir(), 'cliextensions');
-  if (await hasExtension(absolute(userDir))) return true;
+  // Every setting az reads when it loads its extensions is resolved before any folder is checked.
+  if (rawExtensionSetting(env, config, 'dev_sources')) throw undetermined('dev_sources is set');
+  const userDir = absolute(extensionSetting(env, config, 'dir') ?? pyJoin(env.AZURE_CONFIG_DIR || azureDir(), 'cliextensions'));
   const sysDir = extensionSetting(env, config, 'sys_dir');
+  if (await hasExtension(userDir)) return true;
   const systemDir = sysDir ? absolute(sysDir) : await defaultSystemFolder({ env, cwd: base });
   return systemDir !== null && hasExtension(systemDir);
 }

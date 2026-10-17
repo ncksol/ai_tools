@@ -434,7 +434,8 @@ const outcome = ({ runs, error }) => (runs === 1 && error === null ? 'installed'
 
 // Each config file, written to <AZURE_CONFIG_DIR>/config, against what Python 3.12's configparser (which az reads it with)
 // gives for get('extension', 'dir'): the default folder <config>/cliextensions has the extension; `empty` is a folder without
-// it; `two` names the folder "two\nlines", which has it. An error that az would raise at start-up is "undetermined".
+// it; `two` names the folder "two\nlines", which has it. An error that az would raise at start-up is "undetermined", and so is
+// a file the check does not model: one with a character outside printable ASCII, tab, CR and LF, or with a % anywhere.
 const CONFIG_CASES = [
   ['a comment after the section header', d => `[extension] # local extensions\ndir = ${d.empty}\n`, 'missing'],
   ['[DEFAULT] dir without an [extension] section', d => `[DEFAULT]\ndir = ${d.empty}\n`, 'installed'],
@@ -443,8 +444,8 @@ const CONFIG_CASES = [
   ['a continuation line makes a two-line path', d => `[extension]\ndir = ${d.two}\n  lines\n`, 'installed', { defaultHas: false }],
   ['a comment line inside a value is skipped', d => `[extension]\ndir = ${d.two}\n  # c\n  lines\n`, 'installed', { defaultHas: false }],
   ['an empty value gives the default folder', () => '[extension]\ndir =\n', 'installed'],
-  ['Python whitespace is stripped', d => `[extension]\n\x85dir\x1c=\x1c${d.empty}\x85\u3000\n`, 'missing'],
-  ['a byte order mark inside a line is not whitespace', d => `[extension]\n\ufeffdir = ${d.empty}\n`, 'installed'],
+  ['Python whitespace outside ASCII is refused', d => `[extension]\n\x85dir\x1c=\x1c${d.empty}\x85\u3000\n`, 'undetermined'],
+  ['a byte order mark inside a line is refused', d => `[extension]\n\ufeffdir = ${d.empty}\n`, 'undetermined'],
   ['the section name runs to the last ]', d => `[extension]]x\ndir = ${d.empty}\n`, 'installed'],
   ['the section name is not trimmed', d => `[ extension ]\ndir = ${d.empty}\n`, 'installed'],
   ['CR line ends', d => `[extension]\rdir = ${d.empty}\r`, 'missing'],
@@ -533,6 +534,35 @@ test('with AZURE_CONFIG_DIR empty, the config file is config in the child\'s fol
   assert.equal(outcome(await adoLookup(blank, { cwd: worktree })), 'installed');
   folder(worktree, { config: `[extension]\ndir = ${empty}\n` });
   assert.equal(outcome(await adoLookup(blank, { cwd: worktree })), 'missing');
+});
+
+/** The outcome of one lookup in a fresh synthetic environment whose user folder has the extension, with `config` as the file. */
+async function withUserExtension(config, extra = {}) {
+  const { env } = azureEnv(extra);
+  installExtension(path.join(env.AZURE_CONFIG_DIR, 'cliextensions'));
+  writeFileSync(path.join(env.AZURE_CONFIG_DIR, 'config'), config);
+  return outcome(await adoLookup(env));
+}
+
+test('a config file with a character outside printable ASCII is not modelled, such as a name only Python folds to a duplicate', async () => {
+  assert.equal(await withUserExtension('[extension]\n\u1C89\u03A3 = a\n\u1C89\u03C3 = b\n'), 'undetermined');
+  assert.equal(await withUserExtension('[core]\noutput = json\t\r\n'), 'installed', 'tab and CR are allowed');
+});
+
+test('every setting is resolved before any folder is checked: a % anywhere, or dev_sources, gives could not tell', async () => {
+  // az reads dir, dev_sources and sys_dir when it loads its extension module, so a failure in any of them stops it, although
+  // the user folder has the extension.
+  assert.equal(await withUserExtension('[extension]\nsys_dir = %broken\n'), 'undetermined', 'sys_dir with a %');
+  assert.equal(await withUserExtension('[extension]\ndev_sources = %broken\n'), 'undetermined', 'dev_sources with a %');
+  assert.equal(await withUserExtension('[core]\nnote = 50%\n'), 'undetermined', 'a % in another section');
+  // Dev sources are listed eagerly at start-up, so any set value is not modelled.
+  assert.equal(await withUserExtension('[extension]\ndev_sources = /synthetic/dev\n'), 'undetermined', 'dev_sources in the file');
+  assert.equal(await withUserExtension('', { AZURE_EXTENSION_DEV_SOURCES: '/synthetic/dev' }), 'undetermined', 'dev_sources in the environment');
+  assert.equal(await withUserExtension('[extension]\n[DEFAULT]\ndev_sources = /synthetic/dev\n'), 'undetermined', 'dev_sources from DEFAULT');
+  // Unset as az takes it: an empty variable wins over the file, and DEFAULT does not count without an [extension] section.
+  assert.equal(await withUserExtension('[extension]\ndev_sources = /synthetic/dev\n', { AZURE_EXTENSION_DEV_SOURCES: '' }), 'installed');
+  assert.equal(await withUserExtension('[DEFAULT]\ndev_sources = /synthetic/dev\n'), 'installed');
+  assert.equal(await withUserExtension('[extension]\ndev_sources =\n'), 'installed');
 });
 
 test('GitHub lookups never check for the Azure extension', async () => {
