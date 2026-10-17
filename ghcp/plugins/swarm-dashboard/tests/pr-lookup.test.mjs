@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import * as prLookupModule from '../engine/model/pr-lookup.mjs';
 import { CLI_ENV, adoArgs, cliEnv, createPrLookup, githubArgs, mapAdo, mapGithub, prKey, runCommand } from '../engine/model/pr-lookup.mjs';
@@ -324,6 +324,123 @@ test('an azure-devops folder without a *.*-info entry is not an installed extens
   assert.equal(await azRuns(env), 0);
   folder(path.join(extension, 'azure_devops-1.0.1.egg-info'));
   assert.equal(await azRuns(env), 1, 'an egg-info entry counts too');
+});
+
+const UNDETERMINED = 'lookup unavailable: could not tell whether the azure-devops extension is installed';
+
+/** One ADO lookup with the default extension check: the number of az runs and the lookup's error. */
+async function adoLookup(env, { cwd = null } = {}) {
+  let runs = 0;
+  const lookup = createPrLookup({ run: async () => { runs += 1; return '{"status":"active"}'; }, env });
+  const pr = cwd ? { provider: 'ado', id: 9, repo: null } : ADO_PR;
+  lookup.request(pr, { cwd });
+  await lookup.settle();
+  return { runs, error: lookup.get(pr, { cwd }).error };
+}
+const outcome = ({ runs, error }) => (runs === 1 && error === null ? 'installed' : runs === 0 && error === NOT_INSTALLED ? 'missing'
+  : runs === 0 && error === UNDETERMINED ? 'undetermined' : `runs ${runs}, error ${error}`);
+
+// Each config file, written to <AZURE_CONFIG_DIR>/config, against what Python 3.12's configparser (which az reads it with)
+// gives for get('extension', 'dir'): the default folder <config>/cliextensions has the extension; `empty` is a folder without
+// it; `two` names the folder "two\nlines", which has it. An error that az would raise at start-up is "undetermined".
+const CONFIG_CASES = [
+  ['a comment after the section header', d => `[extension] # local extensions\ndir = ${d.empty}\n`, 'missing'],
+  ['[DEFAULT] dir without an [extension] section', d => `[DEFAULT]\ndir = ${d.empty}\n`, 'installed'],
+  ['[DEFAULT] dir with an empty [extension] section', d => `[extension]\n[DEFAULT]\ndir = ${d.empty}\n`, 'missing'],
+  ['an indented header after an option is a continuation', d => `[core]\noutput = json\n  [extension]\n  dir = ${d.empty}\n`, 'installed'],
+  ['a continuation line makes a two-line path', d => `[extension]\ndir = ${d.two}\n  lines\n`, 'installed', { defaultHas: false }],
+  ['a comment line inside a value is skipped', d => `[extension]\ndir = ${d.two}\n  # c\n  lines\n`, 'installed', { defaultHas: false }],
+  ['an empty value gives the default folder', () => '[extension]\ndir =\n', 'installed'],
+  ['Python whitespace is stripped', d => `[extension]\n\x85dir\x1c=\x1c${d.empty}\x85\u3000\n`, 'missing'],
+  ['a byte order mark inside a line is not whitespace', d => `[extension]\n\ufeffdir = ${d.empty}\n`, 'installed'],
+  ['the section name runs to the last ]', d => `[extension]]x\ndir = ${d.empty}\n`, 'installed'],
+  ['the section name is not trimmed', d => `[ extension ]\ndir = ${d.empty}\n`, 'installed'],
+  ['CR line ends', d => `[extension]\rdir = ${d.empty}\r`, 'missing'],
+  ['CRLF line ends and the colon delimiter', d => `[extension]\r\ndir : ${d.empty}\r\n`, 'missing'],
+  ['% in the chosen value', d => `[extension]\ndir = ${d.empty}%B\n`, 'undetermined'],
+  ['%% in the chosen value', d => `[extension]\ndir = ${d.empty}%%B\n`, 'undetermined'],
+  ['a byte order mark at the start', d => Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(`[extension]\ndir = ${d.empty}\n`)]), 'undetermined'],
+  ['invalid UTF-8', () => Buffer.concat([Buffer.from('[extension]\ndir = /'), Buffer.from([0xff]), Buffer.from('\n')]), 'undetermined'],
+  ['an option before any header', d => `dir = ${d.empty}\n[extension]\n`, 'undetermined'],
+  ['a duplicate section', d => `[extension]\ndir = ${d.empty}\n[extension]\nsys_dir = ${d.empty}\n`, 'undetermined'],
+  ['a duplicate option differing only in case', d => `[extension]\ndir = ${d.empty}\nDIR = ${d.empty}\n`, 'undetermined'],
+  ['a duplicate [DEFAULT] option across repeated headers', d => `[DEFAULT]\ndir = ${d.empty}\n[DEFAULT]\ndir = ${d.empty}\n[extension]\n`, 'undetermined'],
+  ['a line with no delimiter', d => `[extension]\ndir ${d.empty}\n`, 'undetermined'],
+  ['an option with an empty name', d => `[extension]\n= ${d.empty}\n`, 'undetermined'],
+  ['empty brackets are not a header', () => '[]\n', 'undetermined'],
+  ['~name in the chosen value', () => '[extension]\ndir = ~synthetic-user/x\n', 'undetermined'],
+];
+
+test('az\'s config file is read as az reads it, case by case', async () => {
+  const actual = {};
+  const expected = {};
+  for (const [name, config, want, { defaultHas = true } = {}] of CONFIG_CASES) {
+    const { dir, env } = azureEnv();
+    if (defaultHas) installExtension(path.join(env.AZURE_CONFIG_DIR, 'cliextensions'));
+    installExtension(path.join(dir, 'two\nlines'));
+    const dirs = { empty: folder(path.join(dir, 'empty')), two: path.join(dir, 'two') };
+    writeFileSync(path.join(env.AZURE_CONFIG_DIR, 'config'), config(dirs));
+    actual[name] = outcome(await adoLookup(env));
+    expected[name] = want;
+  }
+  assert.deepEqual(actual, expected);
+});
+
+test('an undetermined check starts no process, and after the TTL repeats only the check', async () => {
+  const { env } = azureEnv();
+  installExtension(path.join(env.AZURE_CONFIG_DIR, 'cliextensions'));
+  writeFileSync(path.join(env.AZURE_CONFIG_DIR, 'config'), '[extension]\ndir = /x%\n');
+  let clock = T0;
+  let runs = 0;
+  let checks = 0;
+  const lookup = createPrLookup({
+    run: async () => { runs += 1; return '{"status":"active"}'; }, now: () => clock, env,
+    azureExtensionInstalled: options => { checks += 1; return prLookupModule.azureExtensionInstalled(options); },
+  });
+  lookup.request(ADO_PR);
+  await lookup.settle();
+  assert.deepEqual([runs, checks, lookup.get(ADO_PR).error], [0, 1, UNDETERMINED]);
+  clock += 5 * MINUTE;
+  lookup.request(ADO_PR);
+  await lookup.settle();
+  assert.deepEqual([runs, checks, lookup.get(ADO_PR).error], [0, 2, UNDETERMINED]);
+  // A check that fails in any other way is also undetermined.
+  const throwing = createPrLookup({ run: async () => { runs += 1; return '{}'; }, env, azureExtensionInstalled: async () => { throw new Error('synthetic'); } });
+  throwing.request(ADO_PR);
+  await throwing.settle();
+  assert.deepEqual([runs, throwing.get(ADO_PR).error], [0, UNDETERMINED]);
+});
+
+test('settings are taken as az takes them: variables raw and first, ~ from HOME, ~name undetermined, a config file that cannot be opened is empty', async () => {
+  const { dir, env } = azureEnv();
+  installExtension(path.join(env.AZURE_CONFIG_DIR, 'cliextensions'));
+  const empty = folder(path.join(dir, 'empty'));
+  // The variable wins over the config file even when its value has a %, which only the file would interpolate.
+  writeFileSync(path.join(env.AZURE_CONFIG_DIR, 'config'), `[extension]\ndir = ${empty}\n`);
+  installExtension(folder(path.join(dir, 'per%cent')));
+  assert.equal(outcome(await adoLookup({ ...env, AZURE_EXTENSION_DIR: path.join(dir, 'per%cent') })), 'installed');
+  assert.equal(outcome(await adoLookup({ ...env, AZURE_EXTENSION_DIR: '~synthetic-user/x' })), 'undetermined');
+  // ~ is HOME with its trailing slashes removed, as Python's expanduser gives.
+  installExtension(path.join(env.HOME, 'tilde-extensions'));
+  assert.equal(outcome(await adoLookup({ ...env, AZURE_EXTENSION_DIR: '~/tilde-extensions', HOME: `${env.HOME}///` })), 'installed');
+  // A config file that is a folder cannot be opened, so it counts as empty and the default folder decides.
+  rmSync(path.join(env.AZURE_CONFIG_DIR, 'config'));
+  folder(path.join(env.AZURE_CONFIG_DIR, 'config'));
+  assert.equal(outcome(await adoLookup(env)), 'installed');
+});
+
+test('with AZURE_CONFIG_DIR empty, the config file is config in the child\'s folder, and the default extensions stay under HOME/.azure', async () => {
+  const { dir, env } = azureEnv();
+  const azure = path.join(env.HOME, '.azure');
+  installExtension(path.join(azure, 'cliextensions'));
+  const empty = folder(path.join(dir, 'empty'));
+  // HOME/.azure/config is not read when AZURE_CONFIG_DIR is set, even to ''.
+  folder(azure, { config: `[extension]\ndir = ${empty}\n` });
+  const worktree = folder(path.join(dir, 'worktree'));
+  const blank = { ...env, AZURE_CONFIG_DIR: '' };
+  assert.equal(outcome(await adoLookup(blank, { cwd: worktree })), 'installed');
+  folder(worktree, { config: `[extension]\ndir = ${empty}\n` });
+  assert.equal(outcome(await adoLookup(blank, { cwd: worktree })), 'missing');
 });
 
 test('GitHub lookups never check for the Azure extension', async () => {

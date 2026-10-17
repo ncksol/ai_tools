@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { readFile, readdir, realpath, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { userInfo } from 'node:os';
 import path from 'node:path';
 import { MINUTE, parseTime } from '../time.mjs';
 
@@ -32,45 +32,154 @@ export const cliEnv = (command, base = process.env) => ({ ...base, ...CLI_ENV[co
 // An az that still says the command is unknown has a broken extension install; it is reported like a missing extension.
 const MISSING_EXTENSION = /not recognized by the system|requires the extension|az extension add/i;
 const MISSING_EXTENSION_MESSAGE = 'lookup unavailable: azure-devops extension not installed';
+const UNDETERMINED_MESSAGE = 'lookup unavailable: could not tell whether the azure-devops extension is installed';
 
 /** A file or folder's stats, or null when it cannot be read. */
 const statOf = file => stat(file).catch(() => null);
 
-/** Python's os.path.expanduser for a leading ~ alone or ~/; `home` is the HOME that az sees. */
-const expandHome = (value, home) => (value === '~' || value.startsWith('~/') ? path.join(home, value.slice(1)) : value);
+/** Thrown when the check cannot tell what az would find; the lookup then starts no process. */
+class UndeterminedError extends Error {}
+const undetermined = reason => new UndeterminedError(reason);
+
+// Python's str.isspace() set, which its strip(), rstrip() and the re module's \s and \S use for str. JS trim() and \s differ:
+// they also strip U+FEFF, and miss U+001C to U+001F and U+0085.
+const PY_SPACE = '\\t\\n\\v\\f\\r\\x1c-\\x1f \\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
+const PY_LEADING = new RegExp(`^[${PY_SPACE}]+`);
+const PY_TRAILING = new RegExp(`[${PY_SPACE}]+$`);
+const PY_NON_SPACE = new RegExp(`[^${PY_SPACE}]`);
+const pyRstrip = text => text.replace(PY_TRAILING, '');
+const pyStrip = text => pyRstrip(text.replace(PY_LEADING, ''));
+
+/** Python's os.path.join for two parts, without the normalising that path.join does (the OS resolves the result). */
+const pyJoin = (a, b) => (b.startsWith('/') || a === '' ? b : a.endsWith('/') ? a + b : `${a}/${b}`);
 
 /**
- * One option of an INI file, as Python's configparser reads az's config file: section names match exactly, option names in any
- * case, `=` or `:` separates the value, lines that start with # or ; are comments, and the DEFAULT section applies to every
- * section. Returns undefined when the option is not set.
+ * Python's os.path.expanduser as az runs it: `~` alone or `~/...` takes HOME from the child's environment when it is set (even
+ * empty), else the account's home folder; the home loses its trailing slashes, and an empty result is '/'. `~name` would look
+ * up another account, so it is undetermined.
  */
-function iniOption(text, section, option) {
-  let current = null;
-  const found = new Map();
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line || line.startsWith('#') || line.startsWith(';')) continue;
-    const header = /^\[(.+)\]$/.exec(line);
-    if (header) {
-      current = header[1];
-      continue;
+function pyExpandUser(value, env) {
+  if (!value.startsWith('~')) return value;
+  const slash = value.indexOf('/', 1);
+  if ((slash < 0 ? value.length : slash) !== 1) throw undetermined(`${value}: ~name is not resolved`);
+  let home;
+  if (Object.hasOwn(env, 'HOME')) home = String(env.HOME);
+  else {
+    try {
+      home = userInfo().homedir;
+    } catch {
+      throw undetermined('no home folder');
     }
-    if (current !== section && current !== 'DEFAULT') continue;
-    const separator = line.search(/[=:]/);
-    if (separator <= 0 || line.slice(0, separator).trim().toLowerCase() !== option) continue;
-    found.set(current, line.slice(separator + 1).trim());
   }
-  return found.get(section) ?? found.get('DEFAULT');
+  return home.replace(/\/+$/, '') + value.slice(1) || '/';
 }
 
 /**
- * The folders az reads for a setting of its [extension] section, as knack does: the variable AZURE_EXTENSION_<OPTION> wins, even
- * when empty; else the option in <config folder>/config. A value has a leading ~ expanded; an empty or missing one gives null.
+ * Python 3.12's ConfigParser._read with ConfigParser's defaults, as az reads its config file: delimiters `=` and `:`; `#` and
+ * `;` start full-line comments only; empty lines belong to values; strict; option names lower-cased; values right-stripped
+ * after their lines are joined with '\n'. `text` is the decoded file; lines end at \r\n, \r or \n (universal newlines).
+ * Returns { sections: Map(name -> Map(option -> value)), defaults: Map(option -> value) }; throws UndeterminedError where
+ * ConfigParser raises (a missing section header, a duplicate section or option, a line it cannot parse).
  */
-function extensionSetting(env, configText, option, home) {
+function parseAzConfig(text) {
+  const lines = text.split(/\r\n|\r|\n/);
+  if (lines[lines.length - 1] === '') lines.pop();
+  const sections = new Map();
+  const defaults = new Map();
+  const added = new Set();
+  let cursect = null;
+  let sectname = null;
+  let optname = null;
+  let indentLevel = 0;
+  for (const line of lines) {
+    const stripped = pyStrip(line);
+    const comment = stripped.startsWith('#') || stripped.startsWith(';');
+    const value = comment ? '' : stripped;
+    if (!value) {
+      // An empty line is part of the current value; a comment line is not.
+      if (!comment && cursect && optname) cursect.get(optname).push('');
+      continue;
+    }
+    const indent = line.search(PY_NON_SPACE);
+    if (cursect && optname && indent > indentLevel) {
+      cursect.get(optname).push(value);
+      continue;
+    }
+    indentLevel = indent;
+    // SECTCRE: `\[(?P<header>.+)\]` as a prefix match; the greedy name runs to the last ], and the rest of the line is ignored.
+    const header = /^\[(.+)\]/s.exec(value);
+    if (header) {
+      sectname = header[1];
+      if (sections.has(sectname)) throw undetermined(`duplicate section ${sectname}`);
+      if (sectname === 'DEFAULT') cursect = defaults;
+      else {
+        cursect = new Map();
+        sections.set(sectname, cursect);
+      }
+      optname = null;
+      continue;
+    }
+    if (!cursect) throw undetermined('an option before any section header');
+    // OPTCRE: the name runs to the first delimiter, without trailing whitespace; the value is the rest, stripped.
+    const at = value.search(/[=:]/);
+    if (at < 0) throw undetermined('a line with no delimiter');
+    const name = pyRstrip(value.slice(0, at)).toLowerCase();
+    if (!name) throw undetermined('an option with an empty name');
+    const key = JSON.stringify([sectname, name]);
+    if (added.has(key)) throw undetermined(`duplicate option ${name}`);
+    added.add(key);
+    optname = name;
+    cursect.set(name, [pyStrip(value.slice(at + 1))]);
+  }
+  const join = options => new Map([...options].map(([name, parts]) => [name, pyRstrip(parts.join('\n'))]));
+  return { sections: new Map([...sections].map(([name, options]) => [name, join(options)])), defaults: join(defaults) };
+}
+
+/** Largest config file read; a bigger one is undetermined. */
+const MAX_CONFIG_BYTES = 1024 * 1024;
+
+/**
+ * az's config file, parsed (see parseAzConfig). As knack reads it: a file that does not exist or cannot be opened (including a
+ * folder) counts as empty; it is decoded as strict UTF-8 with a leading byte order mark kept. A decode error, a parse error,
+ * a file over MAX_CONFIG_BYTES or one that is not a regular file is undetermined.
+ */
+async function readAzConfig(file) {
+  const info = await statOf(file);
+  if (!info || info.isDirectory()) return parseAzConfig('');
+  if (!info.isFile()) throw undetermined(`${file} is not a regular file`);
+  if (info.size > MAX_CONFIG_BYTES) throw undetermined(`${file} is too large`);
+  let bytes;
+  try {
+    bytes = await readFile(file);
+  } catch {
+    return parseAzConfig('');
+  }
+  if (bytes.length > MAX_CONFIG_BYTES) throw undetermined(`${file} is too large`);
+  let text;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw undetermined(`${file} is not valid UTF-8`);
+  }
+  return parseAzConfig(text);
+}
+
+/**
+ * A setting of az's [extension] section as knack gets it: the variable AZURE_EXTENSION_<OPTION>, raw, when it is set (even
+ * empty); else ConfigParser's get: nothing when the file has no [extension] section (DEFAULT does not count then), else the
+ * option from [extension], else from DEFAULT. A file value with a % is undetermined (ConfigParser would interpolate it).
+ * Returns the folder with `~` expanded (see pyExpandUser), or null for an empty or missing value.
+ */
+function extensionSetting(env, config, option) {
   const name = `AZURE_EXTENSION_${option.toUpperCase()}`;
-  const value = Object.hasOwn(env, name) ? env[name] : configText === null ? undefined : iniOption(configText, 'extension', option);
-  return value ? expandHome(value, home) : null;
+  let value;
+  if (Object.hasOwn(env, name)) value = String(env[name]);
+  else {
+    const section = config.sections.get('extension');
+    value = section ? section.get(option) ?? config.defaults.get(option) : undefined;
+    if (value?.includes('%')) throw undetermined(`[extension] ${option} has a %`);
+  }
+  return value ? pyExpandUser(value, env) : null;
 }
 
 /**
@@ -127,22 +236,23 @@ async function hasExtension(dir) {
  * Whether az, run with `env` from `cwd`, has the azure-devops extension installed, judged as az 2.71 does from the folders it
  * reads: the user extension folder (AZURE_EXTENSION_DIR, else [extension] dir in the config file, else
  * <config folder>/cliextensions) and the system one (AZURE_EXTENSION_SYS_DIR, else [extension] sys_dir, else beside the Python
- * that az runs). The config folder is AZURE_CONFIG_DIR, else ~/.azure. Read-only: it only stats, lists and reads these paths.
+ * that az runs). As az takes them: the config file is <AZURE_CONFIG_DIR>/config when that variable is set (even empty, then
+ * `config` in the child's folder), else ~/.azure/config, read as ConfigParser reads it (see readAzConfig); the default
+ * extension folder's parent is AZURE_CONFIG_DIR when it is not empty, else ~/.azure; relative paths are taken from `cwd` (the
+ * child's folder; null is this process's). Resolves true or false; throws when it cannot tell what az would do (a config
+ * file az would fail to read, a value it would interpolate, `~name`), so that a false "installed" is never given.
+ * Read-only: it only stats, lists and reads these paths.
  */
 export async function azureExtensionInstalled({ env = process.env, cwd = null } = {}) {
-  const home = env.HOME || homedir();
   const base = cwd ?? process.cwd();
-  const configDir = path.resolve(base, env.AZURE_CONFIG_DIR || path.join(home, '.azure'));
-  let configText = null;
-  try {
-    configText = await readFile(path.join(configDir, 'config'), 'utf8');
-  } catch {
-    // no config file: the defaults apply
-  }
-  const userDir = extensionSetting(env, configText, 'dir', home);
-  if (await hasExtension(path.resolve(base, userDir ?? path.join(configDir, 'cliextensions')))) return true;
-  const sysDir = extensionSetting(env, configText, 'sys_dir', home);
-  const sysDirs = sysDir ? [path.resolve(base, sysDir)] : await defaultSystemFolders(env);
+  const absolute = file => pyJoin(base, file);
+  const azureDir = () => pyExpandUser('~/.azure', env);
+  const configDir = Object.hasOwn(env, 'AZURE_CONFIG_DIR') ? String(env.AZURE_CONFIG_DIR) : azureDir();
+  const config = await readAzConfig(absolute(pyJoin(configDir, 'config')));
+  const userDir = extensionSetting(env, config, 'dir') ?? pyJoin(env.AZURE_CONFIG_DIR || azureDir(), 'cliextensions');
+  if (await hasExtension(absolute(userDir))) return true;
+  const sysDir = extensionSetting(env, config, 'sys_dir');
+  const sysDirs = sysDir ? [absolute(sysDir)] : await defaultSystemFolders(env);
   for (const dir of sysDirs) if (await hasExtension(dir)) return true;
   return false;
 }
@@ -211,7 +321,8 @@ export function mapGithub(json) {
  * Cached, read-only PR state through `az repos pr show` and `gh pr view`. Only a merged result is final. A closed or abandoned PR can
  * be reopened or reactivated, so it is checked again after the TTL like an open one.
  * `env` is the base environment of both CLIs (see cliEnv). An ADO lookup starts az only when `azureExtensionInstalled` finds the
- * azure-devops extension; otherwise it fails with no process started, and a request after the TTL checks the disk again.
+ * azure-devops extension; otherwise, or when the check cannot tell (it throws), it fails with no process started, and a request
+ * after the TTL checks the disk again.
  */
 export function createPrLookup({
   run = runCommand, now = Date.now, ttlMs = 5 * MINUTE, timeoutMs = 20_000, concurrency = 2, exists = existsSync,
@@ -235,8 +346,17 @@ export function createPrLookup({
       const ado = pr.provider === 'ado';
       const command = ado ? 'az' : 'gh';
       const commandEnv = cliEnv(command, env);
-      // The dashboard never installs the extension, and without it az would only fail after its own start-up work.
-      if (ado && !(await hasAzureExtension({ env: commandEnv, cwd }))) throw new Error(MISSING_EXTENSION_MESSAGE);
+      // The dashboard never installs the extension, and without it az would only fail after its own start-up work. A check
+      // that cannot tell starts no process either.
+      if (ado) {
+        let installed;
+        try {
+          installed = await hasAzureExtension({ env: commandEnv, cwd });
+        } catch {
+          throw new Error(UNDETERMINED_MESSAGE);
+        }
+        if (!installed) throw new Error(MISSING_EXTENSION_MESSAGE);
+      }
       let stdout;
       try {
         stdout = await run(command, ado ? adoArgs(pr) : githubArgs(pr), { cwd: cwd ?? undefined, timeoutMs, env: commandEnv });
