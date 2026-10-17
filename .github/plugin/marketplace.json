@@ -24,6 +24,24 @@
         "documentation",
         "microsoft-style"
       ]
+    },
+    {
+      "name": "swarm-dashboard",
+      "description": "Watch-only dashboard for agentic swarms in the GitHub Copilot app: sessions, sub-agents, cost, stuck detection and run history.",
+      "version": "0.1.0",
+      "source": "./ghcp/plugins/swarm-dashboard",
+      "author": {
+        "name": "Nick Sologoub"
+      },
+      "license": "MIT",
+      "category": "development",
+      "keywords": [
+        "dashboard",
+        "agentic-swarm",
+        "orchestration",
+        "cost",
+        "copilot-app"
+      ]
     }
   ]
 }
