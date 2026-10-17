@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, utimesSync } from 'node:fs';
+import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, utimesSync } from 'node:fs';
 import path from 'node:path';
 import { createSwarmEngine } from '../engine/engine.mjs';
 import { createHistoryStore } from '../engine/model/history.mjs';
@@ -832,6 +832,57 @@ for (const start of ['warm', 'cold']) {
     engine.stop();
   });
 }
+
+test('a session.db that cannot be stat\'ed keeps its last good registry: the stored summary keeps its merged child', async t => {
+  const home = scenario();
+  for (const n of [1, 2, 3]) {
+    home.workspace({ id: `ws-x${n}`, name: `Extra ${n}`, createdAt: T0 - 20 * DAY + n * MINUTE, sessionId: `cli-x${n}` });
+    home.workspace({ id: `ws-x${n}-child`, name: `Extra ${n} child`, createdAt: T0 - 20 * DAY + (n + 5) * MINUTE, sessionId: `cli-x${n}-child`, parentId: `ws-x${n}`, creatorSessionId: `cli-x${n}` });
+  }
+  // The root's registry says its child merged. session.db is a link into a folder that is later made unsearchable.
+  const iso = ms => new Date(ms).toISOString();
+  const file = home.sessionDb('cli-old', {
+    children: [{ unit: 'child', session_id: 'ws-old-child', title: 'Old child', outcome: 'merged', created_at: iso(OLD_LAST - MINUTE), updated_at: iso(OLD_LAST), ended_at: iso(OLD_LAST) }],
+  });
+  const locked = path.join(tempDir('swarm-locked-'), 'locked');
+  mkdirSync(locked);
+  renameSync(file, path.join(locked, 'session.db'));
+  symlinkSync(path.join(locked, 'session.db'), file);
+  const historyDir = path.join(tempDir('swarm-engine-'), 'history');
+  const stored = path.join(historyDir, 'runs', 'ws-old.json');
+  const engine = createSwarmEngine({ copilotHome: home.root, historyDir, now: () => at(0), processProbe: alwaysAlive, prLookup: 'off' });
+  const merged = async () => (await engine.listHistory()).find(item => item.id === 'ws-old');
+  assert.equal((await engine.getRunSummary('ws-old')).children.merged, 1);
+  assert.equal(readSummary(stored).children.merged, 1, 'the run is stored with its merged child, and tracked');
+
+  chmodSync(locked, 0o000);
+  let statable = true;
+  try {
+    statSync(file);
+  } catch {
+    statable = false;
+  }
+  if (statable) {
+    chmodSync(locked, 0o755);
+    engine.stop();
+    t.skip('this user can stat through a folder with no permissions (root, or a file system without modes)');
+    return;
+  }
+  try {
+    await engine.refresh();
+    assert.equal(readSummary(stored).children.merged, 1, 'the stored summary still says 1');
+    assert.ok(engine.diagnostics().some(item => item.source === 'session.db' && item.message.includes('EACCES')), 'the failed stat is reported');
+    const item = await merged();
+    assert.deepEqual([item.merged, item.summarized], [1, true], 'History lists the stored summary, not one built without the registry');
+  } finally {
+    chmodSync(locked, 0o755);
+  }
+  // Three other requested runs push ws-old out of tracking; then the summary is asked for again, without a restart.
+  for (const n of [1, 2, 3]) assert.ok(await engine.getSnapshot(`ws-x${n}`));
+  assert.equal((await engine.getRunSummary('ws-old')).children.merged, 1);
+  assert.equal(readSummary(stored).children.merged, 1);
+  engine.stop();
+});
 
 for (const source of ['data.db', 'session-store.db']) {
   test(`a refresh whose ${source} read fails neither stores nor marks checked a finished run's summary`, async t => {

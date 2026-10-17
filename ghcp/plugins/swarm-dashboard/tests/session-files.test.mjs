@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, mkdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { SESSION_DB_QUERIES, SESSION_DB_TABLES, createSessionDbCache, listLocks, readSessionDb, readWorkspaceYaml } from '../engine/readers/session-files.mjs';
 import { createProcessProbe, parsePsOutput } from '../engine/readers/process-probe.mjs';
@@ -251,6 +251,42 @@ test('the session.db cache also re-reads after a WAL write', async () => {
   rmSync(wal);
   assert.deepEqual(await get(file), { read: 3 });
   assert.deepEqual(await get(file), { read: 3 });
+});
+
+const posixModes = { skip: process.platform === 'win32' || process.getuid?.() === 0 ? 'POSIX file modes, not as root' : false };
+
+test('a session.db or -wal whose stat fails with EACCES is a failed read; only a missing file is absent', posixModes, async () => {
+  const dir = tempDir('swarm-stat-');
+  // Each name is a link into a folder that is then made unsearchable, so stat follows it and fails with EACCES.
+  const locked = path.join(dir, 'locked');
+  mkdirSync(locked);
+  writeFileSync(path.join(locked, 'main.db'), 'main');
+  writeFileSync(path.join(locked, 'wal'), 'wal');
+  const main = path.join(dir, 'main', 'session.db');
+  mkdirSync(path.dirname(main));
+  symlinkSync(path.join(locked, 'main.db'), main);
+  const withWal = path.join(dir, 'wal', 'session.db');
+  mkdirSync(path.dirname(withWal));
+  writeFileSync(withWal, 'db');
+  symlinkSync(path.join(locked, 'wal'), `${withWal}-wal`);
+  let reads = 0;
+  const get = createSessionDbCache(async () => ({ read: ++reads }));
+  assert.deepEqual(await get(main), { read: 1 });
+  assert.deepEqual(await get(withWal), { read: 2 });
+  chmodSync(locked, 0o000);
+  try {
+    await assert.rejects(get(main), { code: 'EACCES' });
+    await assert.rejects(get(withWal), { code: 'EACCES' });
+    assert.deepEqual([get.last(main), get.last(withWal)], [{ read: 1 }, { read: 2 }], 'the last good values stay');
+  } finally {
+    chmodSync(locked, 0o755);
+  }
+  assert.deepEqual([await get(main), await get(withWal), reads], [{ read: 1 }, { read: 2 }, 2], 'unchanged files are not read again');
+  // A missing file, or a path through a file, is absent: null, and the entry goes.
+  rmSync(main);
+  assert.equal(await get(main), null);
+  assert.equal(get.last(main), undefined);
+  assert.equal(await get(path.join(withWal, 'session.db')), null);
 });
 
 test('parsePsOutput reads PID and start time lines', () => {

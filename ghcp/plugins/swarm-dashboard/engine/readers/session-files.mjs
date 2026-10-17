@@ -114,14 +114,19 @@ export async function readSessionDb(file, source = {}) {
 /**
  * Caches each file's last successful read under its stamps. A read that throws stores nothing: the last good entry stays for
  * get.last(file), and its stamps no longer match, so the next get reads again even when the file has not changed since.
+ * Only a stat that fails with ENOENT or ENOTDIR means absent: the main file then gives null and its entry goes, and a -wal file
+ * then counts as none. Any other stat failure (EACCES, say) is a failed read: it throws and the entry stays, so the caller keeps
+ * get.last(file) and knows that this read failed.
  */
 export function createSessionDbCache(read = readSessionDb) {
   const cache = new Map();
+  const absent = error => error?.code === 'ENOENT' || error?.code === 'ENOTDIR';
   async function get(file, sqliteOptions) {
     let stat;
     try {
       stat = statSync(file);
-    } catch {
+    } catch (error) {
+      if (!absent(error)) throw error;
       cache.delete(file);
       return null;
     }
@@ -129,7 +134,8 @@ export function createSessionDbCache(read = readSessionDb) {
     try {
       const wal = statSync(`${file}-wal`);
       key += `|${wal.mtimeMs}:${wal.size}`;
-    } catch {
+    } catch (error) {
+      if (!absent(error)) throw error;
       // no WAL file
     }
     const hit = cache.get(file);
