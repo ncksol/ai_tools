@@ -9,6 +9,8 @@
   "scripts": {
     "test": "node --test tests/*.test.mjs",
     "validate": "node scripts/validate-plugin.mjs",
+    "start": "node scripts/swarm-dashboard.mjs",
+    "check:layout": "node scripts/check-layout.mjs",
     "snapshot": "node scripts/swarm-snapshot.mjs"
   }
 }

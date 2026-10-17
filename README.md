@@ -38,8 +38,11 @@ This repo is also a **Copilot CLI plugin marketplace** (`ai-tools`). Plugins are
 | Plugin | What it does | Install |
 |---|---|---|
 | [`adr-authoring`](./ghcp/plugins/adr-authoring/README.md) | Writes evidence-led architecture decision records in **Microsoft Learn-inspired style**. Bundles an agent, a skill, a fixed template, four example pairs, structural validation, and fourteen evaluation briefs. Preserves accepted records and checks decision relevance and audience fit. | `copilot plugin install adr-authoring@ai-tools` |
+| [`swarm-dashboard`](./ghcp/plugins/swarm-dashboard/README.md) | A **watch-only dashboard** for agentic swarms: one card per child session or running sub-agent with its state, progress, cost and anything waiting for you, plus a timeline, plan, board and run history. Opens as a canvas in the Copilot app or in a browser, reads Copilot's local data read-only, and its only network requests are read-only `gh` and `az` queries about pull requests. | `copilot plugin install swarm-dashboard@ai-tools` |
 
 `adr-authoring` is a documentation workflow, not a PR-review tool. Ask it to draft an ADR in chat, write an authorized Markdown file, or review an existing ADR. It records supplied decisions by default and recommends architecture only when explicitly asked. Its structural checks do not establish factual accuracy or model-output consistency.
+
+`swarm-dashboard` is a viewer, not a workflow: it adds a canvas and a local launcher, and no skills or agents. It reads Copilot's local session data, so it shows the swarms that run on the same machine.
 
 ### Skills
 
@@ -135,6 +138,8 @@ copilot plugin install adr-authoring@ai-tools
 ```
 
 Direct installs from a repo, URL or local path (`copilot plugin install ./ghcp/plugins/adr-authoring`) still work, but the CLI marks them deprecated in favour of `plugin@marketplace`.
+
+The `swarm-dashboard` canvas loads with each session's extensions, so restart your Copilot sessions, or ask Copilot to reload extensions, after installing it.
 
 ### Option 1: Symlink (recommended — you get updates with `git pull`)
 
@@ -247,14 +252,23 @@ ai_tools/
     │   ├── orchestrator.agent.md
     │   └── orchestrator-worker.agent.md
     └── plugins/
-        └── adr-authoring/             ← self-contained plugin (own manifest, tests, LICENSE)
+        ├── adr-authoring/             ← self-contained plugin (own manifest, tests, LICENSE)
+        │   ├── plugin.json
+        │   ├── package.json
+        │   ├── agents/                ← adr-writer.agent.md
+        │   ├── skills/
+        │   │   └── adr-write/         ← template, style, rubric, and examples
+        │   ├── evaluations/           ← ten briefs and a repeatability procedure
+        │   ├── scripts/               ← structural and packaging validators
+        │   └── tests/
+        └── swarm-dashboard/
             ├── plugin.json
             ├── package.json
-            ├── agents/                ← adr-writer.agent.md
-            ├── skills/
-            │   └── adr-write/         ← template, style, rubric, and examples
-            ├── evaluations/           ← ten briefs and a repeatability procedure
-            ├── scripts/               ← structural and packaging validators
+            ├── engine/                ← reads Copilot's local data into swarm snapshots
+            ├── server/                ← local server, shared port and canvas host
+            ├── ui/                    ← the dashboard page, no build step
+            ├── com.github.copilot/    ← the canvas extension
+            ├── scripts/               ← launcher, snapshot command, layout check, validator
             └── tests/
 ```
 

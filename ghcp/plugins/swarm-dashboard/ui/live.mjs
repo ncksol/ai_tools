@@ -1,0 +1,172 @@
+import { ago, costHtml, costText, dur, elapsed, esc, liveTime, plainText, runningFor } from './format.mjs';
+import {
+  CARD_FADE_MS, COUNT_TILES, MODE_WORDS, NEED_CLASS, NEED_LABELS, STAGE_NAMES, cardTimeLeft, cardUnits, closedNotMerged, isSubagent, needItems,
+  omittedSubagents, progressPercent, reportKind, reportTitle, runEnd, sharePercent, unitEnd,
+} from './model.mjs';
+import { badge, bar, chipsHtml, closedBadge, feedList, meter, monitorHtml, reportClass, ring, stageTrack, stateLineHtml } from './parts.mjs';
+
+/**
+ * @typedef {{ snapshot: object, now: number, phaseMs: number, detail: string|null,
+ *   fresh: { feed: Set<string>, reports: Set<string>, chips: Set<string> } }} RenderContext
+ *   fresh holds ids that changed since the previous snapshot: feed item ids, unit ids with a new report, sub-agent ids.
+ */
+
+export function headerHtml({ snapshot, now, phaseMs }) {
+  const { run, orchestrator, counts, cost } = snapshot;
+  const ended = runEnd(snapshot);
+  const tiles = COUNT_TILES.map(([bucket, state]) => `<div class="tile st-${state}"><span class="v">${counts[bucket]}</span><span class="k"><span class="dot"></span>${bucket}</span></div>`).join('');
+  return `<div class="d-head">`
+    + `<div class="d-id">${ring(orchestrator.status, orchestrator.label, phaseMs)}<div class="b-who"><div class="d-name">${esc(run.name)}</div><div class="small muted">Orchestrator${run.project ? ` · ${esc(run.project.name)}` : ''}</div></div></div>`
+    + `<div class="d-facts"><div class="kv"><span class="k">${ended ? 'Ran' : 'Running'}</span><span class="v l">${ended ? dur(ended - run.startedAt, 'clock') : liveTime(run.startedAt, now, 'clock')}</span></div>`
+    + `<div class="kv"><span class="k">Swarm cost</span><span class="v l">${costHtml(cost.credits, true)}</span></div></div>`
+    + `<div class="d-counts" role="group" aria-label="Child sessions and sub-agents by state">${tiles}</div></div>`;
+}
+
+export function needsHtml({ snapshot, now }) {
+  const items = needItems(snapshot);
+  const head = `<div class="sec-h"><h3>Needs you</h3><span class="small muted">${items.length ? `${items.length} waiting, longest first` : 'Nothing waiting'}</span></div>`;
+  if (!items.length) return `<section class="needs" aria-label="Needs you">${head}</section>`;
+  const list = items.map(item => `<div class="need st-${NEED_CLASS[item.kind]}" data-key="${esc(item.id)}"><span class="small need-k"><span class="dot"></span>${NEED_LABELS[item.kind]}</span>`
+    + `<span class="need-t" title="${esc(plainText(item.text))}">${esc(plainText(item.text))}</span>`
+    + `<span class="small muted">${esc(item.from)} · ${item.verb} ${elapsed(item.since, now)}</span></div>`).join('');
+  return `<section class="needs" aria-label="Needs you">${head}<div class="needs-list">${list}</div></section>`;
+}
+
+function reportRow(unit, now, fresh) {
+  const report = unit.report;
+  if (!report) return '<div class="b-rep"><span class="b-rep-t muted">No report yet</span></div>';
+  const kind = reportKind(report);
+  return `<div class="b-rep ${reportClass(kind)}${fresh.reports.has(unit.id) ? ' is-new' : ''}">${badge(kind)}`
+    + `<span class="b-rep-t" title="${esc(reportTitle(report))}">${esc(reportTitle(report))}</span><span class="b-age">${ago(report.at, now)}</span></div>`;
+}
+
+const sessionRows = (unit, now) => `<span class="k">Stage</span>${stageTrack(unit.stage)}<span class="r">${STAGE_NAMES[unit.stage]}</span>`
+  + `<span class="k">Monitor</span><span class="mon mon-${unit.monitor.state}">${monitorHtml(unit, now)}${closedNotMerged(unit) ? closedBadge : ''}</span>`;
+/** A sub-agent has no stage track or PR monitor: its card shows its type and mode in those two rows, so cards line up. */
+const subagentRows = unit => `<span class="k">Type</span><span class="none-r">Sub-agent · ${esc(unit.agent?.type ?? 'unknown')}</span>`
+  + `<span class="k">Mode</span><span class="none-r">${MODE_WORDS[unit.agent?.mode] ?? 'Unknown'}</span>`;
+
+export function cardHtml(unit, ctx) {
+  const { snapshot, now, phaseMs, detail, fresh } = ctx;
+  const end = unitEnd(unit, snapshot);
+  const progress = progressPercent(unit);
+  const progressRow = progress === null
+    ? '<span class="k">Progress</span><span class="none-r">No task list</span>'
+    : `<span class="k">Progress</span>${bar(progress)}<span class="r">${progress}%</span>`;
+  // A finished sub-agent's card fades out in the last CARD_FADE_MS of its grace period. The negative delay starts the fade
+  // where it should be now, and data-phase keeps that delay on later renders so the fade does not restart.
+  const left = cardTimeLeft(unit, now);
+  const leaving = left !== null && left <= CARD_FADE_MS;
+  const fade = leaving ? ` data-phase style="animation-delay:-${((CARD_FADE_MS - left) / 1000).toFixed(2)}s"` : '';
+  return `<article class="b-card st-${unit.status}${detail === unit.id ? ' is-sel' : ''}${leaving ? ' is-leaving' : ''}" data-open="${esc(unit.id)}" tabindex="0" role="button" aria-label="Open details for ${esc(unit.label)} ${esc(unit.name)}" data-kind="${esc(unit.kind)}"${fade}>`
+    + `<div class="b-head">${ring(unit.status, unit.label, phaseMs)}<div class="b-who st-${unit.status}"><div class="b-name">${esc(unit.name)}</div><div class="b-state">${stateLineHtml(unit, now)}</div></div>${unit.pr ? `<span class="b-pr">PR #${unit.pr.id}</span>` : ''}</div>`
+    + `<div class="b-metrics"><span class="k">${end ? 'Ran' : 'Running'}</span><span class="v">${end ? dur(end - unit.startedAt, 'clock') : liveTime(unit.startedAt, now, 'clock')}</span>`
+    + `<span class="k">Cost</span><span class="v">${costHtml(unit.cost.credits)}</span><span></span>${meter(sharePercent(unit.cost.credits, snapshot.cost.maxUnitCredits))}</div>`
+    + reportRow(unit, now, fresh)
+    + `<div class="b-rows st-${unit.status}">${progressRow}${isSubagent(unit) ? subagentRows(unit) : sessionRows(unit, now)}</div>`
+    + `<div class="chips">${chipsHtml(unit, now, fresh.chips, end)}</div></article>`;
+}
+
+export function cardsHtml(ctx) {
+  const units = cardUnits(ctx.snapshot, ctx.now);
+  // The Cards tab leaves out archived units and finished sub-agents past their grace period, and the snapshot itself
+  // leaves out older finished sub-agents; the Board shows every unit in its stage column and counts the sub-agents left out.
+  const note = units.length < ctx.snapshot.units.length || omittedSubagents(ctx.snapshot) > 0 ? '<p class="cards-note">Archived and hidden sessions are on the <button type="button" class="link" data-tab="board">Board tab</button>.</p>' : '';
+  if (!units.length) return `<p class="none">No active child sessions.</p>${note}`;
+  // Inside the grid the note sits one card gap below the last row of cards.
+  return `<div class="b-grid">${units.map(unit => cardHtml(unit, ctx)).join('')}${note}</div>`;
+}
+
+export const railHtml = ctx => `<section class="rail" aria-label="Activity"><div class="sec-h"><h3>Activity</h3><span class="small muted">all units, latest first</span></div>${feedList(ctx.snapshot.feed, 16, ctx.now, ctx.fresh.feed)}</section>`;
+export const activityHtml = ctx => `<section class="rail" aria-label="Activity">${feedList(ctx.snapshot.feed, 24, ctx.now, ctx.fresh.feed)}</section>`;
+
+const SUBAGENT_PILLS = { running: ['busy', 'running'], completed: ['merged', 'finished'], failed: ['blocked', 'failed'], cancelled: ['blocked', 'cancelled'], stuck: ['stuck', 'stuck'] };
+const SUBAGENT_LIMIT = 12;
+
+/** The engine also gives reasons to units that are fine (a slow model call, a normal stop); only these get the alarm box. */
+const WHY_STATUSES = new Set(['stuck', 'blocked']);
+
+function whyHtml(unit) {
+  if (!unit.reason || !WHY_STATUSES.has(unit.status)) return '';
+  const word = unit.status === 'stuck' ? 'stuck' : ['crashed', 'failed', 'cancelled'].includes(unit.statusDetail) ? unit.statusDetail : 'blocked';
+  return `<div class="dt-why st-${unit.status === 'stuck' ? 'stuck' : 'blocked'}"><h4>Why this counts as ${word}</h4><p>${esc(unit.reason)}</p></div>`;
+}
+
+function reportHtml(report, now) {
+  if (!report) return '<p class="small muted">No report yet.</p>';
+  const list = entries => `<ul class="dt-list">${entries.map(entry => `<li>${esc(plainText(entry))}</li>`).join('')}</ul>`;
+  const lead = report.summary ? plainText(report.summary) : report.body ? null : reportTitle(report);
+  const kind = reportKind(report);
+  return `<div class="dt-rep-h ${reportClass(kind)}">${badge(kind)}<span class="small muted">${ago(report.at, now)}</span></div>`
+    + (lead ? `<p class="dt-p">${esc(lead)}</p>` : '')
+    + (report.body ? `<p class="dt-p dt-body">${esc(plainText(report.body))}</p>` : '')
+    + (report.evidence.length ? `<span class="small muted">Evidence</span>${list(report.evidence)}` : '')
+    + (report.blockers === null ? '' : `<span class="small muted">Blockers</span>${report.blockers.length ? list(report.blockers) : '<p class="small">None reported</p>'}`);
+}
+
+function subagentsHtml(subagents, now, end) {
+  if (!subagents.length) return '<p class="small muted">None in this session</p>';
+  const rows = subagents.slice(0, SUBAGENT_LIMIT).map(sub => {
+    const [state, word] = SUBAGENT_PILLS[sub.status] ?? ['idle', sub.status];
+    const runtime = sub.endedAt ? dur(sub.durationMs ?? sub.endedAt - sub.startedAt) : runningFor(sub.startedAt, end, now);
+    return `<li class="sa" title="${esc(sub.task ?? sub.name)}"><div class="sa-1"><span>${esc(sub.type)}${sub.mode === 'sync' ? ' (sync)' : ''}</span><span class="pill st-${state}">${esc(word)}</span></div>`
+      + `<div class="sa-2">${esc(sub.model ?? 'model unknown')}${sub.effort ? ` · ${esc(sub.effort)}` : ''} · ${runtime} · ${costText(sub.credits)}</div></li>`;
+  }).join('');
+  const more = subagents.length > SUBAGENT_LIMIT ? `<p class="small muted">${subagents.length - SUBAGENT_LIMIT} earlier sub-agents not shown</p>` : '';
+  return `<ul class="sa-list">${rows}</ul>${more}`;
+}
+
+function prState(pr, now) {
+  if (pr.state === 'merged') return pr.mergedAt ? `Merged ${ago(pr.mergedAt, now)}` : 'Merged';
+  if (pr.state === 'closed') return pr.closedAt ? `Closed ${ago(pr.closedAt, now)}` : 'Closed';
+  if (pr.state === 'unknown') return 'Not known yet';
+  const word = pr.state === 'draft' ? 'Draft' : 'Open';
+  return pr.openedAt ? `${word} since ${ago(pr.openedAt, now)}` : word;
+}
+
+function prHtml(unit, now) {
+  const { pr, monitor } = unit;
+  if (!pr) return '<p class="small muted">No PR yet. A PR monitor starts when the PR opens.</p>';
+  const state = closedNotMerged(unit)
+    ? `<span class="pr-state">${closedBadge}${pr.closedAt ? `<span>${ago(pr.closedAt, now)}</span>` : ''}</span>`
+    : `<span>${prState(pr, now)}</span>`;
+  return `<div class="dt-kv"><span class="k">PR</span><span>#${pr.id}${pr.title ? ` ${esc(pr.title)}` : ''}</span><span class="k">State</span>${state}`
+    + (pr.reviewNote ? `<span class="k">Reviews</span><span>${esc(pr.reviewNote)}</span>` : '')
+    + `<span class="k">Monitor</span><span class="mon mon-${monitor.state}">${monitorHtml(unit, now, true)}</span>`
+    + (monitor.everyMinutes && monitor.state === 'alive' ? `<span class="k">Schedule</span><span>every ${monitor.everyMinutes} min</span>` : '')
+    + (monitor.everyMinutes && monitor.state === 'missing' ? `<span class="k">Expected</span><span>a check every ${monitor.everyMinutes} min</span>` : '')
+    + '</div>';
+}
+
+function agentHtml(unit) {
+  const agent = unit.agent ?? { type: 'unknown', mode: null };
+  return `<div class="dt-sec"><h4>Sub-agent</h4><div class="dt-kv"><span class="k">Type</span><span>${esc(agent.type)}</span>`
+    + `<span class="k">Mode</span><span>${MODE_WORDS[agent.mode] ?? 'Unknown'}</span></div></div>`;
+}
+
+/** Details for one unit. In narrow mode (inMain) it replaces the card list and offers a way back. */
+export function detailHtml(unitId, inMain, ctx) {
+  const { snapshot, now, phaseMs, fresh } = ctx;
+  const unit = snapshot.units.find(item => item.id === unitId);
+  if (!unit) return '';
+  const end = unitEnd(unit, snapshot);
+  const activity = unit.activity;
+  const progress = progressPercent(unit);
+  const top = `<div class="dt-top">${inMain ? '<button type="button" class="link" data-close>← Back to cards</button>' : ''}`
+    + `<div class="b-head">${ring(unit.status, unit.label, phaseMs)}<div class="b-who st-${unit.status}"><div class="b-name">${esc(unit.label)} ${esc(unit.name)}</div><div class="b-state">${stateLineHtml(unit, now)}</div></div>`
+    + `${inMain ? '' : '<button type="button" class="x" data-close aria-label="Close details">×</button>'}</div></div>`;
+  const facts = `<div class="dt-facts"><div class="kv"><span class="k">${end ? 'Ran' : 'Running'}</span><span class="v">${end ? dur(end - unit.startedAt) : elapsed(unit.startedAt, now)}</span></div>`
+    + `<div class="kv"><span class="k">Cost</span><span class="v">${costHtml(unit.cost.credits)}</span></div>`
+    + `<div class="kv"><span class="k">Progress</span><span class="v">${progress === null ? 'No task list' : `${progress}%`}</span></div>`
+    + `<div class="kv"><span class="k">Stage</span><span class="v">${STAGE_NAMES[unit.stage]}</span></div>`
+    + `<div class="kv"><span class="k">Model</span><span class="v">${esc(unit.model ?? 'unknown')}${unit.effort ? `<span class="v-note"> · ${esc(unit.effort)}</span>` : ''}</span></div></div>`;
+  const current = `<div class="dt-sec"><h4>Current activity</h4><div class="dt-kv"><span class="k">Doing</span><span>${esc(activity.label)}</span>`
+    + (unit.reason && !WHY_STATUSES.has(unit.status) ? `<span class="k">Note</span><span>${esc(unit.reason)}</span>` : '')
+    + (activity.tool ? `<span class="k">Tool call</span><span><span class="code">${esc(activity.tool.summary)}</span> · ${runningFor(activity.tool.startedAt, end, now)}</span>` : '')
+    + `<span class="k">Last event</span><span>${activity.lastEventAt ? ago(activity.lastEventAt, now) : 'none yet'}</span></div></div>`;
+  return `<section class="detail" aria-label="Details for ${esc(unit.label)}">${top}${facts}${whyHtml(unit)}${current}`
+    + `<div class="dt-sec"><h4>Latest report</h4>${reportHtml(unit.report, now)}</div>`
+    + `<div class="dt-sec"><h4>Sub-agents</h4>${subagentsHtml(unit.subagents, now, end)}</div>`
+    + (isSubagent(unit) ? agentHtml(unit) : `<div class="dt-sec"><h4>PR and monitor</h4>${prHtml(unit, now)}</div>`)
+    + `<div class="dt-sec"><h4>Recent activity</h4>${feedList(unit.recent, 6, now, fresh.feed, 'No recent activity')}</div></section>`;
+}
