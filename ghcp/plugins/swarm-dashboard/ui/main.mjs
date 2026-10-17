@@ -1,4 +1,4 @@
-import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, historyReloadWanted, isNarrow, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, staleChoice, staleShown, startShown, startSwarm } from './app.mjs';
+import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, historyReloadWanted, isNarrow, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, retryBudget, staleChoice, staleShown, startShown, startSwarm } from './app.mjs';
 import { tickText } from './format.mjs';
 import { morph } from './morph.mjs';
 import { nextCardChange, runEnd, unitEnd } from './model.mjs';
@@ -379,14 +379,15 @@ function fitChips(box) {
 /** After a failed History load, try again after HISTORY_RETRY_MS, at most HISTORY_RETRIES times per success or trigger. */
 const HISTORY_RETRY_MS = 3000;
 const HISTORY_RETRIES = 3;
-let historyRetries = 0;
-let historyRetryTimer = null;
+const historyRetry = retryBudget({ limit: HISTORY_RETRIES, delayMs: HISTORY_RETRY_MS, retry: () => loadHistory() });
 
 /**
  * Load finished runs. Only the first load shows the loading state; later loads replace the list in place. A failed load
- * keeps the last list (or none), marks History as failed and retries a bounded number of times.
+ * keeps the last list (or none), marks History as failed and retries a bounded number of times. Every load, a queued one
+ * too, first cancels a pending retry, so a retry never runs after another load has started.
  */
 const loadHistory = coalesced(async () => {
+  historyRetry.attempt();
   let runs = null;
   let loaded = false;
   try {
@@ -399,30 +400,20 @@ const loadHistory = coalesced(async () => {
     // A network or JSON error is a failed load, as is a non-OK answer.
   }
   if (loaded) {
-    clearTimeout(historyRetryTimer);
     view.runs = runs;
     view.historyError = false;
-    historyRetries = 0;
+    historyRetry.succeeded();
   } else {
     view.historyError = true;
-    retryHistory();
+    historyRetry.failed();
   }
   scheduleRender();
 });
 
-/** Schedule one more History load after a failure, unless this success or trigger has used up its retries. */
-function retryHistory() {
-  clearTimeout(historyRetryTimer);
-  historyRetryTimer = null;
-  if (historyRetries >= HISTORY_RETRIES) return;
-  historyRetries += 1;
-  historyRetryTimer = setTimeout(loadHistory, HISTORY_RETRY_MS);
-}
-
 /** Ask for History. Once asked, later triggers reload it, queued behind a first load still in flight, with fresh retries. */
 function reloadHistory() {
   historyAsked = true;
-  historyRetries = 0;
+  historyRetry.reset();
   loadHistory();
 }
 
@@ -515,7 +506,7 @@ setInterval(() => {
 window.addEventListener('pagehide', () => {
   clearTimeout(reconnectTimer);
   clearTimeout(cardTimer);
-  clearTimeout(historyRetryTimer);
+  historyRetry.stop();
   source?.close();
 });
 window.addEventListener('pageshow', event => {

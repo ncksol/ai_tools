@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, historyReloadWanted, isNarrow, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, staleChoice, staleShown, startShown, startSwarm } from '../ui/app.mjs';
+import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, historyReloadWanted, isNarrow, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, retryBudget, staleChoice, staleShown, startShown, startSwarm } from '../ui/app.mjs';
 import { NOW, deepFreeze, exampleSnapshot, fixture } from './helpers/ui.mjs';
 
 const view = (overrides = {}) => ({
@@ -91,6 +91,155 @@ test('coalesced still runs a call queued behind a load that rejects', async () =
   await second;
   await first;
   assert.equal(calls, 2);
+});
+
+/** A fake timer: set() records a callback, fire() runs one by hand, and pending() lists the ids not yet fired or cleared. */
+function fakeTimers() {
+  const callbacks = new Map();
+  let next = 1;
+  return {
+    set: (callback, ms) => {
+      callbacks.set(next, { callback, ms });
+      return next++;
+    },
+    clear: id => callbacks.delete(id),
+    pending: () => [...callbacks.keys()],
+    delay: id => callbacks.get(id).ms,
+    fire(id) {
+      const { callback } = callbacks.get(id);
+      callbacks.delete(id);
+      callback();
+    },
+  };
+}
+const flush = async () => {
+  for (let index = 0; index < 5; index += 1) await new Promise(resolve => setImmediate(resolve));
+};
+
+test('a retry budget schedules one retry per failure, three at most, after the delay', () => {
+  const timers = fakeTimers();
+  let retries = 0;
+  const budget = retryBudget({ limit: 3, delayMs: 3000, retry: () => { retries += 1; }, setTimer: timers.set, clearTimer: timers.clear });
+  for (let round = 1; round <= 3; round += 1) {
+    budget.failed();
+    assert.equal(timers.pending().length, 1, `failure ${round} schedules a retry`);
+    assert.equal(timers.delay(timers.pending()[0]), 3000);
+    timers.fire(timers.pending()[0]);
+    assert.equal(retries, round);
+  }
+  budget.failed();
+  assert.deepEqual(timers.pending(), [], 'a fourth failure schedules none');
+  assert.equal(retries, 3);
+});
+
+test('an attempt cancels a pending retry, so its callback never runs', () => {
+  const timers = fakeTimers();
+  let retries = 0;
+  const budget = retryBudget({ limit: 3, delayMs: 3000, retry: () => { retries += 1; }, setTimer: timers.set, clearTimer: timers.clear });
+  budget.failed();
+  budget.failed();
+  assert.equal(timers.pending().length, 1, 'one timer handle: a second failure replaces the pending retry');
+  budget.attempt();
+  assert.deepEqual(timers.pending(), []);
+  budget.stop();
+  assert.equal(retries, 0);
+});
+
+test('reset and success restart the budget and cancel a pending retry', () => {
+  for (const restart of ['reset', 'succeeded']) {
+    const timers = fakeTimers();
+    let retries = 0;
+    const budget = retryBudget({ limit: 3, delayMs: 3000, retry: () => { retries += 1; }, setTimer: timers.set, clearTimer: timers.clear });
+    for (let round = 0; round < 3; round += 1) {
+      budget.failed();
+      timers.fire(timers.pending()[0]);
+    }
+    budget.failed();
+    assert.deepEqual(timers.pending(), [], `${restart}: the budget is used up`);
+    budget[restart]();
+    budget.failed();
+    assert.equal(timers.pending().length, 1, `${restart} restarts the budget`);
+    budget[restart]();
+    assert.deepEqual(timers.pending(), [], `${restart} cancels the pending retry`);
+    assert.equal(retries, 3);
+  }
+  const timers = fakeTimers();
+  const budget = retryBudget({ limit: 3, delayMs: 3000, retry: () => assert.fail('a stopped retry ran'), setTimer: timers.set, clearTimer: timers.clear });
+  budget.failed();
+  budget.stop();
+  assert.deepEqual(timers.pending(), [], 'stop cancels the pending retry');
+});
+
+/** A load wired as History's: coalesced, attempt() first, its outcome settled by hand through answer(ok). */
+function retriedLoad(timers) {
+  const answers = [];
+  let loads = 0;
+  let budget = null;
+  const load = coalesced(async () => {
+    budget.attempt();
+    loads += 1;
+    if (await new Promise(resolve => answers.push(resolve))) budget.succeeded();
+    else budget.failed();
+  });
+  budget = retryBudget({ limit: 3, delayMs: 3000, retry: () => load(), setTimer: timers.set, clearTimer: timers.clear });
+  return { budget, load, loads: () => loads, answer: ok => answers.shift()(ok), waiting: () => answers.length };
+}
+
+test('a trigger while a retry is pending makes no extra load: one failure, one trigger that succeeds, two loads', async () => {
+  const timers = fakeTimers();
+  const history = retriedLoad(timers);
+  history.load();
+  history.answer(false);
+  await flush();
+  assert.equal(timers.pending().length, 1, 'the failure left a retry pending');
+  // The trigger: reset, then load, while the retry is pending.
+  history.budget.reset();
+  history.load();
+  assert.deepEqual(timers.pending(), [], 'the obsolete retry is cancelled before the triggered load runs');
+  history.answer(true);
+  await flush();
+  assert.equal(history.loads(), 2);
+  assert.deepEqual(timers.pending(), []);
+  assert.equal(history.waiting(), 0, 'no retry or queued load runs afterwards');
+});
+
+test('a retry scheduled by a load that fails while a trigger is queued behind it never runs', async () => {
+  const timers = fakeTimers();
+  const history = retriedLoad(timers);
+  history.load();
+  history.budget.reset();
+  history.load();
+  history.answer(false);
+  await flush();
+  assert.equal(history.loads(), 2, 'the queued load started');
+  assert.deepEqual(timers.pending(), [], 'its attempt cancelled the retry the failure scheduled');
+  history.answer(true);
+  await flush();
+  assert.equal(history.loads(), 2);
+  assert.deepEqual(timers.pending(), []);
+  assert.equal(history.waiting(), 0);
+});
+
+test('after a trigger, at most three automatic retries run, even when a retry comes due during a request', async () => {
+  const timers = fakeTimers();
+  const history = retriedLoad(timers);
+  // A failure leaves a retry pending, then a trigger starts a load.
+  history.load();
+  history.answer(false);
+  await flush();
+  history.budget.reset();
+  history.load();
+  const before = history.loads();
+  for (let guard = 0; guard < 20 && history.waiting(); guard += 1) {
+    // Any retry still pending comes due while the request is in flight, then again once it has failed.
+    for (const id of timers.pending()) timers.fire(id);
+    history.answer(false);
+    await flush();
+    for (const id of timers.pending()) timers.fire(id);
+  }
+  assert.equal(history.loads() - before, 3, 'three automatic retries after the triggered load');
+  assert.deepEqual(timers.pending(), []);
+  assert.equal(history.waiting(), 0);
 });
 
 test('the wide Live page has the header, Needs you, four tabs and the activity rail', () => {

@@ -29,14 +29,17 @@ export async function launchWebKit(entry) {
   return { browser: { product: `WebKit/${browser.version()}`, playwright: browser, close: () => browser.close() } };
 }
 
-/** One WebKit page with the same interface as the Chrome page in cdp.mjs. */
+/**
+ * One WebKit page with the same interface as the Chrome page in cdp.mjs. A console error keeps the URL WebKit reports
+ * for it: the resource of a failed request, or the script that logged it.
+ */
 export async function openWebKitPage(browser) {
   const context = await browser.playwright.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: 'reduce' });
   const page = await context.newPage();
   const errors = [];
-  page.on('pageerror', error => errors.push(error.message));
+  page.on('pageerror', error => errors.push({ message: error.message, url: null }));
   page.on('console', message => {
-    if (message.type() === 'error') errors.push(message.text());
+    if (message.type() === 'error') errors.push({ message: message.text(), url: message.location()?.url || null });
   });
   return {
     errors,

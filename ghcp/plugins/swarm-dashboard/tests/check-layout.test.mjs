@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { CANVAS_WIDTHS, VIEWS, WIDTHS, buildStates, describeKept, describeTimes, main, parseArguments } from '../scripts/check-layout.mjs';
+import { CANVAS_WIDTHS, VIEWS, WIDTHS, buildStates, countedErrors, describeKept, describeTimes, main, parseArguments } from '../scripts/check-layout.mjs';
 import { browserArguments, findBrowser } from '../scripts/lib/cdp.mjs';
 import { findPlaywright } from '../scripts/lib/webkit.mjs';
 import { tempDir } from './helpers/temp.mjs';
@@ -30,6 +30,23 @@ test('every view is checked at the nine widths in the browser layout and three i
   assert.deepEqual(subagent.params, { host: 'canvas', detail: 'call-root-24' });
   assert.deepEqual(stress.find(state => state.view === 'detail-subagent' && state.host === 'browser' && state.width === 480).params, { host: 'browser', detail: 'call-9101-sub' });
   assert.equal(example.find(state => state.view === 'activity').narrowOnly, true);
+});
+
+test('only the deliberately failing History request is dropped from the console errors, and only where it is expected', () => {
+  const origin = 'http://127.0.0.1:50000';
+  const failed = 'Failed to load resource: the server responded with a status of 500 (Internal Server Error)';
+  const history = { message: failed, url: `${origin}/api/history` };
+  const events = { message: failed, url: `${origin}/api/events?swarm=ws-1` };
+  const asset = { message: failed, url: `${origin}/ui/styles.css` };
+  const bare = { message: failed, url: null };
+  const thrown = { message: 'TypeError: x is undefined', url: null };
+  const elsewhere = { message: failed, url: 'http://127.0.0.1:50001/api/history' };
+  const errors = [history, events, asset, bare, thrown, elsewhere, history];
+  assert.deepEqual(countedErrors(errors, { view: 'history', historyError: true, origin }), [events, asset, bare, thrown, elsewhere]);
+  for (const view of ['cards', 'run', 'board']) assert.deepEqual(countedErrors(errors, { view, historyError: true, origin }), errors, view);
+  assert.deepEqual(countedErrors(errors, { view: 'history', historyError: false, origin }), errors, 'a scenario served with History working');
+  assert.deepEqual(countedErrors(errors, { view: 'history', historyError: undefined, origin }), errors);
+  assert.deepEqual(countedErrors([{ message: failed, url: 'not a url' }], { view: 'history', historyError: true, origin }), [{ message: failed, url: 'not a url' }]);
 });
 
 test('arguments narrow the run to one scenario or width, or ask for screenshots', () => {

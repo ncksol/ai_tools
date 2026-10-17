@@ -141,6 +141,25 @@ async function describeLive(base) {
   }
 }
 
+/**
+ * The console errors ({ message, url }) that count on one audited view. On the History list of a scenario served with
+ * History failing, the browser reports each request to the page's own /api/history that failed on purpose; only those
+ * are dropped, by their URL. Every other error counts, including a failed request to any other URL and an error with no URL.
+ */
+export function countedErrors(errors, { view, historyError, origin }) {
+  if (view !== 'history' || !historyError) return errors;
+  return errors.filter(error => !ownHistory(error.url, origin));
+}
+
+function ownHistory(url, origin) {
+  try {
+    const parsed = new URL(url);
+    return parsed.origin === origin && parsed.pathname === '/api/history';
+  } catch {
+    return false;
+  }
+}
+
 /** "3 updates; 4.2 ms median, 7.9 ms max" for a list of update durations in ms. */
 export function describeTimes(durations) {
   const sorted = [...durations].sort((a, b) => a - b);
@@ -278,7 +297,7 @@ async function watchUpdates(page, url, { updates = 3, timeoutMs = 15000 } = {}) 
     }
     if (!seen) return null;
     const result = await page.evaluate(`(${inspectPage})()`);
-    result.issues.push(...page.errors);
+    result.issues.push(...page.errors.map(error => error.message));
     return result;
   } finally {
     await page.setReducedMotion(true);
@@ -720,8 +739,6 @@ function failingHistory(demo, failures = Infinity) {
 
 /** The line History shows when it could not be loaded. */
 const HISTORY_ERROR = 'Finished runs couldn\'t be loaded.';
-/** The browser's own console line for the History request that failed on purpose. */
-const HISTORY_500 = /^Failed to load resource: the server responded with a status of 500\b/;
 /** What History shows: its text and how many run rows it lists. */
 const HISTORY_STATE = `({
   text: document.getElementById('dash').textContent,
@@ -872,10 +889,8 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
       const result = await page.evaluate(auditScript(AUDIT_DEFAULTS));
       views += 1;
       checks += result.checks + 1;
-      // On a History list served with History failing, the browser logs each 500 it was sent on purpose; only that is expected.
-      const failing = state.view === 'history' && targets[state.scenario]?.historyError;
-      const errors = failing ? page.errors.filter(message => !HISTORY_500.test(message)) : page.errors;
-      const issues = [...result.issues, ...errors.map(message => ({ rule: 'console', target: 'page', detail: message }))];
+      const errors = countedErrors(page.errors, { view: state.view, historyError: targets[state.scenario]?.historyError, origin: new URL(urls[state.scenario]).origin });
+      const issues = [...result.issues, ...errors.map(error => ({ rule: 'console', target: 'page', detail: error.message }))];
       if (issues.length) failures.push({ state, issues });
       if (options.screenshots) writeFileSync(path.join(options.screenshots, `${state.scenario}-${state.host}-${state.width}-${state.view}.png`), await page.screenshot());
     }

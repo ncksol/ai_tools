@@ -109,7 +109,10 @@ export async function launchBrowser(executable) {
   };
 }
 
-/** One tab with reduced motion, collecting exceptions, console errors and error log entries in `errors`. */
+/**
+ * One tab with reduced motion, collecting exceptions, console errors and error log entries in `errors`, each as
+ * { message, url }: url is the resource a log entry is about (a failed request, for example), or null.
+ */
 export async function openPage(browser) {
   const { targetId } = await browser.send('Target.createTarget', { url: 'about:blank' });
   const { sessionId } = await browser.send('Target.attachToTarget', { targetId, flatten: true });
@@ -118,9 +121,9 @@ export async function openPage(browser) {
   browser.onEvent(message => {
     if (message.sessionId !== sessionId) return;
     const { method, params } = message;
-    if (method === 'Runtime.exceptionThrown') errors.push(params.exceptionDetails.exception?.description ?? params.exceptionDetails.text);
-    if (method === 'Runtime.consoleAPICalled' && params.type === 'error') errors.push(params.args.map(arg => arg.value ?? arg.description ?? '').join(' '));
-    if (method === 'Log.entryAdded' && params.entry.level === 'error') errors.push(params.entry.text);
+    if (method === 'Runtime.exceptionThrown') errors.push({ message: params.exceptionDetails.exception?.description ?? params.exceptionDetails.text, url: null });
+    if (method === 'Runtime.consoleAPICalled' && params.type === 'error') errors.push({ message: params.args.map(arg => arg.value ?? arg.description ?? '').join(' '), url: null });
+    if (method === 'Log.entryAdded' && params.entry.level === 'error') errors.push({ message: params.entry.text, url: params.entry.url || null });
   });
   await send('Page.enable');
   await send('Runtime.enable');

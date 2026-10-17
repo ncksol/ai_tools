@@ -127,6 +127,40 @@ export function coalesced(load) {
   };
 }
 
+/**
+ * Bounded retries for a load that can fail. attempt() runs at the start of every load and cancels a pending retry, so a
+ * retry never overlaps or follows another attempt; failed() schedules one retry while fewer than `limit` have run since
+ * the last success or reset(); succeeded() and reset() restart the budget; stop() cancels. A retry counts when it runs,
+ * so a retry cancelled by another attempt does not use up the budget.
+ */
+export function retryBudget({ limit, delayMs, retry, setTimer = setTimeout, clearTimer = clearTimeout }) {
+  let used = 0;
+  let timer = null;
+  const cancel = () => {
+    if (timer !== null) clearTimer(timer);
+    timer = null;
+  };
+  const restart = () => {
+    cancel();
+    used = 0;
+  };
+  return {
+    attempt: cancel,
+    failed() {
+      cancel();
+      if (used >= limit) return;
+      timer = setTimer(() => {
+        timer = null;
+        used += 1;
+        retry();
+      }, delayMs);
+    },
+    succeeded: restart,
+    reset: restart,
+    stop: cancel,
+  };
+}
+
 /** The whole dashboard for one PageView (see the Task 7 interface). */
 export function renderApp(view) {
   const top = topHtml(view);
