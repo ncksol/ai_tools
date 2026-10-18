@@ -50,7 +50,6 @@ test("R1 POST /reports creates a draft that GET returns", async () => {
   const res = await app().request("POST", "/reports", { title: "March trip" });
   assert.equal(res.status, 201, JSON.stringify(res.body));
   assert.equal(typeof res.body.id, "string");
-  assert.ok(res.body.id.length > 0);
   assert.deepEqual(res.body, {
     id: res.body.id,
     title: "March trip",

@@ -44,27 +44,38 @@ export async function startApp(): Promise<Api> {
     stdio: ["ignore", "ignore", "pipe"],
   });
   let stderr = "";
+  let spawnError: Error | undefined;
   child.stderr?.on("data", (chunk) => (stderr += chunk));
-  const exited = new Promise<void>((done) => child.once("exit", () => done()));
-  const deadline = Date.now() + 10_000;
-  for (;;) {
-    if (child.exitCode !== null) throw new Error(`The app exited with code ${child.exitCode}: ${stderr}`);
-    try {
-      const res = await fetch(`${url}/health`);
-      if (res.ok) break;
-    } catch {
-      // not listening yet
+  child.once("error", (error) => (spawnError = error));
+  const exited = new Promise<void>((done) => {
+    child.once("exit", () => done());
+    child.once("error", () => done());
+  });
+  const running = () => child.exitCode === null && child.signalCode === null && !spawnError;
+  try {
+    const deadline = Date.now() + 10_000;
+    for (;;) {
+      if (!running()) throw new Error(`The app exited (${spawnError ?? child.exitCode ?? child.signalCode}): ${stderr}`);
+      const left = deadline - Date.now();
+      if (left <= 0) throw new Error(`The app did not answer GET /health within 10 s: ${stderr}`);
+      try {
+        const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(Math.min(1000, left)) });
+        await res.body?.cancel();
+        if (res.ok) break;
+      } catch {
+        // not listening yet, or the probe timed out
+      }
+      await sleep(50);
     }
-    if (Date.now() > deadline) {
-      child.kill();
-      throw new Error(`The app did not answer GET /health within 10 s: ${stderr}`);
-    }
-    await new Promise((done) => setTimeout(done, 50));
+  } catch (error) {
+    child.kill("SIGKILL");
+    throw error;
   }
   return {
     url,
     async request(method, path, body, contentType) {
-      const init: RequestInit = { method };
+      // The signal also bounds reading the body.
+      const init: RequestInit = { method, signal: AbortSignal.timeout(10_000) };
       if (body !== undefined) {
         init.body = typeof body === "string" ? body : JSON.stringify(body);
         init.headers = { "content-type": contentType ?? "application/json" };
@@ -82,10 +93,19 @@ export async function startApp(): Promise<Api> {
       return { status: res.status, body: parsed, contentType: res.headers.get("content-type") };
     },
     async stop() {
-      if (child.exitCode === null) child.kill();
-      await exited;
+      if (!running()) return;
+      child.kill("SIGTERM");
+      const force = setTimeout(() => child.kill("SIGKILL"), 2000);
+      let cap: NodeJS.Timeout | undefined;
+      await Promise.race([exited, new Promise((done) => (cap = setTimeout(done, 3000)))]);
+      clearTimeout(force);
+      clearTimeout(cap);
     },
   };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((done) => setTimeout(done, ms));
 }
 
 // Registers beforeEach/afterEach hooks for the calling file and returns a getter for the current app.

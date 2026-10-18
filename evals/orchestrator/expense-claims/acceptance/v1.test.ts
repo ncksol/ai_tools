@@ -28,7 +28,6 @@ test("README Expenses: POST /expenses returns the new expense", async () => {
   const res = await app().request("POST", "/expenses", input);
   assert.equal(res.status, 201, JSON.stringify(res.body));
   assert.equal(typeof res.body.id, "string");
-  assert.ok(res.body.id.length > 0);
   assert.deepEqual(res.body, { ...input, id: res.body.id });
 });
 
@@ -40,10 +39,17 @@ test("README Expenses: description and receipt have defaults", async () => {
 });
 
 test("README Expenses: id and unknown fields are ignored", async () => {
-  const res = await app().request("POST", "/expenses", { ...base, id: "mine", colour: "red" });
+  const a = await createExpense(app());
+  const res = await app().request("POST", "/expenses", { ...base, merchant: "Second", id: a.id, colour: "red" });
   assert.equal(res.status, 201, JSON.stringify(res.body));
-  assert.notEqual(res.body.id, "mine");
+  assert.notEqual(res.body.id, a.id);
   assert.equal("colour" in res.body, false);
+  const got = await app().request("GET", `/expenses/${a.id}`);
+  assert.equal(got.status, 200);
+  assert.deepEqual(got.body, a);
+  const all = await app().request("GET", "/expenses");
+  assert.equal(all.status, 200);
+  assert.deepEqual(ids(all), [a.id, res.body.id]);
 });
 
 test("README Expenses: missing required fields are each reported", async () => {

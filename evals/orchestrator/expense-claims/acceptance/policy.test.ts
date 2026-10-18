@@ -30,6 +30,8 @@ function assertViolations(res: Res, expected: [string, string, string[]][]): voi
 }
 
 test("P1 RECEIPT_REQUIRED above 2500 without a receipt", async () => {
+  // P7/P8: an expense left out of the request is not checked.
+  await id({ category: "travel", amount: 9999, date: SAT });
   const a = await id({ category: "travel", amount: 2501 });
   assertViolations(await check([a]), [["RECEIPT_REQUIRED", "error", [a]]]);
 });
@@ -94,10 +96,11 @@ test("P3 WEEKEND warns on Saturday and Sunday", async () => {
 });
 
 test("P4 violations come in rule order, meals caps by date", async () => {
-  const a = await id({ category: "travel", amount: 3000, date: SAT });
-  const b = await id({ category: "meals", amount: 3000, date: THU, receipt: true });
-  const c = await id({ category: "meals", amount: 2500, date: THU });
+  // P7: created in the order d, c, b, a; the input order is the request order a, b, c, d.
   const d = await id({ category: "meals", amount: 5001, date: WED });
+  const c = await id({ category: "meals", amount: 2500, date: THU });
+  const b = await id({ category: "meals", amount: 3000, date: THU, receipt: true });
+  const a = await id({ category: "travel", amount: 3000, date: SAT });
   assertViolations(await check([a, b, c, d]), [
     ["RECEIPT_REQUIRED", "error", [a]],
     ["RECEIPT_REQUIRED", "error", [d]],
@@ -108,6 +111,7 @@ test("P4 violations come in rule order, meals caps by date", async () => {
 });
 
 test("P6 P7 an empty list gives no violations", async () => {
+  await id({ category: "travel", amount: 9999, date: SAT });
   const res = await check([]);
   assert.equal(res.status, 200, JSON.stringify(res.body));
   assert.deepEqual(res.body, { violations: [] });

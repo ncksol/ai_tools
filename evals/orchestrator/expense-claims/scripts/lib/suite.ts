@@ -45,7 +45,7 @@ export async function runSuite(appDir: string, files: string[]): Promise<SuiteRe
   const env: NodeJS.ProcessEnv = { ...process.env, EXPENSE_APP_DIR: resolve(appDir) };
   // Set by a parent `node --test`; a nested runner would then report to it instead of printing TAP.
   delete env.NODE_TEST_CONTEXT;
-  const result = await run(process.execPath, ["--test", "--test-reporter=tap", ...files], { cwd: KIT_DIR, env });
+  const result = await run(process.execPath, ["--test", "--test-reporter=tap", "--test-timeout=60000", ...files], { cwd: KIT_DIR, env });
   const summary = parseTap(result.stdout);
   return {
     ...summary,
