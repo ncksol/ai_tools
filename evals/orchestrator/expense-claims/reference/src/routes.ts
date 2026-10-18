@@ -1,4 +1,5 @@
 import { createExpense, deleteExpense, getExpense, listExpenses, updateExpense } from "./expenses.ts";
+import { importExpenses } from "./import.ts";
 import { checkPolicy } from "./policy.ts";
 import {
   approveReport,
@@ -10,6 +11,7 @@ import {
   submitReport,
 } from "./reports.ts";
 import type { Route } from "./router.ts";
+import { getSummary } from "./summary.ts";
 
 export const routes: Route[] = [
   { method: "GET", path: "/health", handler: () => ({ status: 200, body: { status: "ok" } }) },
@@ -26,4 +28,6 @@ export const routes: Route[] = [
   { method: "POST", path: "/reports/:id/submit", handler: submitReport },
   { method: "POST", path: "/reports/:id/approve", handler: approveReport },
   { method: "POST", path: "/reports/:id/reject", handler: rejectReport },
+  { method: "POST", path: "/expenses/import", handler: importExpenses },
+  { method: "GET", path: "/summary", handler: getSummary },
 ];

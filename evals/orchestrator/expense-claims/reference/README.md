@@ -27,6 +27,8 @@ A small HTTP JSON API for recording expense claims. It is written in TypeScript 
 | POST | `/reports/:id/submit` | 200 | Submits a `draft` report that passes the policy and returns it. |
 | POST | `/reports/:id/approve` | 200 | Approves a `submitted` report and returns it. |
 | POST | `/reports/:id/reject` | 200 | Rejects a `submitted` report with `{ "reason": ... }` and returns it. |
+| POST | `/expenses/import` | 200 | Creates expenses from the CSV body (`Content-Type: text/csv`) and returns `{ "created": [...], "errors": [...] }`. |
+| GET | `/summary` | 200 | Returns one month's spending per category in one currency. Required query parameters: `month` (`YYYY-MM`), `currency`. |
 
 ## Expenses
 
