@@ -48,6 +48,7 @@ test("a kickoff that quotes the spec fails", () => {
   problem(`${base}\n\n## General rules`, /markdown heading/);
   problem(`${base} export function evaluatePolicy(expenses: Expense[]): Violation[];`, /embeds a spec line/);
   problem(`${base}\n\n\`\`\`\nnpm test\n\`\`\``, /code fence/);
+  problem(`${base}\n~~~ts\nexpenseIds: string[];\n~~~\n`, /code fence/);
 });
 
 test("a kickoff that names a feature or counts them fails", () => {

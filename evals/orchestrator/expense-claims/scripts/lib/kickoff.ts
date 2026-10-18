@@ -41,7 +41,7 @@ export function kickoffProblems(kickoff: string, spec: string): string[] {
     .find((l) => l.length >= SHARED_LINE_CHARS && flat.includes(l));
   if (line) problems.push(`embeds a spec line: "${line}"`);
   if (/^#{1,6} /m.test(kickoff)) problems.push("has a markdown heading");
-  if (kickoff.includes("```")) problems.push("has a code fence");
+  if (/^\s*(?:```|~~~)/m.test(kickoff)) problems.push("has a code fence");
 
   for (const name of FEATURE_NAMES) {
     if (new RegExp(`\\b${name}\\b`, "i").test(kickoff)) problems.push(`names the feature "${name}"`);
