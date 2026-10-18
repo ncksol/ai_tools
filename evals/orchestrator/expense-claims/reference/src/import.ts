@@ -54,11 +54,9 @@ export function importExpenses(ctx: Ctx): Result {
       if (message) details.push({ field: name, message });
     }
     const amount = parseAmount(value("amount")!);
-    if (amount === null) {
-      details.push({ field: "amount", message: "Must be digits, optionally with a . and one or two digits" });
-    } else if (amount <= 0) {
-      details.push({ field: "amount", message: "Must be greater than 0" });
-    }
+    const amountError =
+      amount === null ? "Must be digits, optionally with a . and one or two digits" : checkField("amount", amount);
+    if (amountError) details.push({ field: "amount", message: amountError });
     const receipt = value("receipt") ?? "";
     if (receipt !== "true" && receipt !== "false" && receipt !== "") {
       details.push({ field: "receipt", message: "Must be true or false" });

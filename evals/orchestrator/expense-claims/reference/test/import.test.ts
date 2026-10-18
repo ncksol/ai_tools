@@ -79,6 +79,15 @@ test("I5 invalid amounts are row errors", async () => {
   );
 });
 
+test("I5 an amount too large for a whole number is a row error", async () => {
+  const before = (await app.request("GET", "/expenses")).body.expenses.length;
+  const res = await importCsv(`${HEADER}\n2026-03-04,Shop,other,${"9".repeat(309)},GBP\n`);
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.created, []);
+  assert.deepEqual(res.body.errors.map((e: any) => [e.line, e.details.map((d: any) => d.field)]), [[2, ["amount"]]]);
+  assert.equal((await app.request("GET", "/expenses")).body.expenses.length, before);
+});
+
 test("I5 optional columns, defaults and receipt values", async () => {
   const body = [
     "receipt,currency,amount,category,merchant,date,description,extra",
