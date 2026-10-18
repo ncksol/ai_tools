@@ -67,6 +67,8 @@ Those three are **safe by design**: they only inspect and report. They will not 
 | [`azure-arch-diagram`](./ghcp/agents/azure-arch-diagram.agent.md) | Expert Azure architecture diagram creator. Produces **editable draw.io (`.drawio`) files** as raw mxGraph XML, following Microsoft Azure Architecture Centre style guidelines — official Azure2 icons, directional arrows, grouping containers, and a consistent colour palette. Ships ready-made templates for system, network, data-flow, context, and deployment diagrams. | Ask Copilot to delegate to the `azure-arch-diagram` agent, e.g. "draw an Azure architecture diagram for…". |
 | [`orchestrator`](./ghcp/agents/orchestrator.agent.md) | Coordinator for multi-PR work in the GitHub Copilot app. Plans, delegates, and tracks, but has **no shell, file, search, web, or MCP tools**, so every lookup and change goes elsewhere: owned work (a branch, PR, or ongoing workstream) and jobs that need other agents to a nested child session, other one-off jobs to an `orchestrator-worker` sub-agent. Keeps its plan and a registry of child sessions in the session SQL database. Picks a model and reasoning effort for every child session and sub-agent from the tiers in its "Models and effort" section; edit them to match the models you have. Follows version 1 of the swarm dashboard data contract: each child report starts with a status line, a `children` table records each child's branch, PR and outcome, and every question to you is tagged with the units it concerns. | In the GitHub Copilot app (it relies on the app's session tools), select it as the session's agent before your first message: add the `orchestrator` chip from the composer's **+** menu, or run `/agent orchestrator`. Install `orchestrator-worker` with it. |
 | [`orchestrator-worker`](./ghcp/agents/orchestrator-worker.agent.md) | Helper for `orchestrator`. Does its one-off jobs (research, checks, reviews, documents, commands) with shell, file, search, and web tools, but has no tools to start sub-agents or create sessions. Runs on Opus at high effort unless the orchestrator sets a model and effort for the job, which it normally does. | Not invoked directly, and hidden from the agent picker. `orchestrator` starts it through the `task` tool. |
+| [`session-orchestrator`](./ghcp/agents/session-orchestrator.agent.md) | A variant of `orchestrator` that delegates only to child sessions and never starts sub-agents. One-off jobs (research, checks, reviews, documents, commands) get one-off sessions, which it archives when their results are in. Its children run as `session-worker` and can't start agents of their own, so it plans all fan-out up front, and children ask it when they need a helper. Otherwise the same as `orchestrator`, including the model tiers and version 1 of the swarm dashboard data contract. It can run side by side with `orchestrator`. | Select it as the session's agent in the GitHub Copilot app, as for `orchestrator`: the `session-orchestrator` chip, or `/agent session-orchestrator`. Install `session-worker` with it. |
+| [`session-worker`](./ghcp/agents/session-worker.agent.md) | The agent every child session of `session-orchestrator` runs as. Has shell, file, search, web, GitHub and PR tools, but no tools to start sub-agents or sessions; it asks the orchestrator for a helper instead. Reports in the swarm dashboard format. | Not invoked directly, and hidden from the agent picker. `session-orchestrator` sets it as each child session's agent. |
 
 ---
 
@@ -159,7 +161,7 @@ for agent in ~/src/ai_tools/ghcp/agents/*.agent.md; do
 done
 ```
 
-To update, run `git -C ~/src/ai_tools pull`, then run both loops again. `git pull` updates the skills and agents you have already linked, but a new one, such as `orchestrator-worker`, needs a link of its own. The `-n` flag makes a rerun replace each existing link instead of creating a new link inside the folder it points to.
+To update, run `git -C ~/src/ai_tools pull`, then run both loops again. `git pull` updates the skills and agents you have already linked, but a new one, such as `orchestrator-worker` or `session-worker`, needs a link of its own. The `-n` flag makes a rerun replace each existing link instead of creating a new link inside the folder it points to.
 
 ### Option 2: Copy
 
@@ -188,7 +190,7 @@ curl -fsSL https://raw.githubusercontent.com/ncksol/ai_tools/main/ghcp/agents/an
   -o ~/.copilot/agents/andrej.agent.md
 ```
 
-`orchestrator` needs `orchestrator-worker`, so fetch both `orchestrator.agent.md` and `orchestrator-worker.agent.md`.
+`orchestrator` needs `orchestrator-worker`, so fetch both `orchestrator.agent.md` and `orchestrator-worker.agent.md`. Likewise, `session-orchestrator` needs `session-worker`, so fetch both `session-orchestrator.agent.md` and `session-worker.agent.md`.
 
 Restart your Copilot CLI session and you're done.
 
@@ -250,7 +252,9 @@ ai_tools/
     │   ├── andrej.agent.md
     │   ├── azure-arch-diagram.agent.md
     │   ├── orchestrator.agent.md
-    │   └── orchestrator-worker.agent.md
+    │   ├── orchestrator-worker.agent.md
+    │   ├── session-orchestrator.agent.md
+    │   └── session-worker.agent.md
     └── plugins/
         ├── adr-authoring/             ← self-contained plugin (own manifest, tests, LICENSE)
         │   ├── plugin.json
