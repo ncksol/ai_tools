@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { ALL_FEATURES } from "../lib/features.ts";
+import { kickoffProblems } from "../lib/kickoff.ts";
 import { listSeedFiles, newRun, nextRunNumber, parseRunName, runName } from "../lib/new-run.ts";
 import { run, type ProcResult } from "../lib/proc.ts";
 import { KIT_DIR } from "../lib/suite.ts";
@@ -58,11 +59,14 @@ test("dry run builds a seed-only repo and never calls gh", async () => {
   assert.equal(calls.length, 0);
 });
 
-test("dry run without Summary strips the spec and the kickoff", async () => {
+test("dry run without Summary strips the spec and keeps the kickoff", async () => {
   const { gh } = fakeGh({});
   const result = await newRun({ variant: "ns", features: ["policy", "reports", "import"], owner: "ncksol", runsDir, dryRun: true }, { gh, log });
-  assert.ok(!readFileSync(join(result.repoDir, "docs/spec-v2.md"), "utf8").includes("## Feature: Summary"));
-  assert.ok(!readFileSync(result.kickoffPath, "utf8").includes("## Feature: Summary"));
+  const spec = readFileSync(join(result.repoDir, "docs/spec-v2.md"), "utf8");
+  assert.ok(!spec.includes("## Feature: Summary"));
+  const kickoff = readFileSync(result.kickoffPath, "utf8");
+  assert.equal(kickoff, readFileSync(join(KIT_DIR, "kickoff.md"), "utf8"));
+  assert.deepEqual(kickoffProblems(kickoff, spec), []);
 });
 
 test("a real run stops when the gh account is not the owner", async () => {

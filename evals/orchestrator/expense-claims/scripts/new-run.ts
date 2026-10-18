@@ -42,7 +42,7 @@ Next steps:
 1. In the Copilot app, add ${result.repoDir} as a project.
 2. Start a new top-level session in that project with the agent "${values.variant}" and the held-constant model and effort.
    Never start the run from another session: the orchestrator always runs as a top-level session.
-3. Paste the whole of ${result.kickoffPath} as the first message.
+3. Paste the kickoff as the first message, as typed text. To copy it: pbcopy < ${result.kickoffPath}
 4. Answer any question straight away, word for word, from ${join(KIT_DIR, "answers.md")}. Send nothing else.
 5. After the final report, before sending anything else, run from ${KIT_DIR}:
    npm run score -- --repo-dir ${result.repoDir}

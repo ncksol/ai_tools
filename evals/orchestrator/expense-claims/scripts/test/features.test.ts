@@ -35,14 +35,6 @@ test("stripFeatures ignores headings inside code fences", () => {
   assert.ok(!result.includes("gone"));
 });
 
-test("kickoff.md embeds the spec verbatim", () => {
-  assert.ok(read("kickoff.md").endsWith("\n---\n\n" + spec));
-});
-
-test("the kickoff without Summary embeds the spec without Summary", () => {
-  assert.ok(stripFeatures(read("kickoff.md"), keep).endsWith(stripFeatures(spec, keep)));
-});
-
 test("nothing in the seed mentions the hidden suite or the reference", () => {
   const seed = join(KIT_DIR, "seed");
   for (const file of listSeedFiles(seed)) {

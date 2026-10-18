@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { ALL_FEATURES, FEATURE_HEADINGS } from "./lib/features.ts";
+import { KICKOFF_MAX_CHARS, KICKOFF_SPEC_PATH, kickoffProblems } from "./lib/kickoff.ts";
 import { listSeedFiles } from "./lib/new-run.ts";
 import { run, type ProcResult } from "./lib/proc.ts";
 import { readResults } from "./lib/results.ts";
@@ -129,12 +130,18 @@ try {
   });
 
   await check("spec copies match", async () => {
-    const spec = readFileSync(join(SEED, "docs", "spec-v2.md"), "utf8");
-    const referenceSame = readFileSync(join(REFERENCE, "docs", "spec-v2.md"), "utf8") === spec;
-    const kickoffEnds = readFileSync(join(KIT_DIR, "kickoff.md"), "utf8").endsWith("\n---\n\n" + spec);
+    const same = readFileSync(join(REFERENCE, "docs", "spec-v2.md"), "utf8") === readFileSync(join(SEED, "docs", "spec-v2.md"), "utf8");
+    return verdict(same, `reference/docs/spec-v2.md ${same ? "equals" : "differs from"} seed/docs/spec-v2.md`);
+  });
+
+  await check("kickoff is short and only points at the spec", async () => {
+    const kickoff = readFileSync(join(KIT_DIR, "kickoff.md"), "utf8");
+    const problems = kickoffProblems(kickoff, readFileSync(join(SEED, "docs", "spec-v2.md"), "utf8"));
     return verdict(
-      referenceSame && kickoffEnds,
-      `reference/docs/spec-v2.md ${referenceSame ? "equals" : "differs from"} seed/docs/spec-v2.md; kickoff.md ${kickoffEnds ? "ends with" : "does not end with"} the spec`,
+      problems.length === 0,
+      problems.length === 0
+        ? `${kickoff.length}/${KICKOFF_MAX_CHARS} characters; points at ${KICKOFF_SPEC_PATH}; no spec text, feature names, feature count or kit terms`
+        : problems.join("; "),
     );
   });
 
@@ -153,11 +160,15 @@ try {
     if (result.code !== 0) return verdict(false, `exit ${result.code}: ${result.stderr.trim()}`);
     const seed = await seedOnly(repoDir);
     const heading = FEATURE_HEADINGS.summary;
-    const specHas = readFileSync(join(repoDir, "docs", "spec-v2.md"), "utf8").split("\n").some((line) => line.trim() === heading);
-    const kickoffHas = existsSync(kickoffPath) && readFileSync(kickoffPath, "utf8").split("\n").some((line) => line.trim() === heading);
+    const spec = readFileSync(join(repoDir, "docs", "spec-v2.md"), "utf8");
+    const specHas = spec.split("\n").some((line) => line.trim() === heading);
+    if (!existsSync(kickoffPath)) return verdict(false, `${seed.evidence}; kickoff file missing`);
+    const kickoff = readFileSync(kickoffPath, "utf8");
+    const same = kickoff === readFileSync(join(KIT_DIR, "kickoff.md"), "utf8");
+    const problems = kickoffProblems(kickoff, spec);
     return verdict(
-      seed.status === "PASS" && existsSync(kickoffPath) && !specHas && !kickoffHas,
-      `${seed.evidence}; spec ${specHas ? "has" : "has no"} "${heading}"; kickoff file ${!existsSync(kickoffPath) ? "missing" : kickoffHas ? "has" : "has no"} "${heading}"`,
+      seed.status === "PASS" && !specHas && same && problems.length === 0,
+      `${seed.evidence}; spec ${specHas ? "has" : "has no"} "${heading}"; kickoff file ${same ? "equals" : "differs from"} kickoff.md; kickoff checks ${problems.length === 0 ? "pass" : problems.join(", ")}`,
     );
   });
 
