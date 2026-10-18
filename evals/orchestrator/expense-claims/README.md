@@ -201,7 +201,7 @@ To run the acceptance suite on an app folder by hand:
 npm run acceptance -- --app <dir> [--features <list>] [--only <v1|feature>] [--verbose]
 ```
 
-The suite runs its test files one at a time. Each test starts the app on a port that no other process holds on `127.0.0.1` or `::1`, and calls it on the loopback address where it answers, so the app may listen on IPv4 or IPv6 loopback. If another process takes that port first, it retries on a new port. The harness has these time budgets, and a test that hits one fails:
+The suite runs its test files one at a time. Each test starts the app on a port that no other process holds on `127.0.0.1`, `::1`, `0.0.0.0` or `::`, and calls it on the loopback address where it answers, so the app may listen on IPv4 or IPv6 loopback. If another process takes that port first, it retries on a new port. The harness has these time budgets, and a test that hits one fails:
 
 - the app gets 10 seconds after start to answer `GET /health`;
 - each request gets 30 seconds, including its response body;

@@ -37,9 +37,13 @@ function close(server: Server): Promise<void> {
   return new Promise((done) => server.close(() => done()));
 }
 
-// Binds 127.0.0.1 on `port` (0 for any), then ::1 on the same port, closes both and returns the port.
-// Returns undefined when another listener holds the port on either address. A wildcard bind can't
-// show this: on macOS it shares the port with another process's 127.0.0.1 listener.
+const NO_IPV6 = ["EADDRNOTAVAIL", "EAFNOSUPPORT"];
+
+// Binds 127.0.0.1 on `port` (0 for any) and ::1 on the same port, both held at once, then closes them.
+// A wildcard bind alone can't show a specific owner: on macOS it shares the port with another
+// process's 127.0.0.1 listener. The specific binds alone can't show a wildcard owner either, so
+// `0.0.0.0` and `::` are bound next, one at a time: on Linux a wildcard bind fails while our own
+// loopback probe is open. Returns the port, or undefined when any of these binds finds it taken.
 async function claim(port: number): Promise<number | undefined> {
   const v4 = await bind(port, "127.0.0.1");
   if (v4 === "EADDRINUSE") return undefined;
@@ -48,18 +52,18 @@ async function claim(port: number): Promise<number | undefined> {
   const claimed = typeof address === "object" && address ? address.port : 0;
   const v6 = await bind(claimed, "::1");
   await close(v4);
-  if (typeof v6 !== "string") {
-    await close(v6);
-    return claimed;
+  if (typeof v6 !== "string") await close(v6);
+  else if (NO_IPV6.includes(v6)) ipv6 = false;
+  else return undefined;
+  for (const host of ["0.0.0.0", "::"]) {
+    const any = await bind(claimed, host);
+    if (typeof any !== "string") await close(any);
+    else if (!(host === "::" && NO_IPV6.includes(any))) return undefined;
   }
-  if (v6 === "EADDRNOTAVAIL" || v6 === "EAFNOSUPPORT") {
-    ipv6 = false;
-    return claimed;
-  }
-  return undefined;
+  return claimed;
 }
 
-// True when no other listener holds `port` on 127.0.0.1 or ::1.
+// True when no other listener holds `port` on 127.0.0.1, ::1 or a wildcard address.
 export async function portIsFree(port: number): Promise<boolean> {
   return (await claim(port)) !== undefined;
 }
@@ -69,7 +73,7 @@ export async function pickPort(): Promise<number> {
     const port = await claim(0);
     if (port !== undefined) return port;
   }
-  throw new Error("Found no port free on both 127.0.0.1 and ::1 in 20 picks");
+  throw new Error("Found no port free on 127.0.0.1, ::1 and the wildcard addresses in 20 picks");
 }
 
 class PortInUse extends Error {}
