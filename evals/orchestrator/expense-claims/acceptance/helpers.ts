@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
-import { createServer } from "node:net";
+import { createServer, type Server } from "node:net";
 import { resolve } from "node:path";
 import { afterEach, beforeEach } from "node:test";
 
@@ -22,17 +22,54 @@ function appDir(): string {
   return resolve(dir);
 }
 
-function freePort(): Promise<number> {
-  return new Promise((done, fail) => {
+// Set to false once ::1 can't be bound at all, on a machine without IPv6 loopback.
+let ipv6 = true;
+
+function bind(port: number, host: string): Promise<Server | string> {
+  return new Promise((done) => {
     const server = createServer();
-    server.once("error", fail);
-    // No host: the probe covers every interface, so the port is free on IPv4 and IPv6 loopback.
-    server.listen(0, () => {
-      const address = server.address();
-      const port = typeof address === "object" && address ? address.port : 0;
-      server.close(() => done(port));
-    });
+    server.once("error", (error: NodeJS.ErrnoException) => done(error.code ?? String(error)));
+    server.listen(port, host, () => done(server));
   });
+}
+
+function close(server: Server): Promise<void> {
+  return new Promise((done) => server.close(() => done()));
+}
+
+// Binds 127.0.0.1 on `port` (0 for any), then ::1 on the same port, closes both and returns the port.
+// Returns undefined when another listener holds the port on either address. A wildcard bind can't
+// show this: on macOS it shares the port with another process's 127.0.0.1 listener.
+async function claim(port: number): Promise<number | undefined> {
+  const v4 = await bind(port, "127.0.0.1");
+  if (v4 === "EADDRINUSE") return undefined;
+  if (typeof v4 === "string") throw new Error(`Can't bind 127.0.0.1:${port}: ${v4}`);
+  const address = v4.address();
+  const claimed = typeof address === "object" && address ? address.port : 0;
+  const v6 = await bind(claimed, "::1");
+  await close(v4);
+  if (typeof v6 !== "string") {
+    await close(v6);
+    return claimed;
+  }
+  if (v6 === "EADDRNOTAVAIL" || v6 === "EAFNOSUPPORT") {
+    ipv6 = false;
+    return claimed;
+  }
+  return undefined;
+}
+
+// True when no other listener holds `port` on 127.0.0.1 or ::1.
+export async function portIsFree(port: number): Promise<boolean> {
+  return (await claim(port)) !== undefined;
+}
+
+export async function pickPort(): Promise<number> {
+  for (let pick = 1; pick <= 20; pick++) {
+    const port = await claim(0);
+    if (port !== undefined) return port;
+  }
+  throw new Error("Found no port free on both 127.0.0.1 and ::1 in 20 picks");
 }
 
 class PortInUse extends Error {}
@@ -46,16 +83,18 @@ const REQUEST_MS = 30_000;
 export async function startApp(): Promise<Api> {
   for (let attempt = 1; ; attempt++) {
     try {
-      return await launch(await freePort());
+      return await startAppOnPort(await pickPort());
     } catch (error) {
       if (!(error instanceof PortInUse) || attempt === 5) throw error;
     }
   }
 }
 
-async function launch(port: number): Promise<Api> {
-  // localhost, so an app bound to either IPv4 or IPv6 loopback is reachable.
-  const url = `http://localhost:${port}`;
+export async function startAppOnPort(port: number): Promise<Api> {
+  // Both loopback addresses, so an app bound to either is reachable. Not localhost: it can resolve to
+  // 127.0.0.1 and reach another process's listener there instead of the app's wildcard bind.
+  const urls = (ipv6 ? ["127.0.0.1", "[::1]"] : ["127.0.0.1"]).map((host) => `http://${host}:${port}`);
+  let url = urls[0];
   const child: ChildProcess = spawn(process.execPath, ["src/server.ts"], {
     cwd: appDir(),
     env: { ...process.env, PORT: String(port) },
@@ -82,13 +121,23 @@ async function launch(port: number): Promise<Api> {
       }
       const left = deadline - Date.now();
       if (left <= 0) throw new Error(`The app did not answer GET /health within ${STARTUP_MS / 1000} s: ${stderr}`);
-      try {
-        const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(left) });
-        await res.body?.cancel();
-        // Another process may hold the port and answer; only a still-running child counts as ready.
-        if (res.ok && running()) break;
-      } catch {
-        // not listening yet, or the probe timed out
+      const answers = await Promise.all(
+        urls.map(async (base) => {
+          try {
+            const res = await fetch(`${base}/health`, { signal: AbortSignal.timeout(left) });
+            await res.body?.cancel();
+            return res.ok;
+          } catch {
+            return false; // not listening yet, or the probe timed out
+          }
+        }),
+      );
+      // Another process may hold the port and answer; only a still-running child counts as ready.
+      // The first address that answers wins, so 127.0.0.1 when both do.
+      const ready = answers.indexOf(true);
+      if (ready !== -1 && running()) {
+        url = urls[ready];
+        break;
       }
       await sleep(50);
     }
