@@ -1,7 +1,7 @@
 import { ago, costHtml, costText, dur, elapsed, esc, liveTime, plainText, runningFor, timeOfDay } from './format.mjs';
 import {
   CARD_FADE_MS, COUNT_TILES, MODE_WORDS, NEED_CLASS, NEED_LABELS, STAGE_NAMES, cardTimeLeft, cardUnits, closedNotMerged, isSubagent, needItems,
-  omittedSubagents, progressPercent, reportKind, reportTitle, runClockEnd, runEnd, sharePercent, unitEnd,
+  omittedSubagents, progressPercent, reportKind, reportTitle, runClockEnd, runEnd, sharePercent, unitClockEnd, unitEnd,
 } from './model.mjs';
 import { badge, bar, chipsHtml, closedBadge, feedList, meter, monitorHtml, reportClass, ring, stageTrack, stateLineHtml } from './parts.mjs';
 
@@ -53,6 +53,8 @@ const subagentRows = unit => `<span class="k">Type</span><span class="none-r">Su
 export function cardHtml(unit, ctx) {
   const { snapshot, now, phaseMs, detail, fresh } = ctx;
   const end = unitEnd(unit, snapshot);
+  // While the run is quiet its runtimes stop at its last activity, without reading as ended.
+  const stopped = unitClockEnd(unit, snapshot);
   const progress = progressPercent(unit);
   const progressRow = progress === null
     ? '<span class="k">Progress</span><span class="none-r">No task list</span>'
@@ -64,11 +66,11 @@ export function cardHtml(unit, ctx) {
   const fade = leaving ? ` data-phase style="animation-delay:-${((CARD_FADE_MS - left) / 1000).toFixed(2)}s"` : '';
   return `<article class="b-card st-${unit.status}${detail === unit.id ? ' is-sel' : ''}${leaving ? ' is-leaving' : ''}" data-open="${esc(unit.id)}" tabindex="0" role="button" aria-label="Open details for ${esc(unit.label)} ${esc(unit.name)}" data-kind="${esc(unit.kind)}"${fade}>`
     + `<div class="b-head">${ring(unit.status, unit.label, phaseMs)}<div class="b-who st-${unit.status}"><div class="b-name">${esc(unit.name)}</div><div class="b-state">${stateLineHtml(unit, now)}</div></div>${unit.pr ? `<span class="b-pr">PR #${unit.pr.id}</span>` : ''}</div>`
-    + `<div class="b-metrics"><span class="k">${end ? 'Ran' : 'Running'}</span><span class="v">${end ? dur(end - unit.startedAt, 'clock') : liveTime(unit.startedAt, now, 'clock')}</span>`
+    + `<div class="b-metrics"><span class="k">${end ? 'Ran' : 'Running'}</span><span class="v">${stopped ? dur(stopped - unit.startedAt, 'clock') : liveTime(unit.startedAt, now, 'clock')}</span>`
     + `<span class="k">Cost</span><span class="v">${costHtml(unit.cost.credits)}</span><span></span>${meter(sharePercent(unit.cost.credits, snapshot.cost.maxUnitCredits))}</div>`
     + reportRow(unit, now, fresh)
     + `<div class="b-rows st-${unit.status}">${progressRow}${isSubagent(unit) ? subagentRows(unit) : sessionRows(unit, now)}</div>`
-    + `<div class="chips">${chipsHtml(unit, now, fresh.chips, end)}</div></article>`;
+    + `<div class="chips">${chipsHtml(unit, now, fresh.chips, stopped)}</div></article>`;
 }
 
 export function cardsHtml(ctx) {
@@ -154,23 +156,24 @@ export function detailHtml(unitId, inMain, ctx) {
   const unit = snapshot.units.find(item => item.id === unitId);
   if (!unit) return '';
   const end = unitEnd(unit, snapshot);
+  const stopped = unitClockEnd(unit, snapshot);
   const activity = unit.activity;
   const progress = progressPercent(unit);
   const top = `<div class="dt-top">${inMain ? '<button type="button" class="link" data-close>← Back to cards</button>' : ''}`
     + `<div class="b-head">${ring(unit.status, unit.label, phaseMs)}<div class="b-who st-${unit.status}"><div class="b-name">${esc(unit.label)} ${esc(unit.name)}</div><div class="b-state">${stateLineHtml(unit, now)}</div></div>`
     + `${inMain ? '' : '<button type="button" class="x" data-close aria-label="Close details">×</button>'}</div></div>`;
-  const facts = `<div class="dt-facts"><div class="kv"><span class="k">${end ? 'Ran' : 'Running'}</span><span class="v">${end ? dur(end - unit.startedAt) : elapsed(unit.startedAt, now)}</span></div>`
+  const facts = `<div class="dt-facts"><div class="kv"><span class="k">${end ? 'Ran' : 'Running'}</span><span class="v">${runningFor(unit.startedAt, stopped, now)}</span></div>`
     + `<div class="kv"><span class="k">Cost</span><span class="v">${costHtml(unit.cost.credits)}</span></div>`
     + `<div class="kv"><span class="k">Progress</span><span class="v">${progress === null ? 'No task list' : `${progress}%`}</span></div>`
     + `<div class="kv"><span class="k">Stage</span><span class="v">${STAGE_NAMES[unit.stage]}</span></div>`
     + `<div class="kv"><span class="k">Model</span><span class="v">${esc(unit.model ?? 'unknown')}${unit.effort ? `<span class="v-note"> · ${esc(unit.effort)}</span>` : ''}</span></div></div>`;
   const current = `<div class="dt-sec"><h4>Current activity</h4><div class="dt-kv"><span class="k">Doing</span><span>${esc(activity.label)}</span>`
     + (unit.reason && !WHY_STATUSES.has(unit.status) ? `<span class="k">Note</span><span>${esc(unit.reason)}</span>` : '')
-    + (activity.tool ? `<span class="k">Tool call</span><span><span class="code">${esc(activity.tool.summary)}</span> · ${runningFor(activity.tool.startedAt, end, now)}</span>` : '')
+    + (activity.tool ? `<span class="k">Tool call</span><span><span class="code">${esc(activity.tool.summary)}</span> · ${runningFor(activity.tool.startedAt, stopped, now)}</span>` : '')
     + `<span class="k">Last event</span><span>${activity.lastEventAt ? ago(activity.lastEventAt, now) : 'none yet'}</span></div></div>`;
   return `<section class="detail" aria-label="Details for ${esc(unit.label)}">${top}${facts}${whyHtml(unit)}${current}`
     + `<div class="dt-sec"><h4>Latest report</h4>${reportHtml(unit.report, now)}</div>`
-    + `<div class="dt-sec"><h4>Sub-agents</h4>${subagentsHtml(unit.subagents, now, end)}</div>`
+    + `<div class="dt-sec"><h4>Sub-agents</h4>${subagentsHtml(unit.subagents, now, stopped)}</div>`
     + (isSubagent(unit) ? agentHtml(unit) : `<div class="dt-sec"><h4>PR and monitor</h4>${prHtml(unit, now)}</div>`)
     + `<div class="dt-sec"><h4>Recent activity</h4>${feedList(unit.recent, 6, now, fresh.feed, 'No recent activity')}</div></section>`;
 }

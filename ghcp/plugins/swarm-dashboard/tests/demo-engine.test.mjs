@@ -125,6 +125,7 @@ test('the stress scenario is valid and covers every status, a stalled and quiet 
   assert.equal(snapshot.run.quietSince, snapshot.run.stalled.since, 'the stalled run is quiet, so its clock stops');
   assert.equal(snapshot.run.lastActivityAt, snapshot.run.quietSince);
   assert.ok(snapshot.run.quietSince > T - 3600000 && snapshot.run.quietSince < T, 'its quiet time moves to the present');
+  assert.ok(snapshot.units.some(unit => unit.kind !== 'subagent' && unit.status === 'idle' && unit.endedAt === null), 'an idle child that has not ended, whose card runtime stops');
   assert.ok(snapshot.diagnostics.some(entry => entry.level === 'warn'));
   assert.ok(snapshot.units.some(unit => unit.label.length > 4));
   assert.deepEqual(snapshot.units.filter(unit => unit.label.length === 4).map(unit => unit.label), ['C6-1', 'MM-1']);

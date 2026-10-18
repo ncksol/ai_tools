@@ -66,6 +66,8 @@ export const runClockEnd = snapshot => runEnd(snapshot) ?? snapshot.run.quietSin
  * at its own end, or at the run's end once the run has finished.
  */
 export const unitEnd = (session, snapshot = null) => session.endedAt ?? (snapshot ? runEnd(snapshot) : null);
+/** Where a session's runtime stops: its own end, else where the run's clock stops (null while it ticks). */
+export const unitClockEnd = (session, snapshot) => session.endedAt ?? runClockEnd(snapshot);
 /** A report title without a leading "Status: <status>" that only repeats the status badge shown beside it. */
 export function withoutStatusPrefix(text, status) {
   const words = String(status ?? '').split(/[\s_-]+/).filter(Boolean).map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));

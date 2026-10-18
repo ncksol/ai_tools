@@ -63,6 +63,17 @@ test('a quiet run stops the orchestrator\'s runtime at its last activity, and an
   assert.doesNotMatch(text(quiet), /\bran\b/, 'a quiet run has not finished');
 });
 
+test('a quiet run stops an idle child\'s runtime at the run\'s last activity, and it ticks again once the run is active', () => {
+  const snapshot = exampleSnapshot();
+  const d5 = findByLabel(snapshot, 'D5');
+  const who = () => row(timelineHtml(context(snapshot), '12h'), d5.id).split('<div class="c-sum">')[0];
+  assert.match(who(), new RegExp(`<div class="c-meta"><span data-t="${d5.startedAt}" data-f="short">`));
+  const last = NOW - 10 * MIN;
+  Object.assign(snapshot.run, { lastActivityAt: last, quietSince: last });
+  assert.match(who(), /<div class="c-meta">1d 2h · 3,058 cr/);
+  assert.doesNotMatch(who(), /data-t=|\bran\b/);
+});
+
 test('a lane draws busy spans, idle lines, a blinking live stuck span and the tool mark', () => {
   const i1 = findByLabel(exampleSnapshot(), 'I1');
   const svg = laneSvg(i1, 600, NOW - 12 * HOUR, NOW, NOW, 0);

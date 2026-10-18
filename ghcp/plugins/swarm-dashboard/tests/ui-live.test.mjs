@@ -54,6 +54,43 @@ test('an active run\'s header clock ticks and does not say the run is quiet', ()
   assert.doesNotMatch(html, /quiet/);
 });
 
+/**
+ * The example with nothing active since `last`: D5 is an idle child that has not ended, and lists a sub-agent that never
+ * reported its end (its process is gone, so the engine does not count it as active).
+ */
+function quietRun() {
+  const snapshot = exampleSnapshot();
+  const last = NOW - 10 * 60000;
+  Object.assign(snapshot.run, { lastActivityAt: last, quietSince: last });
+  const d5 = findByLabel(snapshot, 'D5');
+  d5.subagents.unshift({ id: 'call-d5-late', name: 'late-check', type: 'explore', model: null, effort: null, mode: 'background', status: 'running', startedAt: last - 5 * 60000, endedAt: null, durationMs: null, credits: 0, task: null });
+  return { snapshot, d5, last };
+}
+
+test('while a quiet run has nothing active, an idle child\'s card and detail runtimes stay fixed at the run\'s last activity', () => {
+  const { snapshot, d5, last } = quietRun();
+  assert.equal(d5.endedAt, null);
+  const html = card(cardsHtml(context(snapshot)), d5.id);
+  assert.ok(html.includes(`<span class="k">Running</span><span class="v">${dur(last - d5.startedAt, 'clock')}</span>`), text(html));
+  assert.doesNotMatch(html, /data-f="clock"/);
+  assert.match(html, /<span class="chip-t">explore 5m<\/span>/);
+  const detail = detailHtml(d5.id, false, context(snapshot));
+  assert.ok(detail.includes(`<span class="k">Running</span><span class="v">${dur(last - d5.startedAt)}</span>`), text(detail));
+  assert.match(detail, /<div class="sa-2">model unknown · 5m · 0 cr/);
+  assert.doesNotMatch(text(html) + text(detail), /\bRan\b/, 'a quiet run has not finished');
+});
+
+test('an idle child\'s card and detail runtimes tick again once the run is active', () => {
+  const { snapshot, d5 } = quietRun();
+  snapshot.run.quietSince = null;
+  const html = card(cardsHtml(context(snapshot)), d5.id);
+  assert.ok(html.includes(`<span class="k">Running</span><span class="v"><span data-t="${d5.startedAt}" data-f="clock">`), text(html));
+  assert.match(html, /<span class="chip-t">explore <span data-t="\d+" data-f="short">15m<\/span><\/span>/);
+  const detail = detailHtml(d5.id, false, context(snapshot));
+  assert.ok(detail.includes(`<span class="k">Running</span><span class="v"><span data-t="${d5.startedAt}" data-f="short">`), text(detail));
+  assert.match(detail, /<div class="sa-2">model unknown · <span data-t="\d+" data-f="short">15m<\/span> ·/);
+});
+
 test('a finished run stops the clock of a unit that has no end of its own', () => {
   const snapshot = exampleSnapshot();
   Object.assign(snapshot.run, { lifecycle: 'finished', finishedAt: NOW - 3600000 });
