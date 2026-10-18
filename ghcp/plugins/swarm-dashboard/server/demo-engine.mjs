@@ -3,7 +3,7 @@ import { createFakeEngine } from '../engine/fake-engine.mjs';
 import { exampleScenario, stressScenario } from './demo-scenarios.mjs';
 
 const FIXTURES = new URL('../tests/fixtures/', import.meta.url);
-const TIME_KEY = /^(at|since|start|end)$|At$/;
+const TIME_KEY = /^(at|since|start|end)$|At$|Since$/;
 const MIN = 60000;
 const BUCKET = 5 * MIN;
 const SCENARIOS = ['example', 'stress'];
@@ -107,6 +107,8 @@ export function simulateStep(snapshot, now, random = Math.random) {
   next.generatedAt = now;
   next.revision += 1;
   next.run.lastActivityAt = now;
+  // A quiet run stays quiet, from its new last activity.
+  if (next.run.quietSince !== null) next.run.quietSince = now;
   for (const unit of next.units) checkMonitor(next, unit, now);
   const active = [next.orchestrator, ...next.units].filter(session => session.status === 'busy' || session.subagents.some(sub => sub.status === 'running'));
   if (!active.length) return next;

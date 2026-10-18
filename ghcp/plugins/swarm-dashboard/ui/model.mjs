@@ -57,10 +57,17 @@ export const omittedSubagents = snapshot => (snapshot.omittedSubagents?.done ?? 
 /** When a finished run ended (null while it is live). */
 export const runEnd = snapshot => (snapshot.run.lifecycle === 'finished' ? snapshot.run.finishedAt ?? snapshot.run.lastActivityAt : null);
 /**
+ * Where the run's clock stops: the end of a finished run, or the last activity of a live run with nothing active (the
+ * engine's quietSince). Null while anything in the run is active, so the clock ticks.
+ */
+export const runClockEnd = snapshot => runEnd(snapshot) ?? snapshot.run.quietSince ?? null;
+/**
  * When a session's work ended (null while it runs): the engine sets endedAt from the unit's outcome time. A session ends
  * at its own end, or at the run's end once the run has finished.
  */
 export const unitEnd = (session, snapshot = null) => session.endedAt ?? (snapshot ? runEnd(snapshot) : null);
+/** Where a session's runtime stops: its own end, else where the run's clock stops (null while it ticks). */
+export const unitClockEnd = (session, snapshot) => session.endedAt ?? runClockEnd(snapshot);
 /** A report title without a leading "Status: <status>" that only repeats the status badge shown beside it. */
 export function withoutStatusPrefix(text, status) {
   const words = String(status ?? '').split(/[\s_-]+/).filter(Boolean).map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));

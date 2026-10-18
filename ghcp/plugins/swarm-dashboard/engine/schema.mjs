@@ -163,8 +163,9 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  * @property {EpochMs} generatedAt
  * @property {number} revision           Per-swarm counter; increases whenever the content changes
  * @property {{ id: string, name: string, project: {id: string, name: string}|null, startedAt: EpochMs, firstChildAt: EpochMs|null,
- *   lastActivityAt: EpochMs, lifecycle: 'live'|'finished', finishedAt: EpochMs|null, stalled: {since: EpochMs, reason: string}|null,
- *   contract: { registry: boolean, statusLines: boolean, questionTags: boolean } }} run
+ *   lastActivityAt: EpochMs, lifecycle: 'live'|'finished', finishedAt: EpochMs|null, quietSince: EpochMs|null,
+ *   stalled: {since: EpochMs, reason: string}|null, contract: { registry: boolean, statusLines: boolean, questionTags: boolean } }} run
+ *   quietSince: lastActivityAt while nothing in the run is busy, stuck or waiting (the condition the lifecycle uses), else null
  * @property {SessionView} orchestrator
  * @property {UnitView[]} units          Every descendant session, depth-first by creation time; then the root orchestrator's one-off
  *   sub-agents (kind 'subagent'), oldest start first: every one that has not finished, plus the
@@ -340,7 +341,7 @@ export const SNAPSHOT_SPEC = Object.freeze({
   schemaVersion: literal(SCHEMA_VERSION), generatedAt: TIME, revision: is.count,
   run: {
     id: is.id, name: is.text, project: PROJECT, startedAt: TIME, firstChildAt: OPT_TIME, lastActivityAt: TIME,
-    lifecycle: oneOf(LIFECYCLES), finishedAt: OPT_TIME, stalled: nullable({ since: TIME, reason: is.text }),
+    lifecycle: oneOf(LIFECYCLES), finishedAt: OPT_TIME, quietSince: OPT_TIME, stalled: nullable({ since: TIME, reason: is.text }),
     contract: { registry: is.bool, statusLines: is.bool, questionTags: is.bool },
   },
   orchestrator: SESSION,

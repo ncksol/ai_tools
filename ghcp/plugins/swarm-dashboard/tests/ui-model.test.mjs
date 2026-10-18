@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   BOARD_STAGES, CARD_FADE_MS, REPORT_CLASS, REPORT_LABELS, STATE_LINES, SUBAGENT_CARD_GRACE_MS, UNIT_STAGES, archivedUnits, boardColumns, cardTimeLeft, cardUnits, closedNotMerged, feedText,
-  findByLabel, findPlanned, flattenPlan, isFinishedSubagent, isSubagent, needItems, nextCardChange, omittedSubagents, planForest, planLayout, progressPercent, reportKind, reportTitle, runEnd, sharePercent, stateLine, unitEnd, withoutStatusPrefix,
+  findByLabel, findPlanned, flattenPlan, isFinishedSubagent, isSubagent, needItems, nextCardChange, omittedSubagents, planForest, planLayout, progressPercent, reportKind, reportTitle, runClockEnd, runEnd, sharePercent, stateLine, unitClockEnd, unitEnd, withoutStatusPrefix,
 } from '../ui/model.mjs';
 import { createDemoEngine } from '../server/demo-engine.mjs';
 import { NOW, closedSnapshot, exampleSnapshot } from './helpers/ui.mjs';
@@ -44,6 +44,29 @@ test('a finished run ends at finishedAt, else at its last activity, and a sessio
   assert.equal(runEnd(snapshot), NOW - 3600000);
   assert.equal(unitEnd(b1, snapshot), NOW - 3600000);
   assert.equal(unitEnd(f2a, snapshot), f2a.endedAt, 'its own end comes first');
+});
+
+test('the run clock stops at the end of a finished run or the last activity of a quiet one, and runs while anything is active', () => {
+  const snapshot = exampleSnapshot();
+  assert.equal(runClockEnd(snapshot), null, 'an active run');
+  delete snapshot.run.quietSince;
+  assert.equal(runClockEnd(snapshot), null, 'a snapshot without the field');
+  snapshot.run.quietSince = NOW - 600000;
+  assert.equal(runClockEnd(snapshot), NOW - 600000);
+  assert.equal(runEnd(snapshot), null, 'a quiet run has not ended');
+  Object.assign(snapshot.run, { lifecycle: 'finished', finishedAt: NOW - 3600000 });
+  assert.equal(runClockEnd(snapshot), NOW - 3600000);
+});
+
+test('a unit\'s runtime stops at its own end, else where the run\'s clock stops', () => {
+  const snapshot = exampleSnapshot();
+  const d5 = findByLabel(snapshot, 'D5');
+  const f2a = findByLabel(snapshot, 'F2a');
+  assert.equal(unitClockEnd(d5, snapshot), null, 'an active run');
+  snapshot.run.quietSince = NOW - 600000;
+  assert.equal(unitClockEnd(d5, snapshot), NOW - 600000);
+  assert.equal(unitEnd(d5, snapshot), null, 'it has not ended');
+  assert.equal(unitClockEnd(f2a, snapshot), f2a.endedAt, 'its own end comes first');
 });
 
 test('cards put a status the view does not know last', () => {

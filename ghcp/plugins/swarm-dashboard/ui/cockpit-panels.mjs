@@ -1,6 +1,6 @@
 /** HTML for the cockpit's panels, its top line, its quality switch and its note. Pure: Node tests import it. */
 import { count, countdown, credits, dur, esc, liveTime, plural, usdRounded } from './format.mjs';
-import { runEnd } from './model.mjs';
+import { runClockEnd, runEnd } from './model.mjs';
 import { activityRows, clockText, costView, dateText, legend, needRows, nextCheckAt, prRows, runLine, stateWord, tileGrid, timeText, unitCounts } from './cockpit-model.mjs';
 import { QUALITIES } from './cockpit-quality.mjs';
 
@@ -16,10 +16,12 @@ export function clockHtml(snapshot, now) {
     + `<div class="ck-meta" data-clock="date">${esc(dateText(now))}</div>`;
   if (!snapshot) return clock + row('Swarm', 'None yet', false);
   const end = runEnd(snapshot);
+  // A live run with nothing active stops its clock at its last activity, and the run line says since when.
+  const stopped = runClockEnd(snapshot);
   const next = nextCheckAt(snapshot);
-  const line = esc(runLine(snapshot));
+  const line = esc(`${end === null && stopped !== null ? `Quiet since ${timeText(stopped)} · ` : ''}${runLine(snapshot)}`);
   return clock
-    + row(end === null ? 'Running' : 'Ran', end === null ? liveTime(snapshot.run.startedAt, now, 'clock') : dur(end - snapshot.run.startedAt, 'clock'))
+    + row(end === null ? 'Running' : 'Ran', stopped === null ? liveTime(snapshot.run.startedAt, now, 'clock') : dur(stopped - snapshot.run.startedAt, 'clock'))
     + (next === null ? row('Next check', 'None scheduled', false) : row('Next check', countdown(next, now)))
     + `<div class="ck-meta ck-ellipsis" title="${line}">${line}</div>`;
 }

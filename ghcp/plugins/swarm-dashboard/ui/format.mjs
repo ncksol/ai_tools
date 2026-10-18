@@ -61,6 +61,11 @@ export function dateTime(ms) {
   const date = new Date(ms);
   return `${date.getDate()} ${MONTHS[date.getMonth()]} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
+/** Local time of day, for example "09:12". */
+export function timeOfDay(ms) {
+  const date = new Date(ms);
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
 export const dateRange = (start, end) => (end == null ? `from ${dateTime(start)}` : `${dateTime(start)} to ${dateTime(end)}`);
 export const plural = (n, one, many = `${one}s`) => `${count(n)} ${n === 1 ? one : many}`;
 
