@@ -39,8 +39,16 @@ test("portIsFree is false for a port another process holds on 127.0.0.1", async 
 });
 
 for (const host of ["0.0.0.0", "::"]) {
-  test(`portIsFree is false for a port another process holds on ${host}`, async () => {
-    const { server, port } = await foreign(host);
+  test(`portIsFree is false for a port another process holds on ${host}`, async (t) => {
+    let held: Awaited<ReturnType<typeof foreign>>;
+    try {
+      held = await foreign(host);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (host === "::" && (code === "EAFNOSUPPORT" || code === "EADDRNOTAVAIL")) return t.skip("no IPv6 on this machine");
+      throw error;
+    }
+    const { server, port } = held;
     try {
       assert.equal(await portIsFree(port), false);
     } finally {
