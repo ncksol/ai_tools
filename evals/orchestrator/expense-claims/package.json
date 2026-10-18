@@ -6,6 +6,7 @@
   "engines": { "node": ">=24" },
   "scripts": {
     "test": "node --test \"scripts/test/*.test.ts\"",
-    "acceptance": "node scripts/acceptance.ts"
+    "acceptance": "node scripts/acceptance.ts",
+    "new-run": "node scripts/new-run.ts"
   }
 }
