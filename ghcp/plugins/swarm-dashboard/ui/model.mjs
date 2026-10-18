@@ -57,6 +57,11 @@ export const omittedSubagents = snapshot => (snapshot.omittedSubagents?.done ?? 
 /** When a finished run ended (null while it is live). */
 export const runEnd = snapshot => (snapshot.run.lifecycle === 'finished' ? snapshot.run.finishedAt ?? snapshot.run.lastActivityAt : null);
 /**
+ * Where the run's clock stops: the end of a finished run, or the last activity of a live run with nothing active (the
+ * engine's quietSince). Null while anything in the run is active, so the clock ticks.
+ */
+export const runClockEnd = snapshot => runEnd(snapshot) ?? snapshot.run.quietSince ?? null;
+/**
  * When a session's work ended (null while it runs): the engine sets endedAt from the unit's outcome time. A session ends
  * at its own end, or at the run's end once the run has finished.
  */

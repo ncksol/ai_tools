@@ -51,6 +51,18 @@ test('a blank report title reads "Untitled report", and a finished run stops the
   assert.match(text(row(timelineHtml(context(snapshot), '12h'), snapshot.orchestrator.id)), /Sample story B ran 2h 00m ·/);
 });
 
+test('a quiet run stops the orchestrator\'s runtime at its last activity, and an active run\'s runtime ticks', () => {
+  const snapshot = exampleSnapshot();
+  const active = row(timelineHtml(context(snapshot), '12h'), snapshot.orchestrator.id);
+  assert.match(active, /<div class="c-meta"><span data-t="1791809280000" data-f="short">2d 23h<\/span> ·/);
+  const last = snapshot.run.startedAt + 2 * HOUR;
+  Object.assign(snapshot.run, { lastActivityAt: last, quietSince: last });
+  const quiet = row(timelineHtml(context(snapshot), '12h'), snapshot.orchestrator.id);
+  assert.match(quiet, /<div class="c-meta">2h 00m · 31,532 cr/);
+  assert.doesNotMatch(quiet, /data-t=/);
+  assert.doesNotMatch(text(quiet), /\bran\b/, 'a quiet run has not finished');
+});
+
 test('a lane draws busy spans, idle lines, a blinking live stuck span and the tool mark', () => {
   const i1 = findByLabel(exampleSnapshot(), 'I1');
   const svg = laneSvg(i1, 600, NOW - 12 * HOUR, NOW, NOW, 0);

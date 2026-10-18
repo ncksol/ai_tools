@@ -887,6 +887,40 @@ test('a run whose only activity is a silent resumed sub-agent stays live, and fi
   assert.equal(finished.run.finishedAt, at(111));
 });
 
+test('a live run with nothing active is quiet since its last activity, and is not quiet while anything is active', () => {
+  const build = ({ running = false, resumed = false } = {}) => root => {
+    root.at(at(60));
+    const call = root.subagent({ name: 'one', type: 'explore', mode: 'background', agentId: 'ag-1' });
+    root.at(at(61));
+    if (!running) root.subagentDone(call, { durationMs: MINUTE, agentId: 'ag-1' });
+    if (resumed) {
+      root.at(at(125));
+      root.turnStart();
+    }
+  };
+  const quiet = buildSnapshot(quietSwarm(build(), at(130)).data);
+  assert.deepEqual(validateSnapshot(quiet), []);
+  assert.equal(quiet.run.lifecycle, 'live');
+  assert.equal(quiet.run.lastActivityAt, at(111));
+  assert.equal(quiet.run.quietSince, at(111));
+
+  const active = buildSnapshot(quietSwarm(build({ running: true }), at(130)).data);
+  assert.deepEqual(validateSnapshot(active), []);
+  assert.ok(ACTIVE_DETAILS.has(subUnits(active)[0].statusDetail));
+  assert.equal(active.run.lifecycle, 'live');
+  assert.equal(active.run.quietSince, null);
+
+  const resumed = buildSnapshot(quietSwarm(build({ resumed: true }), at(130)).data);
+  assert.deepEqual(validateSnapshot(resumed), []);
+  assert.ok(ACTIVE_DETAILS.has(resumed.orchestrator.statusDetail));
+  assert.equal(resumed.run.lastActivityAt, at(125));
+  assert.equal(resumed.run.quietSince, null);
+
+  const finished = buildSnapshot(quietSwarm(build(), at(111) + 2 * HOUR).data);
+  assert.equal(finished.run.lifecycle, 'finished');
+  assert.equal(finished.run.quietSince, finished.run.finishedAt);
+});
+
 test('completed and cancelled sub-agent units do not keep a swarm from stalling, and a busy one does', () => {
   const finishedOnes = root => {
     root.at(at(60));

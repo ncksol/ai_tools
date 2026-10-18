@@ -203,7 +203,7 @@ export function exampleScenario(fixtures) {
 /**
  * A crowded synthetic swarm for layout checks, built from the example demo so it stays inside the schema: every
  * status and status detail, long names and labels, crowded chips, missing reports and task lists, an eight-level plan,
- * a stalled run, a data warning, many of the orchestrator's one-off sub-agents and a second live swarm for the picker.
+ * a stalled run that is quiet (its clock stopped at its last activity), a data warning, many of the orchestrator's one-off sub-agents and a second live swarm for the picker.
  * Its session cards show all four question and blocker looks: B1's replied question, F1's unanswered one, D5's replied
  * blocker and R8's unanswered one.
  */
@@ -245,6 +245,8 @@ export function stressScenario(fixtures) {
   );
   snapshot.needs.sort((a, b) => a.since - b.since);
   snapshot.run.stalled = { since: t - 32 * MIN, reason: 'Swarm rule: the orchestrator and every open child are idle, and no monitor is due.' };
+  // A stalled run has nothing active, so it is quiet since its last activity, as the engine reports it.
+  Object.assign(snapshot.run, { lastActivityAt: snapshot.run.stalled.since, quietSince: snapshot.run.stalled.since });
   snapshot.diagnostics.push({ level: 'warn', source: 'pr-lookup', message: 'gh is not signed in, so GitHub PR states are not known.' });
   snapshot.feed = [...[...extra, ...subs].flatMap(unit => unit.recent), ...snapshot.feed].sort((a, b) => b.at - a.at).slice(0, 200);
   snapshot.counts = Object.fromEntries(BUCKETS.map(bucket => [bucket, snapshot.units.filter(unit => unit.bucket === bucket).length]));

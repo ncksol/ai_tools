@@ -718,7 +718,7 @@ export function buildSnapshot(input) {
     run: {
       id: root.id, name: root.name ?? '', project: project ? { id: project.id, name: project.name } : null,
       startedAt: root.createdAt ?? orchestrator.startedAt, firstChildAt: minTime(...nodes.map(node => node.createdAt)),
-      lastActivityAt, lifecycle, finishedAt, stalled,
+      lastActivityAt, lifecycle, finishedAt, quietSince: anyActive ? null : lastActivityAt, stalled,
       contract: { registry: registry.present && registry.rows.size > 0, statusLines: flags.statusLines, questionTags: flags.questionTags },
     },
     orchestrator,

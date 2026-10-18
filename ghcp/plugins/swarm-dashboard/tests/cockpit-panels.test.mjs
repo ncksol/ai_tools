@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { activityHtml, clockHtml, costHtml, hudHtml, needsHtml, noteHtml, prsHtml, qualityHtml, statusHtml, unitsHtml } from '../ui/cockpit-panels.mjs';
+import { timeText } from '../ui/cockpit-model.mjs';
 import { NOW, deepFreeze, exampleSnapshot } from './helpers/ui.mjs';
 
 const example = () => deepFreeze(exampleSnapshot());
@@ -22,6 +23,24 @@ test('the clock shows the time, the date, the run timer, the next monitor check 
   assert.match(html, /<span class="ck-k">Next check<\/span><span class="ck-v ck-mono"><span data-t="1792065660000" data-f="left">1m<\/span>/);
   assert.match(html, /Sample story B · sample-project/);
   assert.match(clockHtml(null, NOW), /<span class="ck-k">Swarm<\/span><span class="ck-v">None yet<\/span>/);
+});
+
+test('a quiet run stops the cockpit run clock at its last activity and the panel says since when it has been quiet', () => {
+  const snapshot = exampleSnapshot();
+  const last = snapshot.run.startedAt + 3600000;
+  Object.assign(snapshot.run, { lastActivityAt: last, quietSince: last });
+  const html = clockHtml(deepFreeze(snapshot), NOW);
+  assert.match(html, /<span class="ck-k">Running<\/span><span class="ck-v ck-mono">1h 00m 00s<\/span>/);
+  assert.doesNotMatch(html, /data-f="clock"/);
+  const line = `Quiet since ${timeText(last)} · Sample story B · sample-project`;
+  assert.ok(html.includes(`<div class="ck-meta ck-ellipsis" title="${line}">${line}</div>`), html);
+  assert.equal(hudHtml({ demo: false, connection: 'open', snapshot }), '<span>Swarm cockpit</span>', 'a quiet run is not finished');
+});
+
+test('an active run\'s cockpit run clock ticks and the panel does not say the run is quiet', () => {
+  const html = clockHtml(example(), NOW);
+  assert.match(html, /<span class="ck-k">Running<\/span><span class="ck-v ck-mono"><span data-t="1791809280000" data-f="clock">/);
+  assert.doesNotMatch(html, /Quiet/);
 });
 
 test('cost shows credits, dollars, the hourly rate and up to four models as bars', () => {

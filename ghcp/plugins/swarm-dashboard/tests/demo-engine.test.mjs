@@ -71,6 +71,17 @@ test('simulated steps stay valid, add cost and keep feed ids unique', () => {
   }
 });
 
+test('a simulated step keeps a quiet run quiet since its new last activity, and an active run active', () => {
+  const base = example();
+  const active = simulateStep(shiftTimes(base, T - base.generatedAt), T + 5000, seeded(3));
+  assert.equal(active.run.quietSince, null);
+  const quiet = shiftTimes(base, T - base.generatedAt);
+  quiet.run.quietSince = quiet.run.lastActivityAt;
+  const next = simulateStep(quiet, T + 5000, seeded(3));
+  assert.deepEqual(validateSnapshot(next), []);
+  assert.deepEqual([next.run.lastActivityAt, next.run.quietSince], [T + 5000, T + 5000]);
+});
+
 test('a due PR monitor check lands in the feed and the unit\'s recent items', () => {
   const base = example();
   const due = base.units.find(unit => unit.label === 'D5').monitor.nextCheckAt + 1000;
@@ -104,13 +115,16 @@ test('activity is simulated only between start() and stop()', async () => {
   assert.equal(none.length, 0);
 });
 
-test('the stress scenario is valid and covers every status, a stalled run, a warning, two live swarms and many sub-agent units', async () => {
+test('the stress scenario is valid and covers every status, a stalled and quiet run, a warning, two live swarms and many sub-agent units', async () => {
   const engine = createDemoEngine({ scenario: 'stress', now: () => T, simulate: false });
   const snapshot = await engine.getSnapshot();
   assert.deepEqual(validateSnapshot(snapshot), []);
   const statuses = new Set(snapshot.units.map(unit => unit.status));
   for (const status of ['busy', 'idle', 'plan', 'question', 'stuck', 'blocked', 'merged', 'archived']) assert.ok(statuses.has(status), status);
   assert.ok(snapshot.run.stalled);
+  assert.equal(snapshot.run.quietSince, snapshot.run.stalled.since, 'the stalled run is quiet, so its clock stops');
+  assert.equal(snapshot.run.lastActivityAt, snapshot.run.quietSince);
+  assert.ok(snapshot.run.quietSince > T - 3600000 && snapshot.run.quietSince < T, 'its quiet time moves to the present');
   assert.ok(snapshot.diagnostics.some(entry => entry.level === 'warn'));
   assert.ok(snapshot.units.some(unit => unit.label.length > 4));
   assert.deepEqual(snapshot.units.filter(unit => unit.label.length === 4).map(unit => unit.label), ['C6-1', 'MM-1']);

@@ -1,5 +1,5 @@
 import { HOUR, MIN, ago, costHtml, costText, dur, elapsed, esc, plainText, plural } from './format.mjs';
-import { REPORT_CLASS, TIMELINE_WORDS, isSubagent, reportKind, reportTitle, runEnd, unitEnd, withoutStatusPrefix } from './model.mjs';
+import { REPORT_CLASS, TIMELINE_WORDS, isSubagent, reportKind, reportTitle, runClockEnd, runEnd, unitEnd, withoutStatusPrefix } from './model.mjs';
 import { fill, phase } from './parts.mjs';
 
 export const SPANS = Object.freeze({ '3h': 3 * HOUR, '12h': 12 * HOUR, run: null });
@@ -152,7 +152,9 @@ export function costSvg(cost, width, t0, t1, now) {
 function whoHtml(session, snapshot, now) {
   const isOrchestrator = session === snapshot.orchestrator;
   const end = isOrchestrator ? runEnd(snapshot) : unitEnd(session, snapshot);
-  const runtime = end ? `ran ${dur(end - session.startedAt)}` : elapsed(session.startedAt, now);
+  // The orchestrator's runtime is the run's: it stops while nothing in the run is active, without reading as finished.
+  const stopped = isOrchestrator ? runClockEnd(snapshot) : end;
+  const runtime = end ? `ran ${dur(end - session.startedAt)}` : stopped ? dur(stopped - session.startedAt) : elapsed(session.startedAt, now);
   return `<div class="c-name"><span class="dot${session.status === 'stuck' ? ' stuck' : ''}"></span><span class="tx">${esc(isOrchestrator ? session.name : `${session.label} ${session.name}`)}</span></div>`
     + `<div class="c-meta">${runtime} · ${costText(session.cost.credits)}</div>`;
 }

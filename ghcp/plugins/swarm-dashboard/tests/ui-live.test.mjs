@@ -5,6 +5,8 @@ import { cardHtml, cardsHtml, detailHtml, headerHtml, needsHtml } from '../ui/li
 import { CARD_FADE_MS, SUBAGENT_CARD_GRACE_MS, findByLabel } from '../ui/model.mjs';
 import { NOW, closedSnapshot, context, exampleSnapshot } from './helpers/ui.mjs';
 
+const pad = value => String(value).padStart(2, '0');
+const hm = ms => `${pad(new Date(ms).getHours())}:${pad(new Date(ms).getMinutes())}`;
 const text = html => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 const card = (html, id) => html.split('<article').find(part => part.includes(`data-open="${id}"`));
 const cardIds = html => [...html.matchAll(/<article class="b-card[^"]*" data-open="([^"]+)"/g)].map(match => match[1]);
@@ -32,6 +34,24 @@ test('a finished run shows how long it ran, with no ticking clock', () => {
   const html = headerHtml(context(snapshot));
   assert.match(text(html), /Ran 1h 00m 00s/);
   assert.doesNotMatch(html, /data-f="clock"/);
+});
+
+test('a quiet run stops the header clock at its last activity and says since when it has been quiet', () => {
+  const snapshot = exampleSnapshot();
+  const last = snapshot.run.startedAt + 3600000;
+  Object.assign(snapshot.run, { lastActivityAt: last, quietSince: last });
+  const html = headerHtml(context(snapshot));
+  assert.match(text(html), new RegExp(`Running 1h 00m 00s · quiet since ${hm(last)} Swarm cost`));
+  assert.match(html, /<span class="v l">1h 00m 00s<span class="v-note"> · quiet since \d\d:\d\d<\/span><\/span>/);
+  assert.doesNotMatch(html, /data-f="clock"/);
+  assert.doesNotMatch(text(html), /Ran /);
+});
+
+test('an active run\'s header clock ticks and does not say the run is quiet', () => {
+  const html = headerHtml(context(exampleSnapshot()));
+  assert.equal(exampleSnapshot().run.quietSince, null);
+  assert.match(html, /<span class="v l"><span data-t="1791809280000" data-f="clock">/);
+  assert.doesNotMatch(html, /quiet/);
 });
 
 test('a finished run stops the clock of a unit that has no end of its own', () => {

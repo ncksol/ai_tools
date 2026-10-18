@@ -1,7 +1,7 @@
-import { ago, costHtml, costText, dur, elapsed, esc, liveTime, plainText, runningFor } from './format.mjs';
+import { ago, costHtml, costText, dur, elapsed, esc, liveTime, plainText, runningFor, timeOfDay } from './format.mjs';
 import {
   CARD_FADE_MS, COUNT_TILES, MODE_WORDS, NEED_CLASS, NEED_LABELS, STAGE_NAMES, cardTimeLeft, cardUnits, closedNotMerged, isSubagent, needItems,
-  omittedSubagents, progressPercent, reportKind, reportTitle, runEnd, sharePercent, unitEnd,
+  omittedSubagents, progressPercent, reportKind, reportTitle, runClockEnd, runEnd, sharePercent, unitEnd,
 } from './model.mjs';
 import { badge, bar, chipsHtml, closedBadge, feedList, meter, monitorHtml, reportClass, ring, stageTrack, stateLineHtml } from './parts.mjs';
 
@@ -14,10 +14,14 @@ import { badge, bar, chipsHtml, closedBadge, feedList, meter, monitorHtml, repor
 export function headerHtml({ snapshot, now, phaseMs }) {
   const { run, orchestrator, counts, cost } = snapshot;
   const ended = runEnd(snapshot);
+  // A live run with nothing active stops its clock at its last activity and says so; it ticks again once work resumes.
+  const stopped = runClockEnd(snapshot);
+  const clock = stopped === null ? liveTime(run.startedAt, now, 'clock') : dur(stopped - run.startedAt, 'clock');
+  const quiet = ended === null && stopped !== null ? `<span class="v-note"> · quiet since ${timeOfDay(stopped)}</span>` : '';
   const tiles = COUNT_TILES.map(([bucket, state]) => `<div class="tile st-${state}"><span class="v">${counts[bucket]}</span><span class="k"><span class="dot"></span>${bucket}</span></div>`).join('');
   return `<div class="d-head">`
     + `<div class="d-id">${ring(orchestrator.status, orchestrator.label, phaseMs)}<div class="b-who"><div class="d-name">${esc(run.name)}</div><div class="small muted">Orchestrator${run.project ? ` · ${esc(run.project.name)}` : ''}</div></div></div>`
-    + `<div class="d-facts"><div class="kv"><span class="k">${ended ? 'Ran' : 'Running'}</span><span class="v l">${ended ? dur(ended - run.startedAt, 'clock') : liveTime(run.startedAt, now, 'clock')}</span></div>`
+    + `<div class="d-facts"><div class="kv"><span class="k">${ended ? 'Ran' : 'Running'}</span><span class="v l">${clock}${quiet}</span></div>`
     + `<div class="kv"><span class="k">Swarm cost</span><span class="v l">${costHtml(cost.credits, true)}</span></div></div>`
     + `<div class="d-counts" role="group" aria-label="Child sessions and sub-agents by state">${tiles}</div></div>`;
 }

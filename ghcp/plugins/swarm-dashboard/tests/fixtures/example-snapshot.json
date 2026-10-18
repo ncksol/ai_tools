@@ -11,6 +11,7 @@
     "lastActivityAt": 1792065540000,
     "lifecycle": "live",
     "finishedAt": null,
+    "quietSince": null,
     "stalled": null,
     "contract": { "registry": true, "statusLines": true, "questionTags": true }
   },
