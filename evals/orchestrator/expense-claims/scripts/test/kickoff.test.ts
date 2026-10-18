@@ -46,6 +46,8 @@ test("a kickoff that quotes the spec fails", () => {
   const line = spec.split("\n").find((l) => l.split(/\s+/).length > 12) ?? "";
   problem(`${base} ${line}`, /embeds spec text/);
   problem(`${base}\n\n## General rules`, /markdown heading/);
+  problem(`${base} export function evaluatePolicy(expenses: Expense[]): Violation[];`, /embeds a spec line/);
+  problem(`${base}\n\n\`\`\`\nnpm test\n\`\`\``, /code fence/);
 });
 
 test("a kickoff that names a feature or counts them fails", () => {
@@ -53,6 +55,8 @@ test("a kickoff that names a feature or counts them fails", () => {
   problem(`${base} Do csv import last.`, /names the feature "CSV import"/);
   problem(`${base} Build all four features.`, /feature count/);
   problem(`${base} There are 3 v2 features.`, /feature count/);
+  problem(`${base} Build its four-feature scope.`, /feature count/);
+  problem(`${base} Build all four required v2 features.`, /feature count/);
 });
 
 test("a kickoff that mentions the kit fails", () => {

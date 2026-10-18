@@ -230,7 +230,7 @@ evals/orchestrator/expense-claims/
 - The suite passes 100% on the reference. On the seed, the v1 regression tests pass and every v2 test fails.
 - Every suite assertion maps to a statement in `spec-v2.md` or the seed README.
 - `new-run --dry-run` produces a repo with only seed content: no acceptance, reference or results files.
-- The kickoff is at most 800 characters, points at `docs/spec-v2.md`, shares no run of eight words with the spec, names no feature, gives no feature count, and mentions nothing about the hidden suite, the reference, scoring or the kit. It passes these checks against the full spec and against the spec without Summary, and `new-run` copies it unchanged for every feature set.
+- The kickoff is at most 800 characters, points at `docs/spec-v2.md`, shares no run of eight words and no whole line with the spec, has no markdown heading or code fence, names no feature, gives no feature count, and mentions nothing about the hidden suite, the reference, scoring or the kit. It passes these checks against the full spec and against the spec without Summary, and `new-run` copies it unchanged for every feature set.
 - `score` works against a local reference checkout and computes timing from a real session event log.
 - No GitHub repo is created during the build without the user's approval.
 - Calibrating the timing needs real runs, which the user starts as top-level sessions (**Decided by the user**: top-level only). The builder can't do this step.

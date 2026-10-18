@@ -225,6 +225,6 @@ If you change `kickoff.md`, keep it to a few plain-text lines. `npm test` and `n
 
 - is at most 800 characters (`KICKOFF_MAX_CHARS` in `scripts/lib/kickoff.ts`);
 - points at `docs/spec-v2.md`;
-- shares no run of eight words with the spec and has no markdown heading;
+- shares no run of eight words and no whole line with the spec, and has no markdown heading or code fence;
 - names no feature and gives no feature count;
 - says nothing about the hidden suite, the reference, scoring or the kit.
