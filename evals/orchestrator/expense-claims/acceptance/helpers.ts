@@ -79,7 +79,8 @@ async function launch(port: number): Promise<Api> {
       try {
         const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(Math.min(1000, left)) });
         await res.body?.cancel();
-        if (res.ok) break;
+        // Another process may hold the port and answer; only a still-running child counts as ready.
+        if (res.ok && running()) break;
       } catch {
         // not listening yet, or the probe timed out
       }

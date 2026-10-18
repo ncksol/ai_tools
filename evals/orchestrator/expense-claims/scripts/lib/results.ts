@@ -61,6 +61,20 @@ export function appendResult(path: string, row: ResultRow): void {
   appendFileSync(path, toCsvLine(RESULT_COLUMNS.map((column) => row[column])) + "\n");
 }
 
+export const sameRun = (row: ResultRow, repo: string, run: string): boolean => row.repo === repo && row.run === run;
+
+// Rewrites the file without the rows for this repo and run, then adds `row` at the end.
+export function replaceResult(path: string, repo: string, run: string, row: ResultRow): void {
+  const kept = readResults(path).filter((other) => !sameRun(other, repo, run));
+  const lines = [RESULT_COLUMNS.join(","), ...[...kept, row].map((r) => toCsvLine(RESULT_COLUMNS.map((column) => r[column])))];
+  writeFileSync(path, lines.join("\n") + "\n");
+}
+
+// A run is a calibration run when it is the first row of its variant and uses the full feature set.
+export function defaultCalibration(earlier: ResultRow[], variant: string, features: string): "yes" | "no" {
+  return features === FULL_SET && !earlier.some((row) => row.variant === variant) ? "yes" : "no";
+}
+
 export function median(values: number[]): number | null {
   if (values.length === 0) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -82,17 +96,19 @@ export interface Summary {
   groups: VariantSummary[];
 }
 
-// Spec "Sizing": the first run of each variant (calibration = yes) forms the calibration batch, and
-// the batch median uses every one of them. Finished runs (passed, gate-failed) count with their
-// minutes; unfinished runs (timeout, stalled) count as longer than any finished run. If the batch
-// median is 30 minutes or less, calibration runs count as scored runs. The per-variant comparison
+// Spec "Sizing": the first full-feature-set run of each variant (calibration = yes) forms the
+// calibration batch, and the batch median uses every one of them. Finished runs (passed,
+// gate-failed) count with their minutes; unfinished runs (timeout, stalled) count as longer than
+// any finished run. If the batch median is 30 minutes or less, the batch counts as scored runs;
+// otherwise only the batch is left out, and every other row counts. The per-variant comparison
 // below still uses passed runs only.
 export function summarize(rows: ResultRow[]): Summary {
-  const batch = rows.filter((row) => row.calibration === "yes" && row.features === FULL_SET);
+  const inBatch = (row: ResultRow) => row.calibration === "yes" && row.features === FULL_SET;
+  const batch = rows.filter(inBatch);
   const times = batch.map((row) => (row.outcome === "passed" || row.outcome === "gate-failed" ? Number(row.minutes) : Infinity));
   const batchMedian = median(times);
   const counted = batchMedian !== null && batchMedian <= CALIBRATION_LIMIT_MINUTES;
-  const scored = rows.filter((row) => row.calibration !== "yes" || counted);
+  const scored = rows.filter((row) => !inBatch(row) || counted);
   const groups = new Map<string, ResultRow[]>();
   for (const row of rows) {
     const key = `${row.features}\u0000${row.variant}`;

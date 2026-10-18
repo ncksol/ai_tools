@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ALL_FEATURES, featureSetName, parseFeatures } from "../lib/features.ts";
-import { KIT_DIR, parseTap, suiteFiles } from "../lib/suite.ts";
+import { KIT_DIR, parseTap, suiteArgs, suiteFiles } from "../lib/suite.ts";
 
 test("parseFeatures keeps canonical order and drops duplicates", () => {
   assert.deepEqual(parseFeatures("summary, policy,policy"), ["policy", "summary"]);
@@ -33,6 +33,12 @@ test("suiteFiles lists v1 then the features", () => {
   ]);
   assert.ok(suiteFiles([])[0].startsWith("/"));
   assert.ok(KIT_DIR.endsWith(join("evals", "orchestrator", "expense-claims")));
+});
+
+test("suiteArgs runs the files one at a time", () => {
+  const args = suiteArgs(["a.test.ts"]);
+  assert.ok(args.includes("--test-concurrency=1"), args.join(" "));
+  assert.equal(args.at(-1), "a.test.ts");
 });
 
 const tap = [

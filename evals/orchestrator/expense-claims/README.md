@@ -103,7 +103,7 @@ Only passed runs enter the time comparison. For each variant, compare the median
 npm run score -- --summary
 ```
 
-`score` appends one row per run to `results.csv`:
+`score` appends one row per run to `results.csv`. A run is one repo and run number. If `results.csv` already has a row for it, `score` stops with exit code 2 before it runs anything. To score the run again, for example after a mistake, add `--replace`: the new row then replaces the old one.
 
 | Column | Meaning |
 |---|---|
@@ -113,8 +113,8 @@ npm run score -- --summary
 | `repo` | The GitHub repo (`owner/name`) from the clone's `origin`, or the folder name if there is no GitHub remote. |
 | `session` | The orchestrator session id, or `manual` for [manual timing](#manual-timing). |
 | `agent` | The agent the session was started with, from the event log. Empty with manual timing. |
-| `features` | The feature set, for example `policy+reports+import+summary`. `score` reads it from `docs/spec-v2.md` on `main`; `--features` overrides it. |
-| `calibration` | `yes` for the first row of this variant in `results.csv`, otherwise `no`. `--calibration yes\|no` overrides it. |
+| `features` | The feature set, for example `policy+reports+import+summary`. `score` reads it from `docs/spec-v2.md` in the run repo's first commit, the `Seed v1` commit from `new-run`, so a run can't shrink its own gate. If the spec on `main` lists a different set, `score` says so in `note`. `--features` overrides it. |
+| `calibration` | `yes` for the first row of this variant in `results.csv` if the run has the full feature set, otherwise `no`. `--calibration yes\|no` overrides it. |
 | `outcome` | `passed`, `gate-failed`, `timeout` or `stalled`. |
 | `minutes` | The score: `wall_minutes` minus `blocked_minutes`. |
 | `wall_minutes` | Minutes from the kickoff to the final report, or to when `score` ran for `timeout` and `stalled`. |
@@ -133,7 +133,7 @@ Commit `results.csv` after each run, so the history across agent versions is kep
 
 ## Calibration
 
-The first run of each variant is its calibration run; `score` marks it `calibration` = `yes`. When every variant has one, look at the median of all of them (`npm run score -- --summary` prints it):
+The first full-feature-set run of each variant is its calibration run; `score` marks it `calibration` = `yes`. When every variant has one, look at the median of all of them (`npm run score -- --summary` prints it):
 
 - **30 minutes or less:** the calibration runs count as scored runs. Carry on with the full feature set.
 - **Over 30 minutes:** drop Summary, once, before any scored run. Start every later run with:
@@ -142,11 +142,11 @@ The first run of each variant is its calibration run; `score` marks it `calibrat
   npm run new-run -- --variant <v> --features policy,reports,import
   ```
 
-  This removes Summary from the run repo's spec and from the kickoff file. `score` reads the feature set from the run repo's spec, and runs the suite without the Summary tests.
+  This removes Summary from the run repo's spec and from the kickoff file. `score` reads the feature set from the spec in the run repo's first commit, and runs the suite without the Summary tests. A variant whose first run comes after this has no calibration run: that run is a scored run.
 
 The calibration median uses every calibration run of the full feature set. Passed and gate-failed runs count with their minutes. Timeout and stalled runs count as longer than any finished run. Only passed runs enter the per-variant time comparison.
 
-Calibration rows stay in `results.csv`. If Summary was dropped, they are in a different feature set from the scored runs, so they are never compared with them.
+Calibration rows stay in `results.csv`. If Summary was dropped, only the full-feature-set calibration rows are left out of the summary; every other row counts. They are in a different feature set from the scored runs, so they are never compared with them.
 
 ## Manual timing
 
@@ -201,7 +201,7 @@ To run the acceptance suite on an app folder by hand:
 npm run acceptance -- --app <dir> [--features <list>] [--only <v1|feature>] [--verbose]
 ```
 
-The suite starts the app on a free port. If another process takes that port first, it retries on a new port. Each suite test has a 60-second timeout.
+The suite runs its test files one at a time. Each test starts the app on a free port. If another process takes that port first, it retries on a new port. Each suite test has a 60-second timeout.
 
 If you change `seed/docs/spec-v2.md`:
 

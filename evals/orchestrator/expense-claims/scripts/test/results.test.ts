@@ -5,10 +5,12 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 import {
   appendResult,
+  defaultCalibration,
   formatSummary,
   median,
   parseCsvText,
   readResults,
+  replaceResult,
   RESULT_COLUMNS,
   summarize,
   toCsvLine,
@@ -46,6 +48,27 @@ test("appendResult writes the header once", () => {
   assert.equal(lines.length, 3);
   assert.equal(lines[0], RESULT_COLUMNS.join(","));
   assert.deepEqual(readResults(path), [first, second]);
+});
+
+test("replaceResult drops the rows for one repo and run, keeps the rest in order and adds the new row last", () => {
+  const path = join(dir, "replace.csv");
+  const a = row({ variant: "a", run: "1", repo: "o/orch-eval-a-1", minutes: "10.0" });
+  const old = row({ variant: "b", run: "1", repo: "o/orch-eval-b-1", minutes: "30.0", note: "first, try" });
+  const c = row({ variant: "c", run: "1", repo: "o/orch-eval-c-1", minutes: "12.0" });
+  const otherRun = row({ variant: "b", run: "2", repo: "o/orch-eval-b-1", minutes: "14.0" });
+  for (const r of [a, old, c, otherRun]) appendResult(path, r);
+  const fresh = row({ variant: "b", run: "1", repo: "o/orch-eval-b-1", minutes: "25.0" });
+  replaceResult(path, "o/orch-eval-b-1", "1", fresh);
+  assert.deepEqual(readResults(path), [a, c, otherRun, fresh]);
+  assert.equal(readFileSync(path, "utf8").split("\n")[0], RESULT_COLUMNS.join(","));
+});
+
+test("defaultCalibration is yes only for a variant's first row with the full feature set", () => {
+  const earlier = [row({ variant: "A" })];
+  assert.equal(defaultCalibration(earlier, "B", FULL), "yes");
+  assert.equal(defaultCalibration(earlier, "A", FULL), "no");
+  assert.equal(defaultCalibration(earlier, "B", THREE), "no");
+  assert.equal(defaultCalibration([], "B", THREE), "no");
 });
 
 test("readResults rejects a different header", () => {
@@ -118,4 +141,18 @@ test("runs are grouped by feature set", () => {
     [FULL, 1],
     [THREE, 2],
   ]);
+});
+
+test("a slow batch leaves out only full-set calibration rows; a later three-feature row still counts", () => {
+  const summary = summarize([
+    row({ variant: "A", calibration: "yes", minutes: "40.0" }),
+    row({ variant: "B", calibration: "yes", minutes: "45.0" }),
+    row({ variant: "C", features: THREE, calibration: "yes", minutes: "20.0" }),
+    row({ variant: "C", features: THREE, minutes: "24.0" }),
+  ]);
+  assert.equal(summary.calibration.runs, 2);
+  assert.equal(summary.calibration.counted, false);
+  const c = summary.groups.find((group) => group.variant === "C" && group.features === THREE)!;
+  assert.deepEqual([c.runs, c.passed, c.medianMinutes], [2, 2, 22]);
+  assert.equal(summary.groups.find((group) => group.variant === "A")!.runs, 0);
 });

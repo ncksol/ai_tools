@@ -1,18 +1,29 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { computeTiming, EventLogError, findRunSessions, readEventLog } from "./lib/events.ts";
-import { detectFeatures, featureSetName, parseFeatures } from "./lib/features.ts";
+import { detectFeatures, featureSetName, parseFeatures, type Feature } from "./lib/features.ts";
 import { parseRunName } from "./lib/new-run.ts";
 import { run } from "./lib/proc.ts";
-import { appendResult, formatSummary, readResults, RESULT_COLUMNS, summarize, type ResultRow } from "./lib/results.ts";
+import {
+  appendResult,
+  defaultCalibration,
+  formatSummary,
+  readResults,
+  replaceResult,
+  RESULT_COLUMNS,
+  sameRun,
+  summarize,
+  type ResultRow,
+} from "./lib/results.ts";
 import { KIT_DIR, runSuite, suiteFiles } from "./lib/suite.ts";
 
 const USAGE = `Usage:
   npm run score -- --repo-dir <run clone> [--session <id>] [--state-dir <dir>] [--variant <name>] [--n <k>]
                    [--features <list>] [--outcome <timeout|stalled>] [--calibration <yes|no>] [--results <csv>]
                    [--no-github] [--start <iso> --end <iso> [--blocked-min <m>] [--questions <n>]] [--note <text>]
+                   [--replace]
   npm run score -- --summary [--results <csv>]`;
 const TIMEOUT_MS = 90 * 60_000;
 
@@ -36,6 +47,7 @@ const { values } = parseArgs({
     "blocked-min": { type: "string" },
     questions: { type: "string" },
     note: { type: "string" },
+    replace: { type: "boolean", default: false },
   },
 });
 
@@ -144,6 +156,16 @@ async function githubStats(slug: string, cloneDir: string, warnings: string[]): 
   return { prsMerged, mainCi };
 }
 
+// The feature set the run started with: the spec in the run repo's first commit (new-run's "Seed v1").
+// The evaluated main can change its own spec, so it must not decide which tests gate it.
+async function seedFeatures(repoDir: string): Promise<Feature[] | null> {
+  const roots = await run("git", ["-C", repoDir, "rev-list", "--max-parents=0", "HEAD"]);
+  const root = roots.code === 0 ? roots.stdout.trim().split("\n").pop() : undefined;
+  if (!root) return null;
+  const spec = await run("git", ["-C", repoDir, "show", `${root}:docs/spec-v2.md`]);
+  return spec.code === 0 ? detectFeatures(spec.stdout) : null;
+}
+
 async function main(): Promise<number> {
   const resultsPath = resolve(values.results);
   if (values.summary) {
@@ -171,6 +193,18 @@ async function main(): Promise<number> {
   const origin = await run("git", ["-C", repoDir, "remote", "get-url", "origin"]);
   const slug = origin.code === 0 ? githubSlug(origin.stdout) : null;
   const github = values["no-github"] ? null : slug;
+  const repo = slug ?? basename(repoDir);
+  const runId = String(n);
+
+  const replaced = earlier.filter((row) => sameRun(row, repo, runId));
+  if (replaced.length > 0 && !values.replace) {
+    console.error(
+      `${resultsPath} already has a row for ${repo} run ${runId}, scored ${replaced[0].date}. To score it again, rerun with --replace; the new row replaces the old one.`,
+    );
+    return 2;
+  }
+  const others = earlier.filter((row) => !sameRun(row, repo, runId));
+  const seeded = features === undefined ? await seedFeatures(repoDir) : null;
 
   let timing: RunTiming;
   if (values.start) {
@@ -200,22 +234,41 @@ async function main(): Promise<number> {
     if (clone.code !== 0) throw new Error(`Cloning main failed: ${clone.stderr.trim()}`);
     console.log(github ? `Cloned main of ${github}` : `Cloned main of the local repo ${repoDir}`);
 
-    const runFeatures = features ?? detectFeatures(readFileSync(join(cloneDir, "docs", "spec-v2.md"), "utf8"));
+    const warnings = [...timing.warnings];
+    let runFeatures: Feature[];
+    if (features) {
+      runFeatures = features;
+    } else {
+      const mainSpec = join(cloneDir, "docs", "spec-v2.md");
+      const onMain = existsSync(mainSpec) ? detectFeatures(readFileSync(mainSpec, "utf8")) : null;
+      if (seeded) {
+        runFeatures = seeded;
+        const mainName = onMain ? featureSetName(onMain) : null;
+        if (mainName !== featureSetName(seeded)) {
+          warnings.push(`spec on main ${mainName ? `lists ${mainName}` : "is missing"}; scored against the seed's ${featureSetName(seeded)}`);
+        }
+      } else if (onMain) {
+        runFeatures = onMain;
+        warnings.push("the run repo's first commit has no docs/spec-v2.md; scored against the spec on main");
+      } else {
+        throw new Error("Neither the run repo's first commit nor main has docs/spec-v2.md; pass --features");
+      }
+    }
+    for (const warning of warnings.slice(timing.warnings.length)) console.log(`Warning: ${warning}`);
     console.log(`Running the acceptance suite for ${featureSetName(runFeatures)}...`);
     const suite = await runSuite(cloneDir, suiteFiles(runFeatures));
     console.log(`Suite: ${suite.passed}/${suite.total} passed`);
     for (const name of suite.failures) console.log(`FAIL ${name}`);
 
-    const warnings = [...timing.warnings];
     const { prsMerged, mainCi } = github ? await githubStats(github, cloneDir, warnings) : { prsMerged: "n/a", mainCi: "n/a" };
 
     const outcome = values.outcome ?? (timing.wallMs > TIMEOUT_MS ? "timeout" : suite.ok ? "passed" : "gate-failed");
-    const calibration = values.calibration ?? (earlier.some((row) => row.variant === variant) ? "no" : "yes");
+    const calibration = values.calibration ?? defaultCalibration(others, variant, featureSetName(runFeatures));
     const row: ResultRow = {
       date: new Date().toISOString(),
       variant,
-      run: String(n),
-      repo: slug ?? basename(repoDir),
+      run: runId,
+      repo,
       session: timing.session,
       agent: timing.agent,
       features: featureSetName(runFeatures),
@@ -234,9 +287,10 @@ async function main(): Promise<number> {
       copilot_version: timing.copilotVersion,
       note: values.note ?? warnings.join("; "),
     };
-    appendResult(resultsPath, row);
+    if (replaced.length > 0) replaceResult(resultsPath, repo, runId, row);
+    else appendResult(resultsPath, row);
 
-    console.log(`\nAppended to ${resultsPath}:`);
+    console.log(`\n${replaced.length > 0 ? "Replaced the earlier row in" : "Appended to"} ${resultsPath}:`);
     for (const column of RESULT_COLUMNS) console.log(`  ${column}: ${row[column]}`);
     console.log(`\n${formatSummary(summarize(readResults(resultsPath)))}`);
     console.log(`\nNow check for user-level memories saved during this run (README "Memory hygiene") and remove eval-related ones.`);
