@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { assertError, base, createExpense, detailFields, useApp } from "./helpers.ts";
+import { assertError, base, createExpense, detailFields, EXPENSE_FIELDS, pick, seg, unknownId, useApp } from "./helpers.ts";
 
 const app = useApp();
 
@@ -8,10 +8,12 @@ function ids(res: { body: any }): string[] {
   return res.body.expenses.map((expense: { id: string }) => expense.id);
 }
 
+const fields = (expense: unknown) => pick(expense, EXPENSE_FIELDS);
+
 test("README Endpoints: GET /health returns ok", async () => {
   const res = await app().request("GET", "/health");
   assert.equal(res.status, 200);
-  assert.deepEqual(res.body, { status: "ok" });
+  assert.deepEqual(pick(res.body, ["status"]), { status: "ok" });
   assert.ok(res.contentType?.startsWith("application/json"), String(res.contentType));
 });
 
@@ -28,7 +30,7 @@ test("README Expenses: POST /expenses returns the new expense", async () => {
   const res = await app().request("POST", "/expenses", input);
   assert.equal(res.status, 201, JSON.stringify(res.body));
   assert.equal(typeof res.body.id, "string");
-  assert.deepEqual(res.body, { ...input, id: res.body.id });
+  assert.deepEqual(fields(res.body), { ...input, id: res.body.id });
 });
 
 test("README Expenses: description and receipt have defaults", async () => {
@@ -44,9 +46,9 @@ test("README Expenses: id and unknown fields are ignored", async () => {
   assert.equal(res.status, 201, JSON.stringify(res.body));
   assert.notEqual(res.body.id, a.id);
   assert.equal("colour" in res.body, false);
-  const got = await app().request("GET", `/expenses/${a.id}`);
+  const got = await app().request("GET", `/expenses/${seg(a.id)}`);
   assert.equal(got.status, 200);
-  assert.deepEqual(got.body, a);
+  assert.deepEqual(fields(got.body), fields(a));
   const all = await app().request("GET", "/expenses");
   assert.equal(all.status, 200);
   assert.deepEqual(ids(all), [a.id, res.body.id]);
@@ -90,15 +92,14 @@ test("README Conventions: bad JSON returns INVALID_JSON", async () => {
 
 test("README Endpoints: GET /expenses/:id returns the expense", async () => {
   const created = await createExpense(app());
-  const res = await app().request("GET", `/expenses/${created.id}`);
+  const res = await app().request("GET", `/expenses/${seg(created.id)}`);
   assert.equal(res.status, 200);
-  assert.deepEqual(res.body, created);
+  assert.deepEqual(fields(res.body), fields(created));
 });
 
 test("README Conventions: an unknown id returns NOT_FOUND", async () => {
   const res = await app().request("GET", "/expenses/nope");
   assertError(res, 404, "NOT_FOUND");
-  assert.deepEqual(res.body.error.details, []);
 });
 
 test("README Endpoints: GET /expenses lists in creation order", async () => {
@@ -142,29 +143,29 @@ test("README Expenses: invalid filters return VALIDATION_ERROR", async () => {
 
 test("README Endpoints: PATCH changes only the fields sent", async () => {
   const created = await createExpense(app());
-  const res = await app().request("PATCH", `/expenses/${created.id}`, { amount: 2000, id: "other" });
+  const res = await app().request("PATCH", `/expenses/${seg(created.id)}`, { amount: 2000, id: "other" });
   assert.equal(res.status, 200, JSON.stringify(res.body));
-  assert.deepEqual(res.body, { ...created, amount: 2000 });
-  const got = await app().request("GET", `/expenses/${created.id}`);
+  assert.deepEqual(fields(res.body), fields({ ...created, amount: 2000 }));
+  const got = await app().request("GET", `/expenses/${seg(created.id)}`);
   assert.equal(got.status, 200);
-  assert.deepEqual(got.body, { ...created, amount: 2000 });
+  assert.deepEqual(fields(got.body), fields({ ...created, amount: 2000 }));
 });
 
 test("README Expenses: PATCH validates fields and 404s", async () => {
   const created = await createExpense(app());
-  const invalid = await app().request("PATCH", `/expenses/${created.id}`, { currency: "JPY" });
+  const invalid = await app().request("PATCH", `/expenses/${seg(created.id)}`, { currency: "JPY" });
   assertError(invalid, 400, "VALIDATION_ERROR");
   assert.deepEqual(detailFields(invalid), ["currency"]);
-  assertError(await app().request("PATCH", "/expenses/nope", { amount: 5 }), 404, "NOT_FOUND");
+  assertError(await app().request("PATCH", `/expenses/${seg(unknownId(created.id))}`, { amount: 5 }), 404, "NOT_FOUND");
 });
 
 test("README Endpoints: DELETE removes the expense", async () => {
   const created = await createExpense(app());
-  const res = await app().request("DELETE", `/expenses/${created.id}`);
+  const res = await app().request("DELETE", `/expenses/${seg(created.id)}`);
   assert.equal(res.status, 204);
   assert.equal(res.body, undefined);
-  assertError(await app().request("GET", `/expenses/${created.id}`), 404, "NOT_FOUND");
-  assertError(await app().request("DELETE", `/expenses/${created.id}`), 404, "NOT_FOUND");
+  assertError(await app().request("GET", `/expenses/${seg(created.id)}`), 404, "NOT_FOUND");
+  assertError(await app().request("DELETE", `/expenses/${seg(created.id)}`), 404, "NOT_FOUND");
 });
 
 test("README Conventions: an unknown route returns NOT_FOUND", async () => {

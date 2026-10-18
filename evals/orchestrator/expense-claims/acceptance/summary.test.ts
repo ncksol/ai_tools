@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { assertError, createExpense, detailFields, useApp, type Res } from "./helpers.ts";
+import { assertError, createExpense, detailFields, pick, useApp, type Res } from "./helpers.ts";
 
 const app = useApp();
 
 function summary(query: string): Promise<Res> {
   return app().request("GET", `/summary?${query}`);
+}
+
+// The documented properties of a summary, including the four categories.
+function documented(body: any): Record<string, unknown> {
+  return { ...pick(body, ["month", "currency", "count", "total"]), categories: pick(body?.categories, ["meals", "travel", "lodging", "other"]) };
 }
 
 test("S2 S4 totals per category for the month", async () => {
@@ -16,7 +21,7 @@ test("S2 S4 totals per category for the month", async () => {
   await createExpense(app(), { category: "other", amount: 777, currency: "GBP", date: "2026-04-01" });
   const res = await summary("month=2026-03&currency=GBP");
   assert.equal(res.status, 200, JSON.stringify(res.body));
-  assert.deepEqual(res.body, {
+  assert.deepEqual(documented(res.body), {
     month: "2026-03",
     currency: "GBP",
     count: 3,
@@ -50,7 +55,7 @@ test("S3 converts into the requested currency", async () => {
 test("S4 a month with no expenses", async () => {
   const res = await summary("month=2026-07&currency=USD");
   assert.equal(res.status, 200, JSON.stringify(res.body));
-  assert.deepEqual(res.body, {
+  assert.deepEqual(documented(res.body), {
     month: "2026-07",
     currency: "USD",
     count: 0,

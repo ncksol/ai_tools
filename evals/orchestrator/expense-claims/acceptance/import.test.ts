@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { assertError, detailFields, useApp, type Res } from "./helpers.ts";
+import { assertError, detailFields, EXPENSE_FIELDS, pick, useApp, type Res } from "./helpers.ts";
 
 const app = useApp();
 
 const ALL_COLUMNS = "date,merchant,category,amount,currency,description,receipt";
 const REQUIRED_COLUMNS = "date,merchant,category,amount,currency";
+
+const fields = (expense: unknown) => pick(expense, EXPENSE_FIELDS);
 
 function importCsv(text: string, type = "text/csv"): Promise<Res> {
   return app().request("POST", "/expenses/import", text, type);
@@ -38,7 +40,7 @@ test("I3 I9 I10 imports valid rows", async () => {
   const body = assertImported(await importCsv(csv));
   assert.equal(body.created.length, 2);
   assert.deepEqual(body.errors, []);
-  assert.deepEqual(await list(), [
+  assert.deepEqual((await list()).map(fields), [
     {
       id: body.created[0],
       date: "2026-03-04",
@@ -67,7 +69,7 @@ test("I3 columns in any order, unknown columns ignored, optional columns absent"
   const body = assertImported(await importCsv(csv));
   assert.equal(body.created.length, 1);
   assert.deepEqual(body.errors, []);
-  assert.deepEqual(await list(), [
+  assert.deepEqual((await list()).map(fields), [
     {
       id: body.created[0],
       date: "2026-03-06",
@@ -206,5 +208,5 @@ test("I2 CRLF line endings and no final line break", async () => {
 test("I10 a header-only file creates nothing", async () => {
   const res = await importCsv(`${REQUIRED_COLUMNS}\n`);
   assert.equal(res.status, 200, JSON.stringify(res.body));
-  assert.deepEqual(res.body, { created: [], errors: [] });
+  assert.deepEqual(pick(res.body, ["created", "errors"]), { created: [], errors: [] });
 });

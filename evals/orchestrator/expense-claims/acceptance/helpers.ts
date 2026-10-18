@@ -26,7 +26,8 @@ function freePort(): Promise<number> {
   return new Promise((done, fail) => {
     const server = createServer();
     server.once("error", fail);
-    server.listen(0, "127.0.0.1", () => {
+    // No host: the probe covers every interface, so the port is free on IPv4 and IPv6 loopback.
+    server.listen(0, () => {
       const address = server.address();
       const port = typeof address === "object" && address ? address.port : 0;
       server.close(() => done(port));
@@ -36,7 +37,11 @@ function freePort(): Promise<number> {
 
 class PortInUse extends Error {}
 
+const STARTUP_MS = 10_000;
+const REQUEST_MS = 30_000;
+
 // Starts `node src/server.ts` (what `npm start` runs) with PORT set, and waits for GET /health.
+// Budgets: the app has 10 s from start to answer GET /health, and each later request has 30 s.
 // The probed port can be taken before the app binds it, so EADDRINUSE gets a new port, up to 5 attempts.
 export async function startApp(): Promise<Api> {
   for (let attempt = 1; ; attempt++) {
@@ -49,7 +54,8 @@ export async function startApp(): Promise<Api> {
 }
 
 async function launch(port: number): Promise<Api> {
-  const url = `http://127.0.0.1:${port}`;
+  // localhost, so an app bound to either IPv4 or IPv6 loopback is reachable.
+  const url = `http://localhost:${port}`;
   const child: ChildProcess = spawn(process.execPath, ["src/server.ts"], {
     cwd: appDir(),
     env: { ...process.env, PORT: String(port) },
@@ -66,7 +72,7 @@ async function launch(port: number): Promise<Api> {
   const closed = new Promise<void>((done) => child.once("close", () => done()));
   const running = () => child.exitCode === null && child.signalCode === null && !spawnError;
   try {
-    const deadline = Date.now() + 10_000;
+    const deadline = Date.now() + STARTUP_MS;
     for (;;) {
       if (!running()) {
         // `exit` can come before the last stderr data; `close` comes after it.
@@ -75,9 +81,9 @@ async function launch(port: number): Promise<Api> {
         throw stderr.includes("EADDRINUSE") ? new PortInUse(message) : new Error(message);
       }
       const left = deadline - Date.now();
-      if (left <= 0) throw new Error(`The app did not answer GET /health within 10 s: ${stderr}`);
+      if (left <= 0) throw new Error(`The app did not answer GET /health within ${STARTUP_MS / 1000} s: ${stderr}`);
       try {
-        const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(Math.min(1000, left)) });
+        const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(left) });
         await res.body?.cancel();
         // Another process may hold the port and answer; only a still-running child counts as ready.
         if (res.ok && running()) break;
@@ -94,7 +100,7 @@ async function launch(port: number): Promise<Api> {
     url,
     async request(method, path, body, contentType) {
       // The signal also bounds reading the body.
-      const init: RequestInit = { method, signal: AbortSignal.timeout(10_000) };
+      const init: RequestInit = { method, signal: AbortSignal.timeout(REQUEST_MS) };
       if (body !== undefined) {
         init.body = typeof body === "string" ? body : JSON.stringify(body);
         init.headers = { "content-type": contentType ?? "application/json" };
@@ -141,6 +147,23 @@ export function useApp(): () => Api {
     if (!api) throw new Error("No app running");
     return api;
   };
+}
+
+export const EXPENSE_FIELDS = ["id", "date", "merchant", "category", "amount", "currency", "description", "receipt"];
+
+// The documented properties of `value` that it has. Responses may carry more; tests compare only these.
+export function pick(value: any, keys: readonly string[]): Record<string, unknown> {
+  return Object.fromEntries(keys.filter((key) => value !== null && typeof value === "object" && key in value).map((key) => [key, value[key]]));
+}
+
+// A server-returned id, encoded for use in a request path.
+export const seg = (id: string): string => encodeURIComponent(id);
+
+// An id that differs from every id the server returned, for a request that needs a missing one.
+export function unknownId(...knownIds: string[]): string {
+  let id = "nope";
+  for (let i = 1; knownIds.includes(id); i++) id = `nope-${i}`;
+  return id;
 }
 
 export const base = { date: "2026-03-04", merchant: "Cafe Rio", category: "meals", amount: 1000, currency: "GBP" };

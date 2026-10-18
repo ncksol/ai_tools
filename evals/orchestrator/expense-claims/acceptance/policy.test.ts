@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { assertError, createExpense, detailFields, useApp, type Res } from "./helpers.ts";
+import { assertError, createExpense, detailFields, pick, unknownId, useApp, type Res } from "./helpers.ts";
 
 const app = useApp();
 
@@ -114,7 +114,7 @@ test("P6 P7 an empty list gives no violations", async () => {
   await id({ category: "travel", amount: 9999, date: SAT });
   const res = await check([]);
   assert.equal(res.status, 200, JSON.stringify(res.body));
-  assert.deepEqual(res.body, { violations: [] });
+  assert.deepEqual(pick(res.body, ["violations"]), { violations: [] });
 });
 
 test("P9 expenseIds must be an array of strings", async () => {
@@ -129,5 +129,5 @@ test("P10 an unknown expense id returns NOT_FOUND", async () => {
   const a = await id({});
   // P8: the known id alone is checked, so the 404 below comes from the unknown id, not a missing route.
   assertViolations(await check([a]), []);
-  assertError(await check([a, "nope"]), 404, "NOT_FOUND");
+  assertError(await check([a, unknownId(a)]), 404, "NOT_FOUND");
 });
