@@ -1,4 +1,4 @@
-import { cpSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { ALL_FEATURES, stripFeatures, type Feature } from "./features.ts";
 import { run, type ProcResult } from "./proc.ts";
@@ -69,6 +69,9 @@ async function git(repoDir: string, args: string[]): Promise<string> {
 
 export async function newRun(opts: NewRunOptions, deps: NewRunDeps): Promise<NewRunResult> {
   if (!/^[a-z0-9][a-z0-9-]*$/.test(opts.variant)) throw new Error(`Variant "${opts.variant}" must be lowercase letters, digits and hyphens`);
+  if (opts.n !== undefined && !(Number.isSafeInteger(opts.n) && opts.n > 0)) {
+    throw new Error(`Run number "${opts.n}" must be a positive integer`);
+  }
   const n = opts.n ?? nextRunNumber(opts.runsDir, opts.variant);
   const name = runName(opts.variant, n);
   const slug = `${opts.owner}/${name}`;
@@ -89,6 +92,13 @@ export async function newRun(opts: NewRunOptions, deps: NewRunDeps): Promise<New
   }
 
   const seedDir = join(KIT_DIR, "seed");
+  mkdirSync(opts.runsDir, { recursive: true });
+  try {
+    mkdirSync(repoDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`${repoDir} already exists`);
+    throw error;
+  }
   cpSync(seedDir, repoDir, { recursive: true, filter: (src) => !SKIP.has(src.split(/[\\/]/).pop() ?? "") });
   if (opts.features.length !== ALL_FEATURES.length) {
     const specPath = join(repoDir, "docs", "spec-v2.md");

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
@@ -91,4 +91,31 @@ test("an existing run folder is never overwritten", async () => {
   mkdirSync(join(runsDir, "orch-eval-t-9"));
   const { gh } = fakeGh({});
   await assert.rejects(newRun({ variant: "t", n: 9, features: ALL_FEATURES, owner: "ncksol", runsDir, dryRun: true }, { gh, log }));
+});
+
+test("an invalid run number is rejected before any side effect", async () => {
+  for (const n of [NaN, -1, 1.5]) {
+    const { gh, calls } = fakeGh({});
+    await assert.rejects(newRun({ variant: "badn", n, features: ALL_FEATURES, owner: "ncksol", runsDir, dryRun: false }, { gh, log }), /positive integer/);
+    assert.equal(calls.length, 0);
+  }
+  assert.deepEqual(readdirSync(runsDir).filter((e) => e.startsWith("orch-eval-badn")), []);
+});
+
+test("a destination that appears during the gh checks is never overwritten", async () => {
+  const repoDir = join(runsDir, "orch-eval-race-1");
+  const calls: string[][] = [];
+  const gh = async (args: string[]): Promise<ProcResult> => {
+    calls.push(args);
+    if (args[0] === "api") {
+      mkdirSync(repoDir);
+      writeFileSync(join(repoDir, "marker.txt"), "keep");
+      return ok("ncksol\n");
+    }
+    return { code: 1, stdout: "", stderr: "not found" };
+  };
+  await assert.rejects(newRun({ variant: "race", n: 1, features: ALL_FEATURES, owner: "ncksol", runsDir, dryRun: false }, { gh, log }), /already exists/);
+  assert.ok(!calls.some((c) => c[0] === "repo" && c[1] === "create"));
+  assert.equal(readFileSync(join(repoDir, "marker.txt"), "utf8"), "keep");
+  assert.deepEqual(readdirSync(repoDir), ["marker.txt"]);
 });
