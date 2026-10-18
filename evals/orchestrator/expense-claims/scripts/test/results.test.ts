@@ -81,12 +81,30 @@ test("a slow calibration batch is left out and says to drop Summary", () => {
     row({ variant: "B", calibration: "yes", outcome: "timeout", minutes: "90.0" }),
     row({ variant: "C", calibration: "yes", outcome: "stalled", minutes: "40.0" }),
   ]);
+  assert.equal(summary.calibration.median, Infinity);
   assert.equal(summary.calibration.counted, false);
   const text = formatSummary(summary);
   assert.doesNotMatch(text, /Infinity/);
   assert.match(text, /drop Summary/);
   assert.match(text, /--features policy,reports,import/);
   assert.equal(summary.groups.find((group) => group.variant === "A")!.runs, 0);
+});
+
+test("gate-failed and stalled first runs count in the calibration median", () => {
+  const failed = summarize([
+    row({ variant: "A", calibration: "yes", minutes: "20.0" }),
+    row({ variant: "B", calibration: "yes", outcome: "gate-failed", minutes: "45.0" }),
+    row({ variant: "C", calibration: "yes", outcome: "gate-failed", minutes: "50.0" }),
+  ]);
+  assert.equal(failed.calibration.median, 45);
+  assert.equal(failed.calibration.counted, false);
+  const stalled = summarize([
+    row({ variant: "A", calibration: "yes", minutes: "20.0" }),
+    row({ variant: "B", calibration: "yes", minutes: "22.0" }),
+    row({ variant: "C", calibration: "yes", outcome: "stalled", minutes: "5.0" }),
+  ]);
+  assert.equal(stalled.calibration.median, 22);
+  assert.equal(stalled.calibration.counted, true);
 });
 
 test("runs are grouped by feature set", () => {

@@ -93,7 +93,7 @@ function manualTiming(): RunTiming {
   };
 }
 
-function logTiming(stateDir: string, repository: string): RunTiming {
+function logTiming(stateDir: string, repository: string, endAt: number | undefined): RunTiming {
   let id = values.session;
   if (id) {
     console.log(`Session ${id} (from --session)`);
@@ -109,7 +109,7 @@ function logTiming(stateDir: string, repository: string): RunTiming {
     console.log(`Session ${id} (the oldest of ${candidates.length} session(s) for ${repository})`);
   }
   const log = readEventLog(join(stateDir, id, "events.jsonl"));
-  const timing = computeTiming(log.events);
+  const timing = computeTiming(log.events, { endAt });
   console.log(`Agent: ${timing.agent ?? "unknown"}; model: ${timing.model ?? "unknown"}, effort: ${timing.effort ?? "unknown"}`);
   return {
     session: id,
@@ -178,7 +178,9 @@ async function main(): Promise<number> {
   } else {
     const stateDir = resolve(values["state-dir"]);
     try {
-      timing = logTiming(stateDir, slug ?? `local/${basename(repoDir)}`);
+      // An unfinished run has no final report: time it to now, when it was found unfinished.
+      const endAt = values.outcome === undefined ? undefined : Date.now();
+      timing = logTiming(stateDir, slug ?? `local/${basename(repoDir)}`, endAt);
     } catch (error) {
       if (!(error instanceof EventLogError)) throw error;
       console.error(

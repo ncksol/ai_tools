@@ -39,7 +39,8 @@ const isHuman = (event: LogEvent): boolean => event.type === "user.message" && !
 
 export function readEventLog(path: string): { events: LogEvent[]; warnings: string[] } {
   if (!existsSync(path)) throw new EventLogError(`No event log at ${path}`);
-  const lines = readFileSync(path, "utf8").split("\n");
+  const text = readFileSync(path, "utf8");
+  const lines = text.split("\n");
   let last = lines.length - 1;
   while (last >= 0 && lines[last].trim() === "") last--;
   const events: LogEvent[] = [];
@@ -50,7 +51,8 @@ export function readEventLog(path: string): { events: LogEvent[]; warnings: stri
     try {
       parsed = JSON.parse(lines[i]);
     } catch {
-      if (i === last) {
+      // Only an unterminated trailing fragment is a torn write; a complete bad record is an error.
+      if (i === last && !text.endsWith("\n")) {
         warnings.push(`Ignored an incomplete last line (line ${i + 1})`);
         continue;
       }
@@ -65,21 +67,29 @@ export function readEventLog(path: string): { events: LogEvent[]; warnings: stri
   return { events, warnings };
 }
 
-export function computeTiming(events: LogEvent[]): Timing {
+// `endAt` ends the window at a given time instead of the last assistant message. Use it for runs
+// that never finished (timeout, stalled), so they are timed to when they were observed.
+export function computeTiming(events: LogEvent[], opts: { endAt?: number } = {}): Timing {
   const own = events.filter((event) => !event.agentId);
   const kickoff = own.findIndex(isHuman);
   if (kickoff < 0) throw new EventLogError("No kickoff: the session has no user.message without data.source");
-  let last = -1;
-  for (let i = own.length - 1; i > kickoff; i--) {
-    if (own[i].type === "assistant.message") {
-      last = i;
-      break;
-    }
-  }
-  if (last < 0) throw new EventLogError("No assistant.message after the kickoff");
-
   const start = at(own[kickoff]);
-  const end = at(own[last]);
+  let last = -1;
+  if (opts.endAt !== undefined) {
+    if (opts.endAt < start) throw new EventLogError("The end time is before the kickoff");
+    last = kickoff;
+    for (let i = kickoff + 1; i < own.length && at(own[i]) <= opts.endAt; i++) last = i;
+  } else {
+    for (let i = own.length - 1; i > kickoff; i--) {
+      if (own[i].type === "assistant.message") {
+        last = i;
+        break;
+      }
+    }
+    if (last < 0) throw new EventLogError("No assistant.message after the kickoff");
+  }
+
+  const end = opts.endAt ?? at(own[last]);
   const warnings: string[] = [];
   const completes = new Map<string, LogEvent>();
   for (const event of own) {
@@ -128,7 +138,7 @@ export function computeTiming(events: LogEvent[]): Timing {
   const wallMs = end - start;
   return {
     start: own[kickoff].timestamp,
-    end: own[last].timestamp,
+    end: opts.endAt === undefined ? own[last].timestamp : new Date(opts.endAt).toISOString(),
     wallMs,
     blockedMs,
     scoredMs: wallMs - blockedMs,

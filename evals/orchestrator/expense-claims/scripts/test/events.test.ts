@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { computeTiming, EventLogError, findRunSessions, readEventLog, yamlScalar } from "../lib/events.ts";
-import { basic, ev, MIN, withEvents } from "./fixtures/events.ts";
+import { BASE, basic, ev, MIN, withEvents } from "./fixtures/events.ts";
 
 let dir: string;
 before(() => {
@@ -93,6 +93,31 @@ test("an unanswered ask_user counts until the end, with a warning", () => {
   assert.equal(timing.warnings.length, 1);
 });
 
+test("an unfinished run is timed to the given end, not to its last progress message", () => {
+  const events = [
+    ev("session.start", 0, { selectedModel: "claude-opus-5.5", reasoningEffort: "max" }),
+    ev("user.message", 1),
+    ev("assistant.turn_start", 1),
+    ev("assistant.message", 2),
+    ev("tool.execution_start", 50, { toolName: "ask_user", toolCallId: "q1" }),
+  ];
+  const endAt = BASE + 95 * MIN;
+  const timing = computeTiming(events, { endAt });
+  assert.equal(timing.wallMs, 94 * MIN);
+  assert.equal(timing.end, new Date(endAt).toISOString());
+  assert.equal(timing.blockedMs, 45 * MIN);
+  assert.equal(timing.scoredMs, 49 * MIN);
+});
+
+test("with an end time, a run with no assistant message is not an error", () => {
+  const timing = computeTiming([ev("session.start", 0), ev("user.message", 1)], { endAt: BASE + 91 * MIN });
+  assert.equal(timing.wallMs, 90 * MIN);
+});
+
+test("an end time before the kickoff is an error", () => {
+  assert.throws(() => computeTiming(basic(), { endAt: BASE }), EventLogError);
+});
+
 test("no kickoff is an error", () => {
   const events = basic().filter((event) => !(event.type === "user.message" && Object.keys(event.data ?? {}).length === 0));
   assert.throws(() => computeTiming(events), EventLogError);
@@ -109,6 +134,13 @@ test("readEventLog tolerates a torn last line", () => {
   const { events, warnings } = readEventLog(path);
   assert.equal(events.length, 2);
   assert.equal(warnings.length, 1);
+});
+
+test("readEventLog rejects a malformed last line that ends with a newline", () => {
+  const path = join(dir, "bad-last.jsonl");
+  const lines = [ev("session.start", 0), ev("user.message", 1)].map((event) => JSON.stringify(event));
+  writeFileSync(path, [...lines, '{"type":"assistant.mess'].join("\n") + "\n");
+  assert.throws(() => readEventLog(path), (error: unknown) => error instanceof EventLogError && /line 3/i.test(error.message));
 });
 
 test("readEventLog rejects a bad line in the middle", () => {

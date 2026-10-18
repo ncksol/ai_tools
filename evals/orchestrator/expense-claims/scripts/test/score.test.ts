@@ -74,4 +74,13 @@ test("score times a synthetic session, runs the suite on a fresh clone and appen
   assert.equal(missing.code, 2, missing.stdout + missing.stderr);
   assert.match(missing.stderr, /--start/);
   assert.equal(readResults(results).length, 1);
+
+  const before = Date.now();
+  const stalled = await score([...common, "--session", "s1", "--outcome", "stalled"]);
+  assert.equal(stalled.code, 0, stalled.stdout + stalled.stderr);
+  const unfinished = readResults(results)[1];
+  assert.equal(unfinished.outcome, "stalled");
+  assert.equal(unfinished.calibration, "no");
+  const minimumWall = (before - Date.parse("2026-01-01T10:01:00.000Z")) / 60_000;
+  assert.ok(Number(unfinished.wall_minutes) >= Math.floor(minimumWall), unfinished.wall_minutes);
 });

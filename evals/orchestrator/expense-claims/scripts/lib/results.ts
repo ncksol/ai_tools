@@ -82,14 +82,14 @@ export interface Summary {
   groups: VariantSummary[];
 }
 
-// Spec "Sizing": the first run of each variant (calibration = yes) forms the calibration batch.
-// Passed runs count with their minutes, timeouts count as longer than any limit, other outcomes
-// are left out. If the batch median is 30 minutes or less, calibration runs count as scored runs.
+// Spec "Sizing": the first run of each variant (calibration = yes) forms the calibration batch, and
+// the batch median uses every one of them. Finished runs (passed, gate-failed) count with their
+// minutes; unfinished runs (timeout, stalled) count as longer than any finished run. If the batch
+// median is 30 minutes or less, calibration runs count as scored runs. The per-variant comparison
+// below still uses passed runs only.
 export function summarize(rows: ResultRow[]): Summary {
   const batch = rows.filter((row) => row.calibration === "yes" && row.features === FULL_SET);
-  const times = batch.flatMap((row) =>
-    row.outcome === "passed" ? [Number(row.minutes)] : row.outcome === "timeout" ? [Infinity] : [],
-  );
+  const times = batch.map((row) => (row.outcome === "passed" || row.outcome === "gate-failed" ? Number(row.minutes) : Infinity));
   const batchMedian = median(times);
   const counted = batchMedian !== null && batchMedian <= CALIBRATION_LIMIT_MINUTES;
   const scored = rows.filter((row) => row.calibration !== "yes" || counted);
@@ -122,7 +122,7 @@ export function formatSummary(summary: Summary): string {
   if (calibration.runs === 0) {
     lines.push("Calibration: no calibration runs yet.");
   } else {
-    const shown = calibration.median === null ? "n/a" : Number.isFinite(calibration.median) ? `${calibration.median.toFixed(1)} min` : `over ${CALIBRATION_LIMIT_MINUTES} min (timeouts count as longest)`;
+    const shown = calibration.median === null ? "n/a" : Number.isFinite(calibration.median) ? `${calibration.median.toFixed(1)} min` : `over ${CALIBRATION_LIMIT_MINUTES} min (unfinished runs count as longest)`;
     lines.push(`Calibration: ${calibration.runs} run(s), median ${shown}.`);
     if (calibration.counted) lines.push("Calibration runs count as scored runs.");
     else if (calibration.median !== null) {
