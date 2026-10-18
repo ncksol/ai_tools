@@ -31,7 +31,17 @@ export interface SessionInfo {
   createdAt: string | null;
 }
 
+export type Starter = "user" | "session" | "none";
+
+export interface RunSession extends SessionInfo {
+  hasLog: boolean;
+  startedBy: Starter | null;
+  agent: string | null;
+}
+
 export class EventLogError extends Error {}
+
+export class SessionChoiceError extends Error {}
 
 const str = (value: unknown): string | null => (typeof value === "string" && value !== "" ? value : null);
 const at = (event: LogEvent): number => Date.parse(event.timestamp);
@@ -173,4 +183,68 @@ export function findRunSessions(stateDir: string, repository: string): SessionIn
     found.push({ id, dir: join(stateDir, id), repository: repo, createdAt: yamlScalar(text, "created_at") });
   }
   return found.sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
+}
+
+// The app wraps a kickoff sent by another session in this tag. Its user.message has no data.source,
+// like one the user typed, so the tag is what tells them apart.
+const CROSS_SESSION_TAG = "<cross_session_message";
+
+// Finds who sent the session's first message, and the agent selected by then. Message text is only
+// checked for the tag above; it is never kept or printed. Unreadable lines are skipped.
+export function describeSession(dir: string): Pick<RunSession, "hasLog" | "startedBy" | "agent"> {
+  const path = join(dir, "events.jsonl");
+  if (!existsSync(path)) return { hasLog: false, startedBy: null, agent: null };
+  let agent: string | null = null;
+  for (const line of readFileSync(path, "utf8").split("\n")) {
+    let event: LogEvent;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!event || typeof event !== "object" || event.agentId) continue;
+    if (event.type === "subagent.selected") agent = str(event.data?.agentName) ?? agent;
+    if (event.type !== "user.message") continue;
+    const source = str(event.data?.source);
+    if (source?.startsWith("agent-")) return { hasLog: true, startedBy: "session", agent };
+    // system, skill-<name> and autopilot messages come from the runtime, not from a sender.
+    if (source) continue;
+    const text = event.data?.transformedContent ?? event.data?.content;
+    const tagged = typeof text === "string" && text.includes(CROSS_SESSION_TAG);
+    return { hasLog: true, startedBy: tagged ? "session" : "user", agent };
+  }
+  return { hasLog: true, startedBy: "none", agent };
+}
+
+function sessionStatus(session: RunSession): string {
+  if (!session.hasLog) return "no event log";
+  if (session.startedBy === "user") return "started by you";
+  if (session.startedBy === "session") return "started by another session";
+  return "no message yet";
+}
+
+// The run's orchestrator session is the one session for the run repo that the user started, which
+// rules out sessions that never ran and the orchestrator's child sessions. If the user started
+// several, the one whose agent is the variant under test wins. Anything else is left to --session.
+export function chooseRunSession(stateDir: string, repository: string, variant: string): { session: RunSession; rule: string } {
+  const sessions: RunSession[] = findRunSessions(stateDir, repository).map((info) => ({ ...info, ...describeSession(info.dir) }));
+  const byUser = sessions.filter((session) => session.startedBy === "user");
+  if (byUser.length === 1) return { session: byUser[0], rule: `the only session for ${repository} that you started` };
+  const byAgent = byUser.filter((session) => session.agent === variant);
+  if (byAgent.length === 1) {
+    return { session: byAgent[0], rule: `the only session for ${repository} that you started with agent ${variant}` };
+  }
+
+  const problem =
+    sessions.length === 0
+      ? `No session in ${stateDir} has repository ${repository}`
+      : byUser.length === 0
+        ? `None of the ${sessions.length} session(s) for ${repository} was started by you`
+        : `${byUser.length} sessions for ${repository} were started by you, and ${byAgent.length === 0 ? "none" : byAgent.length} of them used agent ${variant}`;
+  const list = sessions.map(
+    (session) => `  ${session.id}  created ${session.createdAt ?? "unknown"}  agent ${session.agent ?? "none"}  ${sessionStatus(session)}`,
+  );
+  throw new SessionChoiceError(
+    [`${problem}, so score can't tell which one is the orchestrator session.`, ...list, "Rerun with --session <id>."].join("\n"),
+  );
 }

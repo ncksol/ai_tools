@@ -3,8 +3,18 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
-import { computeTiming, EventLogError, findRunSessions, readEventLog, yamlScalar } from "../lib/events.ts";
-import { BASE, basic, ev, MIN, withEvents } from "./fixtures/events.ts";
+import {
+  chooseRunSession,
+  computeTiming,
+  describeSession,
+  EventLogError,
+  findRunSessions,
+  readEventLog,
+  SessionChoiceError,
+  yamlScalar,
+  type LogEvent,
+} from "../lib/events.ts";
+import { BASE, basic, childLog, ev, MIN, withEvents, writeSession } from "./fixtures/events.ts";
 
 let dir: string;
 before(() => {
@@ -169,6 +179,88 @@ test("findRunSessions picks sessions by repository, oldest first", () => {
     findRunSessions(stateDir, "ncksol/orch-eval-x-1").map((session) => session.id),
     ["s2", "s1"],
   );
+});
+
+const REPO = "ncksol/orch-eval-orchestrator-1";
+
+function stateWith(name: string, sessions: [string, string, LogEvent[] | null][]): string {
+  const stateDir = join(dir, name);
+  for (const [id, createdAt, events] of sessions) writeSession(stateDir, id, REPO, createdAt, events);
+  writeSession(stateDir, "other-repo", "ncksol/ai_tools", "2026-01-01T09:00:00Z", basic());
+  return stateDir;
+}
+
+test("describeSession tells a session the user started from one another session started", () => {
+  const stateDir = stateWith("describe", [
+    ["user", "2026-01-01T10:00:00Z", basic()],
+    ["tagged", "2026-01-01T10:20:00Z", childLog("session-worker")],
+    ["from-agent", "2026-01-01T10:20:00Z", [ev("user.message", 21, { source: "agent-workspace-1" })]],
+    ["runtime-first", "2026-01-01T10:20:00Z", [ev("user.message", 20, { source: "system" }), ev("user.message", 21)]],
+    ["empty-log", "2026-01-01T10:20:00Z", [ev("session.start", 20)]],
+    ["no-log", "2026-01-01T09:00:00Z", null],
+  ]);
+  const describe = (id: string) => describeSession(join(stateDir, id));
+  assert.deepEqual(describe("user"), { hasLog: true, startedBy: "user", agent: "orchestrator" });
+  assert.deepEqual(describe("tagged"), { hasLog: true, startedBy: "session", agent: "session-worker" });
+  assert.deepEqual(describe("from-agent"), { hasLog: true, startedBy: "session", agent: null });
+  assert.deepEqual(describe("runtime-first"), { hasLog: true, startedBy: "user", agent: null });
+  assert.deepEqual(describe("empty-log"), { hasLog: true, startedBy: "none", agent: null });
+  assert.deepEqual(describe("no-log"), { hasLog: false, startedBy: null, agent: null });
+});
+
+test("chooseRunSession skips a stray session with no log and the orchestrator's child sessions", () => {
+  const stateDir = stateWith("run1-shape", [
+    ["stray", "2026-01-01T09:00:00Z", null],
+    ["orch", "2026-01-01T10:00:00Z", basic()],
+    ["child-1", "2026-01-01T10:20:00Z", childLog()],
+    ["child-2", "2026-01-01T10:20:01Z", childLog()],
+    ["child-3", "2026-01-01T10:30:00Z", [ev("user.message", 31, { source: "agent-workspace-1" })]],
+    ["child-4", "2026-01-01T10:40:00Z", null],
+  ]);
+  const chosen = chooseRunSession(stateDir, REPO, "orchestrator");
+  assert.equal(chosen.session.id, "orch");
+  assert.equal(chosen.rule, `the only session for ${REPO} that you started`);
+});
+
+test("chooseRunSession stops and lists the sessions when none was started by the user", () => {
+  const stateDir = stateWith("none", [
+    ["stray", "2026-01-01T09:00:00Z", null],
+    ["child-1", "2026-01-01T10:20:00Z", childLog()],
+  ]);
+  assert.throws(
+    () => chooseRunSession(stateDir, REPO, "orchestrator"),
+    (error: Error) => {
+      assert.ok(error instanceof SessionChoiceError);
+      assert.match(error.message, /None of the 2 session\(s\) for ncksol\/orch-eval-orchestrator-1 was started by you/);
+      assert.match(error.message, /stray {2}created 2026-01-01T09:00:00Z {2}agent none {2}no event log/);
+      assert.match(error.message, /child-1 {2}created 2026-01-01T10:20:00Z {2}agent none {2}started by another session/);
+      assert.match(error.message, /Rerun with --session <id>\.$/);
+      assert.doesNotMatch(error.message, /other-repo/);
+      return true;
+    },
+  );
+  assert.throws(() => chooseRunSession(join(dir, "none"), "ncksol/nothing", "orchestrator"), /No session in .* has repository ncksol\/nothing/);
+});
+
+test("chooseRunSession narrows several user-started sessions by the variant's agent, or stops", () => {
+  const helper = basic().filter((event) => event.type !== "subagent.selected");
+  const stateDir = stateWith("several", [
+    ["orch", "2026-01-01T10:00:00Z", basic()],
+    ["helper", "2026-01-01T10:05:00Z", helper],
+  ]);
+  assert.equal(chooseRunSession(stateDir, REPO, "orchestrator").session.id, "orch");
+  assert.throws(
+    () => chooseRunSession(stateDir, REPO, "session-orchestrator"),
+    (error: Error) => {
+      assert.ok(error instanceof SessionChoiceError);
+      assert.match(error.message, /2 sessions for .* were started by you, and none of them used agent session-orchestrator/);
+      assert.match(error.message, /orch {2}created 2026-01-01T10:00:00Z {2}agent orchestrator {2}started by you/);
+      assert.match(error.message, /helper {2}created 2026-01-01T10:05:00Z {2}agent none {2}started by you/);
+      return true;
+    },
+  );
+  writeSession(stateDir, "orch-again", REPO, "2026-01-01T11:00:00Z", basic());
+  assert.throws(() => chooseRunSession(stateDir, REPO, "orchestrator"), /3 sessions .* and 2 of them used agent orchestrator/);
 });
 
 test("yamlScalar reads plain and quoted values", () => {
