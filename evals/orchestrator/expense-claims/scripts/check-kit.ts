@@ -52,6 +52,31 @@ async function npmTest(dir: string): Promise<Outcome> {
   return verdict(result.code === 0 && pass !== null && pass > 0, `exit ${result.code}, # pass ${pass ?? "?"}, # fail ${fail ?? "?"}`);
 }
 
+// Reads one `# <label> N` line of a TAP summary; -1 when it is missing, so no check can pass on it.
+function tapCount(output: string, label: string): number {
+  const match = output.match(new RegExp(`^# ${label} (\\d+)$`, "m"));
+  return match ? Number(match[1]) : -1;
+}
+
+const TAP_LABELS = ["tests", "pass", "fail", "cancelled", "skipped", "todo"] as const;
+type TapCounts = Record<(typeof TAP_LABELS)[number], number>;
+
+function tapCounts(output: string): TapCounts {
+  return Object.fromEntries(TAP_LABELS.map((label) => [label, tapCount(output, label)])) as TapCounts;
+}
+
+const showCounts = (c: TapCounts): string => TAP_LABELS.map((label) => `${label} ${c[label]}`).join(", ");
+const noneOther = (c: TapCounts): boolean => c.cancelled === 0 && c.skipped === 0 && c.todo === 0;
+const allPassed = (c: TapCounts): boolean => c.tests > 0 && c.pass === c.tests && c.fail === 0 && noneOther(c);
+const allFailed = (c: TapCounts): boolean => c.tests > 0 && c.fail === c.tests && c.pass === 0 && noneOther(c);
+
+async function mustPass(appDir: string, files: string[]): Promise<Outcome> {
+  const suite = await runSuite(appDir, files);
+  const counts = tapCounts(suite.output);
+  const failures = suite.failures.length > 0 ? `; failing: ${suite.failures.join(", ")}` : "";
+  return verdict(suite.exitCode === 0 && allPassed(counts), `${showCounts(counts)}${failures}`);
+}
+
 async function git(cwd: string, args: string[]): Promise<string> {
   const result = await run("git", ["-c", "user.name=Kit Check", "-c", "user.email=kit-check@example.invalid", ...args], { cwd });
   if (result.code !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr.trim()}`);
@@ -86,29 +111,19 @@ try {
   await check("seed npm test", () => npmTest(SEED));
   await check("reference npm test", () => npmTest(REFERENCE));
 
-  await check("suite passes 100% on the reference", async () => {
-    const suite = await runSuite(REFERENCE, suiteFiles(ALL_FEATURES));
-    const failures = suite.failures.length > 0 ? `; failing: ${suite.failures.join(", ")}` : "";
-    return verdict(suite.ok, `${suite.passed}/${suite.total} passed${failures}`);
-  });
-
-  await check("suite passes on the reference without Summary", async () => {
-    const suite = await runSuite(REFERENCE, suiteFiles(["policy", "reports", "import"]));
-    return verdict(suite.ok, `${suite.passed}/${suite.total} passed`);
-  });
-
-  await check("v1 regressions pass on the seed", async () => {
-    const suite = await runSuite(SEED, [suiteFile("v1")]);
-    return verdict(suite.ok, `${suite.passed}/${suite.total} passed`);
-  });
+  await check("suite passes 100% on the reference", () => mustPass(REFERENCE, suiteFiles(ALL_FEATURES)));
+  await check("suite passes on the reference without Summary", () => mustPass(REFERENCE, suiteFiles(["policy", "reports", "import"])));
+  await check("v1 regressions pass on the seed", () => mustPass(SEED, [suiteFile("v1")]));
 
   await check("every v2 test fails on the seed", async () => {
     let ok = true;
     const parts: string[] = [];
     for (const feature of ALL_FEATURES) {
-      const suite = await runSuite(SEED, [suiteFile(feature)]);
-      if (!(suite.passed === 0 && suite.total > 0)) ok = false;
-      parts.push(`${feature} ${suite.passed}/${suite.total} passed`);
+      const counts = tapCounts((await runSuite(SEED, [suiteFile(feature)])).output);
+      // A file that fails to load reports one failing test; the reference's count catches that.
+      const expected = tapCounts((await runSuite(REFERENCE, [suiteFile(feature)])).output).tests;
+      if (!allFailed(counts) || counts.tests !== expected) ok = false;
+      parts.push(`${feature} (${showCounts(counts)}; reference runs ${expected})`);
     }
     return verdict(ok, parts.join(", "));
   });
