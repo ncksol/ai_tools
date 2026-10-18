@@ -921,6 +921,50 @@ test('a live run with nothing active is quiet since its last activity, and is no
   assert.equal(finished.run.quietSince, finished.run.finishedAt);
 });
 
+/**
+ * The quiet swarm, except that the UI child starts a background task at minute 116, ends its own turn at 117, and its agent writes
+ * at 118. With done, the task completes at 120; with resumed, the child starts a new turn at 124.
+ */
+function childBackgroundSwarm(now, { done = false, resumed = false, alive = true } = {}) {
+  const { data } = quietSwarm(() => {}, now);
+  const ui = new EventLog(at(6));
+  ui.start(); ui.at(at(115)); ui.turnStart();
+  ui.at(at(116)); const call = ui.subagent({ name: 'bg', type: 'general-purpose', mode: 'background', agentId: 'ag-bg' });
+  ui.at(at(117)); ui.turnEnd();
+  ui.at(at(118)); ui.sub(call, 'assistant.message', { content: 'still working' });
+  if (done) { ui.at(at(120)); ui.subagentDone(call, { durationMs: 4 * MINUTE, agentId: 'ag-bg' }); }
+  if (resumed) { ui.at(at(124)); ui.turnStart(); }
+  data.states.set('cli-ui', fold(ui, 'cli-ui'));
+  data.alive.set('cli-ui', alive);
+  return buildSnapshot(data);
+}
+const uiUnit = snapshot => snapshot.units.find(unit => unit.id === 'ws-ui');
+
+test('a background task a child session started keeps the run active after the child ends its turn, while its CLI is alive', () => {
+  for (const now of [at(119), at(122)]) {
+    const snapshot = childBackgroundSwarm(now);
+    assert.deepEqual(validateSnapshot(snapshot), []);
+    assert.equal(uiUnit(snapshot).endedAt, null);
+    assert.equal(snapshot.run.lifecycle, 'live');
+    assert.equal(snapshot.run.quietSince, null, 'the run and unit clocks tick while the task runs');
+  }
+  const completed = childBackgroundSwarm(at(125), { done: true });
+  assert.deepEqual(validateSnapshot(completed), []);
+  assert.equal(completed.run.lastActivityAt, at(120));
+  assert.equal(completed.run.quietSince, at(120), 'once the task completes the run is quiet since its last activity');
+  const resumed = childBackgroundSwarm(at(126), { done: true, resumed: true });
+  assert.equal(resumed.run.quietSince, null, 'the clocks tick again once the child works again');
+});
+
+test('a background task of a child session whose CLI is gone does not keep the run active', () => {
+  const snapshot = childBackgroundSwarm(at(122), { alive: false });
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  assert.equal(snapshot.run.quietSince, at(118));
+  const later = childBackgroundSwarm(at(118) + 2 * HOUR, { alive: false });
+  assert.equal(later.run.lifecycle, 'finished');
+  assert.equal(later.run.finishedAt, at(118));
+});
+
 test('completed and cancelled sub-agent units do not keep a swarm from stalling, and a busy one does', () => {
   const finishedOnes = root => {
     root.at(at(60));

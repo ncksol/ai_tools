@@ -533,12 +533,18 @@ function cliAlive(input, context, cliId) {
   return cliId === undefined || cliId === context.node.currentCliSessionId ? context.alive : input.alive.get(cliId) === true;
 }
 
-/** True when a sub-agent started by a sub-agent is still running in a CLI session that counts as alive, in any session of the swarm. */
-function nestedWorkRuns(input, contexts) {
+/**
+ * True when work that no unit status shows is still running in a CLI session that counts as alive: a sub-agent started by a
+ * sub-agent, in any session of the swarm, or a sub-agent started by a child session, which runs on after the child ends its turn.
+ * The root's own sub-agents are units, so their statuses already count.
+ */
+function hiddenWorkRuns(input, contexts, rootId) {
   for (const context of contexts.values()) {
     for (const state of context.states) {
       if (cliAlive(input, context, state.id) === false) continue;
       for (const entry of state.descendants.values()) if (entry.status === 'running') return true;
+      if (context.node.id === rootId) continue;
+      for (const sub of state.subagents.values()) if (sub.status === 'running') return true;
     }
   }
   return false;
@@ -700,8 +706,8 @@ export function buildSnapshot(input) {
   counts.failed += subagents.omitted.failed;
 
   const lastActivityAt = maxTime(...[...contexts.values()].map(c => c.all.lastEventAt), lastCostAt) ?? root.createdAt ?? now;
-  // A nested sub-agent that is still running also keeps the run live: it is not a unit of its own, so no unit status shows it.
-  const anyActive = [orchestrator, ...everyUnit].some(session => ACTIVE_DETAILS.has(session.statusDetail)) || nestedWorkRuns(input, contexts);
+  // A running nested sub-agent, or a child session's own sub-agent, also keeps the run live: no unit status shows them.
+  const anyActive = [orchestrator, ...everyUnit].some(session => ACTIVE_DETAILS.has(session.statusDetail)) || hiddenWorkRuns(input, contexts, root.id);
   const { lifecycle, finishedAt } = runLifecycle({ lastActivityAt, anyActive, now, thresholds });
   const monitorDue = units.some(unit => unit.monitor.state === 'alive') || app.automations.some(item => rootContext.ids.has(item.sessionId)
     && item.pausedAt === null && item.nextRunAt !== null && item.nextRunAt > now - thresholds.monitorGraceMs);
