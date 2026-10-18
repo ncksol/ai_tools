@@ -1,0 +1,14 @@
+{
+  "name": "orchestrator-eval-expense-claims",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "test": "node --test \"scripts/test/*.test.ts\"",
+    "acceptance": "node scripts/acceptance.ts",
+    "new-run": "node scripts/new-run.ts",
+    "score": "node scripts/score.ts",
+    "check": "node scripts/check-kit.ts"
+  }
+}
