@@ -10,7 +10,7 @@ export function isCurrency(value: unknown): value is Currency {
 
 // amountMinor × rate(from) ÷ rate(to), rounded half up to a whole minor unit.
 export function convert(amountMinor: number, from: Currency, to: Currency): number {
-  const numerator = amountMinor * RATES[from];
-  const denominator = RATES[to];
-  return Math.floor((2 * numerator + denominator) / (2 * denominator));
+  const numerator = BigInt(amountMinor) * BigInt(RATES[from]);
+  const denominator = BigInt(RATES[to]);
+  return Number((2n * numerator + denominator) / (2n * denominator));
 }

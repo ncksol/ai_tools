@@ -24,3 +24,8 @@ test("isCurrency accepts only GBP, EUR and USD", () => {
   for (const c of ["GBP", "EUR", "USD"]) assert.equal(isCurrency(c), true);
   for (const c of ["JPY", "gbp", 1, undefined]) assert.equal(isCurrency(c), false);
 });
+
+test("convert is exact for large amounts", () => {
+  assert.equal(convert(4503599627370496, "GBP", "GBP"), 4503599627370496);
+  assert.equal(convert(9007199254740991, "USD", "USD"), 9007199254740991);
+});
