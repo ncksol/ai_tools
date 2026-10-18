@@ -114,7 +114,8 @@ export async function newRun(opts: NewRunOptions, deps: NewRunDeps): Promise<New
     throw new Error(`The run repo's files differ from the seed's:\n${files.join("\n")}`);
   }
 
-  writeFileSync(kickoffPath, stripFeatures(readFileSync(join(KIT_DIR, "kickoff.md"), "utf8"), opts.features));
+  // The kickoff names no features, so every feature set gets it unchanged.
+  cpSync(join(KIT_DIR, "kickoff.md"), kickoffPath);
 
   if (opts.dryRun) {
     deps.log(`Dry run: would run gh repo create ${slug} --private --source ${repoDir} --remote origin --push`);

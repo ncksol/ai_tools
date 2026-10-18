@@ -140,7 +140,7 @@ graph LR
 ### Sizing
 
 - **Approved in conversation:** about 20 minutes for a run that works in parallel, over 40 for a serial one (estimates). If the first real runs are slower than that, drop Summary.
-- **Design call:** calibration rule. The first run of each variant forms the calibration batch. If the median of that batch, across all variants, is 30 minutes or less, those runs count as scored runs. If it is over 30 minutes, Summary is dropped once, before any scored run: those calibration rows stay in `results.csv` marked as calibration, and every variant's scored runs use the three-feature spec. Each `results.csv` row records its feature set, and runs are compared only within one feature set. To drop Summary, remove its section from the spec and the kickoff prompt, and run the suite without its tests. The suite must therefore be runnable per feature.
+- **Design call:** calibration rule. The first run of each variant forms the calibration batch. If the median of that batch, across all variants, is 30 minutes or less, those runs count as scored runs. If it is over 30 minutes, Summary is dropped once, before any scored run: those calibration rows stay in `results.csv` marked as calibration, and every variant's scored runs use the three-feature spec. Each `results.csv` row records its feature set, and runs are compared only within one feature set. To drop Summary, remove its section from the spec and run the suite without its tests. The kickoff prompt names no features, so it stays the same. The suite must therefore be runnable per feature.
 
 ## Running it
 
@@ -177,7 +177,7 @@ evals/orchestrator/expense-claims/
 1. Run `new-run`.
 2. Add the clone as a project in the Copilot app.
 3. Start a new top-level session in that project with the agent under test, using the held-constant model and effort.
-4. Paste `kickoff.md`.
+4. Paste `kickoff.md` into the composer as typed text.
 5. Answer any question straight away, verbatim, from `answers.md`. Send nothing else.
 6. After the final report, run `score` before sending anything else to the session.
 
@@ -185,8 +185,10 @@ evals/orchestrator/expense-claims/
 
 ### Kickoff prompt
 
-- **Approved in conversation:** the same for every variant. It includes the full spec, approves the plan and the opening and squash-merging of PRs in advance, and defines "done" as all four features merged to main with CI green, followed by a final report.
-- **Design call:** it says nothing about how to split the work or which models to use, and also points to `docs/spec-v2.md` in the repo.
+- **Approved in conversation:** the same for every variant and every feature set. It approves the plan and the opening, marking ready and squash-merging of PRs once CI is green, in advance. It defines "done" as every feature in the spec merged to main through PRs, with CI on main green, followed by a final report. The agent works unattended.
+- **Decided by the user:** the kickoff is a short typed query that points at `docs/spec-v2.md` in the run repo and doesn't include the spec. A long paste becomes an attached file in the Copilot app, and an orchestrator that can't read files would have to start a child session to read it. The kickoff stays a few lines, well under 1,000 characters, so it goes in as typed text.
+- **Decided by the user:** the kit expects orchestrator agents that can read files. An agent that can't has to delegate the read, and that time counts in its score.
+- **Design call:** it says nothing about how to split the work or which models to use, and nothing about the hidden suite, the reference or the kit. It names no feature and gives no feature count, so it fits a spec without Summary.
 
 ### Answer sheet
 
@@ -228,6 +230,7 @@ evals/orchestrator/expense-claims/
 - The suite passes 100% on the reference. On the seed, the v1 regression tests pass and every v2 test fails.
 - Every suite assertion maps to a statement in `spec-v2.md` or the seed README.
 - `new-run --dry-run` produces a repo with only seed content: no acceptance, reference or results files.
+- The kickoff is at most 800 characters, points at `docs/spec-v2.md`, shares no run of eight words and no whole line with the spec, has no markdown heading or code fence, names no feature, gives no feature count, and mentions nothing about the hidden suite, the reference, scoring or the kit. It passes these checks against the full spec and against the spec without Summary, and `new-run` copies it unchanged for every feature set.
 - `score` works against a local reference checkout and computes timing from a real session event log.
 - No GitHub repo is created during the build without the user's approval.
 - Calibrating the timing needs real runs, which the user starts as top-level sessions (**Decided by the user**: top-level only). The builder can't do this step.

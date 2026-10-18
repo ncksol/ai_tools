@@ -17,7 +17,7 @@ The design, with the reasons behind each rule, is in [the design doc](../../../d
 | Path | What it is |
 |---|---|
 | `README.md` | This runbook. |
-| `kickoff.md` | The exact first message of every run. It includes the full v2 spec. |
+| `kickoff.md` | The exact first message of every run: a few lines that point at `docs/spec-v2.md` in the run repo. |
 | `answers.md` | The answer sheet: the only replies you send during a run. |
 | `results.csv` | One row per run, written by `score`. |
 | `seed/` | The v1 app, with `docs/spec-v2.md` and CI. This is what a run repo starts from. |
@@ -35,6 +35,7 @@ You need:
 - Node 24.
 - `gh`, logged in as the repo owner (`ncksol` by default) with the `repo` scope. Several accounts may be logged in, so `new-run` checks the active account and stops if it isn't the owner. Switch with `gh auth switch`, or check `GH_TOKEN`.
 - The Copilot app.
+- An orchestrator agent that can read files, for example with a `view` tool. The kickoff doesn't include the spec; it points at `docs/spec-v2.md` in the run repo. An agent that can't read files has to delegate the read, and that time counts in its score.
 
 Choose one model and effort for the orchestrator session, for example Claude Opus 5.5 at max. Use the same model and effort for every run. `score` records them from the session log. Child sessions and sub-agents pick their own models from each agent's tier table; that is part of what the eval tests.
 
@@ -49,7 +50,13 @@ Choose one model and effort for the orchestrator session, for example Claude Opu
    This creates the private repo `ncksol/orch-eval-<variant>-<n>` from `seed/`, with one `Seed v1` commit on `main`. The clone is `~/orch-evals/orch-eval-<variant>-<n>`, and the kickoff file is `~/orch-evals/orch-eval-<variant>-<n>.kickoff.md`. `<n>` is one more than the highest run number of that variant in `~/orch-evals/`. To set it yourself, pass `--n <k>`; it must be a positive whole number. `new-run` never reuses a run folder: it stops if the folder or the GitHub repo already exists. Other flags: `--features` (see [Calibration](#calibration)), `--owner`, `--runs-dir`, and `--dry-run`, which builds the clone and kickoff file locally without touching GitHub.
 2. In the Copilot app, add the clone as a project.
 3. Start a **new top-level session** in that project with the agent under test, using the held-constant model and effort. **An orchestrator run is always a top-level session that you start. Never start one as a child of another session, and never ask an agent to start one.**
-4. Paste the whole kickoff file as the first message.
+4. Copy the kickoff, then paste it into the composer as the first message:
+
+   ```bash
+   pbcopy < ~/orch-evals/<name>.kickoff.md
+   ```
+
+   `<name>` is `orch-eval-<variant>-<n>`. The kickoff is short so that the app takes it as typed text; a long paste becomes an attached file. Don't attach the file or add anything to the message.
 5. Answer any question straight away, word for word, from `answers.md`. Send nothing else.
 6. After the final report, before you send anything else to the session, run:
 
@@ -57,7 +64,7 @@ Choose one model and effort for the orchestrator session, for example Claude Opu
    npm run score -- --repo-dir ~/orch-evals/<name>
    ```
 
-   `<name>` is `orch-eval-<variant>-<n>`. Then commit `results.csv` and follow [Memory hygiene](#memory-hygiene).
+   Then commit `results.csv` and follow [Memory hygiene](#memory-hygiene).
 
 ## When a run doesn't finish
 
@@ -142,7 +149,7 @@ The first full-feature-set run of each variant is its calibration run; `score` m
   npm run new-run -- --variant <v> --features policy,reports,import
   ```
 
-  This removes Summary from the run repo's spec and from the kickoff file. `score` reads the feature set from the spec in the run repo's first commit, and runs the suite without the Summary tests. A variant whose first run comes after this has no calibration run: that run is a scored run.
+  This removes Summary from the run repo's spec. The kickoff is the same for every feature set: it names no features and doesn't say how many there are. `score` reads the feature set from the spec in the run repo's first commit, and runs the suite without the Summary tests. A variant whose first run comes after this has no calibration run: that run is a scored run.
 
 The calibration median uses every calibration run of the full feature set. Passed and gate-failed runs count with their minutes. Timeout and stalled runs count as longer than any finished run. Only passed runs enter the per-variant time comparison.
 
@@ -209,8 +216,15 @@ The suite runs its test files one at a time. Each test starts the app on a port 
 
 If you change `seed/docs/spec-v2.md`:
 
-- copy it to `reference/docs/spec-v2.md`;
-- update the spec part of `kickoff.md` (`npm test` and `npm run check` check both copies);
+- copy it to `reference/docs/spec-v2.md` (`npm test` and `npm run check` check that the copies match);
 - update the suite and the reference, so that every suite assertion still maps to a statement in the spec or in `seed/README.md`.
 
 Old `results.csv` rows are then not comparable with new ones. Say so in their `note`.
+
+If you change `kickoff.md`, keep it to a few plain-text lines. `npm test` and `npm run check` check that it:
+
+- is at most 800 characters (`KICKOFF_MAX_CHARS` in `scripts/lib/kickoff.ts`);
+- points at `docs/spec-v2.md`;
+- shares no run of eight words and no whole line with the spec, and has no markdown heading or code fence;
+- names no feature and gives no feature count;
+- says nothing about the hidden suite, the reference, scoring or the kit.
