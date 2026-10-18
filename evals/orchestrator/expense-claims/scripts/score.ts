@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { computeTiming, EventLogError, findRunSessions, readEventLog } from "./lib/events.ts";
+import { chooseRunSession, computeTiming, EventLogError, readEventLog, SessionChoiceError } from "./lib/events.ts";
 import { detectFeatures, featureSetName, parseFeatures, type Feature } from "./lib/features.ts";
 import { parseRunName } from "./lib/new-run.ts";
 import { run } from "./lib/proc.ts";
@@ -105,20 +105,20 @@ function manualTiming(): RunTiming {
   };
 }
 
-function logTiming(stateDir: string, repository: string, endAt: number | undefined): RunTiming {
+function logTiming(stateDir: string, repository: string, variant: string, endAt: number | undefined): RunTiming {
   let id = values.session;
   if (id) {
     console.log(`Session ${id} (from --session)`);
   } else {
-    let candidates;
+    let chosen;
     try {
-      candidates = findRunSessions(stateDir, repository);
+      chosen = chooseRunSession(stateDir, repository, variant);
     } catch (error) {
+      if (error instanceof SessionChoiceError) throw error;
       throw new EventLogError(`Cannot read the session folder ${stateDir} (${(error as Error).message})`);
     }
-    if (candidates.length === 0) throw new EventLogError(`No session in ${stateDir} has repository ${repository}`);
-    id = candidates[0].id;
-    console.log(`Session ${id} (the oldest of ${candidates.length} session(s) for ${repository})`);
+    id = chosen.session.id;
+    console.log(`Session ${id} (${chosen.rule})`);
   }
   const log = readEventLog(join(stateDir, id, "events.jsonl"));
   const timing = computeTiming(log.events, { endAt });
@@ -214,8 +214,12 @@ async function main(): Promise<number> {
     try {
       // An unfinished run has no final report: time it to now, when it was found unfinished.
       const endAt = values.outcome === undefined ? undefined : Date.now();
-      timing = logTiming(stateDir, slug ?? `local/${basename(repoDir)}`, endAt);
+      timing = logTiming(stateDir, slug ?? `local/${basename(repoDir)}`, variant, endAt);
     } catch (error) {
+      if (error instanceof SessionChoiceError) {
+        console.error(error.message);
+        return 2;
+      }
       if (!(error instanceof EventLogError)) throw error;
       console.error(
         `Could not time the run from the session log: ${error.message}. Time it by hand (README "Manual timing") and rerun with --start, --end, --blocked-min and --questions.`,

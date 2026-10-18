@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
@@ -7,7 +7,7 @@ import { stripFeatures } from "../lib/features.ts";
 import { run } from "../lib/proc.ts";
 import { readResults } from "../lib/results.ts";
 import { KIT_DIR } from "../lib/suite.ts";
-import { basic, ev, withEvents } from "./fixtures/events.ts";
+import { basic, childLog, ev, withEvents, writeSession } from "./fixtures/events.ts";
 
 let dir: string;
 before(() => {
@@ -37,20 +37,24 @@ test("score times a synthetic session, runs the seed's suite on a fresh clone an
   writeFileSync(specPath, stripFeatures(readFileSync(specPath, "utf8"), ["policy", "reports", "import"]));
   await git(repoDir, ["commit", "-q", "-am", "Drop Summary"]);
 
+  // The run's shape: a stray session that never ran, the orchestrator session, and its child sessions.
   const stateDir = join(dir, "state");
-  mkdirSync(join(stateDir, "s1"), { recursive: true });
-  writeFileSync(join(stateDir, "s1", "workspace.yaml"), "repository: local/orch-eval-e2e-1\ncreated_at: 2026-01-01T10:00:00Z\n");
+  const repository = "local/orch-eval-e2e-1";
   const events = withEvents(basic(), [
     ev("tool.execution_start", 3, { toolName: "ask_user", toolCallId: "q1" }),
     ev("tool.execution_complete", 5, { toolCallId: "q1", success: true }),
   ]);
-  writeFileSync(join(stateDir, "s1", "events.jsonl"), events.map((event) => JSON.stringify(event)).join("\n") + "\n");
+  writeSession(stateDir, "s0", repository, "2026-01-01T09:00:00Z", null);
+  writeSession(stateDir, "s1", repository, "2026-01-01T10:00:00Z", events);
+  writeSession(stateDir, "c1", repository, "2026-01-01T10:20:00Z", childLog());
+  writeSession(stateDir, "c2", repository, "2026-01-01T10:20:01Z", childLog());
 
   const results = join(dir, "results.csv");
   const common = ["--repo-dir", repoDir, "--state-dir", stateDir, "--no-github", "--results", results];
 
-  const ok = await score([...common, "--session", "s1"]);
+  const ok = await score(common);
   assert.equal(ok.code, 0, ok.stdout + ok.stderr);
+  assert.match(ok.stdout, /Session s1 \(the only session for local\/orch-eval-e2e-1 that you started\)/);
   const rows = readResults(results);
   assert.equal(rows.length, 1);
   const expected = {
@@ -89,8 +93,20 @@ test("score times a synthetic session, runs the seed's suite on a fresh clone an
   assert.doesNotMatch(again.stdout, /acceptance suite/);
   assert.equal(readFileSync(results, "utf8"), firstFile);
 
+  // A second session the user started makes discovery ambiguous: score stops and asks for --session.
+  writeSession(stateDir, "s2", repository, "2026-01-01T11:00:00Z", basic());
+  const ambiguous = await score([...common, "--replace"]);
+  assert.equal(ambiguous.code, 2, ambiguous.stdout + ambiguous.stderr);
+  assert.match(ambiguous.stderr, /2 sessions for local\/orch-eval-e2e-1 were started by you, and none of them used agent e2e/);
+  for (const id of ["s0", "s1", "s2", "c1", "c2"]) assert.match(ambiguous.stderr, new RegExp(`^  ${id}  created `, "m"));
+  assert.match(ambiguous.stderr, /Rerun with --session <id>\./);
+  assert.doesNotMatch(ambiguous.stderr, /Time it by hand/);
+  assert.equal(readFileSync(results, "utf8"), firstFile);
+
+  // --session overrides discovery.
   const before = Date.now();
   const stalled = await score([...common, "--session", "s1", "--outcome", "stalled", "--replace"]);
+  assert.match(stalled.stdout, /Session s1 \(from --session\)/);
   assert.equal(stalled.code, 0, stalled.stdout + stalled.stderr);
   const replaced = readResults(results);
   assert.equal(replaced.length, 1);

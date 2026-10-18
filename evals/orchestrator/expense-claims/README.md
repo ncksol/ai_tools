@@ -157,7 +157,7 @@ Calibration rows stay in `results.csv`. If Summary was dropped, only the full-fe
 
 ## Manual timing
 
-`score` finds the session on its own: it takes the oldest session in `~/.copilot/session-state/` whose `workspace.yaml` names the run repo. To pick a different one, pass `--session <id>`. The id is the session's folder name in `~/.copilot/session-state/`.
+`score` finds the orchestrator session on its own. Of the sessions in `~/.copilot/session-state/` whose `workspace.yaml` names the run repo, it takes the one you started: it has an `events.jsonl`, and its first message came from you, not from another session. That leaves out sessions that never ran, such as one the app opens when you add the project, and the orchestrator's child sessions, whose kickoff the app marks as sent by another session. If you started more than one, it takes the one whose agent has the variant's name. If that still leaves none or several, `score` stops with exit code 2, lists the sessions with their created time, agent and status, and asks you to pass `--session <id>`. `--session` also overrides the search. The id is the session's folder name in `~/.copilot/session-state/`.
 
 The event log format is internal to Copilot and may change. `score` ignores an unfinished last line in `events.jsonl` (a write still in progress). Any other line it can't read makes it stop with exit code 2 and point here. Then time the run by hand:
 
