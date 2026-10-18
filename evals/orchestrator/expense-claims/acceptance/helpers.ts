@@ -34,9 +34,21 @@ function freePort(): Promise<number> {
   });
 }
 
+class PortInUse extends Error {}
+
 // Starts `node src/server.ts` (what `npm start` runs) with PORT set, and waits for GET /health.
+// The probed port can be taken before the app binds it, so EADDRINUSE gets a new port, up to 5 attempts.
 export async function startApp(): Promise<Api> {
-  const port = await freePort();
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await launch(await freePort());
+    } catch (error) {
+      if (!(error instanceof PortInUse) || attempt === 5) throw error;
+    }
+  }
+}
+
+async function launch(port: number): Promise<Api> {
   const url = `http://127.0.0.1:${port}`;
   const child: ChildProcess = spawn(process.execPath, ["src/server.ts"], {
     cwd: appDir(),
@@ -51,11 +63,17 @@ export async function startApp(): Promise<Api> {
     child.once("exit", () => done());
     child.once("error", () => done());
   });
+  const closed = new Promise<void>((done) => child.once("close", () => done()));
   const running = () => child.exitCode === null && child.signalCode === null && !spawnError;
   try {
     const deadline = Date.now() + 10_000;
     for (;;) {
-      if (!running()) throw new Error(`The app exited (${spawnError ?? child.exitCode ?? child.signalCode}): ${stderr}`);
+      if (!running()) {
+        // `exit` can come before the last stderr data; `close` comes after it.
+        if (!spawnError) await Promise.race([closed, sleep(1000)]);
+        const message = `The app exited (${spawnError ?? child.exitCode ?? child.signalCode}): ${stderr}`;
+        throw stderr.includes("EADDRINUSE") ? new PortInUse(message) : new Error(message);
+      }
       const left = deadline - Date.now();
       if (left <= 0) throw new Error(`The app did not answer GET /health within 10 s: ${stderr}`);
       try {
