@@ -100,6 +100,7 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  *   pr: PrView|null, monitor: MonitorView, dependsOn: string|null, todoId: string|null,
  *   agent: { type: string, mode: 'sync'|'background', effort: string|null }|null }} UnitView
  *   `dependsOn` is the label of the unit or planned entry it stacks on.
+ *   `branch` of a session unit is its registry row's branch when set, else the app's.
  *   `agent` is null for session units (kind 'project' or 'chat') and set for sub-agent units (kind 'subagent').
  */
 

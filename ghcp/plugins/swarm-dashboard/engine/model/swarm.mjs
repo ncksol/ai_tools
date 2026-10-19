@@ -352,6 +352,8 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
   const outcomeAt = outcome ? row?.endedAt ?? pr?.mergedAt ?? pr?.closedAt ?? null : null;
   return {
     ...sessionView(input, c, label, evaluation, report, row?.title ?? null, marks, outcomeAt),
+    // The registry's branch wins over the app's, which can be missing or stale; assignDependencies matches base branches on it.
+    branch: row?.branch ?? node.branch ?? null,
     parentId: node.parentId, depth: node.depth, stage, closedWithoutMerge, outcome, pr, monitor, dependsOn: null, todoId: row?.todoId ?? null,
     agent: null,
   };
