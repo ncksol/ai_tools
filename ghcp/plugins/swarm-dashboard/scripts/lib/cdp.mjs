@@ -128,7 +128,10 @@ export async function openPage(browser) {
   await send('Page.enable');
   await send('Runtime.enable');
   await send('Log.enable');
-  await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+  // setEmulatedMedia replaces every emulated feature, so both are sent each time.
+  const media = { reducedMotion: 'reduce', colorScheme: 'light' };
+  const emulate = () => send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: media.reducedMotion }, { name: 'prefers-color-scheme', value: media.colorScheme }] });
+  await emulate();
   const page = {
     send,
     errors,
@@ -154,7 +157,12 @@ export async function openPage(browser) {
       return Buffer.from(data, 'base64');
     },
     async setReducedMotion(reduce) {
-      await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: reduce ? 'reduce' : 'no-preference' }] });
+      media.reducedMotion = reduce ? 'reduce' : 'no-preference';
+      await emulate();
+    },
+    async setColorScheme(scheme) {
+      media.colorScheme = scheme;
+      await emulate();
     },
   };
   return page;

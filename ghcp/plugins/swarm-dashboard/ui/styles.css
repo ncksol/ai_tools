@@ -45,6 +45,61 @@
   --stg-archived: var(--archived);
   --stg-subagent: var(--sunk);
   --stg-ink: oklch(0.62 0.07 185);
+  --pr-ink: oklch(0.45 0.07 190);
+  /* The run summary's busy line, which its legend calls dark against the light start-to-finish bar; at least 3:1 against it in both themes. */
+  --g-busy: var(--merged-ink);
+  --g-busy-no: var(--blocked-ink);
+  /* The slate of the cockpit control's spaceship, which the theme switch's icons share. */
+  --icon: #687c96;
+}
+/* The dark theme: the same roles on dark surfaces. Fills stay mid-tone so borders, rings and bars read; the inks are light for text on surface and soft fills. The layout check proves 4.5:1 for every text in both themes. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: oklch(0.16 0.008 255);
+  --surface: oklch(0.205 0.01 255);
+  --sunk: oklch(0.26 0.012 255);
+  --line: oklch(0.34 0.014 255);
+  --line-2: oklch(0.28 0.012 255);
+  --ink: oklch(0.93 0.006 250);
+  --ink-2: oklch(0.76 0.014 250);
+  --ink-3: oklch(0.64 0.014 250);
+  --meter: oklch(0.52 0.03 250);
+  --focus: oklch(0.74 0.11 245);
+  --busy: oklch(0.62 0.09 238);
+  --busy-ink: oklch(0.80 0.08 240);
+  --busy-soft: oklch(0.25 0.025 240);
+  --idle: oklch(0.46 0.012 250);
+  --idle-ink: oklch(0.74 0.012 250);
+  --idle-soft: oklch(0.26 0.008 250);
+  --plan: oklch(0.66 0.10 88);
+  --plan-ink: oklch(0.84 0.10 88);
+  --plan-soft: oklch(0.25 0.025 85);
+  --question: oklch(0.62 0.10 300);
+  --question-ink: oklch(0.80 0.09 300);
+  --question-soft: oklch(0.25 0.03 300);
+  --stuck: oklch(0.62 0.15 25);
+  --stuck-ink: oklch(0.78 0.11 25);
+  --stuck-soft: oklch(0.25 0.035 25);
+  --blocked: oklch(0.66 0.12 60);
+  --blocked-ink: oklch(0.82 0.10 62);
+  --blocked-soft: oklch(0.25 0.03 60);
+  --merged: oklch(0.60 0.09 160);
+  --merged-ink: oklch(0.80 0.09 160);
+  --merged-soft: oklch(0.25 0.025 160);
+  --archived: oklch(0.42 0.008 250);
+  --archived-ink: oklch(0.70 0.01 250);
+  --archived-soft: oklch(0.25 0.005 250);
+  --stg-coding: oklch(0.26 0.03 195);
+  --stg-pr: oklch(0.30 0.045 188);
+  --stg-review: oklch(0.34 0.055 178);
+  /* Plan nodes in these stages carry text, so their fills stay dark. */
+  --stg-merged: oklch(0.33 0.055 160);
+  --stg-archived: oklch(0.30 0.008 250);
+  --stg-ink: oklch(0.70 0.08 185);
+  --pr-ink: oklch(0.80 0.07 190);
+  --g-busy: oklch(0.32 0.06 160);
+  --g-busy-no: oklch(0.38 0.07 55);
+  --icon: oklch(0.76 0.03 255);
 }
 *, *::before, *::after { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -73,7 +128,7 @@ a { color: var(--busy-ink); }
 .st-archived { --c: var(--archived); --c-ink: var(--archived-ink); --c-soft: var(--archived-soft); }
 .st-done { --c: var(--merged); --c-ink: var(--merged-ink); --c-soft: var(--merged-soft); }
 .st-planned { --c: var(--surface); --c-ink: var(--ink-2); --c-soft: var(--surface); }
-.st-pr { --c: var(--stg-pr); --c-ink: oklch(0.45 0.07 190); --c-soft: var(--stg-coding); }
+.st-pr { --c: var(--stg-pr); --c-ink: var(--pr-ink); --c-soft: var(--stg-coding); }
 .rp-complete { --r: var(--merged-ink); }
 .rp-progress { --r: var(--busy-ink); }
 .rp-needs { --r: var(--question-ink); }
@@ -117,6 +172,12 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 .ck-open svg { display: block; }
 .ck-addr { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-width: 0; }
 .ck-addr-url { user-select: all; overflow-wrap: anywhere; }
+.d-tools { display: flex; align-items: center; gap: 8px; }
+.ck-open path { fill: var(--icon); }
+/* The theme switch shows a moon in the light theme and a sun in the dark one: the theme a click switches to. */
+.th-icon { display: grid; color: var(--icon); }
+.th-icon svg { display: block; grid-area: 1 / 1; transition: opacity .2s ease, transform .3s cubic-bezier(.25, 1, .5, 1); }
+:root[data-theme="dark"] .th-moon, :root:not([data-theme="dark"]) .th-sun { opacity: 0; transform: rotate(90deg) scale(.5); }
 .d-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px 32px; }
 .d-id { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .d-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -364,8 +425,8 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 .g-track { position: relative; height: 12px; border-radius: 2px; background: var(--line-2); }
 .g-span { position: absolute; top: 0; height: 12px; border-radius: 2px; background: var(--merged); }
 .g-span.no { background: var(--blocked); }
-.g-busy { position: absolute; top: 4px; height: 4px; border-radius: 2px; background: var(--merged-ink); }
-.g-span.no + .g-busy { background: var(--blocked-ink); }
+.g-busy { position: absolute; top: 4px; height: 4px; border-radius: 2px; background: var(--g-busy); }
+.g-span.no + .g-busy { background: var(--g-busy-no); }
 .g-num { font-size: 12px; line-height: 16px; color: var(--ink-2); text-align: right; white-space: nowrap; }
 .g-axis { display: grid; grid-template-columns: 152px minmax(0, 1fr) 96px; gap: 12px; }
 .g-axis div { position: relative; height: 16px; font-size: 12px; line-height: 16px; color: var(--ink-2); }
@@ -386,4 +447,5 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; }
+  .th-icon svg { transition: none; }
 }

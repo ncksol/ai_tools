@@ -5,6 +5,7 @@ import { morph } from './morph.mjs';
 import { nextCardChange, runEnd, unitEnd } from './model.mjs';
 import { shortLabel } from './parts.mjs';
 import { planFits, planGraphHtml, planListHtml } from './plan.mjs';
+import { createThemeChoice } from './theme.mjs';
 import { axisSvg, costSvg, laneSource, laneSvg, timelineWindow } from './timeline.mjs';
 
 const STORE = 'swarm-dashboard:ui';
@@ -67,6 +68,8 @@ const view = {
   fresh: emptyFresh(),
   host: document.documentElement.dataset.host,
   cockpitNote: null,
+  /** Set by ui/theme-boot.mjs before the first paint. */
+  theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light',
 };
 if (view.page === 'run' && !view.runId) view.page = 'history';
 // The self-reload carried the page's state in the address; drop it now, so a later manual reload shows the saved state.
@@ -105,6 +108,18 @@ function save() {
     // Storage can be unavailable; the dashboard works without it.
   }
 }
+
+const darkScheme = matchMedia('(prefers-color-scheme: dark)');
+function showTheme(theme) {
+  if (view.theme === theme) return;
+  view.theme = theme;
+  document.documentElement.dataset.theme = theme;
+  render();
+}
+const themeChoice = createThemeChoice({ win: window, prefersDark: () => darkScheme.matches, show: showTheme });
+// The same rule as the boot script, so they agree; this also covers a boot script that did not run.
+view.theme = themeChoice.current();
+document.documentElement.dataset.theme = view.theme;
 
 function connect() {
   clearTimeout(reconnectTimer);
@@ -434,7 +449,7 @@ async function loadRun(id) {
 }
 
 function act(target) {
-  const el = target.closest('[data-page],[data-tab],[data-span],[data-close],[data-open],[data-run],[data-cockpit],[data-cockpit-copy]');
+  const el = target.closest('[data-page],[data-tab],[data-span],[data-close],[data-open],[data-run],[data-cockpit],[data-cockpit-copy],[data-theme-toggle]');
   if (!el || !dash.contains(el)) return;
   if (el.dataset.page) {
     view.page = el.dataset.page;
@@ -462,6 +477,9 @@ function act(target) {
     loadRun(view.runId);
   } else if (el.dataset.cockpit !== undefined) {
     view.cockpitNote = view.snapshot ? openCockpit(window, { swarm: view.snapshot.run.id, host: view.host }) : null;
+  } else if (el.dataset.themeToggle !== undefined) {
+    themeChoice.toggle();
+    return;
   } else if (el.dataset.cockpitCopy !== undefined) {
     const note = view.cockpitNote;
     if (note) {
@@ -518,6 +536,10 @@ setInterval(() => {
   // A full render, not only a redraw of the lanes: which sub-agent rows exist depends on the window, which moves with now.
   if (ticks % 15 === 0 && view.page === 'live' && view.tab === 'timeline' && view.snapshot) scheduleRender();
 }, 1000);
+
+// With no choice the page follows the system setting; another tab's choice applies here too.
+darkScheme.addEventListener('change', () => themeChoice.systemChanged());
+window.addEventListener('storage', event => themeChoice.storageChanged(event));
 
 // The cockpit asks this window to show a unit's details or a tab, in place; a request for another swarm loads its address.
 window.addEventListener('message', event => {

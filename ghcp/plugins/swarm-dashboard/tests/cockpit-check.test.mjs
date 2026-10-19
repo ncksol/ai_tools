@@ -41,7 +41,7 @@ test('the layout check runs the cockpit\'s checks after the dashboard\'s', () =>
   const source = readFileSync(new URL('../scripts/check-layout.mjs', import.meta.url), 'utf8');
   assert.match(source, /import \{ runCockpitChecks \} from '\.\/lib\/cockpit-check\.mjs';/);
   assert.match(source, /const cockpit = await runCockpitChecks\(/);
-  assert.match(source, /historyErrorIssues\.length \|\| cockpit\.issues \? 1 : 0/);
+  assert.match(source, /historyErrorIssues\.length \|\| themeIssues\.length \|\| cockpit\.issues \? 1 : 0/);
 });
 
 test('browser errors reach the cockpit\'s diagnostics as their message', () => {

@@ -3,6 +3,7 @@ import { ago, esc } from './format.mjs';
 import { historyHtml, runHtml } from './history.mjs';
 import { activityHtml, cardsHtml, detailHtml, headerHtml, needsHtml, railHtml } from './live.mjs';
 import { boardHtml } from './plan.mjs';
+import { themeControlHtml } from './theme.mjs';
 import { timelineHtml } from './timeline.mjs';
 
 export const TABS = Object.freeze({ cards: 'Cards', activity: 'Activity', timeline: 'Timeline', plan: 'Plan', board: 'Board' });
@@ -173,7 +174,7 @@ export function renderApp(view) {
 function topHtml(view) {
   const current = view.page === 'run' ? 'history' : view.page;
   const pages = ['live', 'history'].map(page => `<button type="button" data-page="${page}" aria-pressed="${current === page}">${page === 'live' ? 'Live' : 'History'}</button>`).join('');
-  return `<div class="d-top"><div class="seg" role="group" aria-label="Dashboard">${pages}</div><div class="d-top-r">${pickerHtml(view)}${statusHtml(view)}${cockpitControlHtml(view)}</div></div>`
+  return `<div class="d-top"><div class="seg" role="group" aria-label="Dashboard">${pages}</div><div class="d-top-r">${pickerHtml(view)}${statusHtml(view)}<div class="d-tools">${cockpitControlHtml(view)}${themeControlHtml(view.theme)}</div></div></div>`
     + (view.page === 'live' ? cockpitAddressHtml(view.cockpitNote ?? null) : '');
 }
 

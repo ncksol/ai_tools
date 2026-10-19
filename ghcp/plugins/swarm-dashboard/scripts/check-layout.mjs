@@ -12,6 +12,8 @@ import { findPlaywright, launchWebKit, openWebKitPage } from './lib/webkit.mjs';
 
 export const WIDTHS = [480, 560, 640, 800, 1024, 1280, 1440, 1600, 1920];
 export const CANVAS_WIDTHS = [480, 560, 640];
+/** Each view is checked in both themes. The page starts in the system setting when nothing is saved, so the check emulates it. */
+export const THEMES = ['light', 'dark'];
 /**
  * What each scenario shows in the detail, sub-agent detail and run views. The stress scenario has no finished run; the
  * check serves it with History failing (historyError), so its History list audits the line that says so.
@@ -39,8 +41,8 @@ export const VIEWS = [
 export const SELF_TEST_RULES = ['overlap', 'font-family', 'font-size', 'font-style', 'text-transform', 'font-weight', 'letter-spacing', 'line-height', 'contrast', 'colour', 'grid', 'padding', 'height', 'spill', 'clipped', 'hidden-lines', 'cut', 'outside', 'gap', 'align', 'kind-border', 'hscroll'];
 export const USAGE = `Usage: check-layout [--scenario example|stress | --live <url>] [--width <px>] [--screenshots <dir>] [--engine chrome|webkit]
 
-Checks every dashboard view for overlap, clipped text, type, spacing, sizes, contrast and console errors in a
-local headless Chrome, Chromium or Edge (set CHROME_PATH to pick one). It proves its rules on a broken page first,
+Checks every dashboard view, in the light and the dark theme, for overlap, clipped text, type, spacing, sizes,
+contrast and console errors in a local headless Chrome, Chromium or Edge (set CHROME_PATH to pick one). It proves its rules on a broken page first,
 tests the page's in-place updates, and then watches live updates arrive and reports how long each one takes.
 Then it checks the swarm cockpit the same way (see scripts/check-cockpit.mjs).
 By default it serves the synthetic example and stress swarms itself; --live checks a running dashboard instead
@@ -99,18 +101,20 @@ export function parseArguments(argv) {
  */
 export function buildStates({ scenarios, widths, canvasWidths, targets = SCENARIOS }) {
   const states = [];
-  for (const scenario of scenarios) {
-    const target = targets[scenario];
-    for (const [host, list] of [['browser', widths], ['canvas', canvasWidths]]) {
-      for (const width of list) {
-        for (const view of VIEWS) {
-          const history = view.name === 'history' ? target.run || target.historyError : target.run;
-          if ((view.history && !history) || (view.name === 'detail' && !target.detail) || (view.name === 'detail-subagent' && !target.subagent)) continue;
-          const params = { host, ...(target.swarm ? { swarm: target.swarm } : {}), ...view.params };
-          if (params.detail === 'DETAIL') params.detail = target.detail;
-          if (params.detail === 'SUBAGENT') params.detail = target.subagent;
-          if (params.run === 'RUN') params.run = target.run;
-          states.push({ scenario, host, width, view: view.name, narrowOnly: Boolean(view.narrowOnly), params });
+  for (const theme of THEMES) {
+    for (const scenario of scenarios) {
+      const target = targets[scenario];
+      for (const [host, list] of [['browser', widths], ['canvas', canvasWidths]]) {
+        for (const width of list) {
+          for (const view of VIEWS) {
+            const history = view.name === 'history' ? target.run || target.historyError : target.run;
+            if ((view.history && !history) || (view.name === 'detail' && !target.detail) || (view.name === 'detail-subagent' && !target.subagent)) continue;
+            const params = { host, ...(target.swarm ? { swarm: target.swarm } : {}), ...view.params };
+            if (params.detail === 'DETAIL') params.detail = target.detail;
+            if (params.detail === 'SUBAGENT') params.detail = target.subagent;
+            if (params.run === 'RUN') params.run = target.run;
+            states.push({ theme, scenario, host, width, view: view.name, narrowOnly: Boolean(view.narrowOnly), params });
+          }
         }
       }
     }
@@ -780,6 +784,117 @@ async function watchHistoryUnavailable(page, servers) {
   }
 }
 
+/** What the theme switch shows: the root's theme, the button's name, the icon on show and the saved choice ('unreadable' when storage fails). */
+const THEME_STATE = `(() => {
+  const button = document.querySelector('[data-theme-toggle]');
+  const shown = [...document.querySelectorAll('.th-icon svg')].filter(svg => getComputedStyle(svg).opacity === '1').map(svg => svg.getAttribute('class'));
+  let saved = 'unreadable';
+  try {
+    saved = localStorage.getItem('swarm-dashboard:theme');
+  } catch {
+    // A broken storage below.
+  }
+  return { theme: document.documentElement.dataset.theme ?? null, label: button?.getAttribute('aria-label') ?? null, shown, saved };
+})()`;
+
+/**
+ * Ways a browser or webview can refuse storage, applied to a loaded page: each runs in the page and returns whether it
+ * took. The page's own listeners then meet the broken storage, as they would in such a webview.
+ */
+const BROKEN_STORAGE = {
+  'a localStorage getter that throws': `(() => {
+    Object.defineProperty(window, 'localStorage', { configurable: true, get() { throw new DOMException('The operation is insecure.', 'SecurityError'); } });
+    try { void localStorage; return false; } catch { return true; }
+  })()`,
+  'no localStorage at all': `(() => {
+    delete window.localStorage;
+    return !('localStorage' in window);
+  })()`,
+  'a write refused as over quota': `(() => {
+    Storage.prototype.setItem = function () { throw new DOMException('The quota has been exceeded.', 'QuotaExceededError'); };
+    try { localStorage.setItem('swarm-dashboard:probe', '1'); return false; } catch { return true; }
+  })()`,
+};
+
+/**
+ * The theme switch on the example demo: with nothing saved the page follows the system setting; a click switches the
+ * theme, the icon (moon in the light theme, sun in the dark one) and the button's name, saves the choice, and the choice
+ * outlasts a reload and a change of the system setting. Leaves the page light, with nothing saved.
+ */
+async function watchTheme(page, url) {
+  const issues = [];
+  const expect = (state, theme, saved, when) => {
+    const icon = theme === 'dark' ? 'th-sun' : 'th-moon';
+    const label = `Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`;
+    if (state.theme !== theme) issues.push(`${when}: the theme is ${state.theme}, not ${theme}`);
+    if (state.label !== label) issues.push(`${when}: the button is named ${JSON.stringify(state.label)}, not ${JSON.stringify(label)}`);
+    if (state.shown.length !== 1 || state.shown[0] !== icon) issues.push(`${when}: the button shows ${JSON.stringify(state.shown)}, not ${icon}`);
+    if (saved !== undefined && state.saved !== saved) issues.push(`${when}: the saved choice is ${state.saved}, not ${saved}`);
+  };
+  // Reloads the same address, so it waits for the old page's mark to go before it uses the new page.
+  const open = async () => {
+    await page.evaluate('window.swarmThemeMark = 1').catch(() => {});
+    await page.goto(url, 1280);
+    await page.waitFor(`window.swarmThemeMark === undefined && location.href === ${JSON.stringify(url)} && document.documentElement.dataset.ready === '1'`);
+  };
+  // The system setting goes dark, then light, each change seen by the page: two changes within one frame fire no event.
+  // The page's own listener was added first, so it has run when the check's listener counts the change.
+  const systemDarkThenLight = async () => {
+    await page.evaluate("window.swarmSchemeChanges = 0; matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { window.swarmSchemeChanges += 1; })");
+    for (const [scheme, count] of [['dark', 1], ['light', 2]]) {
+      await page.setColorScheme(scheme);
+      await page.waitFor(`window.swarmSchemeChanges === ${count}`, 3000).catch(() => issues.push(`the page saw no change of the system setting to ${scheme}`));
+    }
+  };
+  try {
+    await open();
+    await page.evaluate("localStorage.removeItem('swarm-dashboard:theme')");
+    await page.setColorScheme('dark');
+    await open();
+    expect(await page.evaluate(THEME_STATE), 'dark', null, 'nothing saved, system dark');
+    await page.setColorScheme('light');
+    await page.waitFor("document.documentElement.dataset.theme === 'light'", 3000).catch(() => {});
+    expect(await page.evaluate(THEME_STATE), 'light', null, 'nothing saved, system changed to light');
+    await page.evaluate("document.querySelector('[data-theme-toggle]').click()");
+    expect(await page.evaluate(THEME_STATE), 'dark', 'dark', 'after a click');
+    await open();
+    expect(await page.evaluate(THEME_STATE), 'dark', 'dark', 'after a reload');
+    await systemDarkThenLight();
+    expect(await page.evaluate(THEME_STATE), 'dark', 'dark', 'saved dark, system changed');
+    await page.evaluate("document.querySelector('[data-theme-toggle]').click()");
+    expect(await page.evaluate(THEME_STATE), 'light', 'light', 'after a second click');
+    // Another tab's change arrives as a storage event; the browser sends none to the tab that wrote, so the check sends it.
+    await page.evaluate("dispatchEvent(new StorageEvent('storage', { key: 'swarm-dashboard:theme', oldValue: 'light', newValue: 'dark', storageArea: localStorage }))");
+    expect(await page.evaluate(THEME_STATE), 'dark', undefined, 'another tab chose dark');
+    await page.evaluate("dispatchEvent(new StorageEvent('storage', { key: null, storageArea: localStorage }))");
+    expect(await page.evaluate(THEME_STATE), 'light', undefined, 'another tab cleared the choice, system light');
+
+    // Where storage fails, the click still switches the theme, and the choice outlasts system changes until a reload.
+    for (const [name, breakStorage] of Object.entries(BROKEN_STORAGE)) {
+      await page.setColorScheme('light');
+      await open();
+      await page.evaluate("localStorage.removeItem('swarm-dashboard:theme')");
+      if (!await page.evaluate(breakStorage)) {
+        issues.push(`${name}: the check could not break storage this way`);
+        continue;
+      }
+      page.errors.length = 0;
+      await page.evaluate("document.querySelector('[data-theme-toggle]').click()");
+      expect(await page.evaluate(THEME_STATE), 'dark', undefined, `${name}, after a click`);
+      await systemDarkThenLight();
+      expect(await page.evaluate(THEME_STATE), 'dark', undefined, `${name}, after system changes`);
+      await page.evaluate("document.querySelector('[data-theme-toggle]').click()");
+      expect(await page.evaluate(THEME_STATE), 'light', undefined, `${name}, after a second click`);
+      for (const error of page.errors) issues.push(`${name}: ${error.message}`);
+    }
+    return { issues };
+  } finally {
+    await page.setColorScheme('light');
+    await open().catch(() => {});
+    await page.evaluate("localStorage.removeItem('swarm-dashboard:theme')").catch(() => {});
+  }
+}
+
 async function selfTest(page) {
   const problems = [];
   for (const [name, broken] of [['layout-bad.html', true], ['layout-good.html', false]]) {
@@ -881,25 +996,33 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
     let views = 0;
     let checks = 0;
     const failures = [];
+    let scheme = 'light';
     for (const state of buildStates({ ...options, targets })) {
       const url = `${urls[state.scenario]}?${new URLSearchParams(state.params)}`;
+      if (state.theme !== scheme) {
+        scheme = state.theme;
+        await page.setColorScheme(scheme);
+      }
       page.errors.length = 0;
       await page.goto(url, state.width);
       await page.waitFor(`location.href === ${JSON.stringify(url)} && document.documentElement.dataset.ready === '1'`);
       await page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
       if (state.narrowOnly && await page.evaluate('document.documentElement.dataset.narrow') !== '1') continue;
+      const shownTheme = await page.evaluate('document.documentElement.dataset.theme');
       const result = await page.evaluate(auditScript(AUDIT_DEFAULTS));
       views += 1;
       checks += result.checks + 1;
       const errors = countedErrors(page.errors, { view: state.view, historyError: targets[state.scenario]?.historyError, origin: new URL(urls[state.scenario]).origin });
       const issues = [...result.issues, ...errors.map(error => ({ rule: 'console', target: 'page', detail: error.message }))];
+      if (shownTheme !== state.theme) issues.push({ rule: 'theme', target: 'html', detail: `the page started in the ${shownTheme} theme, not ${state.theme}` });
       if (issues.length) failures.push({ state, issues });
-      if (options.screenshots) writeFileSync(path.join(options.screenshots, `${state.scenario}-${state.host}-${state.width}-${state.view}.png`), await page.screenshot());
+      if (options.screenshots) writeFileSync(path.join(options.screenshots, `${state.scenario}-${state.theme}-${state.host}-${state.width}-${state.view}.png`), await page.screenshot());
     }
+    await page.setColorScheme('light');
     const total = failures.reduce((sum, failure) => sum + failure.issues.length, 0);
-    stdout.write(`Checked ${views} views (${options.scenarios.join(' and ')}; browser layout at ${options.widths.join(', ')} px; canvas layout at ${options.canvasWidths.join(', ') || 'no'} px): ${checks} checks, ${total} issues.\n`);
+    stdout.write(`Checked ${views} views (${options.scenarios.join(' and ')}; ${THEMES.join(' and ')} themes; browser layout at ${options.widths.join(', ')} px; canvas layout at ${options.canvasWidths.join(', ') || 'no'} px): ${checks} checks, ${total} issues.\n`);
     for (const { state, issues } of failures) {
-      stderr.write(`\n${state.scenario}, ${state.host} layout, ${state.width} px, ${state.view}:\n`);
+      stderr.write(`\n${state.scenario}, ${state.theme} theme, ${state.host} layout, ${state.width} px, ${state.view}:\n`);
       for (const issue of issues.slice(0, 20)) stderr.write(`  ${issue.rule}: ${issue.target} (${issue.detail})\n`);
       if (issues.length > 20) stderr.write(`  and ${issues.length - 20} more\n`);
     }
@@ -952,8 +1075,14 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
       if (!historyErrorIssues.length) stdout.write('History unavailable (example): a failed History load said so instead of showing no runs, and the rows appeared by themselves once History answered.\n');
       for (const issue of historyErrorIssues) stderr.write(`history-error: ${issue}\n`);
     }
+    let themeIssues = [];
+    if (!options.live) {
+      themeIssues = (await watchTheme(page, `${urls.example ?? first}?host=browser`)).issues;
+      if (!themeIssues.length) stdout.write(`Theme switch (example): with nothing saved the page followed the system setting; a click switched the theme, the icon and the button's name and saved the choice, which outlasted a reload and a change of the system setting, and another tab's choice applied; with ${Object.keys(BROKEN_STORAGE).join(', with ')}, a click still switched the theme without errors and the choice outlasted system changes.\n`);
+      for (const issue of themeIssues) stderr.write(`theme: ${issue}\n`);
+    }
     const cockpit = await runCockpitChecks({ page, browser, engine: options.engine, urls, options: { only: null, printMetrics: false, screenshots: options.screenshots }, stdout, stderr });
-    return failures.length || updateIssues.length || historyIssues.length || reloadIssues.length || reconnectIssues.length || nothingIssues.length || historyErrorIssues.length || cockpit.issues ? 1 : 0;
+    return failures.length || updateIssues.length || historyIssues.length || reloadIssues.length || reconnectIssues.length || nothingIssues.length || historyErrorIssues.length || themeIssues.length || cockpit.issues ? 1 : 0;
   } finally {
     process.off('SIGINT', interrupt);
     process.off('SIGTERM', interrupt);

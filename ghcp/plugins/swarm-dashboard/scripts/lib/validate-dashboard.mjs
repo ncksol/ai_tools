@@ -8,7 +8,7 @@ export const DASHBOARD_FILES = [
   'server/assets.mjs', 'server/canvas-host.mjs', 'server/demo-engine.mjs', 'server/demo-scenarios.mjs', 'server/engines.mjs',
   'server/http.mjs', 'server/hub.mjs', 'server/shared.mjs',
   'ui/index.html', 'ui/styles.css', 'ui/app.mjs', 'ui/format.mjs', 'ui/history.mjs', 'ui/live.mjs', 'ui/main.mjs', 'ui/model.mjs',
-  'ui/morph.mjs', 'ui/parts.mjs', 'ui/plan.mjs', 'ui/timeline.mjs',
+  'ui/morph.mjs', 'ui/parts.mjs', 'ui/plan.mjs', 'ui/theme.mjs', 'ui/theme-boot.mjs', 'ui/timeline.mjs',
   'scripts/swarm-dashboard.mjs', 'scripts/check-layout.mjs', 'scripts/lib/cdp.mjs', 'scripts/lib/page-audit.mjs', 'scripts/lib/webkit.mjs',
   'tests/fixtures/layout-good.html', 'tests/fixtures/layout-bad.html',
 ];
