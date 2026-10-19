@@ -108,7 +108,7 @@ test('escapes, numbers and literals of allowlisted keys are decoded, and other k
 });
 
 const TOP_KEYS = ['type', 'id', 'timestamp', 'parentId', 'agentId', 'data'];
-const DATA_KEYS = ['toolCallId', 'success', 'parentToolCallId', 'agentId', 'durationMs'];
+const DATA_KEYS = ['toolCallId', 'toolName', 'success', 'parentToolCallId', 'agentId', 'durationMs'];
 
 test('a very wide line captures only the allowlisted metadata, however many fields it has', () => {
   const scanner = createJsonScanner();
@@ -130,6 +130,17 @@ test('a very wide line captures only the allowlisted metadata, however many fiel
   assert.deepEqual(event, { type: 'tool.execution_complete', id: 'ev-1', timestamp: new Date(T0).toISOString(), data: { toolCallId: 'call-1', success: false } });
   assert.ok(Object.keys(event).every(key => TOP_KEYS.includes(key)));
   assert.ok(Object.keys(event.data).every(key => DATA_KEYS.includes(key)));
+});
+
+test('a recovered event keeps its data.toolName, but not one over the value limit', () => {
+  const iso = new Date(T0).toISOString();
+  const scan = text => {
+    const scanner = createJsonScanner();
+    scanner.write(Buffer.from(text));
+    return scanner.finish();
+  };
+  assert.deepEqual(scan(`{"data":{"toolName":"task","toolCallId":"c1","arguments":{"toolName":"nested"}},"timestamp":"${iso}","type":"tool.execution_start"}`).data, { toolName: 'task', toolCallId: 'c1' });
+  assert.deepEqual(scan(`{"type":"tool.execution_start","timestamp":"${iso}","data":{"toolName":"${'t'.repeat(600)}","toolCallId":"c2"}}`).data, { toolCallId: 'c2' });
 });
 
 test('a repeated allowlisted key keeps its last value', () => {

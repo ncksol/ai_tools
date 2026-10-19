@@ -10,12 +10,17 @@ export const ORCHESTRATOR_AGENTS = Object.freeze(['orchestrator', 'session-orche
  * project session created by a chat (which no workspace link can express) nests under that chat. Every node with
  * children and no parent is a swarm root.
  *
- * A top session with no child session yet is a swarm root only when it is one of the `candidates` and the engine names
- * it in `waitingRoots`. Candidates are unarchived top sessions with no child (project sessions, and chats in no workspace)
- * whose current CLI session runs an orchestrator agent (data.db sessions.agent); the engine names those that wait on an
- * open tagged question (see engine.mjs, waitingOrchestrators).
+ * A top session with no child session yet is a swarm root only when it runs an orchestrator agent (data.db sessions.agent)
+ * and either:
+ * - it is one of the `candidates` and the engine names it in `waitingRoots`. Candidates are unarchived top sessions with no
+ *   child (project sessions, and chats in no workspace) whose current CLI session runs an orchestrator agent; the engine
+ *   names those that wait on an open tagged question (see engine.mjs, waitingOrchestrators);
+ * - or one of its CLI sessions runs an orchestrator agent and `hasSubagents` says it started a sub-agent, such as an
+ *   orchestrator that has used only `task` sub-agents so far (issue #30). Sub-agent work alone is not enough: most
+ *   sessions start sub-agents, and they are not swarms (issue #29, item 10). `taskCandidates` lists those CLI sessions,
+ *   archived or not, current or older aliases, for the engine to look for sub-agent starts (see engine.mjs, scanTaskStarts).
  */
-export function buildForest(app, { waitingRoots = new Set() } = {}) {
+export function buildForest(app, { waitingRoots = new Set(), hasSubagents = () => false } = {}) {
   const nodes = new Map();
   const workspaceOfSession = new Map();
   const aliasesByWorkspace = new Map();
@@ -105,8 +110,22 @@ export function buildForest(app, { waitingRoots = new Set() } = {}) {
     if (nodes.has(row.id) || workspaceOfSession.has(row.id) || orphanSessions.has(row.id) || row.archivedAt != null || !orchestrator(row.id)) continue;
     candidates.push({ id: row.id, cliId: row.id });
   }
-  const waiting = new Set(candidates.filter(item => waitingRoots.has(item.id)).map(item => chatNode(item.id)));
-  const roots = [...nodes.values()].filter(node => !node.parentId && (node.childIds.length > 0 || waiting.has(node.id)));
+  const promoted = new Set(candidates.filter(item => waitingRoots.has(item.id)).map(item => chatNode(item.id)));
+  const working = cliIds => cliIds.some(cliId => orchestrator(cliId) && hasSubagents(cliId));
+  // Every CLI session that sub-agent work would make a root: one running an orchestrator agent, of a top session with no
+  // child, archived or not, current or an older alias. The engine looks for sub-agent starts in their logs.
+  const taskCandidates = new Set();
+  for (const node of [...nodes.values()]) {
+    if (node.parentId || node.childIds.length) continue;
+    for (const cliId of node.cliSessionIds) if (orchestrator(cliId)) taskCandidates.add(cliId);
+    if (working(node.cliSessionIds)) promoted.add(node.id);
+  }
+  for (const row of app.sessions.values()) {
+    if (nodes.has(row.id) || workspaceOfSession.has(row.id) || orphanSessions.has(row.id) || !orchestrator(row.id)) continue;
+    taskCandidates.add(row.id);
+    if (working([row.id])) promoted.add(chatNode(row.id));
+  }
+  const roots = [...nodes.values()].filter(node => !node.parentId && (node.childIds.length > 0 || promoted.has(node.id)));
   for (const root of roots) {
     const stack = [[root.id, 0]];
     while (stack.length) {
@@ -117,7 +136,7 @@ export function buildForest(app, { waitingRoots = new Set() } = {}) {
     }
   }
   roots.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
-  return { nodes, roots, workspaceOfSession, candidates };
+  return { nodes, roots, workspaceOfSession, candidates, taskCandidates: [...taskCandidates] };
 }
 
 export function descendants(forest, rootId) {

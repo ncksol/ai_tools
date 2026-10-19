@@ -5,7 +5,7 @@ import { copilotPaths, resolveThresholds } from './config.mjs';
 import { CREDIT_USD, NANO_AIU_PER_CREDIT } from './schema.mjs';
 import { SqliteUnavailableError, createSqliteReader, loadNodeSqlite } from './sqlite.mjs';
 import { readAppDb } from './readers/app-db.mjs';
-import { createTail, readNewLines } from './readers/events.mjs';
+import { createTail, fileStamp, lastWorkTime, readNewLines } from './readers/events.mjs';
 import { createLedger, pullLedger } from './readers/ledger.mjs';
 import { createProcessProbe } from './readers/process-probe.mjs';
 import { createSessionDbCache, listLocks, readWorkspaceYaml } from './readers/session-files.mjs';
@@ -13,7 +13,7 @@ import { buildForest, resolveNodeId, treeNodes } from './model/forest.mjs';
 import { parseQuestionTag } from './model/contract.mjs';
 import { createHistoryStore, listItemOf, summarizeRun } from './model/history.mjs';
 import { createPrLookup } from './model/pr-lookup.mjs';
-import { applyLine, applyRecovered, createSessionState } from './model/session-state.mjs';
+import { UI_EVENT_TYPES, applyLine, applyRecovered, createSessionState } from './model/session-state.mjs';
 import { buildSnapshot } from './model/swarm.mjs';
 
 const LIVENESS_TTL_MS = 15_000;
@@ -64,13 +64,9 @@ function digest(snapshot) {
   return createHash('sha1').update(JSON.stringify({ ...snapshot, generatedAt: 0, revision: 0 })).digest('hex');
 }
 
-async function mtimeOf(file) {
-  try {
-    return Math.round((await stat(file)).mtimeMs);
-  } catch {
-    return null;
-  }
-}
+/** True for a log event that starts a sub-agent: a `task` tool call, or subagent.started. */
+const isTaskStart = event => Boolean(event && typeof event === 'object'
+  && (event.type === 'subagent.started' || (event.type === 'tool.execution_start' && event.data?.toolName === 'task')));
 
 const byLifecycleThenActivity = (a, b) => (a.lifecycle === b.lifecycle ? b.lastActivityAt - a.lastActivityAt : a.lifecycle === 'live' ? -1 : 1);
 
@@ -104,6 +100,11 @@ export function createSwarmEngine(options = {}) {
   const readDb = createSessionDbCache();
   const sessions = new Map();
   const liveness = new Map();
+  // Per CLI session: { stamp, mtimeMs, at, checkedAt } from the last look at the end of its log (see workTimeOf).
+  const workTimes = new Map();
+  // CLI sessions of task candidates whose log shows a sub-agent start, and the log tails of the others (see scanTaskStarts).
+  const taskStarted = new Set();
+  const taskScans = new Map();
   const snapshots = new Map();
   // Per root id: the labels its sub-agent units showed in earlier snapshots (see assignSubagentLabels). Dropped with the root's snapshot.
   const subagentLabels = new Map();
@@ -164,11 +165,47 @@ export function createSwarmEngine(options = {}) {
     return value;
   }
 
+  /**
+   * When a CLI session last did work, from its log's end (see lastWorkTime), or null when its log is missing. App UI events,
+   * such as opening the dashboard canvas, are not work, so they do not make an old run look live (issue #30). A log that
+   * cannot be read gives its mtime, so its run is still rebuilt and the failed read is reported. The end of the log is read
+   * again whenever its fileStamp changed: a new size, mtime or ctime, or another file in its place.
+   */
+  async function workTimeOf(cliId, at) {
+    const file = path.join(paths.stateDir, cliId, 'events.jsonl');
+    let info;
+    try {
+      info = await stat(file);
+    } catch {
+      workTimes.delete(cliId);
+      return null;
+    }
+    const mtimeMs = Math.round(info.mtimeMs);
+    const cached = workTimes.get(cliId);
+    if (cached && cached.stamp === fileStamp(info)) {
+      cached.checkedAt = at;
+      return cached.at;
+    }
+    let found;
+    try {
+      found = await lastWorkTime(file, UI_EVENT_TYPES);
+    } catch {
+      workTimes.delete(cliId);
+      return mtimeMs;
+    }
+    if (!found) {
+      workTimes.delete(cliId);
+      return null;
+    }
+    workTimes.set(cliId, { ...found, checkedAt: at });
+    return found.at;
+  }
+
   async function listRoot(root, at) {
     const nodes = treeNodes(forest, root.id);
     const cliIds = [...new Set(nodes.flatMap(node => node.cliSessionIds))];
     let last = root.createdAt ?? 0;
-    for (const cliId of cliIds) last = Math.max(last, (await mtimeOf(path.join(paths.stateDir, cliId, 'events.jsonl'))) ?? 0);
+    for (const cliId of cliIds) last = Math.max(last, (await workTimeOf(cliId, at)) ?? 0);
     const totals = ledger.sumFor(cliIds);
     last = Math.max(last, totals.lastAt ?? 0);
     cheapLast.set(root.id, last);
@@ -213,6 +250,46 @@ export function createSwarmEngine(options = {}) {
   }
 
   /**
+   * Looks for a sub-agent start (a `task` tool call, or a subagent.started event) in the logs of the forest's task
+   * candidates (see buildForest) that have no sub-agent model call in the ledger. Proven work is membership, whatever the
+   * session's liveness or age: a found session stays in `taskStarted` while it is a candidate, and its log is not read
+   * again. Any other candidate's log is read from where the last scan stopped, so a refresh reads only new bytes; the
+   * first scan reads it whole. Resolves true when it found a new one.
+   */
+  async function scanTaskStarts(cliIds, diag) {
+    const wanted = new Set(cliIds);
+    for (const cliId of [...taskStarted]) if (!wanted.has(cliId)) taskStarted.delete(cliId);
+    for (const cliId of [...taskScans.keys()]) if (!wanted.has(cliId) || taskStarted.has(cliId)) taskScans.delete(cliId);
+    let found = false;
+    for (const cliId of wanted) {
+      if (taskStarted.has(cliId)) continue;
+      if (ledger.hasSubagentWork(cliId)) {
+        taskScans.delete(cliId);
+        continue;
+      }
+      let tail = taskScans.get(cliId);
+      if (!tail) {
+        tail = createTail(path.join(paths.stateDir, cliId, 'events.jsonl'));
+        taskScans.set(cliId, tail);
+      }
+      let started = false;
+      try {
+        await readNewLines(tail, line => {
+          if (!started && (line.includes('subagent.started') || (line.includes('tool.execution_start') && line.includes('"task"')))) started = isTaskStart(JSON.parse(line));
+        }, { onOversized: event => { if (!started) started = isTaskStart(event); } });
+      } catch (error) {
+        diag.push({ level: 'warn', source: 'events', message: `${shortId(cliId)}: ${error.message}` });
+      }
+      if (started) {
+        taskStarted.add(cliId);
+        taskScans.delete(cliId);
+        found = true;
+      }
+    }
+    return found;
+  }
+
+  /**
    * The forest's candidates (see buildForest) that wait on an open contract-tagged question: an unanswered ask_user whose
    * text starts with a valid tag, in a session not known to have ended, the wait that "Needs you" shows (see buildNeeds).
    * Only a candidate whose log changed within runFinishedAfterMs, or whose process is alive, is read, so an orchestrator
@@ -223,7 +300,7 @@ export function createSwarmEngine(options = {}) {
     for (const { id, cliId } of forest.candidates) {
       const alive = await livenessOf(cliId, at);
       if (alive === false) continue;
-      const changedAt = await mtimeOf(path.join(paths.stateDir, cliId, 'events.jsonl'));
+      const changedAt = await workTimeOf(cliId, at);
       if (changedAt === null || (alive !== true && at - changedAt >= thresholds.runFinishedAfterMs)) continue;
       read.add(cliId);
       // A session that is not a swarm reports no read problems; buildTracked reads it again, and reports them, once it is one.
@@ -433,24 +510,29 @@ export function createSwarmEngine(options = {}) {
       app = app ?? emptyApp();
       diag.push(sqliteProblem('data.db', error));
     }
-    // The CLI sessions of top sessions that may be swarms before their first child (see waitingOrchestrators).
-    const candidateCliIds = new Set();
-    // Roots before this refresh: a root that leaves the forest is reported as changed, so a page that shows it learns it has gone.
-    const before = forest ? forest.roots.map(root => root.id) : [];
-    try {
-      forest = buildForest(app);
-      const waiting = await waitingOrchestrators(at, candidateCliIds);
-      if (waiting.size) forest = buildForest(app, { waitingRoots: waiting });
-    } catch (error) {
-      forest = forest ?? buildForest(emptyApp());
-      diag.push({ level: 'warn', source: 'forest', message: error.message });
-    }
+    // Read before the forest is built: a sub-agent's model calls can make an orchestrator with no child a swarm (see buildForest).
     try {
       const pulled = await reader.read(paths.storeDb, db => pullLedger(db, ledger));
       if (pulled === null) diag.push({ level: 'warn', source: 'session-store.db', message: 'The Copilot session store was not found, so costs are unknown.' });
     } catch (error) {
       globalsRead = false;
       diag.push(sqliteProblem('session-store.db', error));
+    }
+    // The CLI sessions of top sessions that may be swarms before their first child (see waitingOrchestrators).
+    const candidateCliIds = new Set();
+    // Roots before this refresh: a root that leaves the forest is reported as changed, so a page that shows it learns it has gone.
+    const before = forest ? forest.roots.map(root => root.id) : [];
+    try {
+      // A CLI session started a sub-agent when the ledger has a sub-agent's model call, or its log has a sub-agent start
+      // (see scanTaskStarts; the log can be ahead of the ledger, or a sub-agent can end before its first model call).
+      const hasSubagents = cliId => taskStarted.has(cliId) || ledger.hasSubagentWork(cliId);
+      forest = buildForest(app, { hasSubagents });
+      const found = await scanTaskStarts(forest.taskCandidates, diag);
+      const waiting = await waitingOrchestrators(at, candidateCliIds);
+      if (waiting.size || found) forest = buildForest(app, { waitingRoots: waiting, hasSubagents });
+    } catch (error) {
+      forest = forest ?? buildForest(emptyApp());
+      diag.push({ level: 'warn', source: 'forest', message: error.message });
     }
     for (const failure of lookup?.errors() ?? []) diag.push({ level: 'info', source: 'pr-lookup', message: `${failure.key}: ${failure.error}` });
 
@@ -510,6 +592,7 @@ export function createSwarmEngine(options = {}) {
     for (const rootId of [...verified.keys()]) if (!current.has(rootId)) verified.delete(rootId);
     for (const rootId of [...pendingRoots]) if (!current.has(rootId)) pendingRoots.delete(rootId);
     for (const [cliId, entry] of [...liveness]) if (at - entry.checkedAt > 4 * LIVENESS_TTL_MS) liveness.delete(cliId);
+    for (const [cliId, entry] of [...workTimes]) if (at - entry.checkedAt > 4 * LIVENESS_TTL_MS) workTimes.delete(cliId);
     readDb.retain(dbFiles);
     reader.retain(new Set([...dbFiles, paths.dataDb, paths.storeDb]));
     swarms = swarms.map(item => {
