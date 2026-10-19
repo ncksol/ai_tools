@@ -134,14 +134,15 @@ export function nextCardChange(snapshot, now) {
 }
 
 /**
- * Units shown as cards at `now`: attention first, then creation order. Archived units leave the Cards tab. Sub-agent
+ * Units shown as cards at `now`: attention first, then creation order. Archived units leave the Cards tab: those with status
+ * archived, and those on the Archived stage, whose status shows their outcome (failed). Sub-agent
  * units stay on it while they run or are stuck, and a finished one for SUBAGENT_CARD_GRACE_MS after it ended; the Board
  * shows them all.
  */
 export function cardUnits(snapshot, now) {
   return snapshot.units
     .map((unit, index) => ({ unit, index }))
-    .filter(({ unit }) => unit.status !== 'archived' && (!isFinishedSubagent(unit) || cardTimeLeft(unit, now) > 0))
+    .filter(({ unit }) => unit.status !== 'archived' && unit.stage !== 'archived' && (!isFinishedSubagent(unit) || cardTimeLeft(unit, now) > 0))
     .sort((a, b) => (STATUS_ORDER[a.unit.status] ?? 9) - (STATUS_ORDER[b.unit.status] ?? 9) || a.index - b.index)
     .map(({ unit }) => unit);
 }

@@ -32,15 +32,19 @@ function bestMention(mentions, host) {
 /** PR identity: registry row, latest contract status line, the app's PR columns, then the most-mentioned PR. */
 export function resolvePr({ registry = null, statusLines = [], createdPr = null, mentions = new Map(), host = null } = {}) {
   const repoFor = provider => (host?.provider === provider ? host.repo : null);
+  // When the unit first reported this PR on a status line, or null.
+  const firstReported = (provider, id) => {
+    const same = statusLines.filter(item => item.pr && item.pr.provider === provider && item.pr.id === id);
+    return same.length ? Math.min(...same.map(item => item.at)) : null;
+  };
   if (registry?.prProvider && registry.prId) {
     const valid = registry.prProvider === 'ado' ? ADO_REPO : registry.prProvider === 'github' ? GITHUB_REPO : null;
     const repo = valid && typeof registry.prRepo === 'string' && valid.test(registry.prRepo) ? registry.prRepo : repoFor(registry.prProvider);
-    return { provider: registry.prProvider, id: registry.prId, repo, url: registry.prUrl ?? null, source: 'registry', knownAt: null };
+    return { provider: registry.prProvider, id: registry.prId, repo, url: registry.prUrl ?? null, source: 'registry', knownAt: firstReported(registry.prProvider, registry.prId) };
   }
   const line = statusLines.find(item => item.pr);
   if (line) {
-    const same = statusLines.filter(item => item.pr && item.pr.provider === line.pr.provider && item.pr.id === line.pr.id);
-    return { provider: line.pr.provider, id: line.pr.id, repo: repoFor(line.pr.provider), url: null, source: 'status_line', knownAt: Math.min(...same.map(item => item.at)) };
+    return { provider: line.pr.provider, id: line.pr.id, repo: repoFor(line.pr.provider), url: null, source: 'status_line', knownAt: firstReported(line.pr.provider, line.pr.id) };
   }
   if (createdPr?.number) {
     return { provider: 'github', id: createdPr.number, repo: createdPr.repo ?? repoFor('github'), url: createdPr.url ?? null, source: 'app', knownAt: null };
@@ -49,10 +53,19 @@ export function resolvePr({ registry = null, statusLines = [], createdPr = null,
   return best ? { ...best, url: null, source: 'heuristic' } : null;
 }
 
+/** The app's PR record is this PR: it is the identity's own source, or a GitHub PR with the same repository and number. */
+function sameAppPr(pr, createdPr) {
+  if (!createdPr) return false;
+  if (pr.source === 'app') return true;
+  const sameRepo = typeof pr.repo === 'string' && typeof createdPr.repo === 'string' && pr.repo.toLowerCase() === createdPr.repo.toLowerCase();
+  return pr.provider === 'github' && sameRepo && Number(createdPr.number) === Number(pr.id);
+}
+
+/** The lookup's PR state first; the app's PR record, which can lag, only when the lookup has none. */
 export function prView(pr, info, createdPr) {
   let state = info && info.state !== 'unknown' ? info.state : null;
   let mergedAt = info?.mergedAt ?? null;
-  if (!state && pr.source === 'app' && createdPr) {
+  if (!state && sameAppPr(pr, createdPr)) {
     const raw = String(createdPr.state ?? '').toLowerCase();
     state = createdPr.mergedAt || raw === 'merged' ? 'merged' : raw === 'closed' ? 'closed' : raw === 'draft' ? 'draft' : raw === 'open' ? 'open' : null;
     mergedAt = mergedAt ?? createdPr.mergedAt ?? null;
@@ -64,13 +77,16 @@ export function prView(pr, info, createdPr) {
   };
 }
 
-/** coding → PR open → in review → merged → archived (builder decision 4). */
+/**
+ * coding → PR open → in review → merged → archived (builder decision 4). A merged unit stays under merged once archived:
+ * the orchestrator archives each unit after its PR merges. Archived is for units with no better-known stage.
+ */
 export function deriveStage({ archivedAt = null, outcome = null, pr = null, monitorEver = false }) {
   const merged = outcome === 'merged' || pr?.state === 'merged';
   const closedWithoutMerge = !merged && (outcome === 'closed' || outcome === 'failed' || pr?.state === 'closed');
   let stage;
-  if (archivedAt !== null && archivedAt !== undefined) stage = 'archived';
-  else if (merged) stage = 'merged';
+  if (merged) stage = 'merged';
+  else if (archivedAt !== null && archivedAt !== undefined) stage = 'archived';
   else if (!pr) stage = 'coding';
   else if (pr.state === 'open' || (pr.state === 'unknown' && monitorEver)) stage = 'in_review';
   else stage = 'pr_open';
@@ -93,6 +109,7 @@ export function deriveMonitor({ stage, hasPr, closedWithoutMerge = false, automa
   }
   if (stage !== 'pr_open' && stage !== 'in_review') return view('none');
   const expected = (everyMinutes ?? 10) * MINUTE;
-  const since = lastWake !== null ? lastWake + expected : lastSave?.clear ? lastSave.at : prKnownAt ?? now;
-  return view('missing', { since: Math.min(since, now) });
+  // No wake, no cleared schedule and no time for the PR: the start is not known, so `since` stays null.
+  const since = lastWake !== null ? lastWake + expected : lastSave?.clear ? lastSave.at : prKnownAt;
+  return view('missing', { since: since === null ? null : Math.min(since, now) });
 }

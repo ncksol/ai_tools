@@ -152,7 +152,7 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  *   state: 'draft'|'open'|'merged'|'closed'|'unknown', openedAt: EpochMs|null, mergedAt: EpochMs|null, closedAt: EpochMs|null,
  *   reviewNote: string|null, source: 'registry'|'status_line'|'app'|'heuristic', checkedAt: EpochMs|null }} PrView
  * @typedef {{ state: 'none'|'alive'|'missing'|'paused'|'ended', lastCheckAt: EpochMs|null, nextCheckAt: EpochMs|null,
- *   everyMinutes: number|null, since: EpochMs|null }} MonitorView  `since` is set for missing and paused
+ *   everyMinutes: number|null, since: EpochMs|null }} MonitorView  `since` is set for paused, and for missing when its start is known
  * @typedef {{ label: string, name: string, dependsOn: string|null, canStart: boolean, waitsOn: string|null, todoId: string|null }} PlannedUnit
  * @typedef {{ id: string, kind: 'question'|'plan'|'pr', unitIds: string[], labels: string[], fromId: string, text: string,
  *   since: EpochMs, tagged: boolean }} NeedItem  unitIds empty = the whole swarm. id is unique within needs and stable across refreshes
