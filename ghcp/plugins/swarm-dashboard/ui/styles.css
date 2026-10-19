@@ -114,6 +114,7 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 .pick { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .pick select { height: 28px; max-width: 240px; padding: 0 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); cursor: pointer; }
 .pick select:hover { border-color: var(--ink-3); }
+.ck-open svg { display: block; }
 .ck-addr { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-width: 0; }
 .ck-addr-url { user-select: all; overflow-wrap: anywhere; }
 .d-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px 32px; }

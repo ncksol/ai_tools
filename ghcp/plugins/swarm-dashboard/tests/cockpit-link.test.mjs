@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  COCKPIT_WINDOW, REGULAR_WINDOW, SHOW, cockpitAddressHtml, cockpitControlHtml, cockpitPath, copyAddress, openCockpit, regularPath, showInRegular, showRequest,
+  COCKPIT_ICON, COCKPIT_WINDOW, REGULAR_WINDOW, SHOW, cockpitAddressHtml, cockpitControlHtml, cockpitPath, copyAddress, openCockpit, regularPath, showInRegular, showRequest,
 } from '../ui/cockpit-link.mjs';
 
 const BASE = 'http://127.0.0.1:7927';
@@ -15,6 +15,14 @@ function page(opened, href = `${BASE}/?host=browser`) {
   return { win, calls };
 }
 
+test('the Cockpit control shows the spaceship icon, named Cockpit for screen readers and in its tooltip', () => {
+  assert.match(COCKPIT_ICON, /^<svg width="21" height="20" viewBox="0 0 853 825" aria-hidden="true" focusable="false"><path fill="#687c96" fill-rule="evenodd" d="M[-0-9. MLCZ]+"\/><\/svg>$/);
+  assert.equal(COCKPIT_ICON.match(/<path /g).length, 1);
+  assert.equal(COCKPIT_ICON.match(/M/g).length, 4, 'two wings, the fuselage and the cockpit window');
+  const html = cockpitControlHtml({ page: 'live', snapshot: { run: { id: 'ws-1' } } });
+  assert.equal(html.replace(/<[^>]*>/g, ''), '', 'no visible text');
+});
+
 test('addresses for the cockpit and for the regular view', () => {
   assert.equal(cockpitPath('ws 1'), '/cockpit?swarm=ws+1');
   assert.equal(regularPath({ swarm: 'ws-1', detail: 'u1', tab: 'board' }), '/?swarm=ws-1&tab=board&detail=u1');
@@ -23,7 +31,7 @@ test('addresses for the cockpit and for the regular view', () => {
 
 test('the Cockpit control shows on the Live page once a swarm shows', () => {
   const snapshot = { run: { id: 'ws-1' } };
-  assert.equal(cockpitControlHtml({ page: 'live', snapshot }), '<div class="seg ck-open"><button type="button" data-cockpit>Cockpit</button></div>');
+  assert.equal(cockpitControlHtml({ page: 'live', snapshot }), `<div class="seg ck-open"><button type="button" data-cockpit aria-label="Cockpit" title="Cockpit">${COCKPIT_ICON}</button></div>`);
   assert.equal(cockpitControlHtml({ page: 'history', snapshot }), '');
   assert.equal(cockpitControlHtml({ page: 'live', snapshot: null }), '');
 });
