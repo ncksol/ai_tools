@@ -64,6 +64,10 @@ function digest(snapshot) {
   return createHash('sha1').update(JSON.stringify({ ...snapshot, generatedAt: 0, revision: 0 })).digest('hex');
 }
 
+/** True for a log event that starts a sub-agent: a `task` tool call, or subagent.started. */
+const isTaskStart = event => Boolean(event && typeof event === 'object'
+  && (event.type === 'subagent.started' || (event.type === 'tool.execution_start' && event.data?.toolName === 'task')));
+
 const byLifecycleThenActivity = (a, b) => (a.lifecycle === b.lifecycle ? b.lastActivityAt - a.lastActivityAt : a.lifecycle === 'live' ? -1 : 1);
 
 /**
@@ -98,6 +102,9 @@ export function createSwarmEngine(options = {}) {
   const liveness = new Map();
   // Per CLI session: { stamp, mtimeMs, at, checkedAt } from the last look at the end of its log (see workTimeOf).
   const workTimes = new Map();
+  // CLI sessions of task candidates whose log shows a sub-agent start, and the log tails of the others (see scanTaskStarts).
+  const taskStarted = new Set();
+  const taskScans = new Map();
   const snapshots = new Map();
   // Per root id: the labels its sub-agent units showed in earlier snapshots (see assignSubagentLabels). Dropped with the root's snapshot.
   const subagentLabels = new Map();
@@ -243,13 +250,52 @@ export function createSwarmEngine(options = {}) {
   }
 
   /**
+   * Looks for a sub-agent start (a `task` tool call, or a subagent.started event) in the logs of the forest's task
+   * candidates (see buildForest) that have no sub-agent model call in the ledger. Proven work is membership, whatever the
+   * session's liveness or age: a found session stays in `taskStarted` while it is a candidate, and its log is not read
+   * again. Any other candidate's log is read from where the last scan stopped, so a refresh reads only new bytes; the
+   * first scan reads it whole. Resolves true when it found a new one.
+   */
+  async function scanTaskStarts(cliIds, diag) {
+    const wanted = new Set(cliIds);
+    for (const cliId of [...taskStarted]) if (!wanted.has(cliId)) taskStarted.delete(cliId);
+    for (const cliId of [...taskScans.keys()]) if (!wanted.has(cliId) || taskStarted.has(cliId)) taskScans.delete(cliId);
+    let found = false;
+    for (const cliId of wanted) {
+      if (taskStarted.has(cliId)) continue;
+      if (ledger.hasSubagentWork(cliId)) {
+        taskScans.delete(cliId);
+        continue;
+      }
+      let tail = taskScans.get(cliId);
+      if (!tail) {
+        tail = createTail(path.join(paths.stateDir, cliId, 'events.jsonl'));
+        taskScans.set(cliId, tail);
+      }
+      let started = false;
+      try {
+        await readNewLines(tail, line => {
+          if (!started && (line.includes('subagent.started') || (line.includes('tool.execution_start') && line.includes('"task"')))) started = isTaskStart(JSON.parse(line));
+        }, { onOversized: event => { if (!started) started = isTaskStart(event); } });
+      } catch (error) {
+        diag.push({ level: 'warn', source: 'events', message: `${shortId(cliId)}: ${error.message}` });
+      }
+      if (started) {
+        taskStarted.add(cliId);
+        taskScans.delete(cliId);
+        found = true;
+      }
+    }
+    return found;
+  }
+
+  /**
    * The forest's candidates (see buildForest) that wait on an open contract-tagged question: an unanswered ask_user whose
    * text starts with a valid tag, in a session not known to have ended, the wait that "Needs you" shows (see buildNeeds).
    * Only a candidate whose log changed within runFinishedAfterMs, or whose process is alive, is read, so an orchestrator
-   * that finished long ago costs a stat. `read` collects the CLI sessions read, so that their tails are kept, and `started`
-   * those whose log shows a sub-agent start.
+   * that finished long ago costs a stat. `read` collects the CLI sessions read, so that their tails are kept.
    */
-  async function waitingOrchestrators(at, read, started) {
+  async function waitingOrchestrators(at, read) {
     const waiting = new Set();
     for (const { id, cliId } of forest.candidates) {
       const alive = await livenessOf(cliId, at);
@@ -260,7 +306,6 @@ export function createSwarmEngine(options = {}) {
       // A session that is not a swarm reports no read problems; buildTracked reads it again, and reports them, once it is one.
       const { state } = await tailSession(cliId, [], true);
       if ([...(state?.waits.values() ?? [])].some(wait => wait.kind === 'question' && parseQuestionTag(wait.text))) waiting.add(id);
-      if (state?.subagentCount) started.add(cliId);
     }
     return waiting;
   }
@@ -479,12 +524,12 @@ export function createSwarmEngine(options = {}) {
     const before = forest ? forest.roots.map(root => root.id) : [];
     try {
       // A CLI session started a sub-agent when the ledger has a sub-agent's model call, or its log has a sub-agent start
-      // (a candidate's log, read below, can be ahead of the ledger).
-      const started = new Set();
-      const hasSubagents = cliId => started.has(cliId) || ledger.hasSubagentWork(cliId);
+      // (see scanTaskStarts; the log can be ahead of the ledger, or a sub-agent can end before its first model call).
+      const hasSubagents = cliId => taskStarted.has(cliId) || ledger.hasSubagentWork(cliId);
       forest = buildForest(app, { hasSubagents });
-      const waiting = await waitingOrchestrators(at, candidateCliIds, started);
-      if (waiting.size || started.size) forest = buildForest(app, { waitingRoots: waiting, hasSubagents });
+      const found = await scanTaskStarts(forest.taskCandidates, diag);
+      const waiting = await waitingOrchestrators(at, candidateCliIds);
+      if (waiting.size || found) forest = buildForest(app, { waitingRoots: waiting, hasSubagents });
     } catch (error) {
       forest = forest ?? buildForest(emptyApp());
       diag.push({ level: 'warn', source: 'forest', message: error.message });

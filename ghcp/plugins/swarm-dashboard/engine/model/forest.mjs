@@ -17,7 +17,8 @@ export const ORCHESTRATOR_AGENTS = Object.freeze(['orchestrator', 'session-orche
  *   names those that wait on an open tagged question (see engine.mjs, waitingOrchestrators);
  * - or one of its CLI sessions runs an orchestrator agent and `hasSubagents` says it started a sub-agent, such as an
  *   orchestrator that has used only `task` sub-agents so far (issue #30). Sub-agent work alone is not enough: most
- *   sessions start sub-agents, and they are not swarms (issue #29, item 10).
+ *   sessions start sub-agents, and they are not swarms (issue #29, item 10). `taskCandidates` lists those CLI sessions,
+ *   archived or not, current or older aliases, for the engine to look for sub-agent starts (see engine.mjs, scanTaskStarts).
  */
 export function buildForest(app, { waitingRoots = new Set(), hasSubagents = () => false } = {}) {
   const nodes = new Map();
@@ -111,10 +112,18 @@ export function buildForest(app, { waitingRoots = new Set(), hasSubagents = () =
   }
   const promoted = new Set(candidates.filter(item => waitingRoots.has(item.id)).map(item => chatNode(item.id)));
   const working = cliIds => cliIds.some(cliId => orchestrator(cliId) && hasSubagents(cliId));
-  for (const node of [...nodes.values()]) if (!node.parentId && !node.childIds.length && working(node.cliSessionIds)) promoted.add(node.id);
+  // Every CLI session that sub-agent work would make a root: one running an orchestrator agent, of a top session with no
+  // child, archived or not, current or an older alias. The engine looks for sub-agent starts in their logs.
+  const taskCandidates = new Set();
+  for (const node of [...nodes.values()]) {
+    if (node.parentId || node.childIds.length) continue;
+    for (const cliId of node.cliSessionIds) if (orchestrator(cliId)) taskCandidates.add(cliId);
+    if (working(node.cliSessionIds)) promoted.add(node.id);
+  }
   for (const row of app.sessions.values()) {
-    if (nodes.has(row.id) || workspaceOfSession.has(row.id) || orphanSessions.has(row.id) || !working([row.id])) continue;
-    promoted.add(chatNode(row.id));
+    if (nodes.has(row.id) || workspaceOfSession.has(row.id) || orphanSessions.has(row.id) || !orchestrator(row.id)) continue;
+    taskCandidates.add(row.id);
+    if (working([row.id])) promoted.add(chatNode(row.id));
   }
   const roots = [...nodes.values()].filter(node => !node.parentId && (node.childIds.length > 0 || promoted.has(node.id)));
   for (const root of roots) {
@@ -127,7 +136,7 @@ export function buildForest(app, { waitingRoots = new Set(), hasSubagents = () =
     }
   }
   roots.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
-  return { nodes, roots, workspaceOfSession, candidates };
+  return { nodes, roots, workspaceOfSession, candidates, taskCandidates: [...taskCandidates] };
 }
 
 export function descendants(forest, rootId) {

@@ -216,3 +216,76 @@ test('an open page finds its session\'s swarm when the first task sub-agent star
     await server.close();
   }
 });
+
+/** The log-only cases: proven task work and no sub-agent model call in the ledger. Returns { root id: CLI session to find it by }. */
+function logOnlyHome() {
+  const home = scenario();
+  const roots = {
+    'ws-dead': withSubagent(home, { id: 'ws-dead', cli: 'cli-dead', ledger: false }),
+    'ws-archived': withSubagent(home, { id: 'ws-archived', cli: 'cli-archived', ledger: false, archivedAt: at(58) }),
+    'cli-chat': withSubagent(home, { id: 'cli-chat', kind: 'chat', ledger: false }),
+  };
+  // An older CLI session of ws-alias ran the task; its current one has not started a sub-agent.
+  home.session({ id: 'cli-alias-old', title: 'Alias old', createdAt: at(50), agent: 'orchestrator' });
+  home.alias('cli-alias-old', 'ws-alias', at(50));
+  const old = new EventLog(at(50));
+  old.start(); old.turnStart(); old.subagent({ name: 'scout' }); old.turnEnd();
+  home.writeEvents('cli-alias-old', old.events);
+  home.workspace({ id: 'ws-alias', name: 'Alias', createdAt: at(55), sessionId: 'cli-alias', agent: 'orchestrator' });
+  const current = new EventLog(at(55));
+  current.start(); current.turnStart(); current.message('Resumed.'); current.turnEnd();
+  home.writeEvents('cli-alias', current.events);
+  roots['ws-alias'] = 'cli-alias';
+  // A task start written with its type last.
+  home.workspace({ id: 'ws-reordered', name: 'Reordered', createdAt: at(55), sessionId: 'cli-reordered', agent: 'orchestrator' });
+  const reordered = new EventLog(at(55));
+  reordered.start();
+  reordered.events.push({ data: { toolCallId: 'call-r', toolName: 'task', arguments: { name: 'scout', description: 'scout work' } }, id: 'ev-r', timestamp: new Date(at(56)).toISOString(), type: 'tool.execution_start' });
+  home.writeEvents('cli-reordered', reordered.events);
+  roots['ws-reordered'] = 'cli-reordered';
+  withSubagent(home, { id: 'ws-plain', cli: 'cli-plain', agent: null, ledger: false });
+  return { home, roots };
+}
+
+test('a task start in the log makes a root with no ledger row, whatever the process, archive or alias', async () => {
+  const { home, roots } = logOnlyHome();
+  const engine = createSwarmEngine({
+    copilotHome: home.root, historyDir: path.join(tempDir('subagent-roots-'), 'history'), now: () => at(60), prLookup: 'off',
+    processProbe: async locks => new Map(locks.map(lock => [lock.pid, false])),
+  });
+  await engine.refresh();
+  assert.deepEqual(ids(engine), [...Object.keys(roots), 'ws-old', 'ws-root'].sort());
+  for (const [root, cliId] of Object.entries(roots)) assert.equal(await engine.findSwarm(cliId), root, cliId);
+  assert.equal(await engine.findSwarm('cli-alias-old'), 'ws-alias');
+  assert.equal(await engine.findSwarm('cli-plain'), null, 'a task start in a session with no orchestrator agent is no swarm');
+});
+
+test('a cold start long after a log-only run ended lists it as finished, in History, with no stored summary', async () => {
+  const { home, roots } = logOnlyHome();
+  const engine = engineFor(home, at(57) + 3 * 60 * 60000);
+  await engine.refresh();
+  for (const root of Object.keys(roots)) assert.equal(engine.listSwarms().find(swarm => swarm.id === root)?.lifecycle, 'finished', root);
+  const history = new Set((await engine.listHistory()).map(run => run.id));
+  for (const root of Object.keys(roots)) assert.ok(history.has(root), root);
+});
+
+test('a log-only run shown while its process ran stays a swarm after the process ends and its log goes quiet', async () => {
+  const home = scenario();
+  const cli = withSubagent(home, { id: 'ws-fade', cli: 'cli-fade', ledger: false, alive: true });
+  let alive = true;
+  let now = at(60);
+  const engine = createSwarmEngine({
+    copilotHome: home.root, historyDir: path.join(tempDir('subagent-roots-'), 'history'), now: () => now, prLookup: 'off',
+    processProbe: async locks => new Map(locks.map(lock => [lock.pid, alive])),
+  });
+  await engine.refresh();
+  assert.equal(await engine.findSwarm(cli), 'ws-fade');
+  assert.equal(engine.listSwarms().find(swarm => swarm.id === 'ws-fade').lifecycle, 'live');
+  alive = false;
+  now = at(57) + 3 * 60 * 60000;
+  await engine.refresh();
+  await engine.refresh();
+  assert.equal(await engine.findSwarm(cli), 'ws-fade');
+  assert.equal(engine.listSwarms().find(swarm => swarm.id === 'ws-fade').lifecycle, 'finished');
+  assert.ok((await engine.listHistory()).some(run => run.id === 'ws-fade'));
+});
