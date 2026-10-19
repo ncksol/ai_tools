@@ -175,9 +175,31 @@ export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onRes
   return result;
 }
 
-/** Longest line taken for a skipped type: a line longer than this whose start is not read yet is taken as one that is not. */
+/**
+ * Identity of a file's current contents: its device, inode, size, mtime and ctime. A file replaced by another of the same
+ * size and mtime gets a new inode, and one rewritten in place a new ctime, so neither keeps the old stamp.
+ */
+export function fileStamp(info) {
+  return `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+}
+
+/** Longest line taken for a skipped type: a longer line is taken as one that is not, without parsing it. */
 const MAX_SKIPPED_LINE_BYTES = 64 * 1024;
 const TIMESTAMP_KEY = '"timestamp":"';
+
+const BLANK = Symbol('blank');
+
+/** A log line's JSON object, BLANK for a line of only spaces, or null when the line is not a JSON object. */
+function parseObject(line) {
+  const text = line.toString('utf8');
+  if (!text.trim()) return BLANK;
+  try {
+    const value = JSON.parse(text);
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
 
 /** The time in a log line, by its last "timestamp" key, which follows the event's data; null when it has none. */
 function lineTime(line) {
@@ -189,11 +211,12 @@ function lineTime(line) {
 }
 
 /**
- * When a session last did work, from the end of its log, reading backwards in chunks. Resolves { mtimeMs, size, at }, or
- * null when the log is missing. `at` is the file's mtime, as before, unless the log ends with lines of the types in
- * `skipTypes` (app UI events, such as opening a canvas, that are not work); it is then the time of the last line before
- * them, or null when every line is one of them. An unfinished last line is work being written, so `at` is the mtime. When
- * more than maxBytes would have to be read, `at` is the mtime.
+ * When a session last did work, from the end of its log, reading backwards in chunks. Resolves { stamp, mtimeMs, at }, or
+ * null when the log is missing; `stamp` is the fileStamp of the file that was read. `at` is the file's mtime, as before,
+ * unless the log ends with lines whose top-level type is in `skipTypes` (app UI events, such as opening a canvas, that are
+ * not work), in any key order; it is then the time of the last line before them, or null when every line is one of them.
+ * A line that is not a JSON object, or is longer than any UI event, is work. An unfinished last line is work being
+ * written, so `at` is the mtime. When more than maxBytes would have to be read, `at` is the mtime.
  */
 export async function lastWorkTime(file, skipTypes, { chunkSize = 16 * 1024, maxBytes = 1024 * 1024 } = {}) {
   let handle;
@@ -207,7 +230,8 @@ export async function lastWorkTime(file, skipTypes, { chunkSize = 16 * 1024, max
     const info = await handle.stat();
     const mtimeMs = Math.round(info.mtimeMs);
     const size = info.size;
-    const result = at => ({ mtimeMs, size, at });
+    const stamp = fileStamp(info);
+    const result = at => ({ stamp, mtimeMs, at });
     if (!size) return result(null);
     // buffer holds the bytes [start, size); cursor is the end of the line to look at next, its newline excluded.
     let buffer = Buffer.alloc(0);
@@ -233,9 +257,9 @@ export async function lastWorkTime(file, skipTypes, { chunkSize = 16 * 1024, max
       }
       let line = buffer.subarray(newline + 1, cursor - start);
       if (line[line.length - 1] === CARRIAGE_RETURN) line = line.subarray(0, -1);
-      if (line.length) {
-        const type = /^\{"type":"([^"]+)"/.exec(line.subarray(0, 256).toString('latin1'))?.[1];
-        if (!type || !skipTypes.has(type)) return result(cursor === size - 1 ? mtimeMs : lineTime(line) ?? mtimeMs);
+      const event = line.length <= MAX_SKIPPED_LINE_BYTES ? parseObject(line) : null;
+      if (event !== BLANK && (!event || !skipTypes.has(event.type))) {
+        return result(cursor === size - 1 ? mtimeMs : parseTime(event?.timestamp) ?? lineTime(line) ?? mtimeMs);
       }
       if (newline < 0) return result(null);
       cursor = start + newline;

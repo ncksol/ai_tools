@@ -51,6 +51,10 @@ export function createLedger() {
     session(id) {
       return sessions.get(id) ?? null;
     },
+    /** True when a sub-agent of the session made a model call: a row with a parent_tool_call_id, the sub-agent's `task` call. */
+    hasSubagentWork(id) {
+      return (sessions.get(id)?.byParentToolCall.size ?? 0) > 0;
+    },
     sumFor(ids) {
       const total = emptyTotals();
       for (const id of new Set(ids)) {

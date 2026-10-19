@@ -5,7 +5,7 @@ import { copilotPaths, resolveThresholds } from './config.mjs';
 import { CREDIT_USD, NANO_AIU_PER_CREDIT } from './schema.mjs';
 import { SqliteUnavailableError, createSqliteReader, loadNodeSqlite } from './sqlite.mjs';
 import { readAppDb } from './readers/app-db.mjs';
-import { createTail, lastWorkTime, readNewLines } from './readers/events.mjs';
+import { createTail, fileStamp, lastWorkTime, readNewLines } from './readers/events.mjs';
 import { createLedger, pullLedger } from './readers/ledger.mjs';
 import { createProcessProbe } from './readers/process-probe.mjs';
 import { createSessionDbCache, listLocks, readWorkspaceYaml } from './readers/session-files.mjs';
@@ -96,7 +96,7 @@ export function createSwarmEngine(options = {}) {
   const readDb = createSessionDbCache();
   const sessions = new Map();
   const liveness = new Map();
-  // Per CLI session: { mtimeMs, size, at, checkedAt } from the last look at the end of its log (see workTimeOf).
+  // Per CLI session: { stamp, mtimeMs, at, checkedAt } from the last look at the end of its log (see workTimeOf).
   const workTimes = new Map();
   const snapshots = new Map();
   // Per root id: the labels its sub-agent units showed in earlier snapshots (see assignSubagentLabels). Dropped with the root's snapshot.
@@ -162,7 +162,7 @@ export function createSwarmEngine(options = {}) {
    * When a CLI session last did work, from its log's end (see lastWorkTime), or null when its log is missing. App UI events,
    * such as opening the dashboard canvas, are not work, so they do not make an old run look live (issue #30). A log that
    * cannot be read gives its mtime, so its run is still rebuilt and the failed read is reported. The end of the log is read
-   * again only when its size or mtime changed.
+   * again whenever its fileStamp changed: a new size, mtime or ctime, or another file in its place.
    */
   async function workTimeOf(cliId, at) {
     const file = path.join(paths.stateDir, cliId, 'events.jsonl');
@@ -175,7 +175,7 @@ export function createSwarmEngine(options = {}) {
     }
     const mtimeMs = Math.round(info.mtimeMs);
     const cached = workTimes.get(cliId);
-    if (cached && cached.mtimeMs === mtimeMs && cached.size === info.size) {
+    if (cached && cached.stamp === fileStamp(info)) {
       cached.checkedAt = at;
       return cached.at;
     }
@@ -246,9 +246,10 @@ export function createSwarmEngine(options = {}) {
    * The forest's candidates (see buildForest) that wait on an open contract-tagged question: an unanswered ask_user whose
    * text starts with a valid tag, in a session not known to have ended, the wait that "Needs you" shows (see buildNeeds).
    * Only a candidate whose log changed within runFinishedAfterMs, or whose process is alive, is read, so an orchestrator
-   * that finished long ago costs a stat. `read` collects the CLI sessions read, so that their tails are kept.
+   * that finished long ago costs a stat. `read` collects the CLI sessions read, so that their tails are kept, and `started`
+   * those whose log shows a sub-agent start.
    */
-  async function waitingOrchestrators(at, read) {
+  async function waitingOrchestrators(at, read, started) {
     const waiting = new Set();
     for (const { id, cliId } of forest.candidates) {
       const alive = await livenessOf(cliId, at);
@@ -259,6 +260,7 @@ export function createSwarmEngine(options = {}) {
       // A session that is not a swarm reports no read problems; buildTracked reads it again, and reports them, once it is one.
       const { state } = await tailSession(cliId, [], true);
       if ([...(state?.waits.values() ?? [])].some(wait => wait.kind === 'question' && parseQuestionTag(wait.text))) waiting.add(id);
+      if (state?.subagentCount) started.add(cliId);
     }
     return waiting;
   }
@@ -463,24 +465,29 @@ export function createSwarmEngine(options = {}) {
       app = app ?? emptyApp();
       diag.push(sqliteProblem('data.db', error));
     }
-    // The CLI sessions of top sessions that may be swarms before their first child (see waitingOrchestrators).
-    const candidateCliIds = new Set();
-    // Roots before this refresh: a root that leaves the forest is reported as changed, so a page that shows it learns it has gone.
-    const before = forest ? forest.roots.map(root => root.id) : [];
-    try {
-      forest = buildForest(app);
-      const waiting = await waitingOrchestrators(at, candidateCliIds);
-      if (waiting.size) forest = buildForest(app, { waitingRoots: waiting });
-    } catch (error) {
-      forest = forest ?? buildForest(emptyApp());
-      diag.push({ level: 'warn', source: 'forest', message: error.message });
-    }
+    // Read before the forest is built: a sub-agent's model calls can make an orchestrator with no child a swarm (see buildForest).
     try {
       const pulled = await reader.read(paths.storeDb, db => pullLedger(db, ledger));
       if (pulled === null) diag.push({ level: 'warn', source: 'session-store.db', message: 'The Copilot session store was not found, so costs are unknown.' });
     } catch (error) {
       globalsRead = false;
       diag.push(sqliteProblem('session-store.db', error));
+    }
+    // The CLI sessions of top sessions that may be swarms before their first child (see waitingOrchestrators).
+    const candidateCliIds = new Set();
+    // Roots before this refresh: a root that leaves the forest is reported as changed, so a page that shows it learns it has gone.
+    const before = forest ? forest.roots.map(root => root.id) : [];
+    try {
+      // A CLI session started a sub-agent when the ledger has a sub-agent's model call, or its log has a sub-agent start
+      // (a candidate's log, read below, can be ahead of the ledger).
+      const started = new Set();
+      const hasSubagents = cliId => started.has(cliId) || ledger.hasSubagentWork(cliId);
+      forest = buildForest(app, { hasSubagents });
+      const waiting = await waitingOrchestrators(at, candidateCliIds, started);
+      if (waiting.size || started.size) forest = buildForest(app, { waitingRoots: waiting, hasSubagents });
+    } catch (error) {
+      forest = forest ?? buildForest(emptyApp());
+      diag.push({ level: 'warn', source: 'forest', message: error.message });
     }
     for (const failure of lookup?.errors() ?? []) diag.push({ level: 'info', source: 'pr-lookup', message: `${failure.key}: ${failure.error}` });
 

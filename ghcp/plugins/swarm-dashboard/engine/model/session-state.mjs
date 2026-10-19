@@ -156,6 +156,7 @@ function eventSource(state, event, data) {
 }
 
 export function applyEvent(state, event) {
+  if (UI_EVENT_TYPES.has(event.type)) return;
   const at = parseTime(event.timestamp);
   if (at === null) return;
   touch(state, at, event.type);

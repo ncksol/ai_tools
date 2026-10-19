@@ -1,6 +1,6 @@
 # Swarm dashboard
 
-A watch-only dashboard for agentic swarms in the GitHub Copilot app. A swarm is a session that has started child sessions, such as an orchestrator that hands each unit of work to its own session. Before its first child session, an `orchestrator` or `session-orchestrator` session is a swarm while it waits on a tagged question, such as its plan question, so that the question shows under "Needs you". The dashboard shows what every session and sub-agent is doing, how far it has got, what it costs and what needs you, so you can follow the work at a glance instead of reading transcripts.
+A watch-only dashboard for agentic swarms in the GitHub Copilot app. A swarm is a session that has started child sessions, such as an orchestrator that hands each unit of work to its own session. Before its first child session, an `orchestrator` or `session-orchestrator` session is a swarm once it has started a `task` sub-agent, or while it waits on a tagged question, such as its plan question, so that the question shows under "Needs you". Sub-agents alone don't make other sessions swarms. The dashboard shows what every session and sub-agent is doing, how far it has got, what it costs and what needs you, so you can follow the work at a glance instead of reading transcripts.
 
 It opens as a canvas in the app's side panel, or in any browser through a small local launcher. It reads Copilot's local data read-only. Its only network requests are read-only `gh` and `az` queries about the swarm's pull requests.
 

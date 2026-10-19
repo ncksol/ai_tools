@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createSwarmEngine } from '../engine/engine.mjs';
-import { UI_EVENT_TYPES, applyLine, createSessionState } from '../engine/model/session-state.mjs';
-import { lastWorkTime } from '../engine/readers/events.mjs';
+import { UI_EVENT_TYPES, applyLine, applyRecovered, createSessionState } from '../engine/model/session-state.mjs';
+import { createTail, lastWorkTime, readNewLines } from '../engine/readers/events.mjs';
 import { createDashboardServer } from '../server/http.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { openEvents } from './helpers/http.mjs';
@@ -65,6 +65,15 @@ test('a log\'s work time is found across read chunks, and a long line is taken a
   assert.equal(await workAt(canvasLine(at(1)) + long + canvasLine(at(50)), { chunkSize: 4096 }), at(7));
 });
 
+test('a log\'s work time skips UI events in any key order', async () => {
+  const work = line('assistant.turn_end', at(5));
+  assert.equal(await workAt(work + reordered(at(50)).join('\n') + '\n'), at(5));
+  assert.equal(await workAt(work + `   \n${reordered(at(50))[1]}\n`), at(5), 'a line of spaces is blank');
+  const typeLastWork = `{"timestamp":"${new Date(at(7)).toISOString()}","type":"assistant.turn_start","data":{}}\n`;
+  assert.equal(await workAt(work + typeLastWork + canvasLine(at(50))), at(7));
+  assert.equal(await workAt(work + '[1,2]\n' + canvasLine(at(50))), MTIME, 'a line that is not an object is work');
+});
+
 const engineFor = (home, now) => createSwarmEngine({
   copilotHome: home.root, historyDir: path.join(tempDir('canvas-activity-'), 'history'), now: () => now, processProbe: alwaysAlive, prLookup: 'off',
 });
@@ -83,12 +92,44 @@ test('canvas events do not move a session\'s activity time', () => {
   assert.equal(state.lastEventType, 'assistant.turn_end');
 });
 
+/** Canvas lines as some writer might encode them: the type last, or spaces around keys. */
+const reordered = time => [
+  `{"timestamp":"${new Date(time).toISOString()}","type":"session.canvas.recorded","data":{"canvasId":"swarm-dashboard"}}`,
+  `{ "type" : "session.canvas.removed", "data" : {}, "timestamp" : "${new Date(time).toISOString()}" }`,
+];
+
+test('canvas events in any key order, normal or recovered from an oversized line, do not move a session\'s clock', async () => {
+  const state = createSessionState('cli-1');
+  const log = new EventLog(at(0));
+  log.start(); log.turnStart(); log.at(at(5)); log.turnEnd();
+  for (const event of log.events) applyLine(state, JSON.stringify(event));
+  for (const text of reordered(at(50))) applyLine(state, text);
+  applyRecovered(state, { type: 'session.canvas.recorded', timestamp: new Date(at(51)).toISOString(), data: {} });
+  assert.deepEqual([state.lastEventAt, state.lastEventType], [at(5), 'assistant.turn_end']);
+
+  // Lines over the size limit go through the oversized scanner and applyRecovered, with the type first or last.
+  const padded = { canvasId: 'swarm-dashboard', input: { note: 'x'.repeat(400) } };
+  const iso = new Date(at(52)).toISOString();
+  const big = [
+    JSON.stringify({ type: 'session.canvas.recorded', data: padded, id: 'ev-a', timestamp: iso }),
+    JSON.stringify({ data: padded, id: 'ev-b', timestamp: iso, type: 'session.canvas.removed' }),
+  ];
+  const file = logFile(log.lines() + big.join('\n') + '\n');
+  const read = createSessionState('cli-2');
+  const result = await readNewLines(createTail(file), line => applyLine(read, line), { onOversized: event => applyRecovered(read, event), maxLineBytes: 300 });
+  assert.equal(result.skipped, 2);
+  assert.deepEqual([read.lines, read.lastEventAt, read.lastEventType], [5, at(5), 'assistant.turn_end']);
+});
+
 test('a canvas opened in an old swarm\'s root does not make that swarm live', async () => {
   const home = scenario();
   canvasEvents(home, 'cli-old', [at(6)]);
   const now = at(60);
   const engine = engineFor(home, now);
+  const built = [];
+  engine.subscribe(change => built.push(...change.swarmIds));
   await engine.refresh();
+  assert.deepEqual(built, ['ws-root'], 'the listing alone decides that ws-old is finished: it is not built');
   const listed = engine.listSwarms().find(swarm => swarm.id === 'ws-old');
   assert.deepEqual([listed.lifecycle, listed.lastActivityAt], ['finished', OLD_LAST], 'the quick listing');
   const snapshot = await engine.getSnapshot('ws-old');
@@ -110,7 +151,33 @@ test('work after the canvas events still counts as activity', async () => {
   assert.equal((await engine.getSnapshot('ws-old')).run.lastActivityAt, at(8));
 });
 
-test('a page for a session with only task sub-agents shows no swarm, not an old swarm whose canvas was restored', async () => {
+test('a log replaced by another of the same size and mtime is read again, so resumed work shows in the listing', async () => {
+  const home = scenario();
+  canvasEvents(home, 'cli-old', [at(6)]);
+  let now = at(60);
+  const engine = engineFor(home, now);
+  const lifecycleOf = () => engine.listSwarms().find(swarm => swarm.id === 'ws-old').lifecycle;
+  await engine.refresh();
+  now += MINUTE;
+  await engine.refresh();
+  assert.equal(lifecycleOf(), 'finished', 'the cache is warm');
+
+  // The same bytes, but the canvas event is now work of the same length; written aside and renamed in, as an atomic save does.
+  const file = path.join(home.stateDir, 'cli-old', 'events.jsonl');
+  const { size, mtime } = statSync(file);
+  const text = readFileSync(file, 'utf8').replace('"session.canvas.recorded"', '"assistant.message_delta"');
+  assert.equal(Buffer.byteLength(text), size);
+  writeFileSync(`${file}.tmp`, text);
+  utimesSync(`${file}.tmp`, mtime, mtime);
+  renameSync(`${file}.tmp`, file);
+  assert.deepEqual([statSync(file).size, statSync(file).mtimeMs], [size, mtime.getTime()]);
+  now += MINUTE;
+  await engine.refresh();
+  assert.equal(lifecycleOf(), 'live');
+  assert.equal(engine.listSwarms().find(swarm => swarm.id === 'ws-old').lastActivityAt, at(6));
+});
+
+test('a page for a session with only task sub-agents shows that session\'s swarm, not an old swarm whose canvas was restored', async () => {
   const home = scenario();
   canvasEvents(home, 'cli-old', [at(6)]);
   home.session({ id: 'cli-new', title: 'Folder orchestrator', createdAt: at(55), agent: 'orchestrator' });
@@ -123,13 +190,16 @@ test('a page for a session with only task sub-agents shows no swarm, not an old 
   log.done(call);
   log.turnEnd();
   home.writeEvents('cli-new', log.events);
+  home.usage([{ sessionId: 'cli-new', nanoAiu: 1e9, createdAt: at(56) }, { sessionId: 'cli-new', nanoAiu: 2e9, createdAt: at(57), parentToolCallId: call }]);
   const engine = engineFor(home, at(60));
   const server = createDashboardServer({ createEngine: () => engine, version: 'test', hub: { engineIdleMs: 60, heartbeatMs: 1000 } });
   await server.listen();
   const page = openEvents(server.port, '/api/events?session=cli-new');
   try {
-    assert.equal((await page.waitFor(entry => entry.event === 'snapshot', 10000)).data.snapshot, null);
-    assert.equal(await engine.findSwarm('cli-new'), null);
+    const { snapshot } = (await page.waitFor(entry => entry.event === 'snapshot', 10000)).data;
+    assert.equal(snapshot.run.id, 'cli-new');
+    assert.deepEqual(snapshot.units.map(unit => [unit.kind, unit.name]), [['subagent', 'research work']]);
+    assert.ok(page.events.filter(entry => entry.event === 'snapshot').every(entry => entry.data.snapshot?.run.id === 'cli-new'), 'never another swarm');
     assert.equal(engine.listSwarms().find(swarm => swarm.id === 'ws-old').lifecycle, 'finished');
   } finally {
     page.close();

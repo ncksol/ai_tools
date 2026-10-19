@@ -78,13 +78,13 @@ export class CopilotHome {
   }
 
   workspace({ id, projectId = null, name, branch = null, createdAt, archivedAt = null, sessionId = id, parentId = null,
-    creatorSessionId = null, baseBranch = null, pr = null, isRunning = false, model = 'claude-sonnet-5', agent = null }) {
+    creatorSessionId = null, baseBranch = null, pr = null, isRunning = false, model = 'claude-sonnet-5', agent = null, workspaceType = 'worktree' }) {
     const worktreeId = baseBranch ? `wt-${id}` : null;
     if (worktreeId) {
       this.insert(this.dataDb, 'worktrees', { id: worktreeId, project_id: projectId, path: `/synthetic/worktrees/${id}`, branch, base_branch: baseBranch, created_at: iso(createdAt) });
     }
     this.insert(this.dataDb, 'workspaces', {
-      id, project_id: projectId, worktree_id: worktreeId, workspace_type: 'worktree', branch, name,
+      id, project_id: projectId, worktree_id: worktreeId, workspace_type: workspaceType, branch, name,
       created_at: iso(createdAt), updated_at: iso(createdAt), archived_at: iso(archivedAt), session_id: sessionId,
       created_by: parentId || creatorSessionId ? 'agent' : 'user', creator_session_id: creatorSessionId,
       coordinating_creator_session_id: parentId ? creatorSessionId : null,
