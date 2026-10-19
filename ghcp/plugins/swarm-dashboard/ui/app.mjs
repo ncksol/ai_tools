@@ -182,11 +182,14 @@ function pickerHtml(view) {
   const live = view.swarms.filter(swarm => swarm.lifecycle === 'live');
   const shown = view.snapshot?.run ?? null;
   const shownLive = shown !== null && live.some(swarm => swarm.id === shown.id);
-  // There is a choice when two swarms are live, or when the page shows a swarm that has ended while another is live.
-  if (live.length < 2 && !(live.length && shown && !shownLive)) return '';
+  // There is a choice when two swarms are live, when the page shows a swarm that has ended while another is live, or when
+  // it has loaded and shows no swarm while one is live.
+  if (live.length < 2 && !(live.length && ((shown && !shownLive) || (view.loaded && !shown)))) return '';
   const current = shown?.id ?? view.swarm;
   const choices = shown && !shownLive ? [shown, ...live] : live;
-  const options = choices.map(swarm => `<option value="${esc(swarm.id)}"${swarm.id === current ? ' selected' : ''}>${esc(swarm.name)}</option>`).join('');
+  // A loaded page that shows none of the choices selects none of them, so the picker never names a swarm that is not shown.
+  const none = view.loaded && !choices.some(swarm => swarm.id === current) ? '<option value="" selected disabled>Choose a swarm</option>' : '';
+  const options = none + choices.map(swarm => `<option value="${esc(swarm.id)}"${swarm.id === current ? ' selected' : ''}>${esc(swarm.name)}</option>`).join('');
   return `<label class="pick"><span class="small muted">Swarm</span><select data-swarm aria-label="Swarm">${options}</select></label>`;
 }
 
@@ -203,7 +206,12 @@ function statusHtml(view) {
 function liveHtml(view) {
   const { snapshot } = view;
   if (!view.loaded) return '<p class="none">Reading Copilot data…</p>';
-  if (!snapshot) return '<div class="empty"><h3>No swarm yet</h3><p class="small muted">A session that starts child sessions shows up here as a swarm.</p></div>';
+  if (!snapshot) {
+    // A page opened for a session gets no snapshot while that session is in no swarm; a page with a swarm of its own gets
+    // none once that swarm has gone.
+    if (view.session && !view.swarm) return '<div class="empty"><h3>Not part of a swarm</h3><p class="small muted">This session isn\'t part of a swarm. The page shows its swarm as soon as it joins one.</p></div>';
+    return '<div class="empty"><h3>No swarm yet</h3><p class="small muted">A session that starts child sessions shows up here as a swarm.</p></div>';
+  }
   if (snapshot.run.lifecycle === 'finished' && !view.swarm) {
     const at = snapshot.run.finishedAt ?? snapshot.run.lastActivityAt;
     const heading = view.swarms.some(swarm => swarm.lifecycle === 'live') ? 'Swarm finished' : 'No live swarm';

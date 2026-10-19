@@ -10,6 +10,7 @@ import { createLedger, pullLedger } from './readers/ledger.mjs';
 import { createProcessProbe } from './readers/process-probe.mjs';
 import { createSessionDbCache, listLocks, readWorkspaceYaml } from './readers/session-files.mjs';
 import { buildForest, resolveNodeId, treeNodes } from './model/forest.mjs';
+import { parseQuestionTag } from './model/contract.mjs';
 import { createHistoryStore, listItemOf, summarizeRun } from './model/history.mjs';
 import { createPrLookup } from './model/pr-lookup.mjs';
 import { applyLine, applyRecovered, createSessionState } from './model/session-state.mjs';
@@ -212,6 +213,27 @@ export function createSwarmEngine(options = {}) {
   }
 
   /**
+   * The forest's candidates (see buildForest) that wait on an open contract-tagged question: an unanswered ask_user whose
+   * text starts with a valid tag, in a session not known to have ended, the wait that "Needs you" shows (see buildNeeds).
+   * Only a candidate whose log changed within runFinishedAfterMs, or whose process is alive, is read, so an orchestrator
+   * that finished long ago costs a stat. `read` collects the CLI sessions read, so that their tails are kept.
+   */
+  async function waitingOrchestrators(at, read) {
+    const waiting = new Set();
+    for (const { id, cliId } of forest.candidates) {
+      const alive = await livenessOf(cliId, at);
+      if (alive === false) continue;
+      const changedAt = await mtimeOf(path.join(paths.stateDir, cliId, 'events.jsonl'));
+      if (changedAt === null || (alive !== true && at - changedAt >= thresholds.runFinishedAfterMs)) continue;
+      read.add(cliId);
+      // A session that is not a swarm reports no read problems; buildTracked reads it again, and reports them, once it is one.
+      const { state } = await tailSession(cliId, [], true);
+      if ([...(state?.waits.values() ?? [])].some(wait => wait.kind === 'question' && parseQuestionTag(wait.text))) waiting.add(id);
+    }
+    return waiting;
+  }
+
+  /**
    * `subagentUnits` is true for the CLI sessions of the swarm's root orchestrator. A cached entry that was built with the other
    * value is read again from the start of its log, so its state has the right shape.
    * Resolves `{ state, read }`: `state` is null while the log is missing; `read` is false when reading the log failed, so `state`
@@ -411,8 +433,12 @@ export function createSwarmEngine(options = {}) {
       app = app ?? emptyApp();
       diag.push(sqliteProblem('data.db', error));
     }
+    // The CLI sessions of top sessions that may be swarms before their first child (see waitingOrchestrators).
+    const candidateCliIds = new Set();
     try {
       forest = buildForest(app);
+      const waiting = await waitingOrchestrators(at, candidateCliIds);
+      if (waiting.size) forest = buildForest(app, { waitingRoots: waiting });
     } catch (error) {
       forest = forest ?? buildForest(emptyApp());
       diag.push({ level: 'warn', source: 'forest', message: error.message });
@@ -466,7 +492,7 @@ export function createSwarmEngine(options = {}) {
         diag.push({ level: 'warn', source: 'snapshot', message: `${shortId(rootId)}: ${error.message}` });
       }
     }
-    const keep = new Set();
+    const keep = new Set(candidateCliIds);
     for (const rootId of tracked) for (const node of treeNodes(forest, rootId)) for (const cliId of node.cliSessionIds) keep.add(cliId);
     for (const cliId of [...sessions.keys()]) if (!keep.has(cliId)) sessions.delete(cliId);
     const dropped = rootId => !tracked.has(rootId) && !failed.has(rootId);

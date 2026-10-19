@@ -17,7 +17,7 @@ export const APP_TABLES = Object.freeze({
   parentLinks: table('workspace_parent_links', ['child_workspace_id', 'parent_workspace_id'], ['child_workspace_id', 'parent_workspace_id']),
   aliases: table('workspace_session_aliases', ['session_id', 'workspace_id', 'created_at'], ['session_id', 'workspace_id']),
   chatLinks: table('chat_parent_links', ['session_id', 'parent_session_id'], ['session_id', 'parent_session_id']),
-  sessions: table('sessions', ['id', 'title', 'mode', 'model', 'reasoning_effort', 'is_running', 'was_interrupted', 'created_at', 'archived_at'], ['id']),
+  sessions: table('sessions', ['id', 'title', 'mode', 'model', 'reasoning_effort', 'is_running', 'was_interrupted', 'created_at', 'archived_at', 'agent'], ['id']),
   automations: table('session_automations', ['session_id', 'interval', 'every_minutes', 'last_run_at', 'next_run_at', 'paused_at', 'name'], ['session_id']),
 });
 
@@ -84,7 +84,7 @@ export async function readAppDb(db) {
     sessions: new Map(rows.sessions.map(row => [row.id, {
       id: row.id, title: row.title ?? '', mode: text(row.mode), model: text(row.model), reasoningEffort: text(row.reasoning_effort),
       isRunning: Number(row.is_running) === 1, wasInterrupted: Number(row.was_interrupted) === 1,
-      createdAt: parseTime(row.created_at), archivedAt: parseTime(row.archived_at),
+      createdAt: parseTime(row.created_at), archivedAt: parseTime(row.archived_at), agent: text(row.agent),
     }])),
     automations: rows.automations.map(row => ({
       sessionId: row.session_id, interval: text(row.interval), everyMinutes: count(row.every_minutes),
