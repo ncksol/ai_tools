@@ -272,12 +272,12 @@ test('a page opened from a session outside any swarm follows that session once i
   const server = await started(createEngine);
   const page = openEvents(server.port, '/api/events?session=cli-new');
   try {
-    assert.equal((await page.waitFor(entry => entry.event === 'snapshot')).data.snapshot.run.id, 'ws-0000-root');
+    assert.equal((await page.waitFor(entry => entry.event === 'snapshot')).data.snapshot, null, 'never the default swarm');
     const joined = exampleSnapshot();
     joined.run.id = 'ws-new';
     joined.orchestrator.cliSessionIds = ['cli-new'];
     fake.push(joined);
-    await page.waitFor(entry => entry.event === 'snapshot' && entry.data.snapshot.run.id === 'ws-new');
+    await page.waitFor(entry => entry.event === 'snapshot' && entry.data.snapshot?.run.id === 'ws-new');
   } finally {
     page.close();
     await server.close();

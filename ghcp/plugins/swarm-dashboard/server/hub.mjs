@@ -135,7 +135,9 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
         const current = engine;
         if (!current || client.closed) return;
         const fromSession = !client.swarm && !pinned && client.session ? await current.findSwarm(client.session) : null;
-        const snapshot = await current.getSnapshot(client.swarm ?? pinned ?? fromSession ?? undefined);
+        const asked = client.swarm ?? pinned ?? fromSession;
+        // A page opened for a session that is in no swarm gets no snapshot, never the default swarm, so it can say so.
+        const snapshot = asked || !client.session ? await current.getSnapshot(asked ?? undefined) : null;
         if (current !== engine) {
           // An engine dropped or closed meanwhile may have reopened its read-only connections, so stop it again.
           current.stop();
@@ -144,7 +146,7 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
         if (client.closed) return;
         // Pin a page to the swarm it was first shown, so the default does not jump between swarms; changed() unpins a
         // default page whose swarm is no longer live while another is. A page opened from a session that is in no swarm
-        // yet stays unpinned, and follows that session once it joins one.
+        // yet stays unpinned with no snapshot, and follows that session once it joins one.
         if (snapshot && !client.swarm && !pinned && !client.pinned && (fromSession || !client.session)) client.pinned = snapshot.run.id;
         const key = snapshot ? `${snapshot.run.id}#${snapshot.revision}` : 'none';
         if (key !== client.lastKey) {
