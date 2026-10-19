@@ -43,6 +43,8 @@ test("score times a synthetic session, runs the seed's suite on a fresh clone an
   const events = withEvents(basic(), [
     ev("tool.execution_start", 3, { toolName: "ask_user", toolCallId: "q1" }),
     ev("tool.execution_complete", 5, { toolCallId: "q1", success: true }),
+    ev("session.task_complete", 21.1),
+    ev("assistant.message", 40),
   ]);
   writeSession(stateDir, "s0", repository, "2026-01-01T09:00:00Z", null);
   writeSession(stateDir, "s1", repository, "2026-01-01T10:00:00Z", events);
@@ -104,18 +106,78 @@ test("score times a synthetic session, runs the seed's suite on a fresh clone an
   assert.equal(readFileSync(results, "utf8"), firstFile);
 
   // --session overrides discovery.
-  const before = Date.now();
-  const stalled = await score([...common, "--session", "s1", "--outcome", "stalled", "--replace"]);
-  assert.match(stalled.stdout, /Session s1 \(from --session\)/);
-  assert.equal(stalled.code, 0, stalled.stdout + stalled.stderr);
-  const replaced = readResults(results);
-  assert.equal(replaced.length, 1);
-  const unfinished = replaced[0];
-  assert.equal(unfinished.outcome, "stalled");
-  // The replaced row is not an earlier run of this variant, so this is still its calibration run.
-  assert.equal(unfinished.calibration, "yes");
-  const minimumWall = (before - Date.parse("2026-01-01T10:01:00.000Z")) / 60_000;
-  assert.ok(Number(unfinished.wall_minutes) >= Math.floor(minimumWall), unfinished.wall_minutes);
+  for (const outcome of ["timeout", "stalled"]) {
+    const before = Date.now();
+    const result = await score([
+      ...common, "--session", "s1", "--outcome", outcome, "--end-at", "2026-01-01T10:21:00Z", "--replace",
+    ]);
+    assert.match(result.stdout, /Session s1 \(from --session\)/);
+    assert.equal(result.code, 0, result.stdout + result.stderr);
+    const replaced = readResults(results);
+    assert.equal(replaced.length, 1);
+    const unfinished = replaced[0];
+    assert.equal(unfinished.outcome, outcome);
+    // The replaced row is not an earlier run of this variant, so this is still its calibration run.
+    assert.equal(unfinished.calibration, "yes");
+    const minimumWall = (before - Date.parse("2026-01-01T10:01:00.000Z")) / 60_000;
+    assert.ok(Number(unfinished.wall_minutes) >= Math.floor(minimumWall), unfinished.wall_minutes);
+  }
+});
+
+test("score attributes driver answers and caps a completed log at the observed report", { timeout: 180_000 }, async () => {
+  const repoDir = join(dir, "orch-eval-driver-1");
+  cpSync(join(KIT_DIR, "reference"), repoDir, { recursive: true, filter: (src) => !/[\\/](node_modules|\.DS_Store)$/.test(src) });
+  await git(repoDir, ["init", "-q", "-b", "main"]);
+  await git(repoDir, ["add", "-A"]);
+  await git(repoDir, ["commit", "-q", "-m", "Reference"]);
+  const stateDir = join(dir, "driver-state");
+  writeSession(stateDir, "driver-run", "local/orch-eval-driver-1", "2026-01-01T10:00:00Z", [
+    ...basic().slice(0, 8),
+    ev("assistant.message", 11),
+    ev("assistant.turn_end", 11),
+    ev("user.message", 13, {
+      source: "agent-driver",
+      transformedContent: "<cross_session_message>\nsynthetic answer\n</cross_session_message>",
+    }),
+    ev("assistant.turn_start", 13),
+    ev("user.message", 14, { content: "<cross_session_message>\nsynthetic child report\n</cross_session_message>" }),
+    ev("assistant.message", 21),
+    ev("assistant.turn_end", 21),
+    ev("user.message", 25, { source: "agent-child" }),
+    ev("assistant.turn_start", 25),
+    ev("assistant.message", 30),
+    ev("session.task_complete", 31),
+  ]);
+  const results = join(dir, "driver-results.csv");
+  const result = await score([
+    "--repo-dir", repoDir, "--state-dir", stateDir, "--no-github", "--results", results,
+    "--answer-source", "agent-driver", "--end-at", "2026-01-01T11:22:00+01:00",
+  ]);
+  assert.equal(result.code, 0, result.stdout + result.stderr);
+  const [row] = readResults(results);
+  assert.equal(row.wall_minutes, "20.0");
+  assert.equal(row.blocked_minutes, "2.0");
+  assert.equal(row.minutes, "18.0");
+  assert.equal(row.questions, "1");
+  assert.equal(row.outcome, "passed");
+  assert.equal(row.suite_passed, "65");
+  assert.equal(row.suite_total, "65");
+});
+
+test("score rejects invalid log timing options before scoring", async () => {
+  const common = ["--repo-dir", dir, "--variant", "invalid", "--n", "1", "--no-github", "--results", join(dir, "invalid.csv")];
+  const cases: [string[], RegExp][] = [
+    [["--end-at", "not-a-time"], /--end-at .* is not an ISO 8601/],
+    [["--answer-source", ""], /--answer-source must not be empty/],
+    [["--start", "2026-01-01T10:00:00Z", "--end", "2026-01-01T10:20:00Z", "--end-at", "2026-01-01T10:20:00Z"], /--end-at.*manual timing/],
+    [["--start", "2026-01-01T10:00:00Z", "--end", "2026-01-01T10:20:00Z", "--answer-source", "agent-driver"], /--answer-source.*manual timing/],
+  ];
+  for (const [args, message] of cases) {
+    const result = await score([...common, ...args]);
+    assert.equal(result.code, 2, result.stdout + result.stderr);
+    assert.match(result.stderr, message);
+    assert.doesNotMatch(result.stdout, /acceptance suite/);
+  }
 });
 
 test("a new variant's first run with fewer features is not a calibration run", { timeout: 180_000 }, async () => {

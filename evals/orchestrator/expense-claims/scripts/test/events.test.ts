@@ -60,7 +60,7 @@ test("an answer to a plain-text question subtracts the idle gap", () => {
     ev("assistant.message", 21),
     ev("assistant.turn_end", 21),
   ];
-  const timing = computeTiming(events);
+  const timing = computeTiming(events, { answerSource: "agent-driver" });
   assert.equal(timing.blockedMs, 2 * MIN);
   assert.equal(timing.humanMessages, 1);
   assert.equal(timing.questions, 1);
@@ -70,6 +70,66 @@ test("a message sent while a turn runs adds no blocked time", () => {
   const timing = computeTiming(withEvents(basic(), [ev("user.message", 15, { delivery: "steering" })]));
   assert.equal(timing.blockedMs, 0);
   assert.equal(timing.questions, 1);
+});
+
+test("cross-session messages without a source are not human answers", () => {
+  for (const field of ["content", "transformedContent"]) {
+    const timing = computeTiming(
+      withEvents(basic(), [
+        ev("user.message", 5, { [field]: "<cross_session_message>\nsynthetic report\n</cross_session_message>" }),
+      ]),
+    );
+    assert.equal(timing.questions, 0, field);
+    assert.equal(timing.humanMessages, 0, field);
+    assert.equal(timing.blockedMs, 0, field);
+  }
+});
+
+test("a tagged kickoff is not a human kickoff", () => {
+  for (const field of ["content", "transformedContent"]) {
+    assert.throws(
+      () => computeTiming([
+        ev("session.start", 0),
+        ev("user.message", 1, { [field]: "<cross_session_message>\nsynthetic kickoff\n</cross_session_message>" }),
+        ev("assistant.message", 2),
+      ]),
+      EventLogError,
+      field,
+    );
+  }
+});
+
+test("only the exact answer source overrides cross-session filtering", () => {
+  const source = "agent-driver";
+  const events = [
+    ...basic().slice(0, 8),
+    ev("assistant.message", 11),
+    ev("assistant.turn_end", 11),
+    ev("user.message", 13, {
+      source,
+      transformedContent: "<cross_session_message>\nsynthetic answer\n</cross_session_message>",
+    }),
+    ev("assistant.turn_start", 13),
+    ev("user.message", 14, { source: `${source}-other` }),
+    ev("user.message", 15, { content: "<cross_session_message>\nsynthetic child report\n</cross_session_message>" }),
+    ev("assistant.message", 21),
+  ];
+  const timing = computeTiming(events, { answerSource: source });
+  assert.equal(timing.humanMessages, 1);
+  assert.equal(timing.questions, 1);
+  assert.equal(timing.blockedMs, 2 * MIN);
+  assert.equal(timing.scoredMs, 18 * MIN);
+  assert.equal(computeTiming(events).questions, 0);
+});
+
+test("an answer source does not make a session-started kickoff human", () => {
+  assert.throws(
+    () => computeTiming([
+      ev("user.message", 1, { source: "agent-driver" }),
+      ev("assistant.message", 2),
+    ], { answerSource: "agent-driver" }),
+    EventLogError,
+  );
 });
 
 test("sub-agent events are ignored", () => {
@@ -101,6 +161,75 @@ test("an unanswered ask_user counts until the end, with a warning", () => {
   const timing = computeTiming(withEvents(basic(), [ev("tool.execution_start", 20, { toolName: "ask_user", toolCallId: "q9" })]));
   assert.equal(timing.blockedMs, 1 * MIN);
   assert.equal(timing.warnings.length, 1);
+});
+
+test("the first top-level task completion bounds a finished run", () => {
+  const timing = computeTiming(
+    withEvents(basic(), [
+      ev("session.task_complete", 21.1),
+      ev("user.message", 22, { source: "agent-workspace-child" }),
+      ev("assistant.turn_start", 22),
+      ev("tool.execution_start", 23, { toolName: "ask_user", toolCallId: "late" }),
+      ev("tool.execution_complete", 24, { toolCallId: "late" }),
+      ev("user.message", 25),
+      ev("session.model_change", 26, { newModel: "another-model" }),
+      ev("assistant.message", 30),
+      ev("session.task_complete", 31),
+    ]),
+  );
+  assert.equal(timing.end, "2026-01-01T10:21:00.000Z");
+  assert.equal(timing.wallMs, 20 * MIN);
+  assert.equal(timing.blockedMs, 0);
+  assert.equal(timing.questions, 0);
+  assert.deepEqual(timing.warnings, []);
+});
+
+test("task completion before the kickoff or in a sub-agent does not end the run", () => {
+  const timing = computeTiming(withEvents(basic(), [
+    ev("session.task_complete", 0.5),
+    ev("session.task_complete", 12, {}, "child"),
+  ]));
+  assert.equal(timing.wallMs, 20 * MIN);
+});
+
+test("a completion marker cannot borrow an assistant message from a later turn", () => {
+  assert.throws(
+    () => computeTiming([
+      ev("user.message", 1),
+      ev("session.task_complete", 2),
+      ev("assistant.message", 3),
+    ]),
+    EventLogError,
+  );
+});
+
+test("a completed-run cutoff ignores later messages and timing events", () => {
+  const events = withEvents(basic(), [
+    ev("tool.execution_start", 20, { toolName: "ask_user", toolCallId: "q1" }),
+    ev("tool.execution_complete", 25, { toolCallId: "q1" }),
+    ev("user.message", 26),
+    ev("session.model_change", 27, { newModel: "another-model" }),
+    ev("assistant.message", 30),
+    ev("session.task_complete", 31),
+  ]);
+  const timing = computeTiming(events, { cutoff: BASE + 22 * MIN });
+  assert.equal(timing.end, "2026-01-01T10:21:00.000Z");
+  assert.equal(timing.wallMs, 20 * MIN);
+  assert.equal(timing.blockedMs, 1 * MIN);
+  assert.equal(timing.scoredMs, 19 * MIN);
+  assert.equal(timing.questions, 1);
+  assert.deepEqual(timing.warnings, ["An ask_user call has no completion; it counts as blocked until the end"]);
+});
+
+test("a completed-run cutoff includes an assistant message exactly at the cutoff", () => {
+  const timing = computeTiming(withEvents(basic(), [ev("assistant.message", 30)]), { cutoff: BASE + 21 * MIN });
+  assert.equal(timing.end, "2026-01-01T10:21:00.000Z");
+  assert.equal(timing.wallMs, 20 * MIN);
+});
+
+test("a completed-run cutoff cannot supply a missing final report", () => {
+  assert.throws(() => computeTiming(basic(), { cutoff: BASE + MIN }), EventLogError);
+  assert.throws(() => computeTiming(basic(), { cutoff: BASE }), EventLogError);
 });
 
 test("an unfinished run is timed to the given end, not to its last progress message", () => {
@@ -206,6 +335,23 @@ test("describeSession tells a session the user started from one another session 
   assert.deepEqual(describe("runtime-first"), { hasLog: true, startedBy: "user", agent: null });
   assert.deepEqual(describe("empty-log"), { hasLog: true, startedBy: "none", agent: null });
   assert.deepEqual(describe("no-log"), { hasLog: false, startedBy: null, agent: null });
+});
+
+test("session discovery and timing use transformed content before the raw content", () => {
+  const stateDir = stateWith("content-precedence", [
+    ["tagged", "2026-01-01T10:00:00Z", [
+      ev("user.message", 1, { content: "synthetic kickoff", transformedContent: "<cross_session_message>synthetic kickoff</cross_session_message>" }),
+      ev("assistant.message", 2),
+    ]],
+    ["human", "2026-01-01T10:00:00Z", [
+      ev("user.message", 1, { content: "<cross_session_message>synthetic kickoff</cross_session_message>", transformedContent: "synthetic kickoff" }),
+      ev("assistant.message", 2),
+    ]],
+  ]);
+  assert.equal(describeSession(join(stateDir, "tagged")).startedBy, "session");
+  assert.throws(() => computeTiming(readEventLog(join(stateDir, "tagged", "events.jsonl")).events), EventLogError);
+  assert.equal(describeSession(join(stateDir, "human")).startedBy, "user");
+  assert.equal(computeTiming(readEventLog(join(stateDir, "human", "events.jsonl")).events).wallMs, MIN);
 });
 
 test("chooseRunSession skips a stray session with no log and the orchestrator's child sessions", () => {

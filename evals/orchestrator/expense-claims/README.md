@@ -91,7 +91,11 @@ The score is the wall-clock minutes from the kickoff to the final report, minus 
 - the duration of every `ask_user` call;
 - for each of your messages after the kickoff, the idle time between the orchestrator's previous turn end and your message. In a hands-off run, every such message answers a question asked in plain text.
 
-`score` reads this from the session's event log. It ignores events written by sub-agents when it looks for the final report. It counts each `ask_user` call and each of your messages after the kickoff as one question.
+`score` reads this from the session's event log. It ignores events written by sub-agents. It counts each `ask_user` call and each of your messages after the kickoff as one question. Messages with a `data.source` or a `<cross_session_message` tag in `transformedContent ?? content` are not human messages, even if the tag arrives without a source.
+
+For answers sent by another session, pass `--answer-source <value>`, usually `agent-<answering-session-id>`. Only messages whose `data.source` matches that value exactly count as human answers, including tagged messages. They add to both the question count and blocked time just like typed replies; ordinary typed replies still count. This does not make a session-sent kickoff human. Answers delivered through `answer_session_input` already count in the duration of `ask_user` and need no source override.
+
+For a completed run, the end is the last top-level `assistant.message` at or before the first `session.task_complete` after the kickoff. Later notifications and turns do not extend it. If there is no completion marker, the end is the last top-level assistant message. To limit scoring to the final report you observed, pass `--end-at <iso>`, for example `--end-at 2026-10-18T18:43:58.221Z`. Events after that time are ignored when finding the end and computing timing; the end is still an assistant message, not the cutoff itself. With `--outcome timeout` or `--outcome stalled`, `--end-at` has no effect: the run ends when `score` runs. Both new options are for session-log timing and cannot be combined with manual `--start`/`--end`.
 
 The gate: `score` makes a fresh clone of the run repo's `main` and runs the acceptance suite on it. The run must pass 100% of the suite.
 
