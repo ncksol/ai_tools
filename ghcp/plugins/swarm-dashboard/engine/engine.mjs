@@ -277,9 +277,21 @@ export function createSwarmEngine(options = {}) {
   /**
    * Builds a tracked root's snapshot. Resolves `{ snapshot, complete }`: `complete` is true only when this refresh read every
    * source the snapshot uses, so a summary of it may be marked checked (see persistFinished). It is false when a session's log
-   * or session.db could not be read (the last good value was used), or `globalsRead` is false (data.db or the ledger failed).
+   * or session.db could not be read (the last good value was used), when a PR's first lookup has not finished (its outcome is
+   * not known yet), or `globalsRead` is false (data.db or the ledger failed).
+   * The snapshot's diagnostics are the engine-wide ones (`shared`) and the notes about this root's own sessions; those notes
+   * are also added to `diag`, the engine's list.
    */
-  async function buildTracked(rootId, at, diag, dbFiles, globalsRead) {
+  async function buildTracked(rootId, at, diag, shared, dbFiles, globalsRead) {
+    const own = [];
+    try {
+      return await buildTrackedSnapshot(rootId, at, own, shared, dbFiles, globalsRead);
+    } finally {
+      diag.push(...own);
+    }
+  }
+
+  async function buildTrackedSnapshot(rootId, at, diag, shared, dbFiles, globalsRead) {
     const nodes = treeNodes(forest, rootId);
     const states = new Map();
     const alive = new Map();
@@ -312,13 +324,18 @@ export function createSwarmEngine(options = {}) {
     let sawPending = false;
     if (!subagentLabels.has(rootId)) subagentLabels.set(rootId, new Map());
     const snapshot = buildSnapshot({
-      forest, rootId, app, states, alive, workspaceFiles, ledger, sessionDbs, now: at, thresholds, revision: 0, diagnostics: [...diag],
+      forest, rootId, app, states, alive, workspaceFiles, ledger, sessionDbs, now: at, thresholds, revision: 0, diagnostics: [...shared, ...diag],
       subagentLabels: subagentLabels.get(rootId),
       prInfo: (pr, { cwd }) => {
         if (!lookup) return null;
         lookup.request(pr, { cwd });
-        if (lookup.pending?.(pr, { cwd })) sawPending = true;
-        return lookup.get(pr, { cwd });
+        const info = lookup.get(pr, { cwd });
+        if (lookup.pending?.(pr, { cwd })) {
+          sawPending = true;
+          // A first lookup that has not finished leaves the PR's outcome unknown, so the run's merged count is not known yet.
+          if (!info) complete = false;
+        }
+        return info;
       },
     });
     if (sawPending) pendingRoots.add(rootId);
@@ -419,9 +436,11 @@ export function createSwarmEngine(options = {}) {
     const changed = [];
     const failed = new Set();
     const dbFiles = new Set();
+    // The engine-wide notes so far; each root's snapshot adds only the notes about its own sessions (see buildTracked).
+    const shared = [...diag];
     for (const rootId of tracked) {
       try {
-        const { snapshot, complete } = await buildTracked(rootId, at, diag, dbFiles, globalsRead);
+        const { snapshot, complete } = await buildTracked(rootId, at, diag, shared, dbFiles, globalsRead);
         const hash = digest(snapshot);
         const entry = snapshots.get(rootId);
         if (entry && entry.hash === hash) {
