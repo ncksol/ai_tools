@@ -41,9 +41,9 @@ npm start
 
 The cockpit is a second, dark look at the same swarm: a seat at a mission control desk, looking through a curved window at a black hole, with the swarm on curved glass panels. It shows what the regular view shows, without new data or actions: the clock and run timer, what needs you, a tile per child session and per running sub-agent, the activity, the cost and the pull requests. Click a panel to see the details in the regular view.
 
-The cockpit is made for Chrome and Edge. In the app's canvas, Cockpit shows its address to open in one of them.
+The cockpit is made for Chrome and Edge. In the app's canvas, the Cockpit button shows its address to open in one of them.
 
-Open it with **Cockpit** in the top bar of the Live page. It opens in its own browser window on the swarm you are watching, at `http://127.0.0.1:<port>/cockpit?swarm=<root session id>`.
+Open it with the **Cockpit** button, the spaceship icon at the right end of the Live page's top bar. It opens in its own browser window on the swarm you are watching, at `http://127.0.0.1:<port>/cockpit?swarm=<root session id>`.
 
 - Quality: **High** (the default) draws the black hole on every frame, at most 30 frames a second. **Balanced** draws it on every second frame, and on every frame while the pointer moves. The choice is kept in the browser. High keeps the GPU busy about a fifth of the time at 1440 × 900 and a quarter at 1920 × 1080 on an Apple M5 Pro, and may make a fanless laptop warm.
 - The cockpit stops drawing while its window is hidden, shows one still frame when the system asks to reduce motion, and lowers the black hole's resolution when frames run late.
