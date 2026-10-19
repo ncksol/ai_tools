@@ -93,9 +93,11 @@ The score is the wall-clock minutes from the kickoff to the final report, minus 
 
 `score` reads this from the session's event log. It ignores events written by sub-agents. It counts each `ask_user` call and each of your messages after the kickoff as one question. Messages with a `data.source` or a `<cross_session_message` tag in `transformedContent ?? content` are not human messages, even if the tag arrives without a source.
 
-For answers sent by another session, pass `--answer-source <value>`, usually `agent-<answering-session-id>`. Only messages whose `data.source` matches that value exactly count as human answers, including tagged messages. They add to both the question count and blocked time just like typed replies; ordinary typed replies still count. This does not make a session-sent kickoff human. Answers delivered through `answer_session_input` already count in the duration of `ask_user` and need no source override.
+For answers sent by another session, pass `--answer-source <value>`, usually `agent-<answering-session-id>`. Only messages whose `data.source` matches that value exactly count as human answers, including tagged messages. They add to both the question count and blocked time just like typed replies; ordinary typed replies still count. This does not make a session-sent kickoff human. `score` warns if the source matches no messages in the scored run, or if another session sent the first non-runtime message and timing starts at a later human kickoff. Answers delivered through `answer_session_input` already count in the duration of `ask_user` and need no source override.
 
-For a completed run, the end is the last top-level `assistant.message` at or before the first `session.task_complete` after the kickoff. Later notifications and turns do not extend it. If there is no completion marker, the end is the last top-level assistant message. To limit scoring to the final report you observed, pass `--end-at <iso>`, for example `--end-at 2026-10-18T18:43:58.221Z`. Events after that time are ignored when finding the end and computing timing; the end is still an assistant message, not the cutoff itself. With `--outcome timeout` or `--outcome stalled`, `--end-at` has no effect: the run ends when `score` runs. Both new options are for session-log timing and cannot be combined with manual `--start`/`--end`.
+For a completed run, the end is the last top-level `assistant.message` at or before the last `session.task_complete` after the kickoff inside the scoring window. Earlier completion markers do not hide later coordination work; more than one adds a warning to `note`. Notifications and turns after the last completion do not extend it. If there is no completion marker, the end is the last top-level assistant message.
+
+To limit scoring to the final report you observed, pass the time you saw the report as `--end-at <iso>`, for example `--end-at 2026-10-18T18:43:58.228Z`. Include `Z` or an explicit UTC offset such as `+01:00`; a cap before the kickoff is an error. Events after that time are ignored when finding the end and computing timing; events exactly at the cap are included. The end is still an assistant message, not the cutoff itself. With `--outcome timeout` or `--outcome stalled`, `--end-at` has no effect on timing: the run ends when `score` runs. Both options are for session-log timing and cannot be combined with manual `--start`/`--end`.
 
 The gate: `score` makes a fresh clone of the run repo's `main` and runs the acceptance suite on it. The run must pass 100% of the suite.
 
@@ -138,7 +140,7 @@ npm run score -- --summary
 | `model` | The orchestrator session's model at the kickoff. Empty with manual timing. |
 | `effort` | The orchestrator session's reasoning effort at the kickoff. Empty with manual timing. |
 | `copilot_version` | The Copilot version that wrote the session log. Empty with manual timing. |
-| `note` | `--note`, if given; otherwise any warnings from `score`, for example a model change during the run. |
+| `note` | `--note`, if given, followed by any warnings from `score`, for example a model change during the run or multiple completion markers. |
 
 Commit `results.csv` after each run, so the history across agent versions is kept.
 

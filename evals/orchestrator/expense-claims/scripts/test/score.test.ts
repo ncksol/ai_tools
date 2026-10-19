@@ -132,7 +132,10 @@ test("score attributes driver answers and caps a completed log at the observed r
   await git(repoDir, ["commit", "-q", "-m", "Reference"]);
   const stateDir = join(dir, "driver-state");
   writeSession(stateDir, "driver-run", "local/orch-eval-driver-1", "2026-01-01T10:00:00Z", [
-    ...basic().slice(0, 8),
+    ...basic().slice(0, 2),
+    ev("user.message", 0.5, { content: "<cross_session_message>synthetic kickoff</cross_session_message>" }),
+    ...basic().slice(2, 8),
+    ev("session.task_complete", 10.5),
     ev("assistant.message", 11),
     ev("assistant.turn_end", 11),
     ev("user.message", 13, {
@@ -142,7 +145,8 @@ test("score attributes driver answers and caps a completed log at the observed r
     ev("assistant.turn_start", 13),
     ev("user.message", 14, { content: "<cross_session_message>\nsynthetic child report\n</cross_session_message>" }),
     ev("assistant.message", 21),
-    ev("assistant.turn_end", 21),
+    ev("session.task_complete", 21.1),
+    ev("assistant.turn_end", 21.2),
     ev("user.message", 25, { source: "agent-child" }),
     ev("assistant.turn_start", 25),
     ev("assistant.message", 30),
@@ -151,7 +155,7 @@ test("score attributes driver answers and caps a completed log at the observed r
   const results = join(dir, "driver-results.csv");
   const result = await score([
     "--repo-dir", repoDir, "--state-dir", stateDir, "--no-github", "--results", results,
-    "--answer-source", "agent-driver", "--end-at", "2026-01-01T11:22:00+01:00",
+    "--session", "driver-run", "--answer-source", "agent-driver", "--end-at", "2026-01-01T11:22:00+01:00", "--note", "driver-run",
   ]);
   assert.equal(result.code, 0, result.stdout + result.stderr);
   const [row] = readResults(results);
@@ -162,12 +166,19 @@ test("score attributes driver answers and caps a completed log at the observed r
   assert.equal(row.outcome, "passed");
   assert.equal(row.suite_passed, "65");
   assert.equal(row.suite_total, "65");
+  assert.match(row.note, /^driver-run; .*2 .*session\.task_complete.*last/);
+  assert.match(row.note, /another session.*later human kickoff/);
 });
 
 test("score rejects invalid log timing options before scoring", async () => {
-  const common = ["--repo-dir", dir, "--variant", "invalid", "--n", "1", "--no-github", "--results", join(dir, "invalid.csv")];
+  const common = [
+    "--repo-dir", dir, "--variant", "invalid", "--n", "1", "--no-github", "--results", join(dir, "invalid.csv"), "--state-dir", dir,
+  ];
   const cases: [string[], RegExp][] = [
     [["--end-at", "not-a-time"], /--end-at .* is not an ISO 8601/],
+    [["--end-at", "2026-01-01T10:20:00"], /--end-at.*Z.*UTC offset/],
+    [["--end-at", "2026-01-01"], /--end-at.*Z.*UTC offset/],
+    [["--end-at", "2026-01-01T10:20:00+0100"], /--end-at.*Z.*UTC offset/],
     [["--answer-source", ""], /--answer-source must not be empty/],
     [["--start", "2026-01-01T10:00:00Z", "--end", "2026-01-01T10:20:00Z", "--end-at", "2026-01-01T10:20:00Z"], /--end-at.*manual timing/],
     [["--start", "2026-01-01T10:00:00Z", "--end", "2026-01-01T10:20:00Z", "--answer-source", "agent-driver"], /--answer-source.*manual timing/],
@@ -178,6 +189,18 @@ test("score rejects invalid log timing options before scoring", async () => {
     assert.match(result.stderr, message);
     assert.doesNotMatch(result.stdout, /acceptance suite/);
   }
+});
+
+test("score rejects an end-at before the log kickoff explicitly", async () => {
+  const stateDir = join(dir, "before-kickoff-state");
+  writeSession(stateDir, "s1", "local/invalid", "2026-01-01T10:00:00Z", basic());
+  const result = await score([
+    "--repo-dir", dir, "--variant", "invalid", "--n", "1", "--no-github", "--results", join(dir, "before-kickoff.csv"),
+    "--state-dir", stateDir, "--session", "s1", "--end-at", "2026-01-01T10:00:00Z",
+  ]);
+  assert.equal(result.code, 2, result.stdout + result.stderr);
+  assert.match(result.stderr, /--end-at is before the kickoff/);
+  assert.doesNotMatch(result.stdout, /acceptance suite/);
 });
 
 test("a new variant's first run with fewer features is not a calibration run", { timeout: 180_000 }, async () => {

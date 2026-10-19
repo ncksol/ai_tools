@@ -58,6 +58,9 @@ const minutes = (ms: number): string => (ms / 60_000).toFixed(1);
 function parseTime(value: string, flag: string): number {
   const ms = Date.parse(value);
   if (Number.isNaN(ms)) throw new UsageError(`${flag} "${value}" is not an ISO 8601 date and time`);
+  if (flag === "--end-at" && !/(?:Z|[+-]\d{2}:\d{2})$/.test(value)) {
+    throw new UsageError("--end-at must include Z or a UTC offset (+/-hh:mm)");
+  }
   return ms;
 }
 
@@ -298,7 +301,7 @@ async function main(): Promise<number> {
       model: timing.model,
       effort: timing.effort,
       copilot_version: timing.copilotVersion,
-      note: values.note ?? warnings.join("; "),
+      note: [values.note, ...warnings].filter(Boolean).join("; "),
     };
     if (replaced.length > 0) replaceResult(resultsPath, repo, runId, row);
     else appendResult(resultsPath, row);

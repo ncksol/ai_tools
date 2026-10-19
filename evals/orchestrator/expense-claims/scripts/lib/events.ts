@@ -89,17 +89,39 @@ export function readEventLog(path: string): { events: LogEvent[]; warnings: stri
 // `endAt` ends the window at a given time instead of the last assistant message. Use it for runs
 // that never finished (timeout, stalled). `cutoff` ignores later events in a completed run.
 export function computeTiming(events: LogEvent[], opts: { endAt?: number; cutoff?: number; answerSource?: string } = {}): Timing {
-  const own = events.filter((event) => !event.agentId && (opts.cutoff === undefined || at(event) <= opts.cutoff));
+  let own = events.filter((event) => !event.agentId);
   const kickoff = own.findIndex((event) => isHuman(event));
   if (kickoff < 0) throw new EventLogError("No kickoff: the session has no human user.message without data.source or a cross-session tag");
   const start = at(own[kickoff]);
+  if (opts.cutoff !== undefined) {
+    const cutoff = opts.cutoff;
+    if (cutoff < start) throw new EventLogError("--end-at is before the kickoff");
+    own = own.filter((event) => at(event) <= cutoff);
+  }
+  const warnings: string[] = [];
+  const firstMessage = own.find((event) =>
+    event.type === "user.message" && (!event.data?.source || str(event.data?.source)?.startsWith("agent-")),
+  );
+  if (firstMessage && !isHuman(firstMessage)) {
+    warnings.push("The first sender message came from another session; timing starts at a later human kickoff");
+  }
   let last = -1;
   if (opts.endAt !== undefined) {
     if (opts.endAt < start) throw new EventLogError("The end time is before the kickoff");
     last = kickoff;
     for (let i = kickoff + 1; i < own.length && at(own[i]) <= opts.endAt; i++) last = i;
   } else {
-    const complete = own.findIndex((event, i) => i > kickoff && event.type === "session.task_complete");
+    let complete = -1;
+    let completions = 0;
+    for (let i = kickoff + 1; i < own.length; i++) {
+      if (own[i].type === "session.task_complete") {
+        complete = i;
+        completions++;
+      }
+    }
+    if (completions > 1) {
+      warnings.push(`The scoring window has ${completions} top-level session.task_complete events; using the last completion`);
+    }
     for (let i = complete < 0 ? own.length - 1 : complete; i > kickoff; i--) {
       if (own[i].type === "assistant.message") {
         last = i;
@@ -110,7 +132,6 @@ export function computeTiming(events: LogEvent[], opts: { endAt?: number; cutoff
   }
 
   const end = opts.endAt ?? at(own[last]);
-  const warnings: string[] = [];
   const completes = new Map<string, LogEvent>();
   for (const event of own) {
     const id = str(event.data?.toolCallId);
@@ -120,6 +141,7 @@ export function computeTiming(events: LogEvent[], opts: { endAt?: number; cutoff
   let blockedMs = 0;
   let askUserCalls = 0;
   let humanMessages = 0;
+  let answerSourceMessages = 0;
   let lastTurn: LogEvent | null = null;
   for (const event of own.slice(kickoff + 1, last + 1)) {
     if (event.type === "assistant.turn_start" || event.type === "assistant.turn_end") {
@@ -135,8 +157,12 @@ export function computeTiming(events: LogEvent[], opts: { endAt?: number; cutoff
       }
     } else if (isHuman(event, opts.answerSource)) {
       humanMessages++;
+      if (opts.answerSource !== undefined && event.data?.source === opts.answerSource) answerSourceMessages++;
       if (lastTurn?.type === "assistant.turn_end") blockedMs += at(event) - at(lastTurn);
     }
+  }
+  if (opts.answerSource !== undefined && answerSourceMessages === 0) {
+    warnings.push(`--answer-source "${opts.answerSource}" matched no messages in the scored run`);
   }
 
   const session = own.find((event) => event.type === "session.start");

@@ -132,6 +132,49 @@ test("an answer source does not make a session-started kickoff human", () => {
   );
 });
 
+test("an answer-source message mid-turn counts as a question without blocked time", () => {
+  const timing = computeTiming(withEvents(basic(), [
+    ev("user.message", 15, { source: "agent-driver", content: "<cross_session_message>synthetic answer</cross_session_message>" }),
+  ]), { answerSource: "agent-driver" });
+  assert.equal(timing.questions, 1);
+  assert.equal(timing.humanMessages, 1);
+  assert.equal(timing.blockedMs, 0);
+  assert.deepEqual(timing.warnings, []);
+});
+
+test("an answer source that matches no messages in the scored run warns", () => {
+  const timing = computeTiming(withEvents(basic(), [
+    ev("user.message", 15, { source: "agent-driver" }, "child"),
+    ev("session.task_complete", 21.1),
+    ev("user.message", 30, { source: "agent-driver" }),
+  ]), { answerSource: "agent-driver" });
+  assert.equal(timing.questions, 0);
+  assert.equal(timing.blockedMs, 0);
+  assert.equal(timing.warnings.length, 1);
+  assert.match(timing.warnings[0], /--answer-source "agent-driver" matched no messages/);
+});
+
+test("a later human kickoff warns when another session sent the first sender message", () => {
+  for (const data of [
+    { transformedContent: "<cross_session_message>synthetic kickoff</cross_session_message>" },
+    { source: "agent-driver" },
+  ]) {
+    const timing = computeTiming([
+      ev("session.start", 0),
+      ev("user.message", 0.1, { source: "system" }),
+      ev("user.message", 1, data),
+      ev("assistant.message", 2),
+      ev("user.message", 10),
+      ev("assistant.message", 11),
+    ]);
+    assert.equal(timing.start, "2026-01-01T10:10:00.000Z");
+    assert.equal(timing.wallMs, MIN);
+    assert.equal(timing.questions, 0);
+    assert.equal(timing.warnings.length, 1);
+    assert.match(timing.warnings[0], /another session.*later human kickoff/);
+  }
+});
+
 test("sub-agent events are ignored", () => {
   const timing = computeTiming(
     withEvents(basic(), [
@@ -163,25 +206,64 @@ test("an unanswered ask_user counts until the end, with a warning", () => {
   assert.equal(timing.warnings.length, 1);
 });
 
-test("the first top-level task completion bounds a finished run", () => {
-  const timing = computeTiming(
-    withEvents(basic(), [
-      ev("session.task_complete", 21.1),
-      ev("user.message", 22, { source: "agent-workspace-child" }),
-      ev("assistant.turn_start", 22),
-      ev("tool.execution_start", 23, { toolName: "ask_user", toolCallId: "late" }),
-      ev("tool.execution_complete", 24, { toolCallId: "late" }),
-      ev("user.message", 25),
-      ev("session.model_change", 26, { newModel: "another-model" }),
-      ev("assistant.message", 30),
-      ev("session.task_complete", 31),
-    ]),
-  );
+test("an idle task completion does not hide coordination before the final completion", () => {
+  const timing = computeTiming([
+    ...basic().slice(0, 6),
+    ev("session.task_complete", 4),
+    ev("user.message", 5, { source: "agent-child" }),
+    ev("assistant.turn_start", 5),
+    ev("tool.execution_start", 6, { toolName: "send_session_message", toolCallId: "coordinate" }),
+    ev("tool.execution_complete", 6.1, { toolCallId: "coordinate" }),
+    ev("tool.execution_start", 7, { toolName: "ask_user", toolCallId: "q1" }),
+    ev("tool.execution_complete", 8, { toolCallId: "q1" }),
+    ev("assistant.message", 10),
+    ev("assistant.turn_end", 10),
+    ev("user.message", 12, { source: "agent-driver" }),
+    ev("assistant.turn_start", 12),
+    ev("assistant.message", 21),
+    ev("session.task_complete", 21.1),
+    ev("assistant.turn_end", 21.2),
+    ev("user.message", 22, { source: "agent-workspace-child" }),
+    ev("assistant.turn_start", 22),
+    ev("tool.execution_start", 23, { toolName: "ask_user", toolCallId: "late" }),
+    ev("tool.execution_complete", 24, { toolCallId: "late" }),
+    ev("user.message", 25),
+    ev("session.model_change", 26, { newModel: "another-model" }),
+    ev("assistant.message", 30),
+  ], { answerSource: "agent-driver" });
   assert.equal(timing.end, "2026-01-01T10:21:00.000Z");
   assert.equal(timing.wallMs, 20 * MIN);
-  assert.equal(timing.blockedMs, 0);
+  assert.equal(timing.blockedMs, 3 * MIN);
+  assert.equal(timing.scoredMs, 17 * MIN);
+  assert.equal(timing.questions, 2);
+  assert.equal(timing.warnings.length, 1);
+  assert.match(timing.warnings[0], /2 .*session\.task_complete.*last/);
+});
+
+test("a completion before the cap bounds later assistant messages inside the cap", () => {
+  const timing = computeTiming(withEvents(basic(), [
+    ev("assistant.message", 9),
+    ev("session.task_complete", 10),
+    ev("assistant.message", 15),
+  ]), { cutoff: BASE + 20 * MIN });
+  assert.equal(timing.end, "2026-01-01T10:09:00.000Z");
+  assert.equal(timing.wallMs, 8 * MIN);
   assert.equal(timing.questions, 0);
   assert.deepEqual(timing.warnings, []);
+});
+
+test("only task completions at or before the cap select the last completion and its warning", () => {
+  const timing = computeTiming(withEvents(basic(), [
+    ev("session.task_complete", 3),
+    ev("assistant.message", 9),
+    ev("session.task_complete", 10),
+    ev("assistant.message", 15),
+    ev("session.task_complete", 22),
+  ]), { cutoff: BASE + 20 * MIN });
+  assert.equal(timing.end, "2026-01-01T10:09:00.000Z");
+  assert.equal(timing.wallMs, 8 * MIN);
+  assert.equal(timing.warnings.length, 1);
+  assert.match(timing.warnings[0], /2 .*session\.task_complete.*last/);
 });
 
 test("task completion before the kickoff or in a sub-agent does not end the run", () => {
@@ -229,7 +311,13 @@ test("a completed-run cutoff includes an assistant message exactly at the cutoff
 
 test("a completed-run cutoff cannot supply a missing final report", () => {
   assert.throws(() => computeTiming(basic(), { cutoff: BASE + MIN }), EventLogError);
-  assert.throws(() => computeTiming(basic(), { cutoff: BASE }), EventLogError);
+});
+
+test("a completed-run cutoff before the kickoff names the invalid end-at", () => {
+  assert.throws(
+    () => computeTiming(basic(), { cutoff: BASE }),
+    (error: unknown) => error instanceof EventLogError && error.message === "--end-at is before the kickoff",
+  );
 });
 
 test("an unfinished run is timed to the given end, not to its last progress message", () => {
