@@ -45,7 +45,16 @@ export class SessionChoiceError extends Error {}
 
 const str = (value: unknown): string | null => (typeof value === "string" && value !== "" ? value : null);
 const at = (event: LogEvent): number => Date.parse(event.timestamp);
-const isHuman = (event: LogEvent): boolean => event.type === "user.message" && !event.data?.source;
+const CROSS_SESSION_TAG = "<cross_session_message";
+
+function isCrossSession(event: LogEvent): boolean {
+  const text = event.data?.transformedContent ?? event.data?.content;
+  return typeof text === "string" && text.includes(CROSS_SESSION_TAG);
+}
+
+const isHuman = (event: LogEvent, answerSource?: string): boolean =>
+  event.type === "user.message" &&
+  ((answerSource !== undefined && event.data?.source === answerSource) || (!event.data?.source && !isCrossSession(event)));
 
 export function readEventLog(path: string): { events: LogEvent[]; warnings: string[] } {
   if (!existsSync(path)) throw new EventLogError(`No event log at ${path}`);
@@ -78,19 +87,42 @@ export function readEventLog(path: string): { events: LogEvent[]; warnings: stri
 }
 
 // `endAt` ends the window at a given time instead of the last assistant message. Use it for runs
-// that never finished (timeout, stalled), so they are timed to when they were observed.
-export function computeTiming(events: LogEvent[], opts: { endAt?: number } = {}): Timing {
-  const own = events.filter((event) => !event.agentId);
-  const kickoff = own.findIndex(isHuman);
-  if (kickoff < 0) throw new EventLogError("No kickoff: the session has no user.message without data.source");
+// that never finished (timeout, stalled). `cutoff` ignores later events in a completed run.
+export function computeTiming(events: LogEvent[], opts: { endAt?: number; cutoff?: number; answerSource?: string } = {}): Timing {
+  let own = events.filter((event) => !event.agentId);
+  const kickoff = own.findIndex((event) => isHuman(event));
+  if (kickoff < 0) throw new EventLogError("No kickoff: the session has no human user.message without data.source or a cross-session tag");
   const start = at(own[kickoff]);
+  if (opts.cutoff !== undefined) {
+    const cutoff = opts.cutoff;
+    if (cutoff < start) throw new EventLogError("--end-at is before the kickoff");
+    own = own.filter((event) => at(event) <= cutoff);
+  }
+  const warnings: string[] = [];
+  const firstMessage = own.find((event) =>
+    event.type === "user.message" && (!event.data?.source || str(event.data?.source)?.startsWith("agent-")),
+  );
+  if (firstMessage && !isHuman(firstMessage)) {
+    warnings.push("The first sender message came from another session; timing starts at a later human kickoff");
+  }
   let last = -1;
   if (opts.endAt !== undefined) {
     if (opts.endAt < start) throw new EventLogError("The end time is before the kickoff");
     last = kickoff;
     for (let i = kickoff + 1; i < own.length && at(own[i]) <= opts.endAt; i++) last = i;
   } else {
-    for (let i = own.length - 1; i > kickoff; i--) {
+    let complete = -1;
+    let completions = 0;
+    for (let i = kickoff + 1; i < own.length; i++) {
+      if (own[i].type === "session.task_complete") {
+        complete = i;
+        completions++;
+      }
+    }
+    if (completions > 1) {
+      warnings.push(`The scoring window has ${completions} top-level session.task_complete events; using the last completion`);
+    }
+    for (let i = complete < 0 ? own.length - 1 : complete; i > kickoff; i--) {
       if (own[i].type === "assistant.message") {
         last = i;
         break;
@@ -100,7 +132,6 @@ export function computeTiming(events: LogEvent[], opts: { endAt?: number } = {})
   }
 
   const end = opts.endAt ?? at(own[last]);
-  const warnings: string[] = [];
   const completes = new Map<string, LogEvent>();
   for (const event of own) {
     const id = str(event.data?.toolCallId);
@@ -110,6 +141,7 @@ export function computeTiming(events: LogEvent[], opts: { endAt?: number } = {})
   let blockedMs = 0;
   let askUserCalls = 0;
   let humanMessages = 0;
+  let answerSourceMessages = 0;
   let lastTurn: LogEvent | null = null;
   for (const event of own.slice(kickoff + 1, last + 1)) {
     if (event.type === "assistant.turn_start" || event.type === "assistant.turn_end") {
@@ -123,10 +155,14 @@ export function computeTiming(events: LogEvent[], opts: { endAt?: number } = {})
         blockedMs += end - at(event);
         warnings.push("An ask_user call has no completion; it counts as blocked until the end");
       }
-    } else if (isHuman(event)) {
+    } else if (isHuman(event, opts.answerSource)) {
       humanMessages++;
+      if (opts.answerSource !== undefined && event.data?.source === opts.answerSource) answerSourceMessages++;
       if (lastTurn?.type === "assistant.turn_end") blockedMs += at(event) - at(lastTurn);
     }
+  }
+  if (opts.answerSource !== undefined && answerSourceMessages === 0) {
+    warnings.push(`--answer-source "${opts.answerSource}" matched no messages in the scored run`);
   }
 
   const session = own.find((event) => event.type === "session.start");
@@ -185,12 +221,8 @@ export function findRunSessions(stateDir: string, repository: string): SessionIn
   return found.sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
 }
 
-// The app wraps a kickoff sent by another session in this tag. Its user.message has no data.source,
-// like one the user typed, so the tag is what tells them apart.
-const CROSS_SESSION_TAG = "<cross_session_message";
-
 // Finds who sent the session's first message, and the agent selected by then. Message text is only
-// checked for the tag above; it is never kept or printed. Unreadable lines are skipped.
+// checked for the cross-session tag; it is never kept or printed. Unreadable lines are skipped.
 export function describeSession(dir: string): Pick<RunSession, "hasLog" | "startedBy" | "agent"> {
   const path = join(dir, "events.jsonl");
   if (!existsSync(path)) return { hasLog: false, startedBy: null, agent: null };
@@ -209,9 +241,7 @@ export function describeSession(dir: string): Pick<RunSession, "hasLog" | "start
     if (source?.startsWith("agent-")) return { hasLog: true, startedBy: "session", agent };
     // system, skill-<name> and autopilot messages come from the runtime, not from a sender.
     if (source) continue;
-    const text = event.data?.transformedContent ?? event.data?.content;
-    const tagged = typeof text === "string" && text.includes(CROSS_SESSION_TAG);
-    return { hasLog: true, startedBy: tagged ? "session" : "user", agent };
+    return { hasLog: true, startedBy: isCrossSession(event) ? "session" : "user", agent };
   }
   return { hasLog: true, startedBy: "none", agent };
 }

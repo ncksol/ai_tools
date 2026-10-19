@@ -23,7 +23,7 @@ const USAGE = `Usage:
   npm run score -- --repo-dir <run clone> [--session <id>] [--state-dir <dir>] [--variant <name>] [--n <k>]
                    [--features <list>] [--outcome <timeout|stalled>] [--calibration <yes|no>] [--results <csv>]
                    [--no-github] [--start <iso> --end <iso> [--blocked-min <m>] [--questions <n>]] [--note <text>]
-                   [--replace]
+                   [--answer-source <value>] [--end-at <iso>] [--replace]
   npm run score -- --summary [--results <csv>]`;
 const TIMEOUT_MS = 90 * 60_000;
 
@@ -46,6 +46,8 @@ const { values } = parseArgs({
     end: { type: "string" },
     "blocked-min": { type: "string" },
     questions: { type: "string" },
+    "answer-source": { type: "string" },
+    "end-at": { type: "string" },
     note: { type: "string" },
     replace: { type: "boolean", default: false },
   },
@@ -56,6 +58,9 @@ const minutes = (ms: number): string => (ms / 60_000).toFixed(1);
 function parseTime(value: string, flag: string): number {
   const ms = Date.parse(value);
   if (Number.isNaN(ms)) throw new UsageError(`${flag} "${value}" is not an ISO 8601 date and time`);
+  if (flag === "--end-at" && !/(?:Z|[+-]\d{2}:\d{2})$/.test(value)) {
+    throw new UsageError("--end-at must include Z or a UTC offset (+/-hh:mm)");
+  }
   return ms;
 }
 
@@ -105,7 +110,7 @@ function manualTiming(): RunTiming {
   };
 }
 
-function logTiming(stateDir: string, repository: string, variant: string, endAt: number | undefined): RunTiming {
+function logTiming(stateDir: string, repository: string, variant: string, endAt: number | undefined, cutoff: number | undefined): RunTiming {
   let id = values.session;
   if (id) {
     console.log(`Session ${id} (from --session)`);
@@ -121,7 +126,7 @@ function logTiming(stateDir: string, repository: string, variant: string, endAt:
     console.log(`Session ${id} (${chosen.rule})`);
   }
   const log = readEventLog(join(stateDir, id, "events.jsonl"));
-  const timing = computeTiming(log.events, { endAt });
+  const timing = computeTiming(log.events, { endAt, cutoff, answerSource: values["answer-source"] });
   console.log(`Agent: ${timing.agent ?? "unknown"}; model: ${timing.model ?? "unknown"}, effort: ${timing.effort ?? "unknown"}`);
   return {
     session: id,
@@ -179,6 +184,13 @@ async function main(): Promise<number> {
   if (values.calibration !== undefined && !["yes", "no"].includes(values.calibration)) {
     throw new UsageError(`--calibration must be yes or no, not "${values.calibration}"`);
   }
+  if (values["answer-source"] !== undefined && values["answer-source"].trim() === "") {
+    throw new UsageError("--answer-source must not be empty");
+  }
+  for (const flag of ["answer-source", "end-at"] as const) {
+    if (values.start && values[flag] !== undefined) throw new UsageError(`--${flag} cannot be used with manual timing (--start/--end)`);
+  }
+  const cutoff = values["end-at"] === undefined ? undefined : parseTime(values["end-at"], "--end-at");
 
   const repoDir = resolve(values["repo-dir"]);
   const parsed = parseRunName(basename(repoDir));
@@ -214,7 +226,7 @@ async function main(): Promise<number> {
     try {
       // An unfinished run has no final report: time it to now, when it was found unfinished.
       const endAt = values.outcome === undefined ? undefined : Date.now();
-      timing = logTiming(stateDir, slug ?? `local/${basename(repoDir)}`, variant, endAt);
+      timing = logTiming(stateDir, slug ?? `local/${basename(repoDir)}`, variant, endAt, values.outcome === undefined ? cutoff : undefined);
     } catch (error) {
       if (error instanceof SessionChoiceError) {
         console.error(error.message);
@@ -289,7 +301,7 @@ async function main(): Promise<number> {
       model: timing.model,
       effort: timing.effort,
       copilot_version: timing.copilotVersion,
-      note: values.note ?? warnings.join("; "),
+      note: [values.note, ...warnings].filter(Boolean).join("; "),
     };
     if (replaced.length > 0) replaceResult(resultsPath, repo, runId, row);
     else appendResult(resultsPath, row);
