@@ -8,8 +8,9 @@
 // when the holder exits, crash included: when this process dies, `cat` reads end-of-file and exits.
 // So no stale lock ever needs reclaiming, and the lock file's content means nothing.
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
+import { loadState } from "./state.ts";
 
 export class LockBusyError extends Error {}
 export class ActiveBatchError extends Error {}
@@ -39,6 +40,20 @@ export interface HeldLock {
   release(): Promise<void>;
 }
 
+// Exit status when the process loses a lock it holds.
+export const HOLDER_LOST_EXIT = 70;
+
+// The holder of a lock this process holds has gone, so the lock may already belong to someone else.
+// Stop at once: no further protected work, no finally block, no save, no notification.
+function holderLost(path: string, detail: string): never {
+  try {
+    writeSync(2, `eval runner: lost the lock on ${path} (${detail}); stopping at once without saving\n`);
+  } catch {
+    // stderr is gone; exit anyway
+  }
+  process.exit(HOLDER_LOST_EXIT);
+}
+
 // Takes the lock without waiting. Null if another process holds it.
 export function tryOsLock(path: string): Promise<HeldLock | null> {
   const [cmd, args] = lockCommand(path);
@@ -51,15 +66,22 @@ export function tryOsLock(path: string): Promise<HeldLock | null> {
       return;
     }
     let settled = false;
+    let acquired = false;
+    let releasing = false;
     let out = "";
     let err = "";
     const exited = new Promise<void>((done) => child.once("exit", () => done()));
+    // Ending stdin on a holder that just died must not throw; the exit handler decides what it means.
+    child.stdin!.on("error", () => {});
     child.stdout!.on("data", (chunk) => {
       out += chunk;
       if (!settled && out.includes("locked")) {
         settled = true;
+        acquired = true;
         resolve({
           release: async () => {
+            if (child.exitCode !== null || child.signalCode !== null) holderLost(path, "its holder had already exited at release");
+            releasing = true;
             child.stdin!.end();
             await exited;
           },
@@ -68,11 +90,13 @@ export function tryOsLock(path: string): Promise<HeldLock | null> {
     });
     child.stderr!.on("data", (chunk) => (err += chunk));
     child.once("error", (error) => {
+      if (acquired && !releasing) holderLost(path, `holder error: ${error.message}`);
       if (settled) return;
       settled = true;
       reject(error);
     });
-    child.once("exit", (code) => {
+    child.once("exit", (code, signal) => {
+      if (acquired && !releasing) holderLost(path, `holder exited (${signal ?? `code ${code}`})`);
       if (settled) return;
       settled = true;
       if (code === BUSY_EXIT) resolve(null);
@@ -158,14 +182,9 @@ const sameBatch = (active: ActiveBatch, id: string, dir: string): boolean => act
 
 // A batch counts as active until its state says done or stopped, or its folder is gone.
 export function batchIsLive(dir: string): boolean {
-  let text: string;
+  if (!existsSync(join(dir, "state.json")) && !existsSync(join(dir, "state"))) return existsSync(join(dir, "config.json"));
   try {
-    text = readFileSync(join(dir, "state.json"), "utf8");
-  } catch {
-    return existsSync(join(dir, "config.json"));
-  }
-  try {
-    const phase = (JSON.parse(text) as { phase?: string }).phase;
+    const phase = loadState(dir).phase;
     return phase !== "done" && phase !== "stopped";
   } catch {
     return true;
@@ -182,7 +201,8 @@ const GUARD_LOCK_WAIT_MS = 30_000;
 const guardOpts = { waitMs: GUARD_LOCK_WAIT_MS, sleep: (ms: number) => new Promise<void>((done) => setTimeout(done, ms)), now: () => Date.now() };
 
 // Claims the machine for this batch. Every read-decide-write of the guard holds the guard's own
-// flock, so two batches can't both decide the machine is free.
+// flock, so two batches can't both decide the machine is free. No guard write happens outside it,
+// and losing that flock stops the process (holderLost) before any further write.
 export async function claimActive(guard: string, id: string, dir: string, now: string): Promise<void> {
   const mine = readActive(guard);
   if (mine && sameBatch(mine, id, dir)) return;
