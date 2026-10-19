@@ -84,25 +84,48 @@ export function buildSegments({ start, end = null, now, busy, waits, stuckFrom =
   return segments;
 }
 
+const LEADING_STATUS_RE = /^status\s*:\s*(complete|progress|needs[\s_-]+input|blocked)(?![\w-])[\s.:;,!—–-]*(.*)$/i;
+
+/**
+ * A free-text "Status: <status>" first line, as written by children without the contract. Markdown emphasis, code
+ * marks and a list or quote marker around it are ignored. `bare` is true when nothing else is on the line.
+ */
+function leadingStatus(text) {
+  const first = firstLine(text);
+  if (!first) return null;
+  const plain = first.replace(/^(?:[-*+>]|#{1,6})\s+/, '').replace(/\*\*|__|[*`]/g, '').trim();
+  const match = LEADING_STATUS_RE.exec(plain);
+  if (!match) return null;
+  return { status: match[1].toLowerCase().replace(/[\s_-]+/g, '_'), bare: !match[2].trim() };
+}
+
 function reportFields(text) {
   const fields = parseReportBody(text);
+  const lead = leadingStatus(fields.freeText);
+  // A bare status line only repeats the badge, so the title comes from the line after it.
+  const rest = lead?.bare ? firstLine(fields.freeText.split(/\r?\n/).slice(1).join('\n')) : null;
   return {
-    title: oneLine(fields.summary ?? firstLine(fields.freeText) ?? '', 160),
+    title: oneLine(fields.summary ?? rest ?? firstLine(fields.freeText) ?? '', 160),
     summary: fields.summary, evidence: fields.evidence, blockers: fields.blockers,
     body: fields.freeText ? clip(fields.freeText, 4000) : null,
   };
 }
 
-/** A report from a message: contract status line, else the send's purpose, else a plain progress message. */
+/**
+ * A report from a message: contract status line, else the send's purpose, else a leading "Status: <status>" line, else
+ * a plain progress message. The purpose outranks the free text: the sender chose it as a field, and the app delivers
+ * the message by it.
+ */
 export function reportFromMessage(message, purpose, at) {
   const text = String(message ?? '');
   const line = parseStatusLine(text);
   const mapped = purposeToStatus(purpose);
+  const body = line ? text.split(/\r?\n/).slice(1).join('\n') : text;
   return {
-    status: line?.status ?? mapped ?? 'progress',
+    status: line?.status ?? mapped ?? leadingStatus(body)?.status ?? 'progress',
     source: line ? 'contract' : mapped ? 'purpose' : 'message',
     at,
-    ...reportFields(line ? text.split(/\r?\n/).slice(1).join('\n') : text),
+    ...reportFields(body),
     unit: line?.unit ?? null,
     commit: line?.commit ?? null,
     repliedAt: null,
