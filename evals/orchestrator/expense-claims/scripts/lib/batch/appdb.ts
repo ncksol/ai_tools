@@ -49,7 +49,7 @@ export function openAppDb(path: string): AppDb {
     sessionSettings: (id) =>
       query((db) => {
         const row = db
-          .prepare("SELECT session_type, mode, agent, model, reasoning_effort, context_tier, auto_approve, permission_mode FROM sessions WHERE id = ?")
+          .prepare("SELECT session_type, mode, agent, model, reasoning_effort, context_tier, auto_approve, permission_mode, was_interrupted, interruption_reason FROM sessions WHERE id = ?")
           .get(id) as Record<string, unknown> | undefined;
         return row ? { ...row } : null;
       }),

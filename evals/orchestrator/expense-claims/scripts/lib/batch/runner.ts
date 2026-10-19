@@ -613,6 +613,7 @@ async function watchRun(ctx: Ctx, state: BatchState, run: RunState, index: numbe
   if (!orch.kickoff) {
     if (waitedMs > minutes(config.sessionAppearMin)) {
       voidRun(ctx, state, run, "the run's session has no kickoff message", true);
+      await notify(ctx, state, notices.runVoid(config.id, run.variant, run.n, run.voidReason!));
       return { progressed: true };
     }
     return {};
@@ -645,7 +646,18 @@ async function watchRun(ctx: Ctx, state: BatchState, run: RunState, index: numbe
   }
 
   const session = run.appSessionId ?? run.sessionId;
-  if (now - ms(run.kickoffAt) >= minutes(config.timeoutMin)) {
+  const timedOut = now - ms(run.kickoffAt) >= minutes(config.timeoutMin);
+  const stalled = now - swarm.lastActivityAt >= minutes(config.stallMin);
+  // An app restart or crash stops the run's session; that run is void, not timed out or stalled.
+  if (timedOut || stalled || run.flags.some((f) => f.code === "driver-gap")) {
+    const settings = ctx.deps.appDb.sessionSettings(run.sessionId);
+    if (settings && Number(settings.was_interrupted) === 1) {
+      voidRun(ctx, state, run, `the app stopped the run's session (${String(settings.interruption_reason ?? "interrupted")}), for example in a restart or update`, false);
+      await notify(ctx, state, notices.runVoid(config.id, run.variant, run.n, run.voidReason!));
+      return { progressed: true };
+    }
+  }
+  if (timedOut) {
     run.endReason = "timeout";
     run.status = "scoring";
     log(ctx, `${run.key} timed out`);
@@ -658,7 +670,7 @@ async function watchRun(ctx: Ctx, state: BatchState, run: RunState, index: numbe
       return { action: askAction(ctx, state, index, session, orch) };
     }
   }
-  if (now - swarm.lastActivityAt >= minutes(config.stallMin)) {
+  if (stalled) {
     run.endReason = "stalled";
     run.status = "scoring";
     for (const s of swarm.sessions) {

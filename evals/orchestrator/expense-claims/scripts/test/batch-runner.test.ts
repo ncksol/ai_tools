@@ -189,6 +189,24 @@ test("a driver that was away for over 10 minutes during a run is flagged", async
   assert.ok(h.state().runs[0].flags.some((f) => f.code === "driver-gap"));
 });
 
+test("a run whose session the app stopped (restart or update) is void, not scored, and is replaced", async () => {
+  const h = await make({ scenarios: ["timeout", "ask-final"] });
+  await h.until((action) => action.action === "judge_idle");
+  // The app restarts: the run's session stops, and so does the driver for 40 minutes.
+  const session = [...h.app.sessions.values()][0];
+  session.stopped = true;
+  session.nextAt = Infinity;
+  h.app.interrupted.add(session.id);
+  h.clock.now += 40 * 60_000;
+  await h.until(() => false);
+  const state = h.state();
+  assert.equal(state.runs[0].status, "void");
+  assert.match(state.runs[0].voidReason!, /the app stopped the run's session \(shutdown\)/);
+  assert.equal(h.scoreCalls.length, 1, "only the replacement run is scored");
+  assert.equal(state.runs[1].status, "done");
+  assert.ok(h.notices.some((n) => n.key === "void-variant-a-1"));
+});
+
 test("changed agent files stop the batch before the next run", async () => {
   const h = await make({ scenarios: ["ask-final", "ask-final"], runsPerVariant: 2 });
   await h.until((action) => action.action === "answer_question");

@@ -235,8 +235,9 @@ export class FakeApp implements AppDb {
   projectAutoApprove(projectId: string): number | null {
     return this.projects.has(projectId) ? 1 : null;
   }
-  sessionSettings(): Record<string, unknown> | null {
-    return null;
+  interrupted = new Set<string>();
+  sessionSettings(id: string): Record<string, unknown> | null {
+    return { was_interrupted: this.interrupted.has(id) ? 1 : 0, interruption_reason: this.interrupted.has(id) ? "shutdown" : null };
   }
   workspaces(projectId: string): WorkspaceRow[] | null {
     return [...this.sessions.values()]

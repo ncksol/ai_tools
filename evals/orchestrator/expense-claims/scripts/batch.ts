@@ -30,9 +30,10 @@ import { KIT_DIR } from "./lib/suite.ts";
 
 const USAGE = `Usage (from evals/orchestrator/expense-claims):
   npm run batch -- init [--variants a,b] [--runs 3] [--deadline 07:00] [--memory-off] [--self-test-only] [options]
-  npm run batch -- next --batch <id|path|latest> [--max-wait 540]
+  npm run batch -- next --batch <id|path|latest> [--max-wait 420]
   npm run batch -- record --batch <id|path|latest> --action <id> <result flags>
   npm run batch -- status|stop|report --batch <id|path|latest>
+  npm run batch -- alert --batch <id|path|latest> --message <text>
   npm run batch -- notify-test
   npm run batch -- rehearse
 
@@ -47,7 +48,7 @@ const { values, positionals } = parseArgs({
   options: {
     batch: { type: "string" },
     "batches-dir": { type: "string", default: defaultPaths().batchesDir },
-    "max-wait": { type: "string", default: "540" },
+    "max-wait": { type: "string", default: "420" },
     // init
     variants: { type: "string", default: "orchestrator,session-orchestrator" },
     runs: { type: "string", default: "3" },
@@ -83,6 +84,7 @@ const { values, positionals } = parseArgs({
     neither: { type: "boolean", default: false },
     sent: { type: "boolean", default: false },
     failed: { type: "string" },
+    message: { type: "string" },
   },
 });
 
@@ -257,6 +259,14 @@ async function main(): Promise<number> {
       }
       const result = await sendNtfy(url, { ...notices.failure("test", "test", "This is a test notification from the eval runner."), title: "Eval runner test" });
       console.log(result.ok ? "Sent. Check your phone." : `Not sent: ${result.error}`);
+      return result.ok ? 0 : 1;
+    }
+    case "alert": {
+      // For the driver when the runner itself keeps failing: the runner still sends the notice.
+      const config = loadConfig(resolveBatchDir());
+      if (!values.message) throw new UsageError("--message is required");
+      const result = await realDeps(config).notify(notices.failure(config.id, `alert-${Date.now()}`, values.message));
+      console.log(result.ok ? "Alert sent." : `Alert not sent: ${result.error}`);
       return result.ok ? 0 : 1;
     }
     case "next":
