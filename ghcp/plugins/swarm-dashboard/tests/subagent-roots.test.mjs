@@ -10,6 +10,7 @@ import { openEvents } from './helpers/http.mjs';
 import { NO_SUCH_PID, alwaysAlive, at, scenario } from './helpers/scenario.mjs';
 import { CopilotHome } from './helpers/copilot-home.mjs';
 import { tempDir } from './helpers/temp.mjs';
+import { MAX_LINE_BYTES } from '../engine/readers/events.mjs';
 
 /*
  * Issue #30, option (b): an orchestrator that has used only `task` sub-agents, with no child session yet, is a swarm root.
@@ -288,4 +289,23 @@ test('a log-only run shown while its process ran stays a swarm after the process
   assert.equal(await engine.findSwarm(cli), 'ws-fade');
   assert.equal(engine.listSwarms().find(swarm => swarm.id === 'ws-fade').lifecycle, 'finished');
   assert.ok((await engine.listHistory()).some(run => run.id === 'ws-fade'));
+});
+
+test('a task start too big to read whole, its type first or last, makes a root with no other evidence', async () => {
+  const home = scenario();
+  const big = 'x'.repeat(MAX_LINE_BYTES + 1024);
+  const cases = { 'ws-big-first': false, 'ws-big-last': true };
+  for (const [id, typeLast] of Object.entries(cases)) {
+    const cli = `cli-${id.slice(3)}`;
+    home.workspace({ id, name: id, createdAt: at(55), sessionId: cli, agent: 'orchestrator' });
+    const log = new EventLog(at(55));
+    log.start();
+    const head = { id: `ev-${id}`, timestamp: new Date(at(56)).toISOString() };
+    const data = { toolCallId: `call-${id}`, toolName: 'task', arguments: { name: 'scout', description: 'scout work', prompt: big } };
+    log.events.push(typeLast ? { data, ...head, type: 'tool.execution_start' } : { type: 'tool.execution_start', data, ...head });
+    home.writeEvents(cli, log.events);
+  }
+  const engine = engineFor(home, at(60));
+  await engine.refresh();
+  for (const id of Object.keys(cases)) assert.equal(await engine.findSwarm(`cli-${id.slice(3)}`), id, id);
 });

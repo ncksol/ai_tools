@@ -8,7 +8,7 @@ const MAX_LITERAL_BYTES = 64;
 const MAX_DEPTH = 256;
 /** The only keys captured: the event's own metadata, and the metadata keys directly under its `data`. */
 const TOP_KEYS = new Set(['type', 'id', 'timestamp', 'parentId', 'agentId']);
-const DATA_KEYS = new Set(['toolCallId', 'success', 'cancelled', 'parentToolCallId', 'agentId', 'durationMs']);
+const DATA_KEYS = new Set(['toolCallId', 'toolName', 'success', 'cancelled', 'parentToolCallId', 'agentId', 'durationMs']);
 
 const QUOTE = 0x22;
 const BACKSLASH = 0x5c;
@@ -35,8 +35,8 @@ function decodeString(raw) {
  * it keeps no line bytes, only a stack of containers (bounded by MAX_DEPTH), the string it is inside, and the values it
  * captures. What it captures is fixed by an allowlist, so its memory does not grow with the width of the line: primitive
  * values (strings of at most MAX_VALUE_BYTES, numbers, true, false, null) of the keys type, id, timestamp, parentId and
- * agentId at depth 1, and toolCallId, success, cancelled, parentToolCallId, agentId and durationMs directly under the top-level key
- * `data`. A repeated key overwrites. Other keys, and keys at any other depth, are read only far enough to know which object
+ * agentId at depth 1, and toolCallId, toolName, success, cancelled, parentToolCallId, agentId and durationMs directly under the
+ * top-level key `data`. toolName lets the engine see that an oversized tool start is a `task` call (see engine.mjs, scanTaskStarts). A repeated key overwrites. Other keys, and keys at any other depth, are read only far enough to know which object
  * is `data` and are then dropped, so a nested "type":"text" never counts. Structural characters are ASCII and never occur
  * inside a UTF-8 sequence, so it works on bytes; a captured string is decoded once, when it ends.
  *
