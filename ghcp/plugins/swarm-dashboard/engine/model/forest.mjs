@@ -2,12 +2,20 @@ function makeNode(fields) {
   return { ...fields, currentCliSessionId: fields.cliSessionIds[fields.cliSessionIds.length - 1] ?? null, parentId: null, childIds: [], depth: 0 };
 }
 
+/** The agents that follow the swarm dashboard data contract (ghcp/agents/orchestrator.agent.md and session-orchestrator.agent.md). */
+export const ORCHESTRATOR_AGENTS = Object.freeze(['orchestrator', 'session-orchestrator']);
+
 /**
  * Session tree. Project sessions nest through workspace_parent_links; chat children through chat_parent_links; a
  * project session created by a chat (which no workspace link can express) nests under that chat. Every node with
  * children and no parent is a swarm root.
+ *
+ * A top session with no child session yet is a swarm root only when it is one of the `candidates` and the engine names
+ * it in `waitingRoots`. Candidates are unarchived top sessions with no child (project sessions, and chats in no workspace)
+ * whose current CLI session runs an orchestrator agent (data.db sessions.agent); the engine names those that wait on an
+ * open tagged question (see engine.mjs, waitingOrchestrators).
  */
-export function buildForest(app) {
+export function buildForest(app, { waitingRoots = new Set() } = {}) {
   const nodes = new Map();
   const workspaceOfSession = new Map();
   const aliasesByWorkspace = new Map();
@@ -88,7 +96,17 @@ export function buildForest(app) {
   }
   const byCreated = (a, b) => (nodes.get(a).createdAt ?? 0) - (nodes.get(b).createdAt ?? 0) || (a < b ? -1 : a > b ? 1 : 0);
   for (const node of nodes.values()) node.childIds.sort(byCreated);
-  const roots = [...nodes.values()].filter(node => !node.parentId && node.childIds.length > 0);
+  const orchestrator = cliId => ORCHESTRATOR_AGENTS.includes(app.sessions.get(cliId)?.agent);
+  const candidates = [];
+  for (const node of nodes.values()) {
+    if (!node.parentId && !node.childIds.length && node.archivedAt == null && orchestrator(node.currentCliSessionId)) candidates.push({ id: node.id, cliId: node.currentCliSessionId });
+  }
+  for (const row of app.sessions.values()) {
+    if (nodes.has(row.id) || workspaceOfSession.has(row.id) || orphanSessions.has(row.id) || row.archivedAt != null || !orchestrator(row.id)) continue;
+    candidates.push({ id: row.id, cliId: row.id });
+  }
+  const waiting = new Set(candidates.filter(item => waitingRoots.has(item.id)).map(item => chatNode(item.id)));
+  const roots = [...nodes.values()].filter(node => !node.parentId && (node.childIds.length > 0 || waiting.has(node.id)));
   for (const root of roots) {
     const stack = [[root.id, 0]];
     while (stack.length) {
@@ -99,7 +117,7 @@ export function buildForest(app) {
     }
   }
   roots.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
-  return { nodes, roots, workspaceOfSession };
+  return { nodes, roots, workspaceOfSession, candidates };
 }
 
 export function descendants(forest, rootId) {

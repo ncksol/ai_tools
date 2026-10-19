@@ -1,12 +1,27 @@
-import { HOUR, costHtml, costText, count, credits, dateRange, dur, esc, plural } from './format.mjs';
+import { HOUR, MIN, costHtml, costText, count, credits, dateRange, dur, esc, plural } from './format.mjs';
 
 const pct = (value, total) => (total > 0 ? Math.max(0, Math.min(100, (value / total) * 100)) : 0).toFixed(2);
 const unitName = unit => (unit.isOrchestrator ? `${unit.label} orchestrator` : `${unit.label} ${unit.name}`);
 
-function ticksFor(hours) {
-  const step = hours <= 6 ? 1 : hours <= 24 ? 4 : hours <= 96 ? 12 : hours <= 240 ? 24 : 48;
+const SEC = 1000;
+const SHORT_STEPS = [5 * SEC, 10 * SEC, 15 * SEC, 30 * SEC, MIN, 2 * MIN, 5 * MIN, 10 * MIN, 15 * MIN, 30 * MIN, HOUR];
+
+function tickLabel(ms, step) {
+  if (step < MIN) return `${Math.round(ms / SEC)}s`;
+  if (step >= HOUR) return `${Math.round(ms / HOUR)}h`;
+  const minutes = Math.round(ms / MIN);
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return h === 0 ? `${m}m` : m === 0 ? `${h}h` : `${h}h ${String(m).padStart(2, '0')}m`;
+}
+
+/** Axis ticks from the run's start: the smallest round step that gives at most six intervals, then the long-run hour steps. */
+function ticksFor(tookMs) {
+  const hours = tookMs / HOUR;
+  const step = SHORT_STEPS.find(candidate => tookMs <= candidate * 6)
+    ?? (hours <= 24 ? 4 : hours <= 96 ? 12 : hours <= 240 ? 24 : 48) * HOUR;
   const ticks = [];
-  for (let hour = 0; hour <= hours + 1e-9; hour += step) ticks.push(hour);
+  for (let at = 0; at <= tookMs; at += step) ticks.push({ at, label: tickLabel(at, step) });
   return ticks;
 }
 
@@ -47,7 +62,7 @@ export function runHtml(run) {
       + `<span class="g-busy" style="left:${pct(from, took)}%;width:${pct(Math.min(unit.busyMs, took - from), took)}%"></span></div>`
       + `<span class="g-num">${dur(end - start, 'hm')}</span></div>`;
   }).join('');
-  const axis = `<div class="g-axis"><div></div><div>${ticksFor(took / HOUR).map(hour => `<span style="left:${pct(hour * HOUR, took)}%">${hour}h</span>`).join('')}</div><div></div></div>`;
+  const axis = `<div class="g-axis"><div></div><div>${ticksFor(took).map(tick => `<span style="left:${pct(tick.at, took)}%">${tick.label}</span>`).join('')}</div><div></div></div>`;
   const units = barRows([...run.units].sort((a, b) => b.credits - a.credits).map(unit => ({ label: unitName(unit), text: costText(unit.credits), value: unit.credits })));
   const models = run.models.length
     ? barRows(run.models.map(model => ({ label: model.model, text: `${costText(model.credits)} · ${dur(model.apiMs, 'hm')}`, value: model.credits })))

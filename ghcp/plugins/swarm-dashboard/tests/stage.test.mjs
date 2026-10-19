@@ -70,8 +70,9 @@ test('stages run from coding through review to merged and archived', () => {
   assert.equal(deriveStage({ archivedAt: null, outcome: null, pr: pr('unknown') }).stage, 'pr_open');
   assert.equal(deriveStage({ archivedAt: null, outcome: null, pr: pr('unknown'), monitorEver: true }).stage, 'in_review');
   assert.deepEqual(deriveStage({ archivedAt: null, outcome: 'merged', pr: pr('unknown') }), { stage: 'merged', merged: true, closedWithoutMerge: false });
-  assert.deepEqual(deriveStage({ archivedAt: T0, outcome: null, pr: pr('merged') }), { stage: 'archived', merged: true, closedWithoutMerge: false });
-  assert.deepEqual(deriveStage({ archivedAt: T0, outcome: 'closed', pr: null }), { stage: 'archived', merged: false, closedWithoutMerge: true });
+  assert.deepEqual(deriveStage({ archivedAt: T0, outcome: null, pr: pr('merged') }), { stage: 'merged', merged: true, closedWithoutMerge: false });
+  assert.deepEqual(deriveStage({ archivedAt: T0, outcome: 'closed', pr: null }), { stage: 'coding', merged: false, closedWithoutMerge: true });
+  assert.equal(deriveStage({ archivedAt: T0, outcome: null, pr: null }).stage, 'archived');
   assert.deepEqual(deriveStage({ archivedAt: null, outcome: null, pr: pr('closed') }), { stage: 'pr_open', merged: false, closedWithoutMerge: true });
 });
 

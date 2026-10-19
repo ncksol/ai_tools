@@ -10,6 +10,7 @@ import { createLedger, pullLedger } from './readers/ledger.mjs';
 import { createProcessProbe } from './readers/process-probe.mjs';
 import { createSessionDbCache, listLocks, readWorkspaceYaml } from './readers/session-files.mjs';
 import { buildForest, resolveNodeId, treeNodes } from './model/forest.mjs';
+import { parseQuestionTag } from './model/contract.mjs';
 import { createHistoryStore, listItemOf, summarizeRun } from './model/history.mjs';
 import { createPrLookup } from './model/pr-lookup.mjs';
 import { applyLine, applyRecovered, createSessionState } from './model/session-state.mjs';
@@ -212,6 +213,27 @@ export function createSwarmEngine(options = {}) {
   }
 
   /**
+   * The forest's candidates (see buildForest) that wait on an open contract-tagged question: an unanswered ask_user whose
+   * text starts with a valid tag, in a session not known to have ended, the wait that "Needs you" shows (see buildNeeds).
+   * Only a candidate whose log changed within runFinishedAfterMs, or whose process is alive, is read, so an orchestrator
+   * that finished long ago costs a stat. `read` collects the CLI sessions read, so that their tails are kept.
+   */
+  async function waitingOrchestrators(at, read) {
+    const waiting = new Set();
+    for (const { id, cliId } of forest.candidates) {
+      const alive = await livenessOf(cliId, at);
+      if (alive === false) continue;
+      const changedAt = await mtimeOf(path.join(paths.stateDir, cliId, 'events.jsonl'));
+      if (changedAt === null || (alive !== true && at - changedAt >= thresholds.runFinishedAfterMs)) continue;
+      read.add(cliId);
+      // A session that is not a swarm reports no read problems; buildTracked reads it again, and reports them, once it is one.
+      const { state } = await tailSession(cliId, [], true);
+      if ([...(state?.waits.values() ?? [])].some(wait => wait.kind === 'question' && parseQuestionTag(wait.text))) waiting.add(id);
+    }
+    return waiting;
+  }
+
+  /**
    * `subagentUnits` is true for the CLI sessions of the swarm's root orchestrator. A cached entry that was built with the other
    * value is read again from the start of its log, so its state has the right shape.
    * Resolves `{ state, read }`: `state` is null while the log is missing; `read` is false when reading the log failed, so `state`
@@ -277,9 +299,21 @@ export function createSwarmEngine(options = {}) {
   /**
    * Builds a tracked root's snapshot. Resolves `{ snapshot, complete }`: `complete` is true only when this refresh read every
    * source the snapshot uses, so a summary of it may be marked checked (see persistFinished). It is false when a session's log
-   * or session.db could not be read (the last good value was used), or `globalsRead` is false (data.db or the ledger failed).
+   * or session.db could not be read (the last good value was used), when a PR's first lookup has not finished (its outcome is
+   * not known yet), or `globalsRead` is false (data.db or the ledger failed).
+   * The snapshot's diagnostics are the engine-wide ones (`shared`) and the notes about this root's own sessions; those notes
+   * are also added to `diag`, the engine's list.
    */
-  async function buildTracked(rootId, at, diag, dbFiles, globalsRead) {
+  async function buildTracked(rootId, at, diag, shared, dbFiles, globalsRead) {
+    const own = [];
+    try {
+      return await buildTrackedSnapshot(rootId, at, own, shared, dbFiles, globalsRead);
+    } finally {
+      diag.push(...own);
+    }
+  }
+
+  async function buildTrackedSnapshot(rootId, at, diag, shared, dbFiles, globalsRead) {
     const nodes = treeNodes(forest, rootId);
     const states = new Map();
     const alive = new Map();
@@ -312,13 +346,18 @@ export function createSwarmEngine(options = {}) {
     let sawPending = false;
     if (!subagentLabels.has(rootId)) subagentLabels.set(rootId, new Map());
     const snapshot = buildSnapshot({
-      forest, rootId, app, states, alive, workspaceFiles, ledger, sessionDbs, now: at, thresholds, revision: 0, diagnostics: [...diag],
+      forest, rootId, app, states, alive, workspaceFiles, ledger, sessionDbs, now: at, thresholds, revision: 0, diagnostics: [...shared, ...diag],
       subagentLabels: subagentLabels.get(rootId),
       prInfo: (pr, { cwd }) => {
         if (!lookup) return null;
         lookup.request(pr, { cwd });
-        if (lookup.pending?.(pr, { cwd })) sawPending = true;
-        return lookup.get(pr, { cwd });
+        const info = lookup.get(pr, { cwd });
+        if (lookup.pending?.(pr, { cwd })) {
+          sawPending = true;
+          // A first lookup that has not finished leaves the PR's outcome unknown, so the run's merged count is not known yet.
+          if (!info) complete = false;
+        }
+        return info;
       },
     });
     if (sawPending) pendingRoots.add(rootId);
@@ -394,8 +433,14 @@ export function createSwarmEngine(options = {}) {
       app = app ?? emptyApp();
       diag.push(sqliteProblem('data.db', error));
     }
+    // The CLI sessions of top sessions that may be swarms before their first child (see waitingOrchestrators).
+    const candidateCliIds = new Set();
+    // Roots before this refresh: a root that leaves the forest is reported as changed, so a page that shows it learns it has gone.
+    const before = forest ? forest.roots.map(root => root.id) : [];
     try {
       forest = buildForest(app);
+      const waiting = await waitingOrchestrators(at, candidateCliIds);
+      if (waiting.size) forest = buildForest(app, { waitingRoots: waiting });
     } catch (error) {
       forest = forest ?? buildForest(emptyApp());
       diag.push({ level: 'warn', source: 'forest', message: error.message });
@@ -419,9 +464,11 @@ export function createSwarmEngine(options = {}) {
     const changed = [];
     const failed = new Set();
     const dbFiles = new Set();
+    // The engine-wide notes so far; each root's snapshot adds only the notes about its own sessions (see buildTracked).
+    const shared = [...diag];
     for (const rootId of tracked) {
       try {
-        const { snapshot, complete } = await buildTracked(rootId, at, diag, dbFiles, globalsRead);
+        const { snapshot, complete } = await buildTracked(rootId, at, diag, shared, dbFiles, globalsRead);
         const hash = digest(snapshot);
         const entry = snapshots.get(rootId);
         if (entry && entry.hash === hash) {
@@ -447,13 +494,15 @@ export function createSwarmEngine(options = {}) {
         diag.push({ level: 'warn', source: 'snapshot', message: `${shortId(rootId)}: ${error.message}` });
       }
     }
-    const keep = new Set();
+    const keep = new Set(candidateCliIds);
     for (const rootId of tracked) for (const node of treeNodes(forest, rootId)) for (const cliId of node.cliSessionIds) keep.add(cliId);
     for (const cliId of [...sessions.keys()]) if (!keep.has(cliId)) sessions.delete(cliId);
     const dropped = rootId => !tracked.has(rootId) && !failed.has(rootId);
     for (const rootId of [...snapshots.keys()]) if (dropped(rootId)) snapshots.delete(rootId);
     for (const rootId of [...subagentLabels.keys()]) if (dropped(rootId)) subagentLabels.delete(rootId);
     const current = new Set(forest.roots.map(root => root.id));
+    // A root that left the forest has no snapshot now; it is never also in `changed`, which holds only current roots.
+    const removed = before.filter(rootId => !current.has(rootId));
     for (const rootId of [...revisions.keys()]) if (!current.has(rootId)) revisions.delete(rootId);
     for (const rootId of [...cheapLast.keys()]) if (!current.has(rootId)) cheapLast.delete(rootId);
     for (const rootId of [...knownFinished.keys()]) if (!current.has(rootId)) knownFinished.delete(rootId);
@@ -471,9 +520,9 @@ export function createSwarmEngine(options = {}) {
     const previous = new Set(diagnostics.map(item => `${item.source}|${item.message}`));
     for (const item of diag) if (item.level === 'warn' && !previous.has(`${item.source}|${item.message}`)) log(item);
     diagnostics = diag;
-    if (changed.length) {
+    if (changed.length || removed.length) {
       revision += 1;
-      notify({ revision, swarmIds: changed });
+      notify({ revision, swarmIds: [...changed, ...removed] });
     }
   }
 

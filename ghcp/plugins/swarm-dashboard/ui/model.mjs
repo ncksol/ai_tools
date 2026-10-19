@@ -104,8 +104,11 @@ export function feedText(item) {
   return item.kind.startsWith('subagent-') && item.label && once.endsWith(ending) ? once.slice(0, -ending.length) : once;
 }
 
-/** Its PR closed without merging and it is not archived: it stays in its PR stage, with a badge (approved decision 5). */
-export const closedNotMerged = unit => Boolean(unit.closedWithoutMerge && unit.pr && unit.stage !== 'archived' && (unit.pr.state === 'closed' || unit.outcome === 'closed'));
+/**
+ * It closed without merging (its PR closed, or the registry outcome is closed, with or without a PR): it stays in its
+ * stage, with a badge (approved decision 5), archived or not.
+ */
+export const closedNotMerged = unit => Boolean(unit.closedWithoutMerge && unit.stage !== 'archived' && (unit.pr?.state === 'closed' || unit.outcome === 'closed'));
 
 export const stateLine = session => STATE_LINES[session.statusDetail] ?? STATE_LINES[session.status] ?? '{t}';
 
@@ -134,6 +137,12 @@ export function nextCardChange(snapshot, now) {
 }
 
 /**
+ * The unit is archived: its status says so, or its timeline has the archived mark, which the engine always keeps. Its
+ * status and stage show its outcome when one is known (merged, failed), so they cannot tell on their own.
+ */
+export const isArchived = unit => unit.status === 'archived' || Boolean(unit.timeline?.marks?.some(mark => mark.kind === 'archived'));
+
+/**
  * Units shown as cards at `now`: attention first, then creation order. Archived units leave the Cards tab. Sub-agent
  * units stay on it while they run or are stuck, and a finished one for SUBAGENT_CARD_GRACE_MS after it ended; the Board
  * shows them all.
@@ -141,11 +150,11 @@ export function nextCardChange(snapshot, now) {
 export function cardUnits(snapshot, now) {
   return snapshot.units
     .map((unit, index) => ({ unit, index }))
-    .filter(({ unit }) => unit.status !== 'archived' && (!isFinishedSubagent(unit) || cardTimeLeft(unit, now) > 0))
+    .filter(({ unit }) => !isArchived(unit) && (!isFinishedSubagent(unit) || cardTimeLeft(unit, now) > 0))
     .sort((a, b) => (STATUS_ORDER[a.unit.status] ?? 9) - (STATUS_ORDER[b.unit.status] ?? 9) || a.index - b.index)
     .map(({ unit }) => unit);
 }
-export const archivedUnits = snapshot => snapshot.units.filter(unit => unit.status === 'archived');
+export const archivedUnits = snapshot => snapshot.units.filter(isArchived);
 export const findUnit = (snapshot, id) => snapshot.units.find(unit => unit.id === id) ?? null;
 const sameLabel = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 export const findByLabel = (snapshot, label) => snapshot.units.find(unit => sameLabel(unit.label, label)) ?? null;

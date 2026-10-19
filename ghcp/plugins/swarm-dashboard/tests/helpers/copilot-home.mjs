@@ -18,7 +18,7 @@ CREATE TABLE workspace_parent_links (child_workspace_id TEXT PRIMARY KEY, parent
 CREATE TABLE workspace_session_aliases (session_id TEXT PRIMARY KEY, workspace_id TEXT, created_at TEXT);
 CREATE TABLE chat_parent_links (session_id TEXT PRIMARY KEY, parent_session_id TEXT, coordinating_creator_session_id TEXT, notify_creator_on_idle TEXT);
 CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT, session_type TEXT, mode TEXT, model TEXT, reasoning_effort TEXT,
-  is_running INTEGER, was_interrupted INTEGER, created_at TEXT, updated_at TEXT, archived_at TEXT, total_nano_aiu INTEGER);
+  is_running INTEGER, was_interrupted INTEGER, created_at TEXT, updated_at TEXT, archived_at TEXT, total_nano_aiu INTEGER, agent TEXT);
 CREATE TABLE session_automations (session_id TEXT PRIMARY KEY, prompt TEXT, interval TEXT, every_minutes INTEGER, schedule_hour INTEGER,
   schedule_day INTEGER, last_run_at TEXT, next_run_at TEXT, updated_at TEXT, name TEXT, owner_session_id TEXT, paused_at TEXT);
 CREATE TABLE settings (id INTEGER PRIMARY KEY, github_token TEXT);
@@ -78,7 +78,7 @@ export class CopilotHome {
   }
 
   workspace({ id, projectId = null, name, branch = null, createdAt, archivedAt = null, sessionId = id, parentId = null,
-    creatorSessionId = null, baseBranch = null, pr = null, isRunning = false, model = 'claude-sonnet-5' }) {
+    creatorSessionId = null, baseBranch = null, pr = null, isRunning = false, model = 'claude-sonnet-5', agent = null }) {
     const worktreeId = baseBranch ? `wt-${id}` : null;
     if (worktreeId) {
       this.insert(this.dataDb, 'worktrees', { id: worktreeId, project_id: projectId, path: `/synthetic/worktrees/${id}`, branch, base_branch: baseBranch, created_at: iso(createdAt) });
@@ -95,22 +95,22 @@ export class CopilotHome {
       this.insert(this.dataDb, 'workspace_parent_links', { child_workspace_id: id, parent_workspace_id: parentId, creator_session_id: creatorSessionId, created_at: iso(createdAt) });
     }
     this.alias(sessionId, id, createdAt);
-    this.session({ id: sessionId, title: name, createdAt, isRunning, model });
+    this.session({ id: sessionId, title: name, createdAt, isRunning, model, agent });
   }
 
   alias(sessionId, workspaceId, createdAt) {
     this.insert(this.dataDb, 'workspace_session_aliases', { session_id: sessionId, workspace_id: workspaceId, created_at: iso(createdAt) });
   }
 
-  session({ id, title = '', createdAt, isRunning = false, model = null, mode = null, archivedAt = null }) {
+  session({ id, title = '', createdAt, isRunning = false, model = null, mode = null, archivedAt = null, agent = null }) {
     this.insert(this.dataDb, 'sessions', {
       id, title, session_type: 'session', mode, model, reasoning_effort: null, is_running: isRunning ? 1 : 0, was_interrupted: 0,
-      created_at: iso(createdAt), updated_at: iso(createdAt), archived_at: iso(archivedAt), total_nano_aiu: 0,
+      created_at: iso(createdAt), updated_at: iso(createdAt), archived_at: iso(archivedAt), total_nano_aiu: 0, agent,
     });
   }
 
-  chat({ id, parentSessionId = null, title, createdAt, isRunning = false }) {
-    this.session({ id, title, createdAt, isRunning });
+  chat({ id, parentSessionId = null, title, createdAt, isRunning = false, agent = null }) {
+    this.session({ id, title, createdAt, isRunning, agent });
     if (parentSessionId) {
       this.insert(this.dataDb, 'chat_parent_links', { session_id: id, parent_session_id: parentSessionId, coordinating_creator_session_id: parentSessionId, notify_creator_on_idle: 'always' });
     }

@@ -1,6 +1,6 @@
 # Swarm dashboard
 
-A watch-only dashboard for agentic swarms in the GitHub Copilot app. A swarm is a session that has started child sessions, such as an orchestrator that hands each unit of work to its own session. The dashboard shows what every session and sub-agent is doing, how far it has got, what it costs and what needs you, so you can follow the work at a glance instead of reading transcripts.
+A watch-only dashboard for agentic swarms in the GitHub Copilot app. A swarm is a session that has started child sessions, such as an orchestrator that hands each unit of work to its own session. Before its first child session, an `orchestrator` or `session-orchestrator` session is a swarm while it waits on a tagged question, such as its plan question, so that the question shows under "Needs you". The dashboard shows what every session and sub-agent is doing, how far it has got, what it costs and what needs you, so you can follow the work at a glance instead of reading transcripts.
 
 It opens as a canvas in the app's side panel, or in any browser through a small local launcher. It reads Copilot's local data read-only. Its only network requests are read-only `gh` and `az` queries about the swarm's pull requests.
 
@@ -26,7 +26,7 @@ Then restart your Copilot sessions, or ask Copilot to reload extensions, so the 
 
 ## Open the dashboard
 
-In the Copilot app, ask the agent to open the Swarm dashboard canvas. An orchestrator can open it itself with `open_canvas` and the canvas id `swarm-dashboard`, for example when it starts its first child session. The canvas shows the swarm of the session it was opened in, or else the most recently active swarm. To show a particular swarm, pass its root session id as input: `{ "swarm": "<root session id>" }`.
+In the Copilot app, ask the agent to open the Swarm dashboard canvas. An orchestrator can open it itself with `open_canvas` and the canvas id `swarm-dashboard`, for example when it starts its first child session. The canvas shows the swarm of the session it was opened in. If that session is in no swarm, the canvas says so, offers the live swarms in its swarm picker, and shows the session's swarm as soon as the session joins one. To show a particular swarm, pass its root session id as input: `{ "swarm": "<root session id>" }`.
 
 In a browser, run the launcher from the plugin folder and open the address it prints:
 

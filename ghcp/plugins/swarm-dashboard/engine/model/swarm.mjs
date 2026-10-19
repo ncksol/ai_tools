@@ -84,25 +84,48 @@ export function buildSegments({ start, end = null, now, busy, waits, stuckFrom =
   return segments;
 }
 
+const LEADING_STATUS_RE = /^status\s*:\s*(complete|progress|needs[\s_-]+input|blocked)(?![\w-])[\s.:;,!—–-]*(.*)$/i;
+
+/**
+ * A free-text "Status: <status>" first line, as written by children without the contract. Markdown emphasis, code
+ * marks and a list or quote marker around it are ignored. `bare` is true when nothing else is on the line.
+ */
+function leadingStatus(text) {
+  const first = firstLine(text);
+  if (!first) return null;
+  const plain = first.replace(/^(?:[-*+>]|#{1,6})\s+/, '').replace(/\*\*|__|[*`]/g, '').trim();
+  const match = LEADING_STATUS_RE.exec(plain);
+  if (!match) return null;
+  return { status: match[1].toLowerCase().replace(/[\s_-]+/g, '_'), bare: !match[2].trim() };
+}
+
 function reportFields(text) {
   const fields = parseReportBody(text);
+  const lead = leadingStatus(fields.freeText);
+  // A bare status line only repeats the badge, so the title comes from the line after it.
+  const rest = lead?.bare ? firstLine(fields.freeText.split(/\r?\n/).slice(1).join('\n')) : null;
   return {
-    title: oneLine(fields.summary ?? firstLine(fields.freeText) ?? '', 160),
+    title: oneLine(fields.summary ?? rest ?? firstLine(fields.freeText) ?? '', 160),
     summary: fields.summary, evidence: fields.evidence, blockers: fields.blockers,
     body: fields.freeText ? clip(fields.freeText, 4000) : null,
   };
 }
 
-/** A report from a message: contract status line, else the send's purpose, else a plain progress message. */
+/**
+ * A report from a message: contract status line, else the send's purpose, else a leading "Status: <status>" line, else
+ * a plain progress message. The purpose outranks the free text: the sender chose it as a field, and the app delivers
+ * the message by it.
+ */
 export function reportFromMessage(message, purpose, at) {
   const text = String(message ?? '');
   const line = parseStatusLine(text);
   const mapped = purposeToStatus(purpose);
+  const body = line ? text.split(/\r?\n/).slice(1).join('\n') : text;
   return {
-    status: line?.status ?? mapped ?? 'progress',
+    status: line?.status ?? mapped ?? leadingStatus(body)?.status ?? 'progress',
     source: line ? 'contract' : mapped ? 'purpose' : 'message',
     at,
-    ...reportFields(line ? text.split(/\r?\n/).slice(1).join('\n') : text),
+    ...reportFields(body),
     unit: line?.unit ?? null,
     commit: line?.commit ?? null,
     repliedAt: null,
@@ -245,6 +268,16 @@ function assignLabels(root, nodes, registry, remembered = [], planned = []) {
   return labels;
 }
 
+/**
+ * The latest `limit` marks, oldest first. The archived mark is always kept: it is how the UI knows a unit is archived
+ * once its status and stage show its outcome (see isArchived in ui/model.mjs).
+ */
+function keepMarks(sorted, limit) {
+  const kept = sorted.slice(-limit);
+  const archived = sorted.find(mark => mark.kind === 'archived');
+  return archived && !kept.includes(archived) ? [archived, ...sorted.slice(-(limit - 1))] : kept;
+}
+
 function sessionView(input, c, label, evaluation, report, title, extraMarks, outcomeAt = null) {
   const { node, current, all } = c;
   const { now, thresholds } = input;
@@ -275,7 +308,7 @@ function sessionView(input, c, label, evaluation, report, title, extraMarks, out
     timeline: {
       segments: buildSegments({ start: startedAt, end: endedAt, now, busy, waits, stuckFrom: status === 'stuck' && endedAt === null ? evaluation.since : null }),
       subagents: [...all.subagents.values()].map(sub => ({ id: sub.id, start: sub.startedAt ?? sub.launchedAt, end: sub.endedAt ?? endedAt, type: sub.type })),
-      marks: [...all.marks, ...extraMarks].sort((a, b) => a.at - b.at).slice(-400),
+      marks: keepMarks([...all.marks, ...extraMarks].sort((a, b) => a.at - b.at), 400),
     },
   };
 }
@@ -352,6 +385,8 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
   const outcomeAt = outcome ? row?.endedAt ?? pr?.mergedAt ?? pr?.closedAt ?? null : null;
   return {
     ...sessionView(input, c, label, evaluation, report, row?.title ?? null, marks, outcomeAt),
+    // The registry's branch wins over the app's, which can be missing or stale; assignDependencies matches base branches on it.
+    branch: row?.branch ?? node.branch ?? null,
     parentId: node.parentId, depth: node.depth, stage, closedWithoutMerge, outcome, pr, monitor, dependsOn: null, todoId: row?.todoId ?? null,
     agent: null,
   };
@@ -711,8 +746,10 @@ export function buildSnapshot(input) {
   const { lifecycle, finishedAt } = runLifecycle({ lastActivityAt, anyActive, now, thresholds });
   const monitorDue = units.some(unit => unit.monitor.state === 'alive') || app.automations.some(item => rootContext.ids.has(item.sessionId)
     && item.pausedAt === null && item.nextRunAt !== null && item.nextRunAt > now - thresholds.monitorGraceMs);
+  // An archived unit is over, whatever its status shows (an archived failed unit shows failed).
+  const archivedIds = new Set(nodes.filter(node => node.archivedAt !== null && node.archivedAt !== undefined).map(node => node.id));
   const stalled = lifecycle === 'live'
-    ? swarmStalled({ orchestratorDetail: orchestrator.statusDetail, unitDetails: everyUnit.map(unit => unit.statusDetail), monitorDue, lastActivityAt })
+    ? swarmStalled({ orchestratorDetail: orchestrator.statusDetail, unitDetails: everyUnit.map(unit => (archivedIds.has(unit.id) ? 'archived' : unit.statusDetail)), monitorDue, lastActivityAt })
     : null;
   const { feed, recent } = buildFeed(contexts, labels, extraFeed, flags);
   for (const view of [orchestrator, ...everyUnit]) view.recent = recent.get(view.id) ?? [];

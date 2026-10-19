@@ -100,6 +100,7 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  *   pr: PrView|null, monitor: MonitorView, dependsOn: string|null, todoId: string|null,
  *   agent: { type: string, mode: 'sync'|'background', effort: string|null }|null }} UnitView
  *   `dependsOn` is the label of the unit or planned entry it stacks on.
+ *   `branch` of a session unit is its registry row's branch when set, else the app's.
  *   `agent` is null for session units (kind 'project' or 'chat') and set for sub-agent units (kind 'subagent').
  */
 
@@ -151,7 +152,7 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  *   state: 'draft'|'open'|'merged'|'closed'|'unknown', openedAt: EpochMs|null, mergedAt: EpochMs|null, closedAt: EpochMs|null,
  *   reviewNote: string|null, source: 'registry'|'status_line'|'app'|'heuristic', checkedAt: EpochMs|null }} PrView
  * @typedef {{ state: 'none'|'alive'|'missing'|'paused'|'ended', lastCheckAt: EpochMs|null, nextCheckAt: EpochMs|null,
- *   everyMinutes: number|null, since: EpochMs|null }} MonitorView  `since` is set for missing and paused
+ *   everyMinutes: number|null, since: EpochMs|null }} MonitorView  `since` is set for paused, and for missing when its start is known
  * @typedef {{ label: string, name: string, dependsOn: string|null, canStart: boolean, waitsOn: string|null, todoId: string|null }} PlannedUnit
  * @typedef {{ id: string, kind: 'question'|'plan'|'pr', unitIds: string[], labels: string[], fromId: string, text: string,
  *   since: EpochMs, tagged: boolean }} NeedItem  unitIds empty = the whole swarm. id is unique within needs and stable across refreshes
@@ -219,8 +220,8 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  *
  * @typedef {{ revision: number, swarmIds: string[] }} SnapshotChange
  *   `revision` is an engine-wide change counter. It increases by one for each refresh (or fake push)
- *   that changed at least one snapshot. It is not `Snapshot.revision`, which counts per swarm.
- *   `swarmIds` lists the swarms whose snapshots changed.
+ *   that changed at least one snapshot or removed a swarm. It is not `Snapshot.revision`, which counts per swarm.
+ *   `swarmIds` lists the swarms whose snapshots changed, and the swarms that are gone (getSnapshot now returns null for them).
  * @typedef {object} SwarmEngine
  * @property {() => Promise<void>} refresh                 Read new data once and rebuild tracked swarms
  * @property {(options?: { intervalMs?: number }) => void} start  Poll every intervalMs (default 3000); no timers before this

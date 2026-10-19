@@ -53,7 +53,7 @@ export function monitorHtml(unit, now, long = false) {
   }
   if (monitor.state === 'missing') {
     const from = monitor.lastCheckAt ?? monitor.since;
-    return `${dot}missing · ${from ? `no check for ${elapsed(from, now)}` : 'no check yet'}`;
+    return `${dot}missing · ${from ? `no check for ${elapsed(from, now)}` : 'no check, start time not known'}`;
   }
   if (monitor.state === 'paused') return `${dot}paused${monitor.since ? ` · ${elapsed(monitor.since, now)}` : ''}`;
   if (monitor.state === 'ended') {
