@@ -161,7 +161,7 @@ test('a contract-following swarm becomes a valid snapshot', () => {
   assert.equal(ui.activity.tool.summary, 'bash: npm run e2e');
   assert.equal(ui.timeline.segments.at(-1).state, 'stuck');
   assert.deepEqual({ status: docs.status, stage: docs.stage, outcome: docs.outcome, monitor: docs.monitor.state, pr: docs.pr.id, alive: docs.alive, endedAt: docs.endedAt },
-    { status: 'archived', stage: 'archived', outcome: 'merged', monitor: 'ended', pr: 4712, alive: false, endedAt: at(95) });
+    { status: 'archived', stage: 'merged', outcome: 'merged', monitor: 'ended', pr: 4712, alive: false, endedAt: at(95) });
   assert.deepEqual(snapshot.planned, [{ label: 'export', name: 'Export', dependsOn: 'api', canStart: true, waitsOn: null, todoId: 'export' }]);
   assert.deepEqual(snapshot.needs, [{ id: 'ws-root:pr:cli-root/call-1', kind: 'pr', unitIds: ['ws-api'], labels: ['api'], fromId: 'ws-root', text: 'Publish PR !4711?', since: at(100), tagged: true }]);
   assert.deepEqual(snapshot.counts, { working: 0, stuck: 1, waiting: 0, idle: 1, done: 1, failed: 0 });
