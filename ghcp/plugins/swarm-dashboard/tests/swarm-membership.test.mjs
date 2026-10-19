@@ -235,8 +235,9 @@ for (const [where, makeHome, others, byDefault] of followCases) {
     const home = makeHome();
     let now = at(60);
     const engine = engineFor(home, () => now);
-    // Only the refreshes below change anything: the hub's own polling waits a minute between refreshes.
-    const server = createDashboardServer({ createEngine: () => engine, version: 'test', hub: { engineIdleMs: 60, heartbeatMs: 1000, intervalMs: 60000 } });
+    // The test runs every refresh itself: a hub poll that overlapped a file change below could read the old log for the
+    // swarm list and the new one for the snapshot, and send a correct but extra snapshot between the steps checked here.
+    const server = createDashboardServer({ createEngine: () => ({ ...engine, start() {} }), version: 'test', hub: { engineIdleMs: 60, heartbeatMs: 1000 } });
     await server.listen();
     // The second refresh starts after any refresh already in flight, so it reads the files as they are now.
     const settle = async () => { await engine.refresh(); await engine.refresh(); };
