@@ -377,7 +377,7 @@ test('a stored summary picks up PR results that arrive later', async t => {
     clock = lastAt + 2 * HOUR + MINUTE;
     await engine.refresh();
     assert.equal(engine.listSwarms().find(swarm => swarm.id === 'ws-pr').lifecycle, 'finished');
-    assert.equal(readSummary(stored).children.merged, 0);
+    assert.equal(existsSync(stored), false, 'no summary is stored before the first lookup finishes');
     gate.release(MERGED_REPLY);
     await lookup.settle();
     await engine.refresh();
@@ -390,15 +390,15 @@ test('a stored summary picks up PR results that arrive later', async t => {
     assert.deepEqual(stat(stored), settled);
   });
 
-  await t.test('path B: getRunSummary on a finished run that was never tracked stores it before the lookup resolves', async () => {
+  await t.test('path B: getRunSummary on a finished run that was never tracked stores it once the lookup resolves', async () => {
     const home = prHome();
     const historyDir = path.join(tempDir('swarm-engine-'), 'history');
     const stored = path.join(historyDir, 'runs', 'ws-pr.json');
     const clock = () => lastAt + 3 * HOUR;
     const { gate, lookup } = gatedLookup(clock);
     const engine = createSwarmEngine({ copilotHome: home.root, historyDir, now: clock, processProbe: alwaysAlive, prLookup: lookup, persistHistory: true });
-    assert.equal((await engine.getRunSummary('ws-pr')).children.merged, 0);
-    assert.equal(readSummary(stored).children.merged, 0);
+    await engine.getRunSummary('ws-pr');
+    assert.equal(existsSync(stored), false, 'no summary is stored before the first lookup finishes');
     gate.release(MERGED_REPLY);
     await lookup.settle();
     await engine.refresh();
