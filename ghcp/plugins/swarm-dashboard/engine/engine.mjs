@@ -435,6 +435,8 @@ export function createSwarmEngine(options = {}) {
     }
     // The CLI sessions of top sessions that may be swarms before their first child (see waitingOrchestrators).
     const candidateCliIds = new Set();
+    // Roots before this refresh: a root that leaves the forest is reported as changed, so a page that shows it learns it has gone.
+    const before = forest ? forest.roots.map(root => root.id) : [];
     try {
       forest = buildForest(app);
       const waiting = await waitingOrchestrators(at, candidateCliIds);
@@ -499,6 +501,8 @@ export function createSwarmEngine(options = {}) {
     for (const rootId of [...snapshots.keys()]) if (dropped(rootId)) snapshots.delete(rootId);
     for (const rootId of [...subagentLabels.keys()]) if (dropped(rootId)) subagentLabels.delete(rootId);
     const current = new Set(forest.roots.map(root => root.id));
+    // A root that left the forest has no snapshot now; it is never also in `changed`, which holds only current roots.
+    const removed = before.filter(rootId => !current.has(rootId));
     for (const rootId of [...revisions.keys()]) if (!current.has(rootId)) revisions.delete(rootId);
     for (const rootId of [...cheapLast.keys()]) if (!current.has(rootId)) cheapLast.delete(rootId);
     for (const rootId of [...knownFinished.keys()]) if (!current.has(rootId)) knownFinished.delete(rootId);
@@ -516,9 +520,9 @@ export function createSwarmEngine(options = {}) {
     const previous = new Set(diagnostics.map(item => `${item.source}|${item.message}`));
     for (const item of diag) if (item.level === 'warn' && !previous.has(`${item.source}|${item.message}`)) log(item);
     diagnostics = diag;
-    if (changed.length) {
+    if (changed.length || removed.length) {
       revision += 1;
-      notify({ revision, swarmIds: changed });
+      notify({ revision, swarmIds: [...changed, ...removed] });
     }
   }
 

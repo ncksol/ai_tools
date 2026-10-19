@@ -221,8 +221,8 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  *
  * @typedef {{ revision: number, swarmIds: string[] }} SnapshotChange
  *   `revision` is an engine-wide change counter. It increases by one for each refresh (or fake push)
- *   that changed at least one snapshot. It is not `Snapshot.revision`, which counts per swarm.
- *   `swarmIds` lists the swarms whose snapshots changed.
+ *   that changed at least one snapshot or removed a swarm. It is not `Snapshot.revision`, which counts per swarm.
+ *   `swarmIds` lists the swarms whose snapshots changed, and the swarms that are gone (getSnapshot now returns null for them).
  * @typedef {object} SwarmEngine
  * @property {() => Promise<void>} refresh                 Read new data once and rebuild tracked swarms
  * @property {(options?: { intervalMs?: number }) => void} start  Poll every intervalMs (default 3000); no timers before this
