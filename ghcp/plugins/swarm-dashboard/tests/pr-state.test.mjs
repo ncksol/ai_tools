@@ -9,7 +9,8 @@ import { summarizeRun } from '../engine/model/history.mjs';
 import { deriveMonitor, deriveStage, prView, resolvePr } from '../engine/model/stage.mjs';
 import { evaluateStatus } from '../engine/model/status.mjs';
 import { MINUTE } from '../engine/time.mjs';
-import { cardUnits } from '../ui/model.mjs';
+import { tileGrid } from '../ui/cockpit-model.mjs';
+import { boardColumns, cardUnits, closedNotMerged } from '../ui/model.mjs';
 import { monitorHtml } from '../ui/parts.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { fold } from './helpers/fold.mjs';
@@ -83,44 +84,83 @@ test('an archived unit whose PR merged goes under Merged, not Archived', () => {
   assert.equal(deriveStage({ archivedAt: T0, outcome: 'merged', pr: null }).stage, 'merged');
 });
 
-test('an archived unit stays under Archived when nothing better is known', () => {
+test('an archived unit with a known outcome takes the stage that outcome gives, not Archived', () => {
+  assert.equal(deriveStage({ archivedAt: T0, outcome: 'closed', pr: { state: 'closed' } }).stage, 'pr_open');
+  assert.equal(deriveStage({ archivedAt: T0, outcome: null, pr: { state: 'closed' } }).stage, 'pr_open');
+  assert.equal(deriveStage({ archivedAt: T0, outcome: 'failed', pr: null }).stage, 'coding');
+  assert.equal(deriveStage({ archivedAt: T0, outcome: 'failed', pr: { state: 'open' } }).stage, 'in_review');
+});
+
+test('an archived unit stays under Archived only when nothing better is known', () => {
   assert.equal(deriveStage({ archivedAt: T0, outcome: null, pr: null }).stage, 'archived');
   assert.equal(deriveStage({ archivedAt: T0, outcome: null, pr: { state: 'open' } }).stage, 'archived');
-  assert.equal(deriveStage({ archivedAt: T0, outcome: 'closed', pr: { state: 'closed' } }).stage, 'archived');
-  assert.equal(deriveStage({ archivedAt: T0, outcome: 'failed', pr: null }).stage, 'archived');
+  assert.equal(deriveStage({ archivedAt: T0, outcome: null, pr: { state: 'unknown' } }).stage, 'archived');
+});
+
+const evaluateArchived = (outcome, merged = false) => evaluateStatus({
+  state: null, alive: false, archivedAt: at(50), merged, mergedAt: merged ? at(45) : null, outcome, hasRegistry: true, report: null,
+  parentRepliedAt: null, monitorDueAt: null, isRunningFlag: false, startedAt: T0, now: at(60), thresholds: DEFAULT_THRESHOLDS,
 });
 
 test('an archived unit that the registry records as failed counts as failed, not done', () => {
-  const evaluate = outcome => evaluateStatus({
-    state: null, alive: false, archivedAt: at(50), merged: false, mergedAt: null, outcome, hasRegistry: true, report: null,
-    parentRepliedAt: null, monitorDueAt: null, isRunningFlag: false, startedAt: T0, now: at(60), thresholds: DEFAULT_THRESHOLDS,
-  }).detail;
-  assert.equal(evaluate('failed'), 'failed');
-  assert.equal(evaluate('closed'), 'archived');
-  assert.equal(evaluate(null), 'archived');
+  assert.equal(evaluateArchived('failed').detail, 'failed');
+  assert.equal(evaluateArchived('closed').detail, 'archived');
+  assert.equal(evaluateArchived(null).detail, 'archived');
 });
 
-test('archived units are placed and counted by their outcome, and the header agrees with History', () => {
+test('an archived unit whose PR merged shows as merged, from its merge time', () => {
+  assert.deepEqual({ detail: evaluateArchived('merged', true).detail, since: evaluateArchived('merged', true).since }, { detail: 'merged', since: at(45) });
+  assert.equal(evaluateArchived(null, true).detail, 'merged');
+});
+
+const lookup = states => pr => (states[pr.id]
+  ? { state: states[pr.id], title: `PR ${pr.id}`, openedAt: at(20), mergedAt: states[pr.id] === 'merged' ? at(45) : null, closedAt: states[pr.id] === 'open' ? null : at(45), reviewNote: null, url: null, checkedAt: at(55), error: null }
+  : null);
+
+test('archived units are placed, shown and counted by their outcome, and the header agrees with History', () => {
   const data = swarm([
     { id: 'fail', archivedAt: at(50), row: { outcome: 'failed', ended_at: iso(45) } },
-    { id: 'close', archivedAt: at(50), row: { outcome: 'closed', ended_at: iso(45) } },
+    { id: 'close', archivedAt: at(50), row: githubPr(11, { outcome: 'closed', ended_at: iso(45) }) },
     { id: 'merge', archivedAt: at(50), row: githubPr(7) },
-  ], pr => (pr.id === 7 ? { state: 'merged', title: 'Merge', openedAt: at(20), mergedAt: at(45), closedAt: at(45), reviewNote: null, url: null, checkedAt: at(55), error: null } : null));
+    { id: 'plain', archivedAt: at(50) },
+  ], lookup({ 7: 'merged', 11: 'closed' }));
   const snapshot = buildSnapshot(data);
   assert.deepEqual(validateSnapshot(snapshot), []);
-  const fail = unitOf(snapshot, 'fail');
-  const close = unitOf(snapshot, 'close');
-  const merge = unitOf(snapshot, 'merge');
-  assert.deepEqual({ stage: fail.stage, bucket: fail.bucket, outcome: fail.outcome }, { stage: 'archived', bucket: 'failed', outcome: 'failed' });
-  assert.deepEqual({ stage: close.stage, bucket: close.bucket, outcome: close.outcome }, { stage: 'archived', bucket: 'done', outcome: 'closed' });
-  assert.deepEqual({ stage: merge.stage, bucket: merge.bucket, outcome: merge.outcome }, { stage: 'merged', bucket: 'done', outcome: 'merged' });
+  const view = label => {
+    const unit = unitOf(snapshot, label);
+    return { stage: unit.stage, status: unit.status, bucket: unit.bucket, outcome: unit.outcome, archivedAt: unit.archivedAt };
+  };
+  assert.deepEqual(view('fail'), { stage: 'coding', status: 'blocked', bucket: 'failed', outcome: 'failed', archivedAt: at(50) });
+  assert.deepEqual(view('close'), { stage: 'pr_open', status: 'archived', bucket: 'done', outcome: 'closed', archivedAt: at(50) });
+  assert.deepEqual(view('merge'), { stage: 'merged', status: 'merged', bucket: 'done', outcome: 'merged', archivedAt: at(50) });
+  assert.deepEqual(view('plain'), { stage: 'archived', status: 'archived', bucket: 'done', outcome: null, archivedAt: at(50) });
   assert.equal(snapshot.counts.failed, 1);
-  assert.equal(snapshot.counts.done, 2);
+  assert.equal(snapshot.counts.done, 3);
   const children = summarizeRun(snapshot, { computedAt: at(60) }).children;
-  assert.deepEqual({ merged: children.merged, closed: children.closed, failed: children.failed }, { merged: 1, closed: 1, failed: 1 });
-  // Archived units still leave the Cards tab, and an archived failed unit is over: it does not make the swarm stalled.
+  assert.deepEqual({ merged: children.merged, closed: children.closed, failed: children.failed, noOutcome: children.noOutcome }, { merged: 1, closed: 1, failed: 1, noOutcome: 1 });
+  // The Board: each in its stage column, the closed one with its badge; the cockpit tile names the merge.
+  const column = stage => boardColumns(snapshot).find(entry => entry.stage === stage).nodes.map(node => node.unit.label);
+  assert.deepEqual([column('coding'), column('pr_open'), column('merged'), column('archived')], [['fail'], ['close'], ['merge'], ['plain']]);
+  assert.equal(closedNotMerged(unitOf(snapshot, 'close')), true);
+  assert.equal(tileGrid(snapshot).tiles.find(tile => tile.label === 'merge').word, 'Merged');
+  // Archived units still leave the Cards tab, and they are over: they do not make the swarm stalled.
   assert.deepEqual(cardUnits(snapshot, at(60)), []);
   assert.equal(snapshot.run.stalled, null);
+});
+
+test('an archived unit recorded as failed whose PR then merged stays off the Cards tab and does not stall the swarm', () => {
+  const snapshot = buildSnapshot(swarm([{ id: 'mixed', archivedAt: at(50), row: githubPr(12, { outcome: 'failed', ended_at: iso(40) }) }], lookup({ 12: 'merged' })));
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  const mixed = unitOf(snapshot, 'mixed');
+  assert.deepEqual({ stage: mixed.stage, detail: mixed.statusDetail, archivedAt: mixed.archivedAt }, { stage: 'merged', detail: 'failed', archivedAt: at(50) });
+  assert.deepEqual(cardUnits(snapshot, at(60)), []);
+  assert.equal(snapshot.run.stalled, null);
+});
+
+test('a unit that is not archived has a null archivedAt and keeps its card', () => {
+  const snapshot = buildSnapshot(swarm([{ id: 'open', row: githubPr(13) }], lookup({ 13: 'open' })));
+  assert.equal(unitOf(snapshot, 'open').archivedAt, null);
+  assert.deepEqual(cardUnits(snapshot, at(60)).map(unit => unit.label), ['open']);
 });
 
 // Item 2: a registry PR shows "Not known yet" when the gh lookup fails.
@@ -167,7 +207,7 @@ test('a registry PR takes its state from the app\'s record when the lookup fails
 
 // Item 3: the monitor timer shows "0s" for registry PRs.
 
-test('a registry PR is known from the first status line that names it', () => {
+test('a registry PR is known from the earliest retained status line that names it', () => {
   const registry = { prProvider: 'github', prId: 8, prRepo: 'acme/shop' };
   const statusLines = [{ at: at(30), pr: { provider: 'github', id: 8 } }, { at: at(25), pr: { provider: 'github', id: 9 } }, { at: at(20), pr: { provider: 'github', id: 8 } }];
   assert.equal(resolvePr({ registry, statusLines }).knownAt, at(20));
