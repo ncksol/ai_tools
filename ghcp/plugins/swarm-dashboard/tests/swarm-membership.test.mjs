@@ -6,6 +6,7 @@ import { buildForest } from '../engine/model/forest.mjs';
 import { validateSnapshot, validateSwarmListItem } from '../engine/schema.mjs';
 import { createDashboardServer } from '../server/http.mjs';
 import { renderApp } from '../ui/app.mjs';
+import { CopilotHome } from './helpers/copilot-home.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { openEvents } from './helpers/http.mjs';
 import { NO_SUCH_PID, alwaysAlive, at, scenario } from './helpers/scenario.mjs';
@@ -217,6 +218,70 @@ test('a page opened for a session in no swarm gets no snapshot, never another sw
     await server.close();
   }
 });
+
+const swarmOnlyHome = () => {
+  const home = new CopilotHome();
+  lone(home, { id: 'ws-plan', cli: 'cli-plan', agent: 'orchestrator', ask: PLAN });
+  return home;
+};
+
+// [where, home, the other swarms, the swarms the default page shows in turn (repeats merged)]
+const followCases = [
+  ['beside other swarms', planningHome, ['ws-old', 'ws-root'], ['ws-plan', 'ws-root']],
+  ['as the only swarm', swarmOnlyHome, [], ['ws-plan', null, 'ws-plan']],
+];
+for (const [where, makeHome, others, byDefault] of followCases) {
+  test(`open pages follow a pre-child swarm ${where} out of the list when its question is answered, and back with its first child`, async () => {
+    const home = makeHome();
+    let now = at(60);
+    const engine = engineFor(home, () => now);
+    // Only the refreshes below change anything: the hub's own polling waits a minute between refreshes.
+    const server = createDashboardServer({ createEngine: () => engine, version: 'test', hub: { engineIdleMs: 60, heartbeatMs: 1000, intervalMs: 60000 } });
+    await server.listen();
+    // The second refresh starts after any refresh already in flight, so it reads the files as they are now.
+    const settle = async () => { await engine.refresh(); await engine.refresh(); };
+    const pages = { session: openEvents(server.port, '/api/events?session=cli-plan'), swarm: openEvents(server.port, '/api/events?swarm=ws-plan') };
+    const fallback = openEvents(server.port, '/api/events');
+    const expect = (name, page, predicate) => page.waitFor(predicate, 10000).catch(error => { throw new Error(`${name} page: ${error.message}`); });
+    const shown = page => page.events.filter(entry => entry.event === 'snapshot').map(entry => entry.data.snapshot?.run.id ?? null);
+    const merged = page => shown(page).filter((id, index, all) => index === 0 || id !== all[index - 1]);
+    try {
+      for (const [name, page] of Object.entries({ ...pages, default: fallback })) {
+        const first = (await expect(name, page, entry => entry.event === 'snapshot')).data.snapshot;
+        assert.deepEqual([first.run.id, first.needs.map(need => need.kind)], ['ws-plan', ['plan']], name);
+      }
+
+      const answer = new EventLog(at(61));
+      answer.done('call-1', { result: 'Approved' });
+      answer.message('Starting the units.');
+      home.writeEvents('cli-plan', answer.events, { append: true });
+      now = at(62);
+      await settle();
+      assert.equal(await engine.findSwarm('cli-plan'), null);
+      for (const [name, page] of Object.entries(pages)) {
+        await expect(name, page, entry => entry.event === 'snapshot' && entry.data.snapshot === null);
+        const list = await expect(name, page, entry => entry.event === 'swarms' && !entry.data.some(swarm => swarm.id === 'ws-plan'));
+        assert.deepEqual(list.data.map(swarm => swarm.id).sort(), others, name);
+      }
+      // A default page follows the live default once its swarm has gone, or, with no live swarm, says there is none.
+      await expect('default', fallback, entry => entry.event === 'snapshot' && (entry.data.snapshot?.run.id ?? null) === byDefault[1]);
+
+      home.workspace({ id: 'ws-plan-a', name: 'Plan a1', createdAt: at(63), sessionId: 'cli-plan-a', parentId: 'ws-plan', creatorSessionId: 'cli-plan' });
+      now = at(64);
+      await settle();
+      for (const [name, page] of Object.entries(pages)) {
+        const back = await expect(name, page, entry => entry.event === 'snapshot' && entry.data.snapshot?.units.length === 1);
+        assert.deepEqual(back.data.snapshot.units.map(unit => unit.id), ['ws-plan-a'], name);
+        assert.deepEqual(shown(page), ['ws-plan', null, 'ws-plan'], name);
+      }
+      if (byDefault.length === 3) await expect('default', fallback, entry => entry.event === 'snapshot' && entry.data.snapshot?.units.length === 1);
+      assert.deepEqual(merged(fallback), byDefault, 'default');
+    } finally {
+      for (const page of [...Object.values(pages), fallback]) page.close();
+      await server.close();
+    }
+  });
+}
 
 const view = (overrides = {}) => ({
   page: 'live', tab: 'cards', detail: null, span: '12h', narrow: false, loaded: true, snapshot: null, session: null,
