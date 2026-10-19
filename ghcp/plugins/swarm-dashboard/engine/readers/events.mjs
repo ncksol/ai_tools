@@ -1,4 +1,5 @@
 import { open, stat } from 'node:fs/promises';
+import { parseTime } from '../time.mjs';
 import { createJsonScanner } from './json-scan.mjs';
 
 export const MAX_LINE_BYTES = 16 * 1024 * 1024;
@@ -172,4 +173,74 @@ export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onRes
   if (skipped) Object.assign(result, { skipped, skippedBytes });
   if (failed) Object.assign(result, { failed, lastError });
   return result;
+}
+
+/** Longest line taken for a skipped type: a line longer than this whose start is not read yet is taken as one that is not. */
+const MAX_SKIPPED_LINE_BYTES = 64 * 1024;
+const TIMESTAMP_KEY = '"timestamp":"';
+
+/** The time in a log line, by its last "timestamp" key, which follows the event's data; null when it has none. */
+function lineTime(line) {
+  const text = line.subarray(Math.max(0, line.length - 4096)).toString('utf8');
+  const index = text.lastIndexOf(TIMESTAMP_KEY);
+  if (index < 0) return null;
+  const end = text.indexOf('"', index + TIMESTAMP_KEY.length);
+  return end < 0 ? null : parseTime(text.slice(index + TIMESTAMP_KEY.length, end));
+}
+
+/**
+ * When a session last did work, from the end of its log, reading backwards in chunks. Resolves { mtimeMs, size, at }, or
+ * null when the log is missing. `at` is the file's mtime, as before, unless the log ends with lines of the types in
+ * `skipTypes` (app UI events, such as opening a canvas, that are not work); it is then the time of the last line before
+ * them, or null when every line is one of them. An unfinished last line is work being written, so `at` is the mtime. When
+ * more than maxBytes would have to be read, `at` is the mtime.
+ */
+export async function lastWorkTime(file, skipTypes, { chunkSize = 16 * 1024, maxBytes = 1024 * 1024 } = {}) {
+  let handle;
+  try {
+    handle = await open(file, 'r');
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
+  try {
+    const info = await handle.stat();
+    const mtimeMs = Math.round(info.mtimeMs);
+    const size = info.size;
+    const result = at => ({ mtimeMs, size, at });
+    if (!size) return result(null);
+    // buffer holds the bytes [start, size); cursor is the end of the line to look at next, its newline excluded.
+    let buffer = Buffer.alloc(0);
+    let start = size;
+    let cursor = size;
+    const more = async () => {
+      const length = Math.min(chunkSize, start);
+      const chunk = Buffer.alloc(length);
+      const { bytesRead } = await handle.read(chunk, 0, length, start - length);
+      start -= length;
+      buffer = Buffer.concat([chunk.subarray(0, bytesRead), buffer]);
+    };
+    await more();
+    if (buffer[buffer.length - 1] !== NEWLINE) return result(mtimeMs);
+    cursor -= 1;
+    for (;;) {
+      const newline = cursor > start ? buffer.lastIndexOf(NEWLINE, cursor - start - 1) : -1;
+      if (newline < 0 && start > 0) {
+        if (cursor - start > MAX_SKIPPED_LINE_BYTES) return result(cursor === size - 1 ? mtimeMs : lineTime(buffer.subarray(0, cursor - start)) ?? mtimeMs);
+        if (size - start >= maxBytes) return result(mtimeMs);
+        await more();
+        continue;
+      }
+      let line = buffer.subarray(newline + 1, cursor - start);
+      if (line[line.length - 1] === CARRIAGE_RETURN) line = line.subarray(0, -1);
+      if (line.length) {
+        const type = /^\{"type":"([^"]+)"/.exec(line.subarray(0, 256).toString('latin1'))?.[1];
+        if (!type || !skipTypes.has(type)) return result(cursor === size - 1 ? mtimeMs : lineTime(line) ?? mtimeMs);
+      }
+      if (newline < 0) return result(null);
+      cursor = start + newline;
+    }
+  } finally {
+    await handle.close();
+  }
 }

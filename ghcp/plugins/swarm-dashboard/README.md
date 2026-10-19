@@ -6,7 +6,7 @@ It opens as a canvas in the app's side panel, or in any browser through a small 
 
 ## What it shows
 
-- Header: the swarm, how long it has run, its cost in credits and dollars, and how many sessions and sub-agents are working, stuck, waiting, idle, done or failed. While nothing in the run is busy, stuck or waiting, its clock, and the runtimes of sessions and sub-agents that have not ended, stop at the last activity and the header says "quiet since" that time; they start again when work resumes. A run that stays quiet for 2 hours moves to History.
+- Header: the swarm, how long it has run, its cost in credits and dollars, and how many sessions and sub-agents are working, stuck, waiting, idle, done or failed. While nothing in the run is busy, stuck or waiting, its clock, and the runtimes of sessions and sub-agents that have not ended, stop at the last activity and the header says "quiet since" that time; they start again when work resumes. A run that stays quiet for 2 hours moves to History. Opening, restoring or closing a canvas in a session is not activity, so it never brings a finished run back.
 - Needs you: a stalled swarm first, then questions, plans and PRs waiting for you, longest wait first.
 - Cards: one card per unit with its state, stage, task-list progress, latest report, running sub-agents and cost. The orchestrator's one-off sub-agents get a card while they run or are stuck, with their type and mode in place of the stage and monitor; when one finishes, its card says how it ended and leaves the Cards tab 10 minutes later. Finished sub-agents stay on the Board. A card's border says what it is: blue for a one-off sub-agent, green for a child session; the Board's cards use the same colours.
 - Activity: the latest events across the swarm.

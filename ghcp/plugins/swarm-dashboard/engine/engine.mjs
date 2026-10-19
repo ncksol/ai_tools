@@ -5,7 +5,7 @@ import { copilotPaths, resolveThresholds } from './config.mjs';
 import { CREDIT_USD, NANO_AIU_PER_CREDIT } from './schema.mjs';
 import { SqliteUnavailableError, createSqliteReader, loadNodeSqlite } from './sqlite.mjs';
 import { readAppDb } from './readers/app-db.mjs';
-import { createTail, readNewLines } from './readers/events.mjs';
+import { createTail, lastWorkTime, readNewLines } from './readers/events.mjs';
 import { createLedger, pullLedger } from './readers/ledger.mjs';
 import { createProcessProbe } from './readers/process-probe.mjs';
 import { createSessionDbCache, listLocks, readWorkspaceYaml } from './readers/session-files.mjs';
@@ -13,7 +13,7 @@ import { buildForest, resolveNodeId, treeNodes } from './model/forest.mjs';
 import { parseQuestionTag } from './model/contract.mjs';
 import { createHistoryStore, listItemOf, summarizeRun } from './model/history.mjs';
 import { createPrLookup } from './model/pr-lookup.mjs';
-import { applyLine, applyRecovered, createSessionState } from './model/session-state.mjs';
+import { UI_EVENT_TYPES, applyLine, applyRecovered, createSessionState } from './model/session-state.mjs';
 import { buildSnapshot } from './model/swarm.mjs';
 
 const LIVENESS_TTL_MS = 15_000;
@@ -64,14 +64,6 @@ function digest(snapshot) {
   return createHash('sha1').update(JSON.stringify({ ...snapshot, generatedAt: 0, revision: 0 })).digest('hex');
 }
 
-async function mtimeOf(file) {
-  try {
-    return Math.round((await stat(file)).mtimeMs);
-  } catch {
-    return null;
-  }
-}
-
 const byLifecycleThenActivity = (a, b) => (a.lifecycle === b.lifecycle ? b.lastActivityAt - a.lastActivityAt : a.lifecycle === 'live' ? -1 : 1);
 
 /**
@@ -104,6 +96,8 @@ export function createSwarmEngine(options = {}) {
   const readDb = createSessionDbCache();
   const sessions = new Map();
   const liveness = new Map();
+  // Per CLI session: { mtimeMs, size, at, checkedAt } from the last look at the end of its log (see workTimeOf).
+  const workTimes = new Map();
   const snapshots = new Map();
   // Per root id: the labels its sub-agent units showed in earlier snapshots (see assignSubagentLabels). Dropped with the root's snapshot.
   const subagentLabels = new Map();
@@ -164,11 +158,47 @@ export function createSwarmEngine(options = {}) {
     return value;
   }
 
+  /**
+   * When a CLI session last did work, from its log's end (see lastWorkTime), or null when its log is missing. App UI events,
+   * such as opening the dashboard canvas, are not work, so they do not make an old run look live (issue #30). A log that
+   * cannot be read gives its mtime, so its run is still rebuilt and the failed read is reported. The end of the log is read
+   * again only when its size or mtime changed.
+   */
+  async function workTimeOf(cliId, at) {
+    const file = path.join(paths.stateDir, cliId, 'events.jsonl');
+    let info;
+    try {
+      info = await stat(file);
+    } catch {
+      workTimes.delete(cliId);
+      return null;
+    }
+    const mtimeMs = Math.round(info.mtimeMs);
+    const cached = workTimes.get(cliId);
+    if (cached && cached.mtimeMs === mtimeMs && cached.size === info.size) {
+      cached.checkedAt = at;
+      return cached.at;
+    }
+    let found;
+    try {
+      found = await lastWorkTime(file, UI_EVENT_TYPES);
+    } catch {
+      workTimes.delete(cliId);
+      return mtimeMs;
+    }
+    if (!found) {
+      workTimes.delete(cliId);
+      return null;
+    }
+    workTimes.set(cliId, { ...found, checkedAt: at });
+    return found.at;
+  }
+
   async function listRoot(root, at) {
     const nodes = treeNodes(forest, root.id);
     const cliIds = [...new Set(nodes.flatMap(node => node.cliSessionIds))];
     let last = root.createdAt ?? 0;
-    for (const cliId of cliIds) last = Math.max(last, (await mtimeOf(path.join(paths.stateDir, cliId, 'events.jsonl'))) ?? 0);
+    for (const cliId of cliIds) last = Math.max(last, (await workTimeOf(cliId, at)) ?? 0);
     const totals = ledger.sumFor(cliIds);
     last = Math.max(last, totals.lastAt ?? 0);
     cheapLast.set(root.id, last);
@@ -223,7 +253,7 @@ export function createSwarmEngine(options = {}) {
     for (const { id, cliId } of forest.candidates) {
       const alive = await livenessOf(cliId, at);
       if (alive === false) continue;
-      const changedAt = await mtimeOf(path.join(paths.stateDir, cliId, 'events.jsonl'));
+      const changedAt = await workTimeOf(cliId, at);
       if (changedAt === null || (alive !== true && at - changedAt >= thresholds.runFinishedAfterMs)) continue;
       read.add(cliId);
       // A session that is not a swarm reports no read problems; buildTracked reads it again, and reports them, once it is one.
@@ -510,6 +540,7 @@ export function createSwarmEngine(options = {}) {
     for (const rootId of [...verified.keys()]) if (!current.has(rootId)) verified.delete(rootId);
     for (const rootId of [...pendingRoots]) if (!current.has(rootId)) pendingRoots.delete(rootId);
     for (const [cliId, entry] of [...liveness]) if (at - entry.checkedAt > 4 * LIVENESS_TTL_MS) liveness.delete(cliId);
+    for (const [cliId, entry] of [...workTimes]) if (at - entry.checkedAt > 4 * LIVENESS_TTL_MS) workTimes.delete(cliId);
     readDb.retain(dbFiles);
     reader.retain(new Set([...dbFiles, paths.dataDb, paths.storeDb]));
     swarms = swarms.map(item => {

@@ -10,6 +10,11 @@ export const SKIP_TYPES = new Set([
   'session.usage_checkpoint', 'system.message', 'skill.context_delivered_ref', 'session.binary_asset',
   'session.workspace_file_changed', 'session.canvas.recorded', 'session.canvas.removed',
 ]);
+/**
+ * Events the app writes when its UI changes, such as opening, restoring or closing a canvas, not when the session works. They
+ * never move the session's clock, so opening the dashboard in an old session does not make its run look active (issue #30).
+ */
+export const UI_EVENT_TYPES = new Set(['session.canvas.recorded', 'session.canvas.removed']);
 /** Each skip type mapped to its own constant: keeping head[1], a slice of the line, would pin the whole read chunk. */
 const SKIP_NAMES = new Map([...SKIP_TYPES].map(type => [type, type]));
 const WAIT_TOOLS = new Map([['ask_user', 'question'], ['exit_plan_mode', 'plan']]);
@@ -77,7 +82,7 @@ export function applyLine(state, line) {
   const head = /^\{"type":"([^"]+)"/.exec(line);
   const skipped = head ? SKIP_NAMES.get(head[1]) : undefined;
   if (skipped) {
-    const at = sniffTimestamp(line);
+    const at = UI_EVENT_TYPES.has(skipped) ? null : sniffTimestamp(line);
     if (at !== null) touch(state, at, skipped);
     return;
   }
@@ -103,11 +108,11 @@ const RECOVERED_DATA = new Map([
  * Applies an event recovered from an oversized line (see readers/json-scan.mjs). It counts the line like applyLine and applies
  * metadata only, never text: a tool completion or a sub-agent completion or failure is applied with just the ids, success and
  * cancelled flags and duration it needs to close its tool call, wait or sub-agent. Any other event only moves the session's clock, and the
- * clock of the sub-agent it belongs to (by data.parentToolCallId, or a top-level agentId that is known).
+ * clock of the sub-agent it belongs to (by data.parentToolCallId, or a top-level agentId that is known). A UI event moves no clock.
  */
 export function applyRecovered(state, event) {
   state.lines += 1;
-  if (!event) return;
+  if (!event || UI_EVENT_TYPES.has(event.type)) return;
   const at = parseTime(event.timestamp);
   if (at === null) return;
   const keys = RECOVERED_DATA.get(event.type);
