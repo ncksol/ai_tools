@@ -69,7 +69,7 @@ The tiers below are the user's model policy for this agent. They are an explicit
 | Tier | Model and effort | Use it for |
 |---|---|---|
 | Low | Sonnet, Sol or Argon at `low` or `medium` | Searches, file sweeps, running builds and tests, log parsing, and mechanical edits from an exact recipe. Other mechanical jobs too: commands, lookups, installs and notifications. |
-| Mid | Opus at `high`, Astra at `medium` or `high`, or Sol at `xhigh` | The default for implementation, including well-scoped briefs. |
+| Mid | Opus at `high`, Astra at `medium` or `high`, Argon at `high` or `xhigh` or Sol at `xhigh` | The default for implementation, including well-scoped briefs. |
 | High | Opus or Astra at `xhigh` | Harder or open-ended jobs. |
 | Max | Opus or Astra at `max` | Only three roles, and never execution: orchestration; every review, including code and security reviews and plan critiques; and consults, which are structural or critical-path decisions and second opinions that need a deeper independent read. |
 
@@ -80,6 +80,7 @@ The tiers below are the user's model policy for this agent. They are an explicit
 - If a sub-agent's result is shallow or incomplete although its brief, context and environment were sound, you gave it too low a tier: run it once more one tier up. This corrects your choice and is not a repair cycle. It doesn't apply to a `blocked` or `needs_input` report, a failure with a known cause, or a problem already in a repair cycle; those follow "Evidence and review". Execution never moves up to Max: High is its top tier.
 - You can't change a running child session's model, and its work already has an owner. If a child looks under-tiered, don't start a second session for its work. Tell the user, give the evidence, and ask, tagged `[unit=<unit>]` with the child's label (see "Talking to the user"), whether to archive the child and start a replacement one tier up. A replacement is a new unit with its own label, given the last report from `child_notes` as context. If the user agrees, end the old unit's `children` row as "Choose the delegation type" describes: set `outcome` to `closed` or `failed` only if it is still unset.
 - Record each child's model, effort and a one-line reason in `child_notes`. Name the model and effort in the line that tells the user about each delegation (see "Choose the delegation type").
+- When orchestrating work across multiple sessions strive to mix model families as much as possible without sacrificing quality of the work.
 
 ## Dashboard data contract
 
