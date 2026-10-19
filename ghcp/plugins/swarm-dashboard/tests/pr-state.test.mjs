@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { DEFAULT_THRESHOLDS } from '../engine/config.mjs';
 import { validateSnapshot } from '../engine/schema.mjs';
 import { createLedger } from '../engine/readers/ledger.mjs';
@@ -10,7 +11,8 @@ import { deriveMonitor, deriveStage, prView, resolvePr } from '../engine/model/s
 import { evaluateStatus } from '../engine/model/status.mjs';
 import { MINUTE } from '../engine/time.mjs';
 import { tileGrid } from '../ui/cockpit-model.mjs';
-import { boardColumns, cardUnits, closedNotMerged } from '../ui/model.mjs';
+import { boardColumns, cardUnits, closedNotMerged, isArchived } from '../ui/model.mjs';
+import { boardHtml, planListHtml } from '../ui/plan.mjs';
 import { monitorHtml } from '../ui/parts.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { fold } from './helpers/fold.mjs';
@@ -22,6 +24,7 @@ const T0 = Date.UTC(2026, 9, 17, 18, 0, 0);
 const at = minutes => T0 + minutes * MINUTE;
 const iso = minutes => new Date(at(minutes)).toISOString();
 const text = html => html.replace(/<[^>]+>/g, '');
+const words = html => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 
 /**
  * A synthetic top-level swarm. Each unit: { id, archivedAt?, createdPr?, row?: registry fields, log?: (EventLog) => void }.
@@ -121,6 +124,7 @@ test('archived units are placed, shown and counted by their outcome, and the hea
   const data = swarm([
     { id: 'fail', archivedAt: at(50), row: { outcome: 'failed', ended_at: iso(45) } },
     { id: 'close', archivedAt: at(50), row: githubPr(11, { outcome: 'closed', ended_at: iso(45) }) },
+    { id: 'drop', archivedAt: at(50), row: { outcome: 'closed', ended_at: iso(45) } },
     { id: 'merge', archivedAt: at(50), row: githubPr(7) },
     { id: 'plain', archivedAt: at(50) },
   ], lookup({ 7: 'merged', 11: 'closed' }));
@@ -128,39 +132,96 @@ test('archived units are placed, shown and counted by their outcome, and the hea
   assert.deepEqual(validateSnapshot(snapshot), []);
   const view = label => {
     const unit = unitOf(snapshot, label);
-    return { stage: unit.stage, status: unit.status, bucket: unit.bucket, outcome: unit.outcome, archivedAt: unit.archivedAt };
+    return { stage: unit.stage, status: unit.status, bucket: unit.bucket, outcome: unit.outcome, archived: isArchived(unit) };
   };
-  assert.deepEqual(view('fail'), { stage: 'coding', status: 'blocked', bucket: 'failed', outcome: 'failed', archivedAt: at(50) });
-  assert.deepEqual(view('close'), { stage: 'pr_open', status: 'archived', bucket: 'done', outcome: 'closed', archivedAt: at(50) });
-  assert.deepEqual(view('merge'), { stage: 'merged', status: 'merged', bucket: 'done', outcome: 'merged', archivedAt: at(50) });
-  assert.deepEqual(view('plain'), { stage: 'archived', status: 'archived', bucket: 'done', outcome: null, archivedAt: at(50) });
+  assert.deepEqual(view('fail'), { stage: 'coding', status: 'blocked', bucket: 'failed', outcome: 'failed', archived: true });
+  assert.deepEqual(view('close'), { stage: 'pr_open', status: 'archived', bucket: 'done', outcome: 'closed', archived: true });
+  assert.deepEqual(view('drop'), { stage: 'coding', status: 'archived', bucket: 'done', outcome: 'closed', archived: true });
+  assert.deepEqual(view('merge'), { stage: 'merged', status: 'merged', bucket: 'done', outcome: 'merged', archived: true });
+  assert.deepEqual(view('plain'), { stage: 'archived', status: 'archived', bucket: 'done', outcome: null, archived: true });
   assert.equal(snapshot.counts.failed, 1);
-  assert.equal(snapshot.counts.done, 3);
+  assert.equal(snapshot.counts.done, 4);
   const children = summarizeRun(snapshot, { computedAt: at(60) }).children;
-  assert.deepEqual({ merged: children.merged, closed: children.closed, failed: children.failed, noOutcome: children.noOutcome }, { merged: 1, closed: 1, failed: 1, noOutcome: 1 });
-  // The Board: each in its stage column, the closed one with its badge; the cockpit tile names the merge.
+  assert.deepEqual({ merged: children.merged, closed: children.closed, failed: children.failed, noOutcome: children.noOutcome }, { merged: 1, closed: 2, failed: 1, noOutcome: 1 });
   const column = stage => boardColumns(snapshot).find(entry => entry.stage === stage).nodes.map(node => node.unit.label);
-  assert.deepEqual([column('coding'), column('pr_open'), column('merged'), column('archived')], [['fail'], ['close'], ['merge'], ['plain']]);
-  assert.equal(closedNotMerged(unitOf(snapshot, 'close')), true);
-  assert.equal(tileGrid(snapshot).tiles.find(tile => tile.label === 'merge').word, 'Merged');
+  assert.deepEqual([column('coding'), column('pr_open'), column('merged'), column('archived')], [['fail', 'drop'], ['close'], ['merge'], ['plain']]);
   // Archived units still leave the Cards tab, and they are over: they do not make the swarm stalled.
   assert.deepEqual(cardUnits(snapshot, at(60)), []);
   assert.equal(snapshot.run.stalled, null);
+});
+
+test('a closed unit shows its outcome on the Board, in Plan and on its cockpit tile, with or without a PR', () => {
+  const snapshot = buildSnapshot(swarm([
+    { id: 'close', archivedAt: at(50), row: githubPr(11, { outcome: 'closed', ended_at: iso(45) }) },
+    { id: 'drop', archivedAt: at(50), row: { outcome: 'closed', ended_at: iso(45) } },
+    { id: 'live', row: { outcome: 'closed', ended_at: iso(45) } },
+    { id: 'merge', archivedAt: at(50), row: githubPr(7) },
+  ], lookup({ 7: 'merged', 11: 'closed' })));
+  for (const label of ['close', 'drop', 'live']) assert.equal(closedNotMerged(unitOf(snapshot, label)), true, label);
+  const board = words(boardHtml({ snapshot, now: at(60) }));
+  for (const label of ['close', 'drop', 'live']) assert.match(board, new RegExp(`${label} ${label} closed, not merged`), label);
+  const plan = planListHtml(snapshot, at(60));
+  const row = label => words(plan.split(/<li class="pl-row /).find(part => part.includes(`<span class="tx">${label} `)));
+  assert.match(row('close'), /PR closed, not merged/);
+  assert.match(row('drop'), /closed, not merged/);
+  assert.doesNotMatch(row('drop'), /PR closed|Coding/);
+  const tile = label => tileGrid(snapshot).tiles.find(entry => entry.label === label).word;
+  assert.deepEqual(['close', 'drop', 'live', 'merge'].map(tile), ['Closed', 'Closed', 'Closed', 'Merged']);
 });
 
 test('an archived unit recorded as failed whose PR then merged stays off the Cards tab and does not stall the swarm', () => {
   const snapshot = buildSnapshot(swarm([{ id: 'mixed', archivedAt: at(50), row: githubPr(12, { outcome: 'failed', ended_at: iso(40) }) }], lookup({ 12: 'merged' })));
   assert.deepEqual(validateSnapshot(snapshot), []);
   const mixed = unitOf(snapshot, 'mixed');
-  assert.deepEqual({ stage: mixed.stage, detail: mixed.statusDetail, archivedAt: mixed.archivedAt }, { stage: 'merged', detail: 'failed', archivedAt: at(50) });
+  assert.deepEqual({ stage: mixed.stage, detail: mixed.statusDetail, archived: isArchived(mixed) }, { stage: 'merged', detail: 'failed', archived: true });
   assert.deepEqual(cardUnits(snapshot, at(60)), []);
   assert.equal(snapshot.run.stalled, null);
 });
 
-test('a unit that is not archived has a null archivedAt and keeps its card', () => {
+test('a unit that is not archived keeps its card', () => {
   const snapshot = buildSnapshot(swarm([{ id: 'open', row: githubPr(13) }], lookup({ 13: 'open' })));
-  assert.equal(unitOf(snapshot, 'open').archivedAt, null);
+  assert.equal(isArchived(unitOf(snapshot, 'open')), false);
   assert.deepEqual(cardUnits(snapshot, at(60)).map(unit => unit.label), ['open']);
+});
+
+// Review finding 3: archival reaches the UI without changing the schema version 1 snapshot shape.
+
+test('the UI knows a unit is archived from its status or its archived mark, not its stage', () => {
+  const unit = (status, kinds = []) => ({ status, stage: 'merged', timeline: { marks: kinds.map(kind => ({ at: T0, kind, text: kind, status: null })) } });
+  assert.equal(isArchived(unit('archived')), true);
+  assert.equal(isArchived(unit('merged', ['pr-merged', 'archived'])), true);
+  assert.equal(isArchived(unit('blocked', ['archived'])), true);
+  assert.equal(isArchived(unit('merged', ['pr-merged'])), false);
+});
+
+test('unit views keep the schema version 1 shape: a version 1 snapshot validates and the engine adds no unit field', () => {
+  const v1 = JSON.parse(readFileSync(new URL('./fixtures/example-snapshot.json', import.meta.url), 'utf8'));
+  for (const unit of v1.units) delete unit.archivedAt;
+  assert.deepEqual(validateSnapshot(v1), []);
+  const snapshot = buildSnapshot(swarm([{ id: 'gone', archivedAt: at(50) }, { id: 'open' }]));
+  for (const unit of snapshot.units) assert.equal(Object.hasOwn(unit, 'archivedAt'), false, unit.label);
+});
+
+test('an archived unit keeps its archived mark when later marks pass the mark limit, so it stays off the Cards tab', () => {
+  const data = swarm([{ id: 'busy', archivedAt: at(50), row: { outcome: 'failed', ended_at: iso(45) } }]);
+  const log = new EventLog(at(5));
+  log.start();
+  log.turnStart();
+  log.at(at(51));
+  for (let index = 0; index < 210; index += 1) {
+    log.done(log.ask(`Question ${index}`));
+    log.wait(1000);
+  }
+  log.turnEnd();
+  data.states.set('cli-busy', fold(log, 'cli-busy'));
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  const unit = unitOf(snapshot, 'busy');
+  assert.equal(unit.timeline.marks.length, 400);
+  assert.equal(unit.timeline.marks.filter(mark => mark.kind === 'archived').length, 1);
+  assert.ok(unit.timeline.marks.every((mark, index, list) => index === 0 || list[index - 1].at <= mark.at));
+  assert.equal(unit.status, 'blocked');
+  assert.deepEqual(cardUnits(snapshot, at(60)), []);
 });
 
 // Item 2: a registry PR shows "Not known yet" when the gh lookup fails.

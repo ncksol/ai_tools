@@ -245,6 +245,16 @@ function assignLabels(root, nodes, registry, remembered = [], planned = []) {
   return labels;
 }
 
+/**
+ * The latest `limit` marks, oldest first. The archived mark is always kept: it is how the UI knows a unit is archived
+ * once its status and stage show its outcome (see isArchived in ui/model.mjs).
+ */
+function keepMarks(sorted, limit) {
+  const kept = sorted.slice(-limit);
+  const archived = sorted.find(mark => mark.kind === 'archived');
+  return archived && !kept.includes(archived) ? [archived, ...sorted.slice(-(limit - 1))] : kept;
+}
+
 function sessionView(input, c, label, evaluation, report, title, extraMarks, outcomeAt = null) {
   const { node, current, all } = c;
   const { now, thresholds } = input;
@@ -275,7 +285,7 @@ function sessionView(input, c, label, evaluation, report, title, extraMarks, out
     timeline: {
       segments: buildSegments({ start: startedAt, end: endedAt, now, busy, waits, stuckFrom: status === 'stuck' && endedAt === null ? evaluation.since : null }),
       subagents: [...all.subagents.values()].map(sub => ({ id: sub.id, start: sub.startedAt ?? sub.launchedAt, end: sub.endedAt ?? endedAt, type: sub.type })),
-      marks: [...all.marks, ...extraMarks].sort((a, b) => a.at - b.at).slice(-400),
+      marks: keepMarks([...all.marks, ...extraMarks].sort((a, b) => a.at - b.at), 400),
     },
   };
 }
@@ -352,7 +362,7 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
   const outcomeAt = outcome ? row?.endedAt ?? pr?.mergedAt ?? pr?.closedAt ?? null : null;
   return {
     ...sessionView(input, c, label, evaluation, report, row?.title ?? null, marks, outcomeAt),
-    parentId: node.parentId, depth: node.depth, stage, closedWithoutMerge, outcome, archivedAt: node.archivedAt ?? null, pr, monitor, dependsOn: null, todoId: row?.todoId ?? null,
+    parentId: node.parentId, depth: node.depth, stage, closedWithoutMerge, outcome, pr, monitor, dependsOn: null, todoId: row?.todoId ?? null,
     agent: null,
   };
 }
@@ -519,7 +529,7 @@ function subagentUnitView(input, rootContext, root, sub, evaluation, label, roll
       subagents: unit.children.map(child => ({ id: child.id, start: child.startedAt ?? child.launchedAt, end: child.endedAt ?? evaluation.endedAt, type: child.type })),
       marks: report && !running ? [{ at: evaluation.endedAt, kind: 'report', text: report.title || 'Report', status: report.status }] : [],
     },
-    parentId: root.id, depth: 1, stage: 'subagent', closedWithoutMerge: false, outcome: null, archivedAt: null, pr: null,
+    parentId: root.id, depth: 1, stage: 'subagent', closedWithoutMerge: false, outcome: null, pr: null,
     monitor: { state: 'none', lastCheckAt: null, nextCheckAt: null, everyMinutes: null, since: null }, dependsOn: null, todoId: null,
     agent: { type: sub.type, mode: sub.mode, effort: sub.effort },
   };
@@ -712,8 +722,9 @@ export function buildSnapshot(input) {
   const monitorDue = units.some(unit => unit.monitor.state === 'alive') || app.automations.some(item => rootContext.ids.has(item.sessionId)
     && item.pausedAt === null && item.nextRunAt !== null && item.nextRunAt > now - thresholds.monitorGraceMs);
   // An archived unit is over, whatever its status shows (an archived failed unit shows failed).
+  const archivedIds = new Set(nodes.filter(node => node.archivedAt !== null && node.archivedAt !== undefined).map(node => node.id));
   const stalled = lifecycle === 'live'
-    ? swarmStalled({ orchestratorDetail: orchestrator.statusDetail, unitDetails: everyUnit.map(unit => (unit.archivedAt !== null ? 'archived' : unit.statusDetail)), monitorDue, lastActivityAt })
+    ? swarmStalled({ orchestratorDetail: orchestrator.statusDetail, unitDetails: everyUnit.map(unit => (archivedIds.has(unit.id) ? 'archived' : unit.statusDetail)), monitorDue, lastActivityAt })
     : null;
   const { feed, recent } = buildFeed(contexts, labels, extraFeed, flags);
   for (const view of [orchestrator, ...everyUnit]) view.recent = recent.get(view.id) ?? [];

@@ -1,6 +1,6 @@
 /** Data for the cockpit's panels: no HTML and no DOM. Words, orders and counts follow the regular view (model.mjs). */
 import { HOUR, MIN, plainText } from './format.mjs';
-import { BOARD_WORDS, COUNT_TILES, NEED_CLASS, NEED_LABELS, STATUS_ORDER, feedText, findUnit, isSubagent, needItems, omittedSubagents, runEnd, stateLine } from './model.mjs';
+import { BOARD_WORDS, COUNT_TILES, NEED_CLASS, NEED_LABELS, STATUS_ORDER, closedNotMerged, feedText, findUnit, isSubagent, needItems, omittedSubagents, runEnd, stateLine } from './model.mjs';
 
 export const ACTIVITY_ROWS = 9;
 export const NEED_ROWS = 2;
@@ -45,7 +45,7 @@ export function tileGrid(snapshot) {
   return {
     density: density.name,
     rows: Array.from({ length: rowCount }, (_, i) => Math.floor(slots / rowCount) + Number(i < slots % rowCount)),
-    tiles: shown.map(unit => ({ id: unit.id, label: unit.label, name: unit.name, status: unit.status, word: tileWord(unit.status), since: unit.since, attention: ATTENTION.has(unit.status), subagent: isSubagent(unit) })),
+    tiles: shown.map(unit => ({ id: unit.id, label: unit.label, name: unit.name, status: unit.status, word: closedNotMerged(unit) ? 'Closed' : tileWord(unit.status), since: unit.since, attention: ATTENTION.has(unit.status), subagent: isSubagent(unit) })),
     more: overflow ? units.length - shown.length : 0,
   };
 }

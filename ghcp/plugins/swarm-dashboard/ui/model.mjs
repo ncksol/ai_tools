@@ -104,8 +104,11 @@ export function feedText(item) {
   return item.kind.startsWith('subagent-') && item.label && once.endsWith(ending) ? once.slice(0, -ending.length) : once;
 }
 
-/** Its PR closed without merging: it stays in its PR stage, with a badge (approved decision 5), archived or not. */
-export const closedNotMerged = unit => Boolean(unit.closedWithoutMerge && unit.pr && unit.stage !== 'archived' && (unit.pr.state === 'closed' || unit.outcome === 'closed'));
+/**
+ * It closed without merging (its PR closed, or the registry outcome is closed, with or without a PR): it stays in its
+ * stage, with a badge (approved decision 5), archived or not.
+ */
+export const closedNotMerged = unit => Boolean(unit.closedWithoutMerge && unit.stage !== 'archived' && (unit.pr?.state === 'closed' || unit.outcome === 'closed'));
 
 export const stateLine = session => STATE_LINES[session.statusDetail] ?? STATE_LINES[session.status] ?? '{t}';
 
@@ -133,8 +136,11 @@ export function nextCardChange(snapshot, now) {
   return next;
 }
 
-/** The unit is archived. Its status and stage show its outcome when one is known (merged, failed), so they cannot tell. */
-export const isArchived = unit => (unit.archivedAt !== null && unit.archivedAt !== undefined) || unit.status === 'archived';
+/**
+ * The unit is archived: its status says so, or its timeline has the archived mark, which the engine always keeps. Its
+ * status and stage show its outcome when one is known (merged, failed), so they cannot tell on their own.
+ */
+export const isArchived = unit => unit.status === 'archived' || Boolean(unit.timeline?.marks?.some(mark => mark.kind === 'archived'));
 
 /**
  * Units shown as cards at `now`: attention first, then creation order. Archived units leave the Cards tab. Sub-agent
