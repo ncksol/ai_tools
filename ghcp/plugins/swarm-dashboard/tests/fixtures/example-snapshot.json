@@ -82,7 +82,7 @@
           { "at": 1791964200000, "kind": "archived", "text": "Archived", "status": null }
         ]
       },
-      "parentId": "ws-0000-root", "depth": 1, "stage": "archived", "closedWithoutMerge": false, "outcome": "merged", "archivedAt": 1791964200000,
+      "parentId": "ws-0000-root", "depth": 1, "stage": "archived", "closedWithoutMerge": false, "outcome": "merged",
       "pr": { "provider": "github", "id": 412, "repo": "sample-org/sample-repo", "url": "https://github.com/sample-org/sample-repo/pull/412", "title": "Schema v3 migration", "state": "merged", "openedAt": 1791939600000, "mergedAt": 1791963600000, "closedAt": 1791963600000, "reviewNote": "approved", "source": "registry", "checkedAt": 1792065300000 },
       "monitor": { "state": "ended", "lastCheckAt": 1791963000000, "nextCheckAt": null, "everyMinutes": 10, "since": null },
       "dependsOn": null, "todoId": "b0-schema", "agent": null
@@ -111,7 +111,7 @@
           { "at": 1791936000000, "kind": "pr-merged", "text": "PR merged", "status": null }
         ]
       },
-      "parentId": "ws-0000-root", "depth": 1, "stage": "merged", "closedWithoutMerge": false, "outcome": "merged", "archivedAt": null,
+      "parentId": "ws-0000-root", "depth": 1, "stage": "merged", "closedWithoutMerge": false, "outcome": "merged",
       "pr": { "provider": "github", "id": 409, "repo": "sample-org/sample-repo", "url": "https://github.com/sample-org/sample-repo/pull/409", "title": "Test harness, part 1", "state": "merged", "openedAt": 1791907200000, "mergedAt": 1791936000000, "closedAt": 1791936000000, "reviewNote": "approved", "source": "registry", "checkedAt": 1792065300000 },
       "monitor": { "state": "ended", "lastCheckAt": 1791935400000, "nextCheckAt": null, "everyMinutes": 10, "since": null },
       "dependsOn": "B0", "todoId": "f2a-tests", "agent": null
@@ -153,7 +153,7 @@
           { "at": 1792063080000, "kind": "monitor", "text": "PR monitor check", "status": null }
         ]
       },
-      "parentId": "ws-0000-root", "depth": 1, "stage": "in_review", "closedWithoutMerge": false, "outcome": null, "archivedAt": null,
+      "parentId": "ws-0000-root", "depth": 1, "stage": "in_review", "closedWithoutMerge": false, "outcome": null,
       "pr": { "provider": "github", "id": 418, "repo": "sample-org/sample-repo", "url": "https://github.com/sample-org/sample-repo/pull/418", "title": "Orders and invoices API", "state": "open", "openedAt": 1792058040000, "mergedAt": null, "closedAt": null, "reviewNote": "changes requested", "source": "registry", "checkedAt": 1792065300000 },
       "monitor": { "state": "missing", "lastCheckAt": 1792063080000, "nextCheckAt": 1792063680000, "everyMinutes": 10, "since": 1792063680000 },
       "dependsOn": "B0", "todoId": "b1-api", "agent": null
@@ -185,7 +185,7 @@
           { "at": 1792065060000, "kind": "monitor", "text": "PR monitor check", "status": null }
         ]
       },
-      "parentId": "ws-0000-root", "depth": 1, "stage": "pr_open", "closedWithoutMerge": false, "outcome": null, "archivedAt": null,
+      "parentId": "ws-0000-root", "depth": 1, "stage": "pr_open", "closedWithoutMerge": false, "outcome": null,
       "pr": { "provider": "github", "id": 421, "repo": "sample-org/sample-repo", "url": "https://github.com/sample-org/sample-repo/pull/421", "title": "Docs for the v3 schema", "state": "draft", "openedAt": 1792047480000, "mergedAt": null, "closedAt": null, "reviewNote": "review required", "source": "registry", "checkedAt": 1792065300000 },
       "monitor": { "state": "alive", "lastCheckAt": 1792065060000, "nextCheckAt": 1792065660000, "everyMinutes": 10, "since": null },
       "dependsOn": "B0", "todoId": "d5-docs", "agent": null
@@ -216,7 +216,7 @@
           { "at": 1792062720000, "kind": "tool", "text": "Tool call started, no events since", "status": null }
         ]
       },
-      "parentId": "ws-0000-root", "depth": 1, "stage": "coding", "closedWithoutMerge": false, "outcome": null, "archivedAt": null,
+      "parentId": "ws-0000-root", "depth": 1, "stage": "coding", "closedWithoutMerge": false, "outcome": null,
       "pr": null,
       "monitor": { "state": "none", "lastCheckAt": null, "nextCheckAt": null, "everyMinutes": null, "since": null },
       "dependsOn": "B1", "todoId": "i1-integration", "agent": null
@@ -250,7 +250,7 @@
           { "at": 1792064880000, "kind": "question", "text": "The results page needs a table: reuse DataGrid, or build a lighter table.", "status": "needs_input" }
         ]
       },
-      "parentId": "ws-0000-root", "depth": 1, "stage": "coding", "closedWithoutMerge": false, "outcome": null, "archivedAt": null,
+      "parentId": "ws-0000-root", "depth": 1, "stage": "coding", "closedWithoutMerge": false, "outcome": null,
       "pr": null,
       "monitor": { "state": "none", "lastCheckAt": null, "nextCheckAt": null, "everyMinutes": null, "since": null },
       "dependsOn": "B1", "todoId": "f1-ui", "agent": null
@@ -285,7 +285,7 @@
           { "at": 1792063320000, "kind": "plan-req", "text": "Plan sent for approval", "status": null }
         ]
       },
-      "parentId": "ws-0000-root", "depth": 1, "stage": "coding", "closedWithoutMerge": false, "outcome": null, "archivedAt": null,
+      "parentId": "ws-0000-root", "depth": 1, "stage": "coding", "closedWithoutMerge": false, "outcome": null,
       "pr": null,
       "monitor": { "state": "none", "lastCheckAt": null, "nextCheckAt": null, "everyMinutes": null, "since": null },
       "dependsOn": "B0", "todoId": "b2-import", "agent": null
@@ -314,7 +314,7 @@
           { "at": 1791812400000, "kind": "report", "text": "Schema audit: 9 call sites use the old column name.", "status": "complete" }
         ]
       },
-      "parentId": "ws-0000-root", "depth": 1, "stage": "subagent", "closedWithoutMerge": false, "outcome": null, "archivedAt": null,
+      "parentId": "ws-0000-root", "depth": 1, "stage": "subagent", "closedWithoutMerge": false, "outcome": null,
       "pr": null,
       "monitor": { "state": "none", "lastCheckAt": null, "nextCheckAt": null, "everyMinutes": null, "since": null },
       "dependsOn": null, "todoId": null,
@@ -345,7 +345,7 @@
           { "at": 1791839040000, "kind": "report", "text": "Migrated 14 of 31 fixtures, then the model request failed.", "status": "blocked" }
         ]
       },
-      "parentId": "ws-0000-root", "depth": 1, "stage": "subagent", "closedWithoutMerge": false, "outcome": null, "archivedAt": null,
+      "parentId": "ws-0000-root", "depth": 1, "stage": "subagent", "closedWithoutMerge": false, "outcome": null,
       "pr": null,
       "monitor": { "state": "none", "lastCheckAt": null, "nextCheckAt": null, "everyMinutes": null, "since": null },
       "dependsOn": null, "todoId": null,
@@ -374,7 +374,7 @@
         "subagents": [],
         "marks": []
       },
-      "parentId": "ws-0000-root", "depth": 1, "stage": "subagent", "closedWithoutMerge": false, "outcome": null, "archivedAt": null,
+      "parentId": "ws-0000-root", "depth": 1, "stage": "subagent", "closedWithoutMerge": false, "outcome": null,
       "pr": null,
       "monitor": { "state": "none", "lastCheckAt": null, "nextCheckAt": null, "everyMinutes": null, "since": null },
       "dependsOn": null, "todoId": null,
@@ -403,7 +403,7 @@
         "subagents": [],
         "marks": []
       },
-      "parentId": "ws-0000-root", "depth": 1, "stage": "subagent", "closedWithoutMerge": false, "outcome": null, "archivedAt": null,
+      "parentId": "ws-0000-root", "depth": 1, "stage": "subagent", "closedWithoutMerge": false, "outcome": null,
       "pr": null,
       "monitor": { "state": "none", "lastCheckAt": null, "nextCheckAt": null, "everyMinutes": null, "since": null },
       "dependsOn": null, "todoId": null,
@@ -430,7 +430,7 @@
         "subagents": [],
         "marks": []
       },
-      "parentId": "ws-0000-root", "depth": 1, "stage": "subagent", "closedWithoutMerge": false, "outcome": null, "archivedAt": null,
+      "parentId": "ws-0000-root", "depth": 1, "stage": "subagent", "closedWithoutMerge": false, "outcome": null,
       "pr": null,
       "monitor": { "state": "none", "lastCheckAt": null, "nextCheckAt": null, "everyMinutes": null, "since": null },
       "dependsOn": null, "todoId": null,
