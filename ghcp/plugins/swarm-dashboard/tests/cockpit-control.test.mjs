@@ -11,11 +11,11 @@ const view = (overrides = {}) => ({
 });
 const NOTE = { url: 'http://127.0.0.1:7927/cockpit?swarm=ws-0000-root', reason: 'canvas', copied: null };
 
-test('the Live page\'s top bar ends with the Cockpit control once a swarm shows', () => {
-  assert.match(renderApp(view()), /<div class="d-top-r">[\s\S]*<div class="seg ck-open"><button type="button" data-cockpit aria-label="Cockpit" title="Cockpit"><svg [^>]*>[\s\S]*?<\/svg><\/button><\/div><\/div><\/div>/);
+test('the Live page\'s top bar ends with the Cockpit control and the theme switch beside it once a swarm shows', () => {
+  assert.match(renderApp(view()), /<div class="d-top-r">[\s\S]*<div class="d-tools"><div class="seg ck-open"><button type="button" data-cockpit aria-label="Cockpit" title="Cockpit"><svg [^>]*>[\s\S]*?<\/svg><\/button><\/div><div class="seg th-open">[\s\S]*?<\/div><\/div><\/div><\/div>/);
   assert.doesNotMatch(renderApp(view({ page: 'history', runs: [] })), /data-cockpit/);
   assert.doesNotMatch(renderApp(view({ snapshot: null })), /data-cockpit/);
-  assert.match(renderApp(view({ connection: 'retrying' })), /Disconnected · retrying<\/span><div class="seg ck-open"><button type="button" data-cockpit aria-label="Cockpit" title="Cockpit"><svg [^>]*>[\s\S]*?<\/svg><\/button><\/div><\/div><\/div>/);
+  assert.match(renderApp(view({ connection: 'retrying' })), /Disconnected · retrying<\/span><div class="d-tools"><div class="seg ck-open"><button type="button" data-cockpit aria-label="Cockpit" title="Cockpit"><svg [^>]*>[\s\S]*?<\/svg><\/button><\/div><div class="seg th-open">[\s\S]*?<\/div><\/div><\/div><\/div>/);
 });
 
 test('the cockpit\'s address shows under the top bar on the Live page only', () => {

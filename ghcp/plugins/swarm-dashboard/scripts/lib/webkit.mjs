@@ -34,7 +34,7 @@ export async function launchWebKit(entry) {
  * for it: the resource of a failed request, or the script that logged it.
  */
 export async function openWebKitPage(browser) {
-  const context = await browser.playwright.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: 'reduce' });
+  const context = await browser.playwright.newContext({ viewport: { width: 1280, height: 900 }, reducedMotion: 'reduce', colorScheme: 'light' });
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', error => errors.push({ message: error.message, url: null }));
@@ -59,5 +59,6 @@ export async function openWebKitPage(browser) {
     },
     screenshot: () => page.screenshot(),
     setReducedMotion: reduce => page.emulateMedia({ reducedMotion: reduce ? 'reduce' : 'no-preference' }),
+    setColorScheme: scheme => page.emulateMedia({ colorScheme: scheme }),
   };
 }
