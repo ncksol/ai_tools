@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
@@ -74,4 +74,7 @@ test("init, next, record and status work from the command line", async () => {
   assert.match(status.stdout, /Pending action: a2 create_session/);
   const stop = await batch(["stop", "--batch", "cli", ...common]);
   assert.match(stop.stdout, /stops after the current run/);
+  const released = await batch(["take-over", "--batch", "cli", ...common]);
+  assert.match(released.stdout, /^Released batch cli from driver \S+; the next driver to run next owns it\.$/m);
+  assert.ok(existsSync(join(dir, "batches", "active-batch.json")), "a dry run keeps its guard beside its batches");
 });

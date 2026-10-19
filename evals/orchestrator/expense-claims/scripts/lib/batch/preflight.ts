@@ -2,6 +2,8 @@
 import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { ProcResult } from "../proc.ts";
+import type { AppDb } from "./appdb.ts";
+import { otherActiveBatch } from "./lock.ts";
 import { readNtfyUrl } from "./notify.ts";
 import { agentsToPin, readAppVersion, readCliVersion } from "./pins.ts";
 import type { BatchConfig } from "./state.ts";
@@ -13,9 +15,12 @@ export interface Check {
 }
 
 export interface Host {
-  exec(cmd: string, args: string[], opts?: { cwd?: string }): Promise<ProcResult>;
+  exec(cmd: string, args: string[], opts?: { cwd?: string; timeoutMs?: number }): Promise<ProcResult>;
   nodeVersion: string;
+  appDb: AppDb;
 }
+
+const CHECK_TIMEOUT_MS = 60_000;
 
 // The app version on which detached top-level runs and answer_session_input were observed.
 export const MIN_APP_VERSION = "1.1.30";
@@ -52,17 +57,18 @@ export async function runPreflight(config: BatchConfig, host: Host): Promise<Che
   const add = (name: string, status: Check["status"], detail: string) => checks.push({ name, status, detail });
   const live = !config.dryRun;
 
+  const exec = (cmd: string, args: string[], opts: { cwd?: string } = {}) => host.exec(cmd, args, { ...opts, timeoutMs: CHECK_TIMEOUT_MS });
   const major = Number(host.nodeVersion.replace(/^v/, "").split(".")[0]);
   add("Node 24 or later", major >= 24 ? "PASS" : "FAIL", `node ${host.nodeVersion}`);
 
   if (live) {
-    const batt = await host.exec("pmset", ["-g", "batt"]);
+    const batt = await exec("pmset", ["-g", "batt"]);
     const onAc = batt.code === 0 && /AC Power/.test(batt.stdout);
     add("AC power", onAc ? "PASS" : "FAIL", onAc ? "drawing from AC power" : `not on AC power (${(batt.stdout.split("\n")[0] || batt.stderr).trim()})`);
   } else add("AC power", "SKIP", "dry run");
 
   const diskDir = nearestExisting(config.runsDir);
-  const df = await host.exec("df", ["-k", diskDir]);
+  const df = await exec("df", ["-k", diskDir]);
   const avail = df.code === 0 ? Number(df.stdout.trim().split("\n").pop()?.trim().split(/\s+/)[3]) : NaN;
   const freeGiB = avail / 1024 / 1024;
   add(
@@ -79,11 +85,11 @@ export async function runPreflight(config: BatchConfig, host: Host): Promise<Che
   }
 
   if (live) {
-    const who = await host.exec("gh", ["api", "user", "--jq", ".login"]);
+    const who = await exec("gh", ["api", "user", "--jq", ".login"]);
     const login = who.stdout.trim();
     add("gh account", who.code === 0 && login.toLowerCase() === config.owner.toLowerCase() ? "PASS" : "FAIL", who.code === 0 ? `active account ${login}, owner ${config.owner}` : `gh api user failed: ${who.stderr.trim()}`);
 
-    const head = await host.exec("gh", ["api", "-i", "user"]);
+    const head = await exec("gh", ["api", "-i", "user"]);
     const scopeLine = head.stdout.split("\n").find((line) => /^x-oauth-scopes:/i.test(line));
     if (!scopeLine) {
       add("gh token scopes", "WARN", "no X-OAuth-Scopes header (a fine-grained token?); make sure it can create private repos and push workflow files");
@@ -93,7 +99,7 @@ export async function runPreflight(config: BatchConfig, host: Host): Promise<Che
       add("gh token scopes", missing.length === 0 ? "PASS" : "FAIL", missing.length === 0 ? `has repo and workflow` : `missing ${missing.join(", ")}`);
     }
 
-    const limits = await host.exec("gh", ["api", "rate_limit", "--jq", "[.resources.core.remaining, .resources.graphql.remaining] | @tsv"]);
+    const limits = await exec("gh", ["api", "rate_limit", "--jq", "[.resources.core.remaining, .resources.graphql.remaining] | @tsv"]);
     const [core, graphql] = limits.stdout.trim().split(/\s+/).map(Number);
     add(
       "GitHub API rate limits",
@@ -127,16 +133,21 @@ export async function runPreflight(config: BatchConfig, host: Host): Promise<Che
   );
 
   const kitRepo = dirname(config.resultsPath);
-  const branch = (await host.exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: kitRepo })).stdout.trim();
+  const branch = (await exec("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: kitRepo })).stdout.trim();
   add("results branch", branch && !["main", "master", "HEAD"].includes(branch) ? "PASS" : "FAIL", branch ? `on ${branch}; results.csv commits go here, never to main` : "not a git checkout");
-  const dirty = await host.exec("git", ["status", "--porcelain", "--", config.resultsPath], { cwd: kitRepo });
+  const dirty = await exec("git", ["status", "--porcelain", "--", config.resultsPath], { cwd: kitRepo });
   add("results.csv committed", dirty.code === 0 && dirty.stdout.trim() === "" ? "PASS" : "FAIL", dirty.stdout.trim() === "" ? "no uncommitted changes" : "commit or discard the changes to results.csv first");
-  const name = (await host.exec("git", ["config", "user.name"], { cwd: kitRepo })).stdout.trim();
-  const email = (await host.exec("git", ["config", "user.email"], { cwd: kitRepo })).stdout.trim();
+  const name = (await exec("git", ["config", "user.name"], { cwd: kitRepo })).stdout.trim();
+  const email = (await exec("git", ["config", "user.email"], { cwd: kitRepo })).stdout.trim();
   add("git identity", name && email ? "PASS" : "FAIL", name && email ? `${name} <${email}>` : "set git user.name and user.email");
 
   if (config.keepAwake) add("caffeinate", existsSync("/usr/bin/caffeinate") ? "PASS" : "FAIL", "/usr/bin/caffeinate");
-  add("app database readable", existsSync(config.appDb) ? "PASS" : "WARN", existsSync(config.appDb) ? `${config.appDb} (read-only)` : `${config.appDb} not found; the self-test can't check auto-approve`);
+  if (live) {
+    const problems = [...host.appDb.probe(), ...host.appDb.takeErrors()];
+    add("app database", problems.length === 0 ? "PASS" : "FAIL", problems.length === 0 ? `${config.appDb}: every column the runner reads is there (read-only)` : problems.join("; "));
+  } else add("app database", "SKIP", "dry run");
+  const other = otherActiveBatch(config.activeGuard, config.id);
+  add("no other batch active", other ? "FAIL" : "PASS", other ? `batch ${other.id} (${other.dir}) is active; only one batch runs at a time` : `guard ${config.activeGuard}`);
 
   const url = readNtfyUrl({ envVar: config.notify.envVar, urlFile: config.notify.urlFile });
   add("notifications", url ? "PASS" : "WARN", url ? "ntfy topic configured" : `no ntfy topic in $${config.notify.envVar} or ${config.notify.urlFile}; no phone notifications`);

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
@@ -35,7 +35,7 @@ test("the variants and the workers they name are pinned through their symlinks",
   assert.deepEqual(agentsToPin(agentsDir, ["orchestrator", "session-orchestrator"]).names, ["orchestrator", "orchestrator-worker", "session-orchestrator", "session-worker"]);
   assert.deepEqual(agentsToPin(agentsDir, ["missing"]).missing, ["missing"]);
   const pinned = pins();
-  assert.equal(pinned.agents["session-worker"].path, join(checkout, "session-worker.agent.md").replace(/^\/var\//, "/private/var/"));
+  assert.equal(pinned.agents["session-worker"].path, realpathSync(join(checkout, "session-worker.agent.md")));
   assert.equal(pinned.appVersion, "1.1.30");
   assert.equal(pinned.cliVersion, "1.0.99-2");
   assert.deepEqual(diffPins(pinned, pins()), []);

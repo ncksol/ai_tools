@@ -2,9 +2,13 @@
 // watching, score, commits, notifications) and stops only at a step the driver agent must take with
 // an app tool or a judgment. `record` takes the result of that step. All state is in the batch
 // folder, so any step can be resumed after a crash, a restart or a context compaction.
+//
+// Exclusive access: every read-modify-write of a batch's state (next, record, stop) holds the batch
+// lock; only the batch's owning driver may run next and record; and only one batch is active on the
+// machine (the active-batch guard). See lock.ts.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { describeSession } from "../events.ts";
+import { describeSession, type LogEvent } from "../events.ts";
 import { featureSetName } from "../features.ts";
 import { runName } from "../new-run.ts";
 import type { ProcResult } from "../proc.ts";
@@ -12,6 +16,7 @@ import { readResults } from "../results.ts";
 import { readAnswerSheet, replyFor, rowForQuestion, settleRow, type AnswerRow } from "./answers.ts";
 import type { AppDb } from "./appdb.ts";
 import { scanSession, scanSwarm } from "./hygiene.ts";
+import { claimActive, releaseActive, withLock } from "./lock.ts";
 import { notices, type Notice } from "./notify.ts";
 import { computePins, diffPins } from "./pins.ts";
 import { calibrationDecision, describePlan, nextRunNumber, planNext, runRowFor, scoredCount } from "./plan.ts";
@@ -37,26 +42,45 @@ import {
   orchestratorView,
   SessionIndex,
   swarmView,
+  type MessageView,
   type OrchView,
   type SessionMeta,
 } from "./swarm.ts";
 
 export const STOP_MESSAGE = "This run is over. Stop all work now: don't start anything new, archive all your child sessions, then end your turn.";
 const DRIVER_GAP_MS = 10 * 60_000;
+// A driver whose liveness can't be checked counts as gone after this long without a call.
+const OWNER_SILENT_MS = 15 * 60_000;
 const ANSWER_RETRY_MS = 2 * 60_000;
 const MAX_ASK_ATTEMPTS = 3;
 const MAX_SEND_ATTEMPTS = 3;
-const DRAIN_QUIET_MS = 2 * 60_000;
+// The swarm is quiet after this long without a new event in any of its logs.
+const QUIET_MS = 2 * 60_000;
+// After a final report is scored, the swarm gets this long to go quiet before the stop message.
+const POST_SCORE_SETTLE_MS = 10 * 60_000;
 const SELFTEST_MAX_MS = 20 * 60_000;
 const MAX_NUMBER_BUMPS = 5;
+// An unconfirmed create_session is reconciled against the logs and data.db for this long before
+// it may be issued again, and it is issued again at most once.
+const CREATE_RECONCILE_MS = 5 * 60_000;
+const MAX_CREATE_REISSUES = 1;
+const COMMIT_RETRY_MS = 60_000;
+const MAX_COMMIT_ATTEMPTS = 3;
+const CLOCK_JUMP_MS = 60_000;
+const LOCK_WAIT_MS = 2 * 60_000;
+export const TIMEOUTS = { git: 2 * 60_000, newRun: 10 * 60_000, score: 30 * 60_000 };
 
 export interface Deps {
   now(): number;
   sleep(ms: number): Promise<void>;
-  exec(cmd: string, args: string[], opts?: { cwd?: string }): Promise<ProcResult>;
+  exec(cmd: string, args: string[], opts?: { cwd?: string; timeoutMs?: number }): Promise<ProcResult>;
   notify(notice: Notice): Promise<{ ok: boolean; error?: string }>;
   appDb: AppDb;
   awake: { start(untilMs: number): number | null; alive(pid: number): boolean; stop(pid: number): void };
+  // The calling driver ("session:<id>" for an app session) and whether a driver is still alive
+  // (null when that can't be told).
+  driverId: string;
+  driverAlive(id: string): boolean | null;
   log(line: string): void;
 }
 
@@ -76,6 +100,9 @@ export interface ActionOut {
   batch: string;
   action: PendingAction["kind"] | "wait" | "done";
   id?: string;
+  // "self-test" or "run": the self-test has its own completion rule.
+  target?: "self-test" | "run";
+  run?: string;
   reissued?: boolean;
   dryRun?: boolean;
   what: string;
@@ -89,9 +116,13 @@ interface StepResult {
   progressed?: boolean;
 }
 
+export class OwnershipError extends Error {}
+
 const iso = (ms: number): string => new Date(ms).toISOString();
 const ms = (time: string | undefined): number => (time ? Date.parse(time) : NaN);
 const minutes = (value: number): number => value * 60_000;
+// Time since `from`, never negative: a clock that jumped back must not look like activity in the future.
+const since = (now: number, from: number): number => Math.max(0, now - from);
 
 function log(ctx: Ctx, line: string): void {
   ctx.deps.log(line);
@@ -109,6 +140,10 @@ async function notify(ctx: Ctx, state: BatchState, notice: Notice): Promise<void
   log(ctx, `notify ${notice.key}: ${result.ok ? "sent" : `not sent (${result.error})`}`);
 }
 
+function warn(state: BatchState, warning: string): void {
+  if (!state.warnings.includes(warning)) state.warnings.push(warning);
+}
+
 function recordCommand(ctx: Ctx, id: string, flags: string): string {
   return `node scripts/batch.ts record --batch ${ctx.config.dir} --action ${id} ${flags}`;
 }
@@ -118,12 +153,28 @@ function issue(ctx: Ctx, state: BatchState, kind: PendingAction["kind"], target:
   const pending: PendingAction = { id: `a${state.actionSeq}`, kind, target, issuedAt: iso(ctx.deps.now()), payload };
   state.pending = pending;
   log(ctx, `issue ${pending.id} ${kind} for ${target === "selftest" ? "the self-test" : state.runs[target]?.key}`);
-  return render(ctx, pending, false);
+  return render(ctx, state, pending, false);
 }
 
-export function render(ctx: Ctx, pending: PendingAction, reissued: boolean): ActionOut {
+const SELFTEST_FINAL_RULE =
+  "This is the self-test, not an eval run. Its final message is the response it wrote after its ask_user question was answered: record --final with the id of the latest message. The runner checks the answer itself.";
+const RUN_FINAL_RULE =
+  "Final report: a message saying the attempt has ended, whether it claims success or reports an honest failure (for example \"I've stopped; import is unfinished\"). The acceptance suite decides passed or gate-failed. Question: it asks the user something and waits for the answer. Neither: progress updates, plans, waiting for child sessions, or anything that says work continues.";
+const ROW_RULE =
+  "Row 3 if the question is about the spec: what to build, the API's behaviour, data formats, validation, or anything docs/spec-v2.md or the run repo's README could answer. Row 4 for anything else. If it asks several things, row 3 wins if any part is about the spec.";
+
+export function render(ctx: Ctx, state: BatchState, pending: PendingAction, reissued: boolean): ActionOut {
   const p = pending.payload;
-  const base = { batch: ctx.config.id, action: pending.kind, id: pending.id, reissued: reissued || undefined, dryRun: ctx.config.dryRun || undefined };
+  const run = pending.target === "selftest" ? null : state.runs[pending.target];
+  const base = {
+    batch: ctx.config.id,
+    action: pending.kind,
+    id: pending.id,
+    target: pending.target === "selftest" ? ("self-test" as const) : ("run" as const),
+    run: run?.key,
+    reissued: reissued || undefined,
+    dryRun: ctx.config.dryRun || undefined,
+  };
   switch (pending.kind) {
     case "create_project":
       return {
@@ -147,34 +198,53 @@ export function render(ctx: Ctx, pending: PendingAction, reissued: boolean): Act
         record: [recordCommand(ctx, pending.id, "--session-id <project session id>"), recordCommand(ctx, pending.id, '--failed "<error>"')],
       };
     case "answer_question": {
+      // tool.args.answer only ever holds a real reply. Without it, the driver picks a candidate.
       const fixed = typeof p.answer === "string";
+      const check =
+        "Call get_session(tool.args.project_session_id). Answer only if awaiting_input.question is exactly details.question" +
+        (p.requestId ? " and awaiting_input.request_id equals details.requestId" : "") +
+        '; otherwise answer nothing and record --failed "question mismatch".';
       return {
         ...base,
         what: fixed
-          ? `Answer the session's open question at once: get_session(project_session_id) for awaiting_input.request_id, check the question matches, then answer_session_input with the answer below as free text, word for word.`
-          : `Judge the open question: row 3 if it is a question about the spec, row 4 for anything else. Then get_session for awaiting_input.request_id and answer_session_input with that row's reply as free text, word for word.`,
-        tool: { name: "answer_session_input", args: { project_session_id: p.session, request_id: "<awaiting_input.request_id from get_session>", answer: fixed ? p.answer : "<the chosen row's reply>" } },
-        details: { question: p.question, choices: p.choices, allowFreeform: p.allowFreeform, row: p.row ?? null, candidates: p.candidates ?? null, stop: p.stop ?? false },
+          ? `Answer the open question at once. ${check} Then call answer_session_input with project_session_id, request_id = awaiting_input.request_id, and answer = tool.args.answer, word for word, as free text.`
+          : `Answer the open question at once. ${check} tool.args has no answer: choose row 3 or 4 by details.rule, then call answer_session_input with project_session_id, request_id = awaiting_input.request_id, and answer = details.candidates[<row>], word for word, as free text.`,
+        tool: { name: "answer_session_input", args: { project_session_id: p.session, ...(fixed ? { answer: p.answer } : {}) } },
+        details: {
+          question: p.question,
+          toolCallId: p.toolCallId,
+          requestId: p.requestId ?? null,
+          choices: p.choices,
+          allowFreeform: p.allowFreeform,
+          row: p.row ?? null,
+          ...(fixed ? {} : { candidates: p.candidates, rule: ROW_RULE }),
+          stop: p.stop ?? false,
+        },
         record: [
-          recordCommand(ctx, pending.id, fixed ? "--answered" : "--row <3|4>"),
-          recordCommand(ctx, pending.id, `${fixed ? "--answered" : "--row <3|4>"} --choice "<choice>"   (only if free text was not allowed and you picked a choice)`),
+          recordCommand(ctx, pending.id, `${fixed ? "--answered" : "--row <3|4>"} --request-id <awaiting_input.request_id>`),
+          recordCommand(ctx, pending.id, `${fixed ? "--answered" : "--row <3|4>"} --request-id <awaiting_input.request_id> --choice "<choice>"   (only if free text was not allowed and you picked a choice)`),
           recordCommand(ctx, pending.id, "--not-pending   (get_session shows no open question)"),
-          recordCommand(ctx, pending.id, '--failed "<error>"'),
+          recordCommand(ctx, pending.id, '--failed "<error>"   (including "question mismatch")'),
         ],
       };
     }
-    case "judge_idle":
+    case "judge_idle": {
+      const selfTest = pending.target === "selftest";
       return {
         ...base,
-        what:
-          "The orchestrator is idle. Read its latest messages and judge: is one of them its final report (it says the work is done), a question to the user, or neither? Only judge; send nothing.",
-        details: { messages: p.messages, swarmQuiet: p.swarmQuiet, reason: p.reason, rows: p.rows },
-        record: [
-          recordCommand(ctx, pending.id, "--final <messageId>"),
-          recordCommand(ctx, pending.id, "--question <messageId> [--row <3|4>]   (--row only when the question has no need=plan or need=pr tag)"),
-          recordCommand(ctx, pending.id, "--neither"),
-        ],
+        what: selfTest
+          ? "The self-test session is idle. Apply details.rule: record --final with the latest message's id. Send nothing."
+          : "The orchestrator is idle, or its run has reached a limit. Judge its messages by details.rule: one is the final report, the latest is a question, or neither. Only judge; send nothing.",
+        details: { messages: p.messages, swarmQuiet: p.swarmQuiet, reason: p.reason, rule: selfTest ? SELFTEST_FINAL_RULE : RUN_FINAL_RULE, ...(selfTest ? {} : { rows: p.rows }) },
+        record: selfTest
+          ? [recordCommand(ctx, pending.id, "--final <messageId>")]
+          : [
+              recordCommand(ctx, pending.id, "--final <messageId>"),
+              recordCommand(ctx, pending.id, "--question <messageId> [--row <3|4>]   (--row only when the question has no need=plan or need=pr tag)"),
+              recordCommand(ctx, pending.id, "--neither"),
+            ],
       };
+    }
     case "send_message":
       return {
         ...base,
@@ -189,13 +259,13 @@ export function render(ctx: Ctx, pending: PendingAction, reissued: boolean): Act
 
 // ---------- session lookup ----------
 
-function knownSessionDir(ctx: Ctx, id: string | undefined): string | null {
+function knownSessionDir(ctx: Ctx, id: string | undefined | null): string | null {
   return id && existsSync(eventsPath(ctx.config.stateDir, id)) ? id : null;
 }
 
-function resolveSession(ctx: Ctx, appSessionId: string | undefined, candidates: () => SessionMeta[], match: (events: ReturnType<LogCache["read"]>) => boolean): string | null {
+function resolveSession(ctx: Ctx, appSessionId: string | undefined, candidates: () => SessionMeta[], match: (events: LogEvent[]) => boolean): string | null {
   const fromDb = appSessionId ? ctx.deps.appDb.sessionForWorkspace(appSessionId) : null;
-  if (fromDb && knownSessionDir(ctx, fromDb)) return fromDb;
+  if (knownSessionDir(ctx, fromDb)) return fromDb;
   const direct = knownSessionDir(ctx, appSessionId);
   if (direct) return direct;
   for (const meta of candidates()) {
@@ -234,11 +304,29 @@ function resolveSelfTestSession(ctx: Ctx, test: SelfTestState): string | null {
   );
 }
 
+// A session the driver created after `issuedAt` but never recorded, found through data.db even
+// before its log is written: the newest agent-created workspace in the project.
+function createdSinceInDb(ctx: Ctx, projectId: string | undefined, issuedAt: string): { appId: string; sessionId: string | null } | null {
+  if (!projectId) return null;
+  const rows = ctx.deps.appDb.workspaces(projectId) ?? [];
+  const fresh = rows
+    .filter((row) => row.createdBy === "agent" && row.createdAt && Date.parse(row.createdAt) >= ms(issuedAt) - 60_000)
+    .sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
+  const row = fresh.at(-1);
+  return row ? { appId: row.id, sessionId: row.sessionId } : null;
+}
+
 // ---------- shared watch helpers ----------
 
 const settings = (config: BatchConfig) => ({ idleSettleMs: config.idleSettleSec * 1000, swarmSettleMs: config.swarmSettleSec * 1000 });
 
-function judgeAction(ctx: Ctx, state: BatchState, target: PendingAction["target"], session: string, candidate: NonNullable<ReturnType<typeof idleCandidate>>): ActionOut {
+function judgeAction(
+  ctx: Ctx,
+  state: BatchState,
+  target: PendingAction["target"],
+  session: string,
+  candidate: { messages: MessageView[]; swarmQuiet: boolean; reason: string },
+): ActionOut {
   return issue(ctx, state, "judge_idle", target, {
     session,
     messages: candidate.messages.map((message) => ({ messageId: message.messageId, timestamp: message.timestamp, text: message.text.length > 6000 ? `${message.text.slice(0, 3000)}\n[...]\n${message.text.slice(-3000)}` : message.text })),
@@ -248,18 +336,13 @@ function judgeAction(ctx: Ctx, state: BatchState, target: PendingAction["target"
   });
 }
 
-function askAction(ctx: Ctx, state: BatchState, target: PendingAction["target"], session: string, orch: OrchView, stop = false): ActionOut {
+function askAction(ctx: Ctx, state: BatchState, target: PendingAction["target"], session: string, orch: OrchView, requestId: string | undefined, stop = false): ActionOut {
   const ask = orch.openAsk!;
-  if (stop) {
-    return issue(ctx, state, "answer_question", target, { session, toolCallId: ask.toolCallId, question: ask.question, choices: ask.choices, allowFreeform: ask.allowFreeform, answer: STOP_MESSAGE, stop: true });
-  }
+  const common = { session, toolCallId: ask.toolCallId, question: ask.question, choices: ask.choices, allowFreeform: ask.allowFreeform, requestId };
+  if (stop) return issue(ctx, state, "answer_question", target, { ...common, answer: STOP_MESSAGE, stop: true });
   const { row, candidates } = rowForQuestion(ask.question);
   return issue(ctx, state, "answer_question", target, {
-    session,
-    toolCallId: ask.toolCallId,
-    question: ask.question,
-    choices: ask.choices,
-    allowFreeform: ask.allowFreeform,
+    ...common,
     ...(row !== null ? { row, answer: replyFor(ctx.sheet, row) } : { candidates: Object.fromEntries(candidates.map((r) => [r, replyFor(ctx.sheet, r)])) }),
   });
 }
@@ -290,7 +373,7 @@ function stopBatch(ctx: Ctx, state: BatchState, reason: string, failure: boolean
 }
 
 async function git(ctx: Ctx, args: string[]): Promise<ProcResult> {
-  return ctx.deps.exec("git", args, { cwd: dirname(ctx.config.resultsPath) });
+  return ctx.deps.exec("git", args, { cwd: dirname(ctx.config.resultsPath), timeoutMs: TIMEOUTS.git });
 }
 
 async function finish(ctx: Ctx, state: BatchState): Promise<ActionOut> {
@@ -314,6 +397,7 @@ async function finish(ctx: Ctx, state: BatchState): Promise<ActionOut> {
   const counts = `${state.runs.length} run(s)${outcomes.size > 0 ? ` (${[...outcomes].map(([k, v]) => `${v} ${k}`).join(", ")})` : ""}`;
   await notify(ctx, state, failed ? notices.stopped(ctx.config.id, state.stopReason ?? "unknown", reportPath) : notices.done(ctx.config.id, `${counts}; ${state.stopReason}`, reportPath));
   state.phase = failed ? "stopped" : "done";
+  releaseActive(ctx.config.activeGuard, ctx.config.id);
   log(ctx, `batch ${state.phase}: ${state.stopReason}`);
   return doneAction(ctx, state);
 }
@@ -327,6 +411,18 @@ function doneAction(ctx: Ctx, state: BatchState): ActionOut {
   };
 }
 
+// The checks before a kickoff: at planning time and again just before create_session is issued.
+function admissionBlock(ctx: Ctx, state: BatchState): { reason: string; failure: boolean } | null {
+  if (state.fatal) return { reason: state.fatal, failure: true };
+  if (state.stopRequested) return { reason: "you asked the batch to stop", failure: false };
+  if (state.startFailures >= 2) return { reason: "two runs in a row failed to start", failure: true };
+  if (state.scoreFailures >= 2) return { reason: "score failed for two runs in a row", failure: true };
+  const drift = diffPins(state.pins, currentPins(ctx.config));
+  if (drift.length > 0) return { reason: `pinned inputs changed: ${drift.join("; ")}`, failure: true };
+  if (ctx.deps.now() >= ms(ctx.config.deadline)) return { reason: `the deadline ${ctx.config.deadline} passed`, failure: false };
+  return null;
+}
+
 // ---------- self-test ----------
 
 function selfTestPrompt(nonce: string): string {
@@ -335,6 +431,13 @@ function selfTestPrompt(nonce: string): string {
     `Call the ask_user tool exactly once, with the question "[unit=selftest need=plan] Self-test ${nonce}: may I finish?" and the choices ["yes", "no"].`,
     "When it returns, reply with one short line that quotes the answer you got, and stop. Do nothing else: no other tools, files or commands.",
   ].join("\n");
+}
+
+function selfTestCreateArgs(ctx: Ctx, test: SelfTestState): Record<string, unknown> {
+  const { config } = ctx;
+  const kickoff: Record<string, unknown> = { prompt: test.prompt, model: config.selfTest.model, reasoning_effort: config.selfTest.effort, mode: "interactive" };
+  if (config.selfTest.agent) kickoff.agent = config.selfTest.agent;
+  return { project_id: test.projectId, workspace_type: "worktree", detached: true, coordinate_with_creator: false, kickoff };
 }
 
 async function selfTestStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
@@ -377,7 +480,7 @@ async function selfTestStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
       writeFileSync(join(test.repoDir, "README.md"), "# Eval runner self-test\n\nA scratch repo with no remote. Safe to delete.\n");
       const ident = ["-c", "user.name=Eval Runner", "-c", "user.email=eval-runner@example.invalid"];
       for (const args of [["init", "-q", "-b", "main"], ["add", "-A"], [...ident, "commit", "-q", "-m", "Self-test scratch repo"]]) {
-        const result = await deps.exec("git", args, { cwd: test.repoDir });
+        const result = await deps.exec("git", args, { cwd: test.repoDir, timeoutMs: TIMEOUTS.git });
         if (result.code !== 0) {
           fail(`git ${args.join(" ")} failed: ${result.stderr.trim()}`);
           return { progressed: true };
@@ -388,35 +491,29 @@ async function selfTestStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
     }
     case "repo":
       return { action: issue(ctx, state, "create_project", "selftest", { args: { path: test.repoDir } }) };
-    case "project": {
+    case "project":
       test.startRequestedAt = iso(now);
       test.status = "starting";
-      const kickoff: Record<string, unknown> = { prompt: test.prompt, model: config.selfTest.model, reasoning_effort: config.selfTest.effort, mode: "interactive" };
-      if (config.selfTest.agent) kickoff.agent = config.selfTest.agent;
-      return {
-        action: issue(ctx, state, "create_session", "selftest", {
-          args: { project_id: test.projectId, workspace_type: "worktree", detached: true, coordinate_with_creator: false, kickoff },
-        }),
-      };
-    }
+      return { action: issue(ctx, state, "create_session", "selftest", { args: selfTestCreateArgs(ctx, test) }) };
     case "starting":
       return {};
     case "running": {
-      if (now - ms(test.startRequestedAt) > SELFTEST_MAX_MS) {
+      if (since(now, ms(test.startRequestedAt)) > SELFTEST_MAX_MS) {
         fail("it did not finish within 20 minutes");
         return { progressed: true };
       }
       test.sessionId ??= resolveSelfTestSession(ctx, test) ?? undefined;
       if (!test.sessionId) {
-        if (now - ms(test.startRequestedAt) > minutes(config.sessionAppearMin)) fail("its session never appeared in the session-state folder");
+        if (since(now, ms(test.startRequestedAt)) > minutes(config.sessionAppearMin)) fail("its session never appeared in the session-state folder");
         return { progressed: test.status !== "running" };
       }
       const events = ctx.logs.read(eventsPath(config.stateDir, test.sessionId));
       const orch = orchestratorView(events);
       const session = test.appSessionId ?? test.sessionId;
       if (orch.openAsk) {
-        if (!test.answered || test.answered.toolCallId !== orch.openAsk.toolCallId || (now - ms(test.answered.at) > ANSWER_RETRY_MS && test.askAttempts < MAX_ASK_ATTEMPTS)) {
-          return { action: askAction(ctx, state, "selftest", session, orch) };
+        const answered = test.answered?.toolCallId === orch.openAsk.toolCallId;
+        if (!answered || (since(now, ms(test.answered!.at)) > ANSWER_RETRY_MS && test.askAttempts < MAX_ASK_ATTEMPTS)) {
+          return { action: askAction(ctx, state, "selftest", session, orch, answered ? test.answered!.requestId : undefined) };
         }
         return {};
       }
@@ -446,7 +543,7 @@ export function verifySelfTest(ctx: Ctx, test: SelfTestState): void {
   const orch = orchestratorView(events);
   const described = describeSession(dir);
   check("kickoff counts as started by the user", described.startedBy === "user" && orch.startedBy === "user", `score sees: ${described.startedBy ?? "no log"}`);
-  check("kickoff text arrived unchanged", kickoffText(orch).trim() === test.prompt.trim(), kickoffText(orch).trim() === test.prompt.trim() ? "identical" : "differs from what was sent");
+  check("kickoff text arrived unchanged", kickoffText(orch) === test.prompt, kickoffText(orch) === test.prompt ? "identical" : "differs from what was sent");
   check("model and effort", orch.model === config.selfTest.model && orch.effort === config.selfTest.effort, `session.start: ${orch.model ?? "none"} at ${orch.effort ?? "none"}`);
   const agentOk = config.selfTest.agent
     ? orch.agent === config.selfTest.agent
@@ -461,6 +558,18 @@ export function verifySelfTest(ctx: Ctx, test: SelfTestState): void {
   check("new project auto-approves tools", autoApprove === 1, `projects.auto_approve = ${autoApprove ?? "unreadable"}`);
   const links = test.appSessionId ? deps.appDb.creatorLinks(test.appSessionId) : null;
   check("session is detached (no creator link)", Boolean(links) && !links!.creator && !links!.coordinator, links ? `creator ${links.creator ?? "none"}, coordinator ${links.coordinator ?? "none"}` : "workspace row unreadable");
+  // Every app-database lookup the runner relies on, on this real session and project.
+  const problems = deps.appDb.probe();
+  const forward = test.appSessionId ? deps.appDb.sessionForWorkspace(test.appSessionId) : null;
+  const backward = test.sessionId ? deps.appDb.workspaceForSession(test.sessionId) : null;
+  const interruption = test.sessionId ? deps.appDb.interruption(test.sessionId) : null;
+  const listed = test.projectId ? (deps.appDb.workspaces(test.projectId) ?? []).some((row) => row.id === test.appSessionId && Boolean(row.createdAt)) : false;
+  if (forward !== test.sessionId) problems.push(`workspace -> session gave ${forward ?? "nothing"}`);
+  if (backward !== test.appSessionId) problems.push(`session -> workspace gave ${backward ?? "nothing"}`);
+  if (interruption?.wasInterrupted !== false) problems.push(`sessions.was_interrupted gave ${interruption ? String(interruption.wasInterrupted) : "nothing"}`);
+  if (!listed) problems.push("the project's workspaces don't list the session with its created_at");
+  problems.push(...deps.appDb.takeErrors());
+  check("app database lookups work", problems.length === 0, problems.length === 0 ? "every query the runner uses answered" : problems.join("; "));
   const memory = scanSession(test.sessionId ?? "missing", events).filter((finding) => finding.code === "memory-loaded");
   check("no memories loaded (Memory is off)", memory.length === 0, memory.length === 0 ? "no <memories> block" : memory.map((finding) => finding.detail).join("; "));
   test.checks = checks;
@@ -479,25 +588,9 @@ function plannedTotal(ctx: Ctx, state: BatchState): number {
 async function startNextRun(ctx: Ctx, state: BatchState): Promise<StepResult> {
   const { config, deps } = ctx;
   const now = deps.now();
-  if (state.stopRequested) {
-    stopBatch(ctx, state, "you asked the batch to stop", false);
-    return { progressed: true };
-  }
-  if (state.startFailures >= 2) {
-    stopBatch(ctx, state, "two runs in a row failed to start", true);
-    return { progressed: true };
-  }
-  if (state.scoreFailures >= 2) {
-    stopBatch(ctx, state, "score failed for two runs in a row", true);
-    return { progressed: true };
-  }
-  const drift = diffPins(state.pins, currentPins(config));
-  if (drift.length > 0) {
-    stopBatch(ctx, state, `pinned inputs changed: ${drift.join("; ")}`, true);
-    return { progressed: true };
-  }
-  if (now >= ms(config.deadline)) {
-    stopBatch(ctx, state, `the deadline ${config.deadline} passed`, false);
+  const block = admissionBlock(ctx, state);
+  if (block) {
+    stopBatch(ctx, state, block.reason, block.failure);
     return { progressed: true };
   }
   const rows = readResults(config.resultsPath);
@@ -524,6 +617,7 @@ async function startNextRun(ctx: Ctx, state: BatchState): Promise<StepResult> {
     judged: [],
     answers: [],
     askAttempts: {},
+    requestIds: {},
     flags: [],
   };
   state.runs.push(run);
@@ -552,14 +646,31 @@ function voidRun(ctx: Ctx, state: BatchState, run: RunState, reason: string, sta
   log(ctx, `${run.key} void: ${reason}`);
 }
 
+// The kickoff exactly as a manual paste delivers it: kickoff.md without its trailing newline (run 1's
+// typed kickoff in its event log equals that form).
+export function kickoffPrompt(config: BatchConfig, run: RunState): string {
+  return readFileSync(join(config.runsDir, `${run.name}.kickoff.md`), "utf8").trimEnd();
+}
+
+function runCreateArgs(ctx: Ctx, run: RunState): Record<string, unknown> {
+  const { config } = ctx;
+  return {
+    project_id: run.projectId,
+    workspace_type: "worktree",
+    detached: true,
+    coordinate_with_creator: false,
+    kickoff: { prompt: kickoffPrompt(config, run), agent: run.variant, model: config.model, reasoning_effort: config.effort, context_tier: config.contextTier, mode: "interactive" },
+  };
+}
+
 // A clone that new-run finished before the runner could save it: one "Seed v1" commit, the kickoff
 // file, and (unless a dry run) the GitHub remote.
 async function finishedClone(ctx: Ctx, run: RunState): Promise<boolean> {
   if (!existsSync(run.repoDir) || !existsSync(join(ctx.config.runsDir, `${run.name}.kickoff.md`))) return false;
-  const subjects = await ctx.deps.exec("git", ["log", "--format=%s"], { cwd: run.repoDir });
+  const subjects = await ctx.deps.exec("git", ["log", "--format=%s"], { cwd: run.repoDir, timeoutMs: TIMEOUTS.git });
   if (subjects.code !== 0 || subjects.stdout.trim() !== "Seed v1") return false;
   if (ctx.config.dryRun) return true;
-  return (await ctx.deps.exec("git", ["remote", "get-url", "origin"], { cwd: run.repoDir })).code === 0;
+  return (await ctx.deps.exec("git", ["remote", "get-url", "origin"], { cwd: run.repoDir, timeoutMs: TIMEOUTS.git })).code === 0;
 }
 
 async function newRepo(ctx: Ctx, state: BatchState, run: RunState): Promise<StepResult> {
@@ -572,14 +683,14 @@ async function newRepo(ctx: Ctx, state: BatchState, run: RunState): Promise<Step
   for (let bump = 0; bump <= MAX_NUMBER_BUMPS; bump++) {
     const args = [config.newRunScript, "--variant", run.variant, "--n", String(run.n), "--features", run.features.join(","), "--owner", config.owner, "--runs-dir", config.runsDir];
     if (config.dryRun) args.push("--dry-run");
-    const result = await deps.exec(process.execPath, args, { cwd: config.kitDir });
+    const result = await deps.exec(process.execPath, args, { cwd: config.kitDir, timeoutMs: TIMEOUTS.newRun });
     if (result.code === 0) {
       run.status = "repo";
       log(ctx, `new-run ${run.name} ok`);
       return { progressed: true };
     }
     const error = (result.stderr || result.stdout).trim().split("\n").pop() ?? "";
-    if (!/already exists/.test(error)) {
+    if (!/already exists/.test(error) || result.timedOut) {
       voidRun(ctx, state, run, `new-run failed: ${error}`, true);
       await notify(ctx, state, notices.runVoid(config.id, run.variant, run.n, run.voidReason!));
       return { progressed: true };
@@ -595,11 +706,17 @@ async function newRepo(ctx: Ctx, state: BatchState, run: RunState): Promise<Step
   return { progressed: true };
 }
 
+function interrupted(ctx: Ctx, run: RunState): string | null {
+  if (!run.sessionId) return null;
+  const result = ctx.deps.appDb.interruption(run.sessionId);
+  return result?.wasInterrupted ? (result.reason ?? "interrupted") : null;
+}
+
 async function watchRun(ctx: Ctx, state: BatchState, run: RunState, index: number): Promise<StepResult> {
   const { config, deps } = ctx;
   const now = deps.now();
   run.sessionId ??= resolveRunSession(ctx, run) ?? undefined;
-  const waitedMs = now - ms(run.startRequestedAt);
+  const waitedMs = since(now, ms(run.startRequestedAt));
   if (!run.sessionId) {
     if (waitedMs > minutes(config.sessionAppearMin)) {
       voidRun(ctx, state, run, "the run's session never appeared in the session-state folder", true);
@@ -624,8 +741,7 @@ async function watchRun(ctx: Ctx, state: BatchState, run: RunState, index: numbe
     run.kickoffChecked = true;
     state.startFailures = 0;
     if (orch.startedBy !== "user") addFlag(run, "kickoff-shape", "the kickoff carries a data.source or a cross-session tag, so score can't treat it as typed by the user", at);
-    const expected = readFileSync(join(config.runsDir, `${run.name}.kickoff.md`), "utf8").trim();
-    if (kickoffText(orch).trim() !== expected) addFlag(run, "kickoff-text", "the kickoff differs from kickoff.md", at);
+    if (kickoffText(orch) !== kickoffPrompt(config, run)) addFlag(run, "kickoff-text", "the kickoff differs from kickoff.md as a manual paste delivers it", at);
     const wrong: string[] = [];
     if (orch.agent !== run.variant) wrong.push(`agent ${orch.agent ?? "none"}`);
     if (orch.model !== config.model) wrong.push(`model ${orch.model ?? "none"}`);
@@ -635,51 +751,64 @@ async function watchRun(ctx: Ctx, state: BatchState, run: RunState, index: numbe
     log(ctx, `${run.key} kickoff at ${run.kickoffAt} in session ${run.sessionId}`);
   }
 
-  const logs = readLogs(ctx, runSessionIds(ctx, run));
-  const swarm = swarmView(logs);
+  const swarm = swarmView(readLogs(ctx, runSessionIds(ctx, run)));
   for (const session of swarm.sessions) {
     if (session.pendingPermissions > 0) addFlag(run, "permission-prompt", `session ${session.id} has a tool-permission prompt no app tool can answer`, at);
     if (session.unattendedDenials > 0) addFlag(run, "permission-prompt", `session ${session.id}: a permission request was denied because no one was there`, at);
   }
-  if (run.plain?.sentAt && !run.answerSource) {
-    run.answerSource = findReplySource(events, run.plain.text, ms(run.plain.sentAt) - 5000) ?? undefined;
-  }
+  findAnswerSource(ctx, run, events);
 
   const session = run.appSessionId ?? run.sessionId;
-  const timedOut = now - ms(run.kickoffAt) >= minutes(config.timeoutMin);
-  const stalled = now - swarm.lastActivityAt >= minutes(config.stallMin);
-  // An app restart or crash stops the run's session; that run is void, not timed out or stalled.
-  if (timedOut || stalled || run.flags.some((f) => f.code === "driver-gap")) {
-    const settings = ctx.deps.appDb.sessionSettings(run.sessionId);
-    if (settings && Number(settings.was_interrupted) === 1) {
-      voidRun(ctx, state, run, `the app stopped the run's session (${String(settings.interruption_reason ?? "interrupted")}), for example in a restart or update`, false);
+  const kickoffMs = ms(run.kickoffAt);
+  const limitMs = minutes(config.timeoutMin);
+  // As in score: a run is over time only when more than 90 minutes have passed.
+  const timedOut = since(now, kickoffMs) > limitMs;
+  const ask = orch.openAsk;
+  const askAttempt = ask ? run.askAttempts[ask.toolCallId] : undefined;
+  const askAnswerable = Boolean(ask) && (!askAttempt || askAttempt.count < MAX_ASK_ATTEMPTS);
+  // A pending question means the swarm is waiting on the user, not stalled.
+  const stalled = !askAnswerable && since(now, swarm.lastActivityAt) >= minutes(config.stallMin);
+
+  if (timedOut || stalled || run.flags.some((flag) => flag.code === "driver-gap")) {
+    const reason = interrupted(ctx, run);
+    if (reason) {
+      voidRun(ctx, state, run, `the app stopped the run's session (${reason}), for example in a restart or update`, false);
       await notify(ctx, state, notices.runVoid(config.id, run.variant, run.n, run.voidReason!));
       return { progressed: true };
     }
   }
-  if (timedOut) {
-    run.endReason = "timeout";
+  if (timedOut || stalled) {
+    // A final report written in time wins over the limit, however late it is seen: judge it first.
+    // Only the latest messages can be the report; older ones are progress the driver needn't revisit.
+    const inTime = timedOut ? orch.messages.filter((message) => message.at - kickoffMs <= limitMs) : orch.messages;
+    const unjudged = inTime.slice(-3).filter((message) => !run.judged.includes(message.messageId));
+    if (unjudged.length > 0) {
+      return {
+        action: judgeAction(ctx, state, index, session, {
+          messages: unjudged,
+          swarmQuiet: since(now, swarm.lastActivityAt) >= config.swarmSettleSec * 1000,
+          reason: `the run reached its ${timedOut ? "90-minute" : "stall"} limit; a final report among these messages is scored at its own time`,
+        }),
+      };
+    }
+    run.endReason = timedOut ? "timeout" : "stalled";
     run.status = "scoring";
-    log(ctx, `${run.key} timed out`);
+    if (stalled) {
+      for (const s of swarm.sessions) {
+        for (const tool of s.openTools) addFlag(run, "open-tool-at-stall", `session ${s.id}${tool.agentId ? ` (sub-agent ${tool.agentId})` : ""} had an open ${tool.toolName} call since ${iso(tool.at)}; a permission prompt or elicitation may have been waiting`, at);
+      }
+    }
+    log(ctx, `${run.key} ${run.endReason}`);
     return { progressed: true };
   }
-  if (orch.openAsk) {
-    const attempt = run.askAttempts[orch.openAsk.toolCallId];
-    if (!attempt || (now - ms(attempt.at) > ANSWER_RETRY_MS && attempt.count < MAX_ASK_ATTEMPTS)) {
-      if (attempt) addFlag(run, "answer-retry", `ask_user ${orch.openAsk.toolCallId} was still open ${Math.round((now - ms(attempt.at)) / 1000)} s after an answer`, at);
-      return { action: askAction(ctx, state, index, session, orch) };
+  if (ask) {
+    if (!askAttempt || (since(now, ms(askAttempt.at)) > ANSWER_RETRY_MS && askAttempt.count < MAX_ASK_ATTEMPTS)) {
+      if (askAttempt) addFlag(run, "answer-retry", `ask_user ${ask.toolCallId} was still open ${Math.round(since(now, ms(askAttempt.at)) / 1000)} s after an answer`, at);
+      return { action: askAction(ctx, state, index, session, orch, run.requestIds[ask.toolCallId]) };
     }
-  }
-  if (stalled) {
-    run.endReason = "stalled";
-    run.status = "scoring";
-    for (const s of swarm.sessions) {
-      for (const tool of s.openTools) addFlag(run, "open-tool-at-stall", `session ${s.id}${tool.agentId ? ` (sub-agent ${tool.agentId})` : ""} had an open ${tool.toolName} call since ${iso(tool.at)}; a permission prompt or elicitation may have been waiting`, at);
-    }
-    log(ctx, `${run.key} stalled`);
-    return { progressed: true };
   }
   if (run.plain && !run.plain.sentAt && run.plain.sendAttempts < MAX_SEND_ATTEMPTS) {
+    run.plain.issuedAt ??= at;
     return { action: issue(ctx, state, "send_message", index, { session, message: run.plain.text, stop: false }) };
   }
   const candidate = idleCandidate(orch, swarm, now, run.judged, settings(config));
@@ -687,19 +816,42 @@ async function watchRun(ctx: Ctx, state: BatchState, run: RunState, index: numbe
   return {};
 }
 
+// The driver's plain-text reply in the run's log: looked for from when the send action was issued,
+// so a late record or a restart can't move the window past it.
+function findAnswerSource(ctx: Ctx, run: RunState, events?: LogEvent[]): void {
+  if (!run.plain?.sentAt || run.answerSource) return;
+  const log = events ?? ctx.logs.read(eventsPath(ctx.config.stateDir, run.sessionId ?? "missing"));
+  const found = findReplySource(log, run.plain.text, ms(run.plain.issuedAt ?? run.plain.sentAt) - 5000);
+  if (found) {
+    run.answerSource = found.source;
+    run.plain.deliveredAt = found.timestamp;
+    const answer = run.answers.find((a) => a.kind === "plain" && a.ref === run.plain!.messageId);
+    if (answer) answer.at = found.timestamp;
+  }
+}
+
+export function noteFor(config: BatchConfig, run: RunState): string {
+  const codes = [...new Set(run.flags.map((flag) => flag.code))];
+  return [`batch=${config.id}`, "driver=eval-runner", `memory=${config.memoryOffConfirmed ? "off" : "unconfirmed"}`, ...(config.dryRun ? ["dry-run"] : []), `flags=${codes.join(",") || "none"}`].join("; ");
+}
+
+function scanHygiene(ctx: Ctx, run: RunState): void {
+  for (const finding of scanSwarm(readLogs(ctx, runSessionIds(ctx, run)))) addFlag(run, finding.code, finding.detail, iso(ctx.deps.now()));
+}
+
 async function scoreRun(ctx: Ctx, state: BatchState, run: RunState): Promise<void> {
   const { config, deps } = ctx;
-  if (run.plain?.sentAt && !run.answerSource) {
-    const events = ctx.logs.read(eventsPath(config.stateDir, run.sessionId ?? "missing"));
-    run.answerSource = findReplySource(events, run.plain.text, ms(run.plain.sentAt) - 5000) ?? undefined;
-  }
-  const args = [config.scoreScript, "--repo-dir", run.repoDir, "--session", run.sessionId ?? "", "--state-dir", config.stateDir, "--results", config.resultsPath];
+  findAnswerSource(ctx, run);
+  if (run.plain?.sentAt && !run.answerSource) addFlag(run, "answer-source-unknown", "the plain-text answer wasn't found in the log, so score counted it as neither a question nor blocked time", iso(deps.now()));
+  // Flags known before scoring go into the row's note; later ones stay in the report.
+  scanHygiene(ctx, run);
+  run.note = noteFor(config, run);
+  const args = [config.scoreScript, "--repo-dir", run.repoDir, "--session", run.sessionId ?? "", "--state-dir", config.stateDir, "--results", config.resultsPath, "--note", run.note];
   if (config.dryRun) args.push("--no-github");
   if (run.endReason === "final" && run.final) args.push("--end-at", run.final.timestamp);
   else args.push("--outcome", run.endReason ?? "stalled");
   if (run.answerSource) args.push("--answer-source", run.answerSource);
-  else if (run.plain?.sentAt) addFlag(run, "answer-source-unknown", "the plain-text answer wasn't found in the log, so score counted it as neither a question nor blocked time", iso(deps.now()));
-  const result = await deps.exec(process.execPath, args, { cwd: config.kitDir });
+  const result = await deps.exec(process.execPath, args, { cwd: config.kitDir, timeoutMs: TIMEOUTS.score });
   mkdirSync(join(config.dir, "runs"), { recursive: true });
   run.scoreLog = join(config.dir, "runs", `${run.name}.score.log`);
   writeFileSync(run.scoreLog, `$ node ${args.join(" ")}\nexit ${result.code}\n\n${result.stdout}\n${result.stderr}`);
@@ -724,32 +876,30 @@ async function scoreRun(ctx: Ctx, state: BatchState, run: RunState): Promise<voi
   log(ctx, `${run.key} scored: exit ${result.code}, ${row ? `${row.outcome} ${row.minutes} min` : "no row"}`);
 }
 
-async function commitResult(ctx: Ctx, state: BatchState, run: RunState): Promise<void> {
+async function commitResult(ctx: Ctx, state: BatchState, run: RunState): Promise<string | null> {
   const { config } = ctx;
   const branch = (await git(ctx, ["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim();
-  if (!branch || ["main", "master", "HEAD"].includes(branch)) {
-    state.warnings.push(`commit skipped for ${run.key}: the checkout is on "${branch || "unknown"}", and results never go to main`);
-    return;
-  }
+  if (!branch || ["main", "master", "HEAD"].includes(branch)) return `the checkout is on "${branch || "unknown"}", and results never go to main`;
   const status = await git(ctx, ["status", "--porcelain", "--", config.resultsPath]);
+  if (status.code !== 0) return `git status failed: ${status.stderr.trim()}`;
   if (status.stdout.trim() !== "") {
     const message = `chore(evals): record ${run.variant} run ${run.n} (${run.row?.outcome ?? "not scored"})`;
     const commit = await git(ctx, ["commit", "-q", "-m", message, "--only", "--", config.resultsPath]);
-    if (commit.code !== 0) {
-      state.warnings.push(`commit failed for ${run.key}: ${commit.stderr.trim()}`);
-      return;
-    }
+    if (commit.code !== 0) return `git commit failed: ${commit.stderr.trim().split("\n").pop()}`;
   }
-  run.committed = true;
   if (config.push) {
     const remote = await git(ctx, ["remote", "get-url", "origin"]);
-    if (remote.code !== 0) {
-      state.warnings.push("push skipped: the ai_tools checkout has no origin remote");
-      return;
+    if (remote.code !== 0) warn(state, "push skipped: the ai_tools checkout has no origin remote");
+    else {
+      const push = await git(ctx, ["push", "-q", "origin", `HEAD:refs/heads/${branch}`]);
+      if (push.code !== 0) warn(state, `push failed after ${run.key}: ${push.stderr.trim().split("\n").pop()}`);
     }
-    const push = await git(ctx, ["push", "-q", "origin", `HEAD:refs/heads/${branch}`]);
-    if (push.code !== 0) state.warnings.push(`push failed after ${run.key}: ${push.stderr.trim().split("\n").pop()}`);
   }
+  return null;
+}
+
+function swarmQuietFor(ctx: Ctx, run: RunState, now: number): number {
+  return since(now, swarmView(readLogs(ctx, runSessionIds(ctx, run))).lastActivityAt);
 }
 
 async function runsStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
@@ -764,29 +914,24 @@ async function runsStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
     case "repo":
       return { action: issue(ctx, state, "create_project", index, { args: { path: run.repoDir } }) };
     case "project": {
-      const kickoff = readFileSync(join(config.runsDir, `${run.name}.kickoff.md`), "utf8").trim();
+      // The last runner-controlled point before a run starts: check the deadline and pins again.
+      const block = admissionBlock(ctx, state);
+      if (block) {
+        voidRun(ctx, state, run, `not started: ${block.reason}`, false);
+        stopBatch(ctx, state, block.reason, block.failure);
+        return { progressed: true };
+      }
       run.startRequestedAt = iso(now);
       run.status = "starting";
-      return {
-        action: issue(ctx, state, "create_session", index, {
-          args: {
-            project_id: run.projectId,
-            workspace_type: "worktree",
-            detached: true,
-            coordinate_with_creator: false,
-            kickoff: { prompt: kickoff, agent: run.variant, model: config.model, reasoning_effort: config.effort, context_tier: config.contextTier, mode: "interactive" },
-          },
-        }),
-      };
+      return { action: issue(ctx, state, "create_session", index, { args: runCreateArgs(ctx, run) }) };
     }
     case "starting":
       return {};
     case "running":
       return watchRun(ctx, state, run, index);
     case "ending": {
-      const swarm = swarmView(readLogs(ctx, runSessionIds(ctx, run)));
-      const quiet = now - swarm.lastActivityAt >= config.swarmSettleSec * 1000;
-      const waited = now - ms(run.endingSince);
+      const quiet = swarmQuietFor(ctx, run, now) >= config.swarmSettleSec * 1000;
+      const waited = since(now, ms(run.endingSince));
       if (quiet || waited >= minutes(config.quietWaitMin)) {
         if (!quiet) addFlag(run, "swarm-not-quiet", `scored ${Math.round(waited / 60_000)} min after the final report while the swarm was still active`, iso(now));
         run.status = "scoring";
@@ -798,18 +943,29 @@ async function runsStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
       await scoreRun(ctx, state, run);
       return { progressed: true };
     case "scored": {
+      if (run.row && !run.committed) {
+        if (run.lastCommitAttemptAt && since(now, ms(run.lastCommitAttemptAt)) < COMMIT_RETRY_MS) return {};
+        const error = await commitResult(ctx, state, run);
+        if (error) {
+          run.commitAttempts = (run.commitAttempts ?? 0) + 1;
+          run.lastCommitAttemptAt = iso(now);
+          log(ctx, `${run.key} results commit failed (attempt ${run.commitAttempts}): ${error}`);
+          if (run.commitAttempts < MAX_COMMIT_ATTEMPTS) return {};
+          addFlag(run, "commit-failed", `results.csv could not be committed after ${run.commitAttempts} attempts: ${error}`, iso(now));
+          state.fatal = `the results commit for ${run.key} failed ${run.commitAttempts} times (${error}); its row is in results.csv but not committed`;
+          await notify(ctx, state, notices.failure(config.id, `commit-${run.key}`, `${state.fatal}. No further run starts.`));
+        } else run.committed = true;
+      }
       if (!run.notified) {
-        for (const finding of scanSwarm(readLogs(ctx, runSessionIds(ctx, run)))) addFlag(run, finding.code, finding.detail, iso(now));
-        if (run.row && !run.committed) await commitResult(ctx, state, run);
         const rows = readResults(config.resultsPath);
         const row = runRowFor(rows, run);
-        const index1 = state.runs.filter((r) => runRowFor(rows, r)).length;
+        const done = state.runs.filter((r) => runRowFor(rows, r)).length;
         await notify(
           ctx,
           state,
           notices.runOutcome(config.id, {
-            index: index1,
-            total: Math.max(index1, plannedTotal(ctx, state)),
+            index: done,
+            total: Math.max(done, plannedTotal(ctx, state)),
             variant: run.variant,
             n: run.n,
             outcome: row?.outcome ?? "not scored",
@@ -822,8 +978,24 @@ async function runsStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
         );
         run.notified = true;
       }
-      run.status = run.endReason === "timeout" || run.endReason === "stalled" ? "stopping" : "done";
+      if (run.endReason === "final") {
+        run.status = "settling";
+        run.settlingSince = iso(now);
+      } else run.status = "stopping";
       return { progressed: true };
+    }
+    case "settling": {
+      // Scored at the final report, as in a manual run; but the next run starts only on a quiet swarm.
+      if (swarmQuietFor(ctx, run, now) >= QUIET_MS) {
+        run.status = "done";
+        return { progressed: true };
+      }
+      if (since(now, ms(run.settlingSince)) >= POST_SCORE_SETTLE_MS) {
+        addFlag(run, "swarm-not-quiet", `the swarm was still active ${Math.round(POST_SCORE_SETTLE_MS / 60_000)} min after scoring the final report; sent the stop message`, iso(now));
+        run.status = "stopping";
+        return { progressed: true };
+      }
+      return {};
     }
     case "stopping": {
       if (run.stopSentAt || (run.stopAttempts ?? 0) >= MAX_SEND_ATTEMPTS) {
@@ -834,15 +1006,19 @@ async function runsStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
       }
       const orch = orchestratorView(ctx.logs.read(eventsPath(config.stateDir, run.sessionId ?? "missing")));
       const session = run.appSessionId ?? run.sessionId ?? "";
-      if (orch.openAsk) return { action: askAction(ctx, state, index, session, orch, true) };
+      if (orch.openAsk) return { action: askAction(ctx, state, index, session, orch, run.requestIds[orch.openAsk.toolCallId], true) };
       return { action: issue(ctx, state, "send_message", index, { session, message: STOP_MESSAGE, stop: true }) };
     }
     case "draining": {
-      const swarm = swarmView(readLogs(ctx, runSessionIds(ctx, run)));
-      const quiet = now - swarm.lastActivityAt >= DRAIN_QUIET_MS;
-      const waited = now - ms(run.drainingSince);
-      if (quiet || waited >= minutes(config.drainMaxMin)) {
-        if (!quiet) addFlag(run, "swarm-not-quiet", `the swarm was still active ${Math.round(waited / 60_000)} min after the stop message`, iso(now));
+      if (swarmQuietFor(ctx, run, now) >= QUIET_MS) {
+        run.status = "done";
+        return { progressed: true };
+      }
+      const waited = since(now, ms(run.drainingSince));
+      if (waited >= minutes(config.drainMaxMin)) {
+        addFlag(run, "swarm-not-quiet", `the swarm was still active ${Math.round(waited / 60_000)} min after the stop message`, iso(now));
+        // Never admit another run next to a busy swarm: stop the batch and list the sessions.
+        state.fatal ??= `the swarm of ${run.key} was still active ${Math.round(waited / 60_000)} min after the stop message; archive its sessions (listed in the report)`;
         run.status = "done";
         return { progressed: true };
       }
@@ -850,6 +1026,7 @@ async function runsStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
     }
     case "done":
     case "void":
+      if (run.status === "done" && run.row) scanHygiene(ctx, run);
       run.endedAt ??= iso(now);
       state.current = null;
       return { progressed: true };
@@ -858,7 +1035,9 @@ async function runsStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
 
 // ---------- pending actions after a restart ----------
 
-function revalidate(ctx: Ctx, state: BatchState): "emit" | "cleared" {
+type Revalidated = "emit" | "cleared" | "hold";
+
+function revalidate(ctx: Ctx, state: BatchState): Revalidated {
   const pending = state.pending!;
   const now = ctx.deps.now();
   const target = pending.target === "selftest" ? state.selftests.at(-1) : state.runs[pending.target];
@@ -875,30 +1054,13 @@ function revalidate(ctx: Ctx, state: BatchState): "emit" | "cleared" {
       // Recomputed from the logs on this poll, so a stale question or message is never re-sent.
       state.pending = null;
       return "cleared";
-    case "create_session": {
-      // The driver may have created the session and stopped before recording it: adopt it rather
-      // than start a second run in the same repo.
-      const found = pending.target === "selftest" ? resolveSelfTestSession(ctx, target as SelfTestState) : resolveRunSession(ctx, target as RunState);
-      if (!found) return "emit";
-      target.sessionId = found;
-      const appId = ctx.deps.appDb.workspaceForSession(found);
-      log(ctx, `adopted session ${found} created by an unrecorded create_session`);
-      if (appId) {
-        target.appSessionId = appId;
-        target.status = "running";
-        state.pending = null;
-        return "cleared";
-      }
-      state.pending = null;
-      target.status = "running";
-      issue(ctx, state, "lookup_session", pending.target, { sessionId: found });
-      return "emit";
-    }
+    case "create_session":
+      return reconcileCreate(ctx, state, pending, target, now);
     case "send_message": {
       const run = target as RunState;
       const events = ctx.logs.read(eventsPath(ctx.config.stateDir, run.sessionId ?? "missing"));
       if (messageArrived(events, String(pending.payload.message), ms(pending.issuedAt) - 5000)) {
-        applySent(ctx, run, pending, now);
+        applySent(run, pending, now);
         state.pending = null;
         return "cleared";
       }
@@ -907,27 +1069,115 @@ function revalidate(ctx: Ctx, state: BatchState): "emit" | "cleared" {
   }
 }
 
-function applySent(ctx: Ctx, run: RunState, pending: PendingAction, now: number): void {
+// An issued create_session that was never recorded is uncertain: the driver may have called it.
+// Adopt a session found in the logs or data.db; otherwise wait out the reconcile window, then issue
+// it again (once) only if the run may still start.
+function reconcileCreate(ctx: Ctx, state: BatchState, pending: PendingAction, target: RunState | SelfTestState, now: number): Revalidated {
+  const selfTest = pending.target === "selftest";
+  let found = selfTest ? resolveSelfTestSession(ctx, target as SelfTestState) : resolveRunSession(ctx, target as RunState);
+  let appId = found ? ctx.deps.appDb.workspaceForSession(found) : null;
+  if (!found) {
+    const fromDb = createdSinceInDb(ctx, target.projectId, pending.issuedAt);
+    if (fromDb) {
+      appId = fromDb.appId;
+      found = fromDb.sessionId ?? null;
+    }
+  }
+  if (found || appId) {
+    if (found) target.sessionId = found;
+    log(ctx, `adopted session ${found ?? appId} created by an unrecorded create_session`);
+    state.pending = null;
+    target.status = "running";
+    if (appId) {
+      target.appSessionId = appId;
+      return "cleared";
+    }
+    issue(ctx, state, "lookup_session", pending.target, { sessionId: found });
+    return "emit";
+  }
+  if (since(now, ms(pending.issuedAt)) < CREATE_RECONCILE_MS) return "hold";
+  if ((pending.reissues ?? 0) >= MAX_CREATE_REISSUES) {
+    state.pending = null;
+    const why = "create_session was issued twice and no session appeared";
+    if (selfTest) Object.assign(target, { status: "failed", failure: why });
+    else voidRun(ctx, state, target as RunState, why, true);
+    return "cleared";
+  }
+  if (!selfTest) {
+    const block = admissionBlock(ctx, state);
+    if (block) {
+      state.pending = null;
+      voidRun(ctx, state, target as RunState, `not started: ${block.reason}`, false);
+      stopBatch(ctx, state, block.reason, block.failure);
+      return "cleared";
+    }
+  }
+  pending.reissues = (pending.reissues ?? 0) + 1;
+  pending.issuedAt = iso(now);
+  target.startRequestedAt = iso(now);
+  log(ctx, `reissuing ${pending.id} create_session: no session after ${Math.round(CREATE_RECONCILE_MS / 60_000)} min`);
+  return "emit";
+}
+
+function applySent(run: RunState, pending: PendingAction, now: number): void {
   if (pending.payload.stop) {
     run.stopSentAt = iso(now);
     return;
   }
   if (run.plain) {
     run.plain.sentAt = iso(now);
+    run.plain.issuedAt ??= pending.issuedAt;
     run.answers.push({ kind: "plain", ref: run.plain.messageId, row: run.plain.row, text: run.plain.text, at: iso(now) });
   }
 }
 
+// ---------- ownership ----------
+
+function checkOwner(ctx: Ctx, state: BatchState): void {
+  const me = ctx.deps.driverId;
+  const now = iso(ctx.deps.now());
+  const owner = state.owner;
+  if (!owner) {
+    state.owner = { id: me, since: now, lastSeenAt: now };
+    return;
+  }
+  if (owner.id === me) {
+    owner.lastSeenAt = now;
+    return;
+  }
+  const alive = ctx.deps.driverAlive(owner.id);
+  const silent = since(ctx.deps.now(), ms(owner.lastSeenAt));
+  const gone = alive === false || (alive === null && silent > OWNER_SILENT_MS);
+  if (!gone) {
+    throw new OwnershipError(
+      `Batch ${ctx.config.id} is driven by ${owner.id}, which is still active (last seen ${owner.lastSeenAt}). Only one driver may run a batch. If that driver is really gone, archive its session, or ask the user to run: npm run batch -- take-over --batch ${ctx.config.id}`,
+    );
+  }
+  warn(state, `the driver changed from ${owner.id} to ${me} at ${now}: the first was gone`);
+  log(ctx, `driver ${me} took over from ${owner.id} (${alive === false ? "its session's process is gone" : `silent for ${Math.round(silent / 60_000)} min`})`);
+  state.owner = { id: me, since: now, lastSeenAt: now };
+}
+
 // ---------- public API ----------
+
+const IN_FLIGHT = new Set(["project", "starting", "running", "ending", "scoring", "scored", "settling", "stopping", "draining"]);
 
 export async function step(ctx: Ctx, state: BatchState): Promise<StepResult> {
   const now = ctx.deps.now();
   const current = state.current === null ? null : state.runs[state.current];
-  if (state.lastHeartbeatAt && current?.status === "running" && now - ms(state.lastHeartbeatAt) > DRIVER_GAP_MS) {
-    addFlag(current, "driver-gap", `the driver was away for ${Math.round((now - ms(state.lastHeartbeatAt)) / 60_000)} min (from ${state.lastHeartbeatAt})`, iso(now));
+  if (state.lastHeartbeatAt) {
+    const last = ms(state.lastHeartbeatAt);
+    if (now < last - CLOCK_JUMP_MS) {
+      const detail = `the clock went back ${Math.round((last - now) / 1000)} s (from ${state.lastHeartbeatAt} to ${iso(now)})`;
+      if (current) addFlag(current, "clock-jump", detail, iso(now));
+      warn(state, detail);
+    } else if (current && IN_FLIGHT.has(current.status) && now - last > DRIVER_GAP_MS) {
+      addFlag(current, "driver-gap", `the driver was away for ${Math.round((now - last) / 60_000)} min (from ${state.lastHeartbeatAt})`, iso(now));
+    }
   }
   state.lastHeartbeatAt = iso(now);
   if (state.phase === "selftest" || state.phase === "runs") {
+    claimActive(ctx.config.activeGuard, ctx.config.id, ctx.config.dir, iso(now));
     if (!state.caffeinate) ensureAwake(ctx, state);
     if (!state.notified.includes("batch-started")) {
       const { config } = ctx;
@@ -938,63 +1188,63 @@ export async function step(ctx: Ctx, state: BatchState): Promise<StepResult> {
       await notify(ctx, state, notices.batchStarted(config.id, plan, deadline));
     }
   }
-  if (state.pending) {
-    if (revalidate(ctx, state) === "emit") return { action: render(ctx, state.pending!, true) };
+  let result: StepResult;
+  const revalidated = state.pending ? revalidate(ctx, state) : "cleared";
+  if (revalidated === "emit") result = { action: render(ctx, state, state.pending!, true) };
+  else if (revalidated === "hold") result = {};
+  else {
+    switch (state.phase) {
+      case "selftest":
+        result = await selfTestStep(ctx, state);
+        break;
+      case "runs":
+        result = await runsStep(ctx, state);
+        break;
+      case "finishing":
+        result = { action: await finish(ctx, state) };
+        break;
+      case "done":
+      case "stopped":
+        result = { action: doneAction(ctx, state) };
+        break;
+    }
   }
-  switch (state.phase) {
-    case "selftest":
-      return selfTestStep(ctx, state);
-    case "runs":
-      return runsStep(ctx, state);
-    case "finishing":
-      return { action: await finish(ctx, state) };
-    case "done":
-    case "stopped":
-      return { action: doneAction(ctx, state) };
+  // Failed app-database queries are flagged, so a schema change can't hide a signal silently.
+  for (const error of ctx.deps.appDb.takeErrors()) {
+    const run = state.current === null ? null : state.runs[state.current];
+    if (run) addFlag(run, "app-db", error, iso(now));
+    warn(state, `app database: ${error}`);
   }
+  return result;
 }
 
-function acquireLock(dir: string): () => void {
-  const path = join(dir, "runner.lock");
-  if (existsSync(path)) {
-    const pid = Number(readFileSync(path, "utf8").trim());
-    let alive = false;
-    try {
-      if (pid && pid !== process.pid) {
-        process.kill(pid, 0);
-        alive = true;
-      }
-    } catch {
-      alive = false;
-    }
-    if (alive) throw new Error(`Another runner process (pid ${pid}) is working on this batch. Wait for it to return.`);
-  }
-  writeFileSync(path, String(process.pid));
-  return () => rmSync(path, { force: true });
+function lockOpts(ctx: Ctx) {
+  return { waitMs: LOCK_WAIT_MS, sleep: ctx.deps.sleep, now: ctx.deps.now };
 }
 
 export async function next(ctx: Ctx, opts: { maxWaitMs: number }): Promise<ActionOut> {
-  const release = acquireLock(ctx.config.dir);
-  try {
-    const until = ctx.deps.now() + opts.maxWaitMs;
-    for (;;) {
-      const state = loadState(ctx.config.dir);
-      let result: StepResult;
-      try {
-        result = await step(ctx, state);
-      } finally {
-        saveState(ctx.config.dir, state);
-      }
-      if (result.action) return result.action;
-      if (result.progressed) continue;
-      const left = until - ctx.deps.now();
-      if (left <= 0) {
-        return { batch: ctx.config.id, action: "wait", what: "Nothing to do yet. Run next again straight away." };
-      }
-      await ctx.deps.sleep(Math.min(left, ctx.config.pollSec * 1000));
-    }
-  } finally {
-    release();
+  const until = ctx.deps.now() + opts.maxWaitMs;
+  for (;;) {
+    // The lock is held for one step at a time and released while waiting, so record and stop
+    // can take it between polls.
+    const result = await withLock(
+      ctx.config.dir,
+      async () => {
+        const state = loadState(ctx.config.dir);
+        try {
+          checkOwner(ctx, state);
+          return await step(ctx, state);
+        } finally {
+          saveState(ctx.config.dir, state);
+        }
+      },
+      lockOpts(ctx),
+    );
+    if (result.action) return result.action;
+    if (result.progressed) continue;
+    const left = until - ctx.deps.now();
+    if (left <= 0) return { batch: ctx.config.id, action: "wait", what: "Nothing to do yet. Run next again straight away." };
+    await ctx.deps.sleep(Math.min(left, ctx.config.pollSec * 1000));
   }
 }
 
@@ -1004,6 +1254,7 @@ export interface RecordInput {
   sessionId?: string;
   row?: number;
   answered?: boolean;
+  requestId?: string;
   choice?: string;
   notPending?: boolean;
   final?: string;
@@ -1013,8 +1264,7 @@ export interface RecordInput {
   failed?: string;
 }
 
-export function record(ctx: Ctx, input: RecordInput): string {
-  const state = loadState(ctx.config.dir);
+function applyRecord(ctx: Ctx, state: BatchState, input: RecordInput): string {
   const pending = state.pending;
   if (!pending || pending.id !== input.action) {
     if (state.recorded.includes(input.action)) return `Action ${input.action} was already recorded.`;
@@ -1055,6 +1305,10 @@ export function record(ctx: Ctx, input: RecordInput): string {
       break;
     case "answer_question": {
       const toolCallId = String(p.toolCallId);
+      if (input.failed && /mismatch/i.test(input.failed) && run) addFlag(run, "answer-mismatch", `ask_user ${toolCallId}: ${input.failed}`, at);
+      if (input.requestId && typeof p.requestId === "string" && input.requestId !== p.requestId) {
+        if (run) addFlag(run, "answer-mismatch", `ask_user ${toolCallId}: answered request ${input.requestId}, expected ${String(p.requestId)}`, at);
+      }
       if (p.stop) {
         if (input.failed) run!.stopAttempts = (run!.stopAttempts ?? 0) + 1;
         else run!.stopSentAt = at;
@@ -1063,7 +1317,7 @@ export function record(ctx: Ctx, input: RecordInput): string {
       }
       if (test) {
         test.askAttempts++;
-        if (!input.failed) test.answered = { toolCallId, at, text: String(p.answer ?? "") };
+        if (!input.failed && !input.notPending) test.answered = { toolCallId, at, text: String(p.answer ?? ""), requestId: input.requestId };
         message = input.failed ? "answer failed" : "answer recorded";
         break;
       }
@@ -1077,6 +1331,7 @@ export function record(ctx: Ctx, input: RecordInput): string {
         message = "no open question; the log is checked again";
         break;
       }
+      if (input.requestId) run!.requestIds[toolCallId] ??= input.requestId;
       const row = settleRow(String(p.question ?? ""), input.row);
       const text = replyFor(ctx.sheet, row);
       run!.answers.push({ kind: "ask_user", ref: toolCallId, row, text, choice: input.choice, at });
@@ -1118,29 +1373,66 @@ export function record(ctx: Ctx, input: RecordInput): string {
         addFlag(run!, "send-failed", `send_session_message failed: ${input.failed}`, at);
         message = "send failed";
       } else {
-        applySent(ctx, run!, pending, now);
+        applySent(run!, pending, now);
         message = "sent";
       }
       break;
   }
   state.recorded = [...state.recorded.slice(-200), pending.id];
   state.pending = null;
-  saveState(ctx.config.dir, state);
   log(ctx, `record ${pending.id} ${pending.kind}: ${message}`);
   return message;
 }
 
-export function requestStop(ctx: Ctx): string {
-  const state = loadState(ctx.config.dir);
-  state.stopRequested = true;
-  saveState(ctx.config.dir, state);
-  return "The batch stops after the current run; no new run starts.";
+export async function record(ctx: Ctx, input: RecordInput): Promise<string> {
+  return withLock(
+    ctx.config.dir,
+    () => {
+      const state = loadState(ctx.config.dir);
+      checkOwner(ctx, state);
+      const message = applyRecord(ctx, state, input);
+      saveState(ctx.config.dir, state);
+      return message;
+    },
+    lockOpts(ctx),
+  );
+}
+
+export async function requestStop(ctx: Ctx): Promise<string> {
+  return withLock(
+    ctx.config.dir,
+    () => {
+      const state = loadState(ctx.config.dir);
+      state.stopRequested = true;
+      saveState(ctx.config.dir, state);
+      return "The batch stops after the current run; no new run starts.";
+    },
+    lockOpts(ctx),
+  );
+}
+
+// For the user only, when the owning driver is gone but the runner can't tell.
+export async function takeOver(ctx: Ctx): Promise<string> {
+  return withLock(
+    ctx.config.dir,
+    () => {
+      const state = loadState(ctx.config.dir);
+      const old = state.owner?.id ?? "none";
+      state.owner = null;
+      warn(state, `the user released the batch from driver ${old} at ${iso(ctx.deps.now())}`);
+      saveState(ctx.config.dir, state);
+      return `Released batch ${ctx.config.id} from driver ${old}; the next driver to run next owns it.`;
+    },
+    lockOpts(ctx),
+  );
 }
 
 export function statusText(ctx: Ctx): string {
   const state = loadState(ctx.config.dir);
   const rows = readResults(ctx.config.resultsPath);
   const lines = [`Batch ${ctx.config.id}: phase ${state.phase}${state.stopReason ? ` (${state.stopReason})` : ""}; deadline ${ctx.config.deadline}`];
+  if (state.owner) lines.push(`Driver: ${state.owner.id}, last seen ${state.owner.lastSeenAt}`);
+  if (state.fatal) lines.push(`No new run starts: ${state.fatal}`);
   if (state.pending) lines.push(`Pending action: ${state.pending.id} ${state.pending.kind} (issued ${state.pending.issuedAt})`);
   for (const test of state.selftests) lines.push(`Self-test: ${test.status}${test.failure ? ` (${test.failure})` : ""}`);
   for (const run of state.runs) {

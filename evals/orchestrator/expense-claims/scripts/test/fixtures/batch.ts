@@ -24,12 +24,14 @@ export interface Harness {
   notices: Notice[];
   awake: { started: number; stopped: number };
   next(maxWaitMs?: number): Promise<ActionOut>;
-  record(input: RecordInput): string;
-  drive(action: ActionOut): void;
+  record(input: RecordInput): Promise<string>;
+  drive(action: ActionOut): Promise<void>;
   state(): BatchState;
   // Calls next and acts as the driver until `stop` says so or the batch is done.
   until(stop: (action: ActionOut, state: BatchState) => boolean, limit?: number): Promise<ActionOut>;
   resultsRepo: string;
+  // Liveness answers for driverAlive, by driver id; missing means alive.
+  alive: Map<string, boolean | null>;
 }
 
 const HEADER = RESULT_COLUMNS.join(",") + "\n";
@@ -48,10 +50,13 @@ export async function harness(opts: {
   selfTest?: boolean;
   minutes?: (runName: string) => number;
   deadlineMin?: number;
+  activeGuard?: string;
+  id?: string;
+  runsDir?: string;
 }): Promise<Harness> {
   const dir = mkdtempSync(join(tmpdir(), "orch-eval-runner-"));
   const variants = opts.variants ?? ["variant-a"];
-  const runsDir = join(dir, "runs");
+  const runsDir = opts.runsDir ?? join(dir, "runs");
   const stateDir = join(dir, "session-state");
   const agentsDir = join(dir, "agents");
   const resultsRepo = join(dir, "checkout");
@@ -73,7 +78,7 @@ export async function harness(opts: {
   const clock = { now: Date.parse("2026-03-01T22:00:00.000Z") };
   const app = new FakeApp(stateDir, clock, [...(opts.selfTest ? (["selftest"] as Scenario[]) : []), ...opts.scenarios]);
   const config: BatchConfig = {
-    id: "test-batch",
+    id: opts.id ?? "test-batch",
     createdAt: new Date(clock.now).toISOString(),
     dir: join(dir, "batch"),
     variants,
@@ -104,6 +109,7 @@ export async function harness(opts: {
     minFreeGiB: 1,
     selfTest: { enabled: Boolean(opts.selfTest), only: false, model: "claude-sonnet-5.5", effort: "low", agent: null },
     notify: { urlFile: join(dir, "none"), envVar: "ORCH_EVAL_TEST_NO_ENV" },
+    activeGuard: opts.activeGuard ?? join(dir, "active-batch.json"),
     keepAwake: true,
     push: false,
     dryRun: true,
@@ -146,11 +152,14 @@ export async function harness(opts: {
           minutes: (opts.minutes?.(basename(repoDir)) ?? 20).toFixed(1),
           suite_passed: "59",
           suite_total: "59",
+          note: flag("--note") ?? "",
         });
         return { code: 0, stdout: "scored", stderr: "" };
       }
-      return runProc(cmd, args, { cwd: execOpts?.cwd, env: env() });
+      return runProc(cmd, args, { cwd: execOpts?.cwd, env: env(), timeoutMs: execOpts?.timeoutMs });
     },
+    driverId: "session:driver-1",
+    driverAlive: (id) => (h.alive.has(id) ? h.alive.get(id)! : true),
     notify: async (notice) => {
       notices.push(notice);
       return { ok: true };
@@ -179,6 +188,7 @@ export async function harness(opts: {
     notices,
     awake,
     resultsRepo,
+    alive: new Map<string, boolean | null>(),
     next: (maxWaitMs = 540_000) => next(ctx, { maxWaitMs }),
     record: (input) => record(ctx, input),
     drive: (action) => actAsDriver(ctx, app, clock, action),
@@ -187,7 +197,7 @@ export async function harness(opts: {
       for (let i = 0; i < limit; i++) {
         const action = await h.next();
         if (action.action === "done" || stop(action, h.state())) return action;
-        h.drive(action);
+        await h.drive(action);
       }
       throw new Error("the batch did not reach the expected point");
     },

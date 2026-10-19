@@ -1,6 +1,6 @@
 # Overnight runner for the orchestrator eval — design
 
-Date: 19 October 2026. Status: built; the design calls are not yet reviewed by the user, and the self-test has not run on the real app.
+Date: 19 October 2026. Status: built, then revised after two independent reviews (core logic and manual-run fidelity); the self-test has not run on the real app.
 
 ## How to read this
 
@@ -54,8 +54,14 @@ Two parts: a runner script that holds the plan, the state and every deterministi
   - `next` performs every deterministic step it can. When the next step needs an app tool or a judgment, it prints one JSON action with the exact tool arguments and the `record` commands that fit.
   - The driver does the action and runs `record` with the result.
   - `next` blocks for up to 7 minutes when there is nothing to do, so the driver waits inside a bounded shell call and doesn't poll through the model. **Decided by the user** (the bounded wait), **Design call** (7 minutes, which leaves room in a 10-minute shell call to score a run).
-- Every action has an id and is re-issued until it is recorded. Before a `create_session` or `send_message` action is re-issued after a restart, the runner checks the logs: if the session exists or the message arrived, it adopts that instead of repeating the call. **Design call**
-- A lock file stops two runner processes working on the same batch. **Design call**
+- Every action has an id and is re-issued until it is recorded. A `send_message` that already arrived in the run's log is adopted instead of being sent again. **Design call**
+- Exclusive access. **Decided by the user** (after the core review):
+  - The batch lock is a file created atomically (`O_EXCL`) in the batch folder. Every read-modify-write of the state (`next`, `record`, `stop`, `take-over`) holds it; `next` holds it for one step at a time and releases it while it waits, so `record` and `stop` can't be lost.
+  - A machine-wide guard (`~/orch-evals/active-batch.json`) lets only one batch be active. The preflight fails while another live batch holds it.
+  - The batch records its owning driver: the `COPILOT_AGENT_SESSION_ID` of the session that first ran `next`. Another driver is refused while the owner is alive (its session folder has an `inuse.<pid>.lock` with a live pid), and takes over once it is gone. If liveness can't be told, the owner counts as gone after 15 minutes without a call. The user can release a batch with `take-over`.
+  - A `create_session` that was issued but never recorded is uncertain: the runner looks for the session in the logs and `data.db` and adopts it. Otherwise it waits 5 minutes, then issues it once more, if the run may still start. **Design call** (the 5 minutes and the single reissue).
+- Every subprocess (git, `gh`, `new-run`, `score`) has a time limit and runs in its own process group, which is stopped when the time runs out: 2 minutes for git, 10 for `new-run`, 30 for `score`. A timeout is a failure under the stop rules. **Decided by the user** (the limits), **Design call** (the values).
+- Clock: the runner uses wall-clock time, as the event logs do. A clock that goes back over a minute is flagged, and no duration goes negative. **Decided by the user**
 - The driver's `tools` allowlist is the shell tools, `view`, `grep`, `glob`, `create_project`, `create_session`, `get_session`, `answer_session_input`, `send_session_message`, `report_intent` and `task_complete`: nothing that starts sub-agents and nothing that edits files. **Decided by the user** (the list), **Design call** (the last two).
 
 ## Decisions
@@ -79,6 +85,8 @@ Never as a child session, and never with `send_session_message`.
   - the agent, model, effort and context tier match the request.
 
   A mismatch is flagged, and so is `score`'s warning that the first message came from another session.
+- The kickoff is `kickoff.md` without its trailing newline: run 1's typed kickoff in its event log equals that form, so that is what a manual paste delivers. **Decided by the user** (match a manual paste), **Design call** (the check against run 1's log; no text from it is in the repo).
+- The deadline and the pinned inputs are checked again just before a `create_session` is issued or reissued. A session that already exists is adopted and may finish; a run that hasn't started doesn't start after the deadline. **Decided by the user**
 
 ### Mode and answers
 
@@ -93,6 +101,9 @@ Never as a child session, and never with `send_session_message`.
 
 - For a plain-text answer, the runner reads the reply's `data.source` from the run's log and passes that exact value to `score --answer-source`, rather than guessing the driver's id. It passes `--answer-source` only for runs where such a reply was sent.
 - An `ask_user` still open 2 minutes after an answer is offered again, up to three times, and flagged.
+- `tool.args.answer` only ever holds a real reply: the fixed one for a `need=plan` or `need=pr` question, or the stop message. For any other question it is absent, and the action carries both candidate replies (rows 3 and 4) word for word, with the rule for choosing. The agent file and the rehearsal's scripted driver follow the same contract. **Decided by the user**
+- The driver answers only the question the runner saw: if `get_session` shows a different question, or a retry shows a different `request_id` from the one answered before, it records a failure and the run is flagged. The app's `request_id` couldn't be matched to the log's `toolCallId` from local data, so the runner compares the question text and the driver records the `request_id` it answered. **Decided by the user** (the rule), **Design call** (how it is checked).
+- The plain-text reply's source is looked for from when the send action was issued, not from when the driver recorded it, and its own timestamp is kept. **Decided by the user**
 
 ### The end of a run
 
@@ -100,6 +111,9 @@ Never as a child session, and never with `send_session_message`.
 
 - When the driver judges that the orchestrator's last message is its final report and the swarm is quiet, the runner scores at once with `--end-at` set to that message's time.
 - 90 minutes from the kickoff is a timeout; 15 minutes with no activity anywhere in the swarm is a stall.
+- "Final" means the attempt has ended, not that it succeeded. An unambiguous terminal report, an honest failure included, is scored at its timestamp with `--end-at`, and the suite decides between `passed` and `gate-failed`. Only progress and waiting messages are not final. **Decided by the user** (after the fidelity review, replacing an earlier call that a run which gave up ends as `stalled`)
+- A final-report candidate whose own timestamp is within 90 minutes is judged before a timeout, whenever it is seen, and the cutoff is `>`, as in `score`. **Decided by the user**
+- A pending `ask_user` question is not a stall: the swarm is waiting on the user, which is blocked time. The question is answered even after a long driver gap, and the run's notification and report show the `driver-gap` flag. **Decided by the user** (the core review's M1 was rejected as a defect)
 - Score before sending anything else.
 - Tool-permission prompts and MCP elicitations can't be answered: they are flagged, and the stall rule applies.
 
@@ -109,14 +123,20 @@ Never as a child session, and never with `send_session_message`.
   - The orchestrator is idle when it has no open turn, no open tool call and no open `ask_user`, and has written nothing for 20 seconds.
   - The swarm is every session whose `workspace.yaml` names the run repo, plus the orchestrator.
   - Interactive sessions log no `session.task_complete`, so the end rests on the driver's judgment.
-- A "final report" is a message that says the work is done, as the kickoff asks. A message that says the orchestrator has given up is not one: that run ends as `stalled`, as in a manual run.
+- The self-test has its own rule: the response written after its answered question is its final message, whatever it says. Actions carry `target` (`self-test` or `run`) so the driver can tell them apart. **Decided by the user**
 - `--end-at` gets the exact `timestamp` string of the report's last event in `events.jsonl`, never a re-serialized time: capping even a millisecond early loses the report.
 - After a final report, the runner waits up to 5 minutes for the swarm to go quiet, then scores, flagging the run if it didn't.
+- When the limit is reached, only the latest three messages are offered for judging, so older progress notes are never revisited.
 - Activity is a new event in any of the swarm's logs. At a stall, every open tool call in the swarm is flagged as a possible prompt.
 
 ### After a timeout or a stall
 
 **Decided by the user:** only after scoring, the driver tells the run's orchestrator to stop all work and archive its child sessions. The runner waits, bounded, for the swarm to go quiet before the next run. Leftover sessions are listed in the report.
+
+**Decided by the user** (after both reviews): the next run starts only on a quiet swarm, whatever the run's end.
+- A final-report run is still scored at the report, as in a manual run. Afterwards the runner waits up to 10 minutes for 2 quiet minutes. If the swarm is still busy, it sends the same stop message and waits again.
+- After a timeout or a stall, the stop message is sent at once after scoring.
+- If the swarm is still busy at the end of the drain wait, no further run starts: the batch stops, you are notified, and the report lists the sessions. `swarm-not-quiet` flags the run.
 
 **Design call:**
 
@@ -187,6 +207,7 @@ A failed self-test stops the batch. It never uses an orchestrator agent.
 - The default agent on `claude-sonnet-5.5` at `low`.
 - The question is tagged `need=plan`, so its answer is fixed and can be checked word for word.
 - It also checks that the session has no creator link and that no memories loaded.
+- It also runs every `data.db` lookup the runner uses against its own session and project, and the column probe below. **Decided by the user** (after the core review)
 - `--self-test-agent` can name another agent, but config validation refuses the orchestrators and the variants under test.
 
 ### Notifications, keep-awake and preflight
@@ -211,6 +232,7 @@ A failed self-test stops the batch. It never uses an orchestrator agent.
   - It also checks that `score` supports `--end-at` and `--answer-source`, that the agents under test are installed, that the checkout isn't on `main`, that `results.csv` has no uncommitted changes, git identity, and the notification topic.
   - The scopes it requires are `repo` and `workflow`, because `new-run` pushes the seed's CI workflow.
   - The minimum app version is 1.1.30, where detached top-level runs and `answer_session_input` were observed.
+  - It checks that no other batch is active, and that every `data.db` column the runner reads exists. **Decided by the user**
   - Any FAIL creates no batch.
 
 ### Results and the morning report
@@ -225,7 +247,12 @@ A failed self-test stops the batch. It never uses an orchestrator agent.
 - The commit uses `git commit --only -- results.csv`, so nothing else the checkout holds is committed.
 - The push is on by default and turned off with `--no-push`.
 - The report lists only the commits made since the batch started.
-- Flags stay out of `results.csv` (its `note` column belongs to `score`). They are in the report and the notifications.
+- A results commit that fails is retried up to three times, a minute apart, with the run held until it succeeds. If it still fails, no further run starts, the run's cleanup still happens, and the user is notified. **Decided by the user**
+- `score` gets a compact `--note` built from the flags known before scoring, for example `batch=<id>; driver=eval-runner; memory=off; flags=plain-text-question`; `score` appends its own warnings. So the row in `results.csv` carries the batch's provenance and Memory mode. Flags found after scoring stay in the report and the notification, and a run is never scored again for them. **Decided by the user** (after the fidelity review, replacing an earlier call to keep flags out of `results.csv`)
+
+### The app database
+
+**Decided by the user** (after the core review): each column is read with its own query, so a renamed or missing column loses only its own value and can't hide `was_interrupted`. Failed queries become `app-db` flags, and the preflight and the self-test check every column and lookup the runner uses.
 
 ### An app restart
 
@@ -253,7 +280,8 @@ A failed self-test stops the batch. It never uses an orchestrator agent.
   - notification text, and the URL staying off the command line;
   - the preflight;
   - the command line.
-- `FakeApp` (`scripts/lib/batch/fake-app.ts`) stands in for the app. It writes synthetic session logs on a simulated clock, and scripts the scenarios: a question then a final report, a plain-text question, a stall, a timeout, and the self-test.
+- `batch-regressions.test.ts` turns each scenario from the two reviews into a permanent test: the cross-process lock, a second batch, a second driver, an unconfirmed `create_session`, a stop request during `next`, final reports at 89:50, 90:00 and after a driver gap, busy swarms after a final report and after a timeout, a question left open over a driver gap, the deadline and pins just before a kickoff, late plain-text answers, failing results commits, the answer contract, question mismatches, the self-test rule, an honest failure report, the `--note`, the kickoff bytes, app-database errors, a `score` timeout, a clock going back, and timed-out subprocesses. `batch-appdb.test.ts` runs the database adapter against a real SQLite file with columns missing.
+- `FakeApp` (`scripts/lib/batch/fake-app.ts`) stands in for the app. It writes synthetic session logs on a simulated clock, and scripts the scenarios: a question then a final report, a plain-text question, an honest failure report, a busy child after the final report, swarms that ignore the stop message, a stall, a timeout, and the self-test.
 - `npm run batch -- rehearse` and its test run a whole batch end to end with the app and driver stubbed:
   - the real `new-run --dry-run`, `score` and acceptance suite;
   - real git commits;
@@ -271,8 +299,10 @@ A failed self-test stops the batch. It never uses an orchestrator agent.
 - **The screen locked:** the behaviour is unverified. Sessions are background CLI processes and `caffeinate` keeps the machine awake, but the user should keep the lid open and the laptop on AC power. Computer use isn't involved: it is blocked for this app.
 - **Leftover sessions:** the driver can't archive detached sessions, so each run's orchestrator, any unarchived child and the self-test session stay in the sidebar until the user archives them or the app's auto-clean does.
 - **Memory off** changes the condition: batch results are "Memory off" runs, and manual comparisons should be made the same way.
-- **Judgments:** the end time and the row for untagged questions depend on the driver's judgment. The runner bounds the effect: `--end-at` pins the end to the report's own timestamp, and a wrong "not final" judgment ends as a stall.
+- **Judgments:** the end time and the row for untagged questions depend on the driver's judgment. The runner bounds the effect: `--end-at` pins the end to the report's own timestamp, a report written in time is judged before a timeout, and a wrong "not final" judgment ends as a stall or a timeout.
+- **A busy swarm** that ignores the stop message stops the batch for the night. That costs the remaining runs, but never puts two swarms side by side.
 - **Activity:** the runner reads logs, not whether a session is busy. A command that writes nothing for 15 minutes while everything else is idle counts as a stall.
 - **The app records runs as created by an agent** (`workspaces.created_by`). Nothing found reads it in a way that changes the run.
-- **The app's internals:** the event log and `data.db` are internal and may change in an app update. Pinning stops the batch when the app version changes mid-batch. The self-test checks the path at the start of each batch.
+- **The app's internals:** the event log and `data.db` are internal and may change in an app update. Pinning stops the batch when the app version changes mid-batch. The self-test and the preflight check the path and every `data.db` column the runner reads at the start of each batch.
+- **Driver identity:** ownership relies on the app setting `COPILOT_AGENT_SESSION_ID` for a session's shell and keeping `inuse.<pid>.lock` in the session folder while its CLI runs, as observed on app 1.1.30. If either changes, the owner counts as gone after 15 silent minutes.
 - **Not yet run on the real app:** the self-test is the first real check. The user runs it after the merge.

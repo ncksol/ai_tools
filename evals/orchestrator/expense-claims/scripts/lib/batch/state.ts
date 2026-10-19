@@ -41,6 +41,8 @@ export interface BatchConfig {
   minFreeGiB: number;
   selfTest: { enabled: boolean; only: boolean; model: string; effort: string; agent: string | null };
   notify: { urlFile: string; envVar: string };
+  // The machine-wide file that lets only one batch be active at a time.
+  activeGuard: string;
   keepAwake: boolean;
   push: boolean;
   // A dry-run batch never touches GitHub and must never be driven with real app tools.
@@ -65,6 +67,10 @@ export type FlagCode =
   | "answer-source-unknown"
   | "score-failed"
   | "score-warning"
+  | "commit-failed"
+  | "app-db"
+  | "clock-jump"
+  | "answer-mismatch"
   | "start-failed"
   | "send-failed";
 
@@ -99,6 +105,7 @@ export type RunStatus =
   | "ending"
   | "scoring"
   | "scored"
+  | "settling"
   | "stopping"
   | "draining"
   | "done"
@@ -124,7 +131,11 @@ export interface RunState {
   judged: string[];
   answers: Answer[];
   askAttempts: Record<string, { count: number; at: string }>;
-  plain?: { messageId: string; row: number; text: string; sentAt?: string; sendAttempts: number };
+  // The request_id the driver answered for each ask_user call, as reported by get_session.
+  requestIds: Record<string, string>;
+  // issuedAt is when the send action was issued; the reply is looked for from then, not from when
+  // the driver recorded it. deliveredAt is the reply's own timestamp in the run's log.
+  plain?: { messageId: string; row: number; text: string; issuedAt?: string; sentAt?: string; deliveredAt?: string; sendAttempts: number };
   answerSource?: string;
   final?: FinalMessage;
   endReason?: "final" | "timeout" | "stalled";
@@ -133,8 +144,13 @@ export interface RunState {
   scoreExit?: number;
   scoreLog?: string;
   row?: Record<string, string>;
+  note?: string;
+  hygieneScanned?: boolean;
   committed?: boolean;
+  commitAttempts?: number;
+  lastCommitAttemptAt?: string;
   notified?: boolean;
+  settlingSince?: string;
   stopSentAt?: string;
   stopAttempts?: number;
   drainingSince?: string;
@@ -153,7 +169,7 @@ export interface SelfTestState {
   appSessionId?: string;
   sessionId?: string;
   startRequestedAt?: string;
-  answered?: { toolCallId: string; at: string; text: string };
+  answered?: { toolCallId: string; at: string; text: string; requestId?: string };
   askAttempts: number;
   judged: string[];
   final?: FinalMessage;
@@ -175,6 +191,8 @@ export interface PendingAction {
   target: "selftest" | number;
   issuedAt: string;
   payload: Record<string, unknown>;
+  // How often an unconfirmed create_session was issued again after reconciling found no session.
+  reissues?: number;
 }
 
 export interface Pins {
@@ -189,6 +207,10 @@ export interface BatchState {
   stopReason?: string;
   // The batch stopped because something went wrong, not because it ran out of work or time.
   failed?: boolean;
+  // Set when the batch must start no further run, for example after a results commit failed for good.
+  fatal?: string;
+  // The driver session that runs this batch. Another driver is refused while this one is alive.
+  owner: { id: string; since: string; lastSeenAt: string } | null;
   pins: Pins;
   pending: PendingAction | null;
   actionSeq: number;
@@ -223,6 +245,7 @@ export function defaultPaths() {
     cliVersionFile: "/Applications/GitHub.app/Contents/Resources/copilot-sdk/cliVersion.d.ts",
     resultsPath: join(KIT_DIR, "results.csv"),
     ntfyUrlFile: join(home, ".config", "orch-evals", "ntfy-url"),
+    activeGuard: join(home, "orch-evals", "active-batch.json"),
   };
 }
 
@@ -307,6 +330,7 @@ export function initialState(pins: Pins, selfTest: boolean, now: string): BatchS
     calibration: "",
     startedAt: now,
     warnings: [],
+    owner: null,
   };
 }
 

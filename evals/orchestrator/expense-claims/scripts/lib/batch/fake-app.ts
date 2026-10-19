@@ -4,9 +4,19 @@
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { LogEvent } from "../events.ts";
-import type { AppDb, WorkspaceRow } from "./appdb.ts";
+import type { AppDb, Interruption, WorkspaceRow } from "./appdb.ts";
 
-export type Scenario = "selftest" | "ask-final" | "plain-final" | "stall" | "timeout" | "silent";
+export type Scenario =
+  | "selftest"
+  | "ask-final"
+  | "plain-final"
+  | "gave-up"
+  | "stall"
+  | "timeout"
+  | "busy-child"
+  | "runaway"
+  | "timeout-runaway"
+  | "silent";
 
 const MIN = 60_000;
 
@@ -20,6 +30,7 @@ interface FakeSession {
   nextAt: number;
   ask?: { toolCallId: string; requestId: string; question: string };
   children: string[];
+  createdAt: string;
   stopped: boolean;
   answered?: string;
 }
@@ -77,7 +88,18 @@ export class FakeApp implements AppDb {
     this.write(id, "system.message", { role: "system", content: "You are a rehearsal session. No memories." });
     this.write(id, "user.message", { content: kickoff.prompt });
     this.write(id, "assistant.turn_start");
-    this.sessions.set(appId, { appId, id, projectId: String(args.project_id), repository: project.repository, scenario, stage: 0, nextAt: this.clock.now + MIN, children: [], stopped: false });
+    this.sessions.set(appId, {
+      appId,
+      id,
+      projectId: String(args.project_id),
+      repository: project.repository,
+      scenario,
+      stage: 0,
+      nextAt: this.clock.now + MIN,
+      children: [],
+      stopped: false,
+      createdAt: new Date(this.clock.now).toISOString(),
+    });
     return appId;
   }
 
@@ -198,6 +220,35 @@ export class FakeApp implements AppDb {
           return false;
         }
         return false;
+      case "gave-up":
+        if (s.stage === 0) {
+          s.stage = 1;
+          this.message(s, "I've stopped. Policy and reports are merged; CSV import is unfinished and its tests fail.");
+          return false;
+        }
+        return false;
+      case "busy-child":
+      case "runaway":
+        // Reports done, but its child keeps working: until the stop message (busy-child) or for good (runaway).
+        if (s.stage === 0) {
+          s.stage = 1;
+          this.child(s);
+          this.message(s, "All features are merged into main and CI on main is green. The work is done.");
+        }
+        if (s.stopped && s.scenario === "busy-child") return false;
+        for (const child of s.children) this.write(child, "tool.execution_complete", { toolCallId: this.id("call") });
+        later(1);
+        return true;
+      case "timeout-runaway":
+        // Works past the timeout, and its child ignores the stop message.
+        if (s.stage === 0) {
+          s.stage = 1;
+          this.message(s, "Working on it.");
+          this.child(s);
+        }
+        for (const child of s.children) this.write(child, "tool.execution_complete", { toolCallId: this.id("call") });
+        later(1);
+        return true;
       case "stall":
         if (s.stage === 0) {
           s.stage = 1;
@@ -236,13 +287,19 @@ export class FakeApp implements AppDb {
     return this.projects.has(projectId) ? 1 : null;
   }
   interrupted = new Set<string>();
-  sessionSettings(id: string): Record<string, unknown> | null {
-    return { was_interrupted: this.interrupted.has(id) ? 1 : 0, interruption_reason: this.interrupted.has(id) ? "shutdown" : null };
+  interruption(id: string): Interruption | null {
+    return { wasInterrupted: this.interrupted.has(id), reason: this.interrupted.has(id) ? "shutdown" : null };
+  }
+  probe(): string[] {
+    return [];
+  }
+  takeErrors(): string[] {
+    return [];
   }
   workspaces(projectId: string): WorkspaceRow[] | null {
     return [...this.sessions.values()]
       .filter((session) => session.projectId === projectId)
-      .map((session) => ({ id: session.appId, sessionId: session.id, name: `${session.repository} (${session.scenario})`, archivedAt: null, createdBy: "agent" }));
+      .map((session) => ({ id: session.appId, sessionId: session.id, name: `${session.repository} (${session.scenario})`, archivedAt: null, createdBy: "agent", createdAt: session.createdAt }));
   }
   creatorLinks(appId: string): { creator: string | null; coordinator: string | null; createdBy: string | null } | null {
     return this.sessions.has(appId) ? { creator: null, coordinator: null, createdBy: "agent" } : null;

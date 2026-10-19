@@ -5,12 +5,13 @@ import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { openAppDb, noAppDb } from "./lib/batch/appdb.ts";
+import { pidAlive } from "./lib/batch/lock.ts";
 import { notices, readNtfyUrl, sendNtfy } from "./lib/batch/notify.ts";
 import { describePlan, calibrationDecision } from "./lib/batch/plan.ts";
 import { formatChecks, MANUAL_STEPS, runPreflight } from "./lib/batch/preflight.ts";
 import { rehearse } from "./lib/batch/rehearsal.ts";
 import { buildReport } from "./lib/batch/report.ts";
-import { currentPins, makeCtx, next, record, requestStop, statusText, type Deps, type RecordInput } from "./lib/batch/runner.ts";
+import { currentPins, makeCtx, next, record, requestStop, statusText, takeOver, type Deps, type RecordInput } from "./lib/batch/runner.ts";
 import {
   batchId,
   defaultPaths,
@@ -33,6 +34,7 @@ const USAGE = `Usage (from evals/orchestrator/expense-claims):
   npm run batch -- next --batch <id|path|latest> [--max-wait 420]
   npm run batch -- record --batch <id|path|latest> --action <id> <result flags>
   npm run batch -- status|stop|report --batch <id|path|latest>
+  npm run batch -- take-over --batch <id|path|latest>   (you only: release a batch whose driver is gone)
   npm run batch -- alert --batch <id|path|latest> --message <text>
   npm run batch -- notify-test
   npm run batch -- rehearse
@@ -40,7 +42,7 @@ const USAGE = `Usage (from evals/orchestrator/expense-claims):
 init options: --model claude-opus-5.5 --effort max --context-tier long_context --owner ncksol
   --self-test-model claude-sonnet-5.5 --self-test-effort low --self-test-agent <name>
   --runs-dir <dir> --batches-dir <dir> --no-push --dry-run (tests only; never drive it with app tools)
-record flags: --project-id <id> | --session-id <id> | --answered | --row <n> [--choice <text>] | --not-pending
+record flags: --project-id <id> | --session-id <id> | --answered | --row <n> [--request-id <id>] [--choice <text>] | --not-pending
   | --final <messageId> | --question <messageId> [--row <n>] | --neither | --sent | --failed <error>`;
 
 const { values, positionals } = parseArgs({
@@ -76,6 +78,7 @@ const { values, positionals } = parseArgs({
     "project-id": { type: "string" },
     "session-id": { type: "string" },
     answered: { type: "boolean", default: false },
+    "request-id": { type: "string" },
     row: { type: "string" },
     choice: { type: "string" },
     "not-pending": { type: "boolean", default: false },
@@ -107,7 +110,19 @@ function realDeps(config: BatchConfig): Deps {
   return {
     now: () => Date.now(),
     sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
-    exec: (cmd, args, opts) => run(cmd, args, { cwd: opts?.cwd }),
+    exec: (cmd, args, opts) => run(cmd, args, { cwd: opts?.cwd, timeoutMs: opts?.timeoutMs }),
+    driverId: process.env.COPILOT_AGENT_SESSION_ID ? `session:${process.env.COPILOT_AGENT_SESSION_ID}` : "local",
+    // An app session's CLI holds inuse.<pid>.lock in its session folder while it runs.
+    driverAlive: (id) => {
+      const match = /^session:(.+)$/.exec(id);
+      if (!match) return null;
+      const dir = join(config.stateDir, match[1]);
+      if (!existsSync(dir)) return null;
+      return readdirSync(dir).some((name) => {
+        const pid = /^inuse\.(\d+)\.lock$/.exec(name)?.[1];
+        return pid !== undefined && pidAlive(Number(pid));
+      });
+    },
     notify: async (notice) => {
       const url = readNtfyUrl({ envVar: config.notify.envVar, urlFile: config.notify.urlFile });
       return url ? sendNtfy(url, notice) : { ok: false, error: "no ntfy topic configured" };
@@ -182,6 +197,8 @@ async function init(): Promise<number> {
     minFreeGiB: 20,
     selfTest: { enabled: true, only: values["self-test-only"], model: values["self-test-model"], effort: values["self-test-effort"], agent: values["self-test-agent"] ?? null },
     notify: { urlFile: resolve(values["ntfy-url-file"]), envVar: NTFY_ENV_VAR },
+    // Machine-wide for real batches; a dry run (tests) keeps its own guard beside its batches.
+    activeGuard: values["dry-run"] ? join(values["batches-dir"], "active-batch.json") : paths.activeGuard,
     keepAwake: !values["dry-run"],
     push: !values["no-push"],
     dryRun: values["dry-run"],
@@ -191,7 +208,11 @@ async function init(): Promise<number> {
   if (problems.length > 0) throw new UsageError(problems.join("; "));
   config.memoryOffConfirmed = await confirmMemoryOff();
 
-  const checks = await runPreflight(config, { exec: (cmd, args, opts) => run(cmd, args, { cwd: opts?.cwd }), nodeVersion: process.version });
+  const checks = await runPreflight(config, {
+    exec: (cmd, args, opts) => run(cmd, args, { cwd: opts?.cwd, timeoutMs: opts?.timeoutMs }),
+    nodeVersion: process.version,
+    appDb: config.dryRun ? noAppDb : openAppDb(config.appDb),
+  });
   console.log(`Preflight for batch ${id}:\n${formatChecks(checks)}\n`);
   console.log(`One-time manual steps (only you can do these):\n${MANUAL_STEPS.map((step, i) => `${i + 1}. ${step}`).join("\n")}\n`);
   if (checks.some((check) => check.status === "FAIL")) {
@@ -200,7 +221,7 @@ async function init(): Promise<number> {
   }
   saveConfig(config);
   const state = initialState(currentPins(config), config.selfTest.enabled, now.toISOString());
-  state.resultsBase = (await run("git", ["rev-parse", "HEAD"], { cwd: dirname(config.resultsPath) })).stdout.trim() || undefined;
+  state.resultsBase = (await run("git", ["rev-parse", "HEAD"], { cwd: dirname(config.resultsPath), timeoutMs: 60_000 })).stdout.trim() || undefined;
   saveState(dir, state);
   const decision = calibrationDecision(readResults(config.resultsPath), config.variants);
   console.log(`Batch ${id} created at ${dir}.`);
@@ -224,6 +245,7 @@ function recordInput(): RecordInput {
     sessionId: values["session-id"],
     row,
     answered: values.answered,
+    requestId: values["request-id"],
     choice: values.choice,
     notPending: values["not-pending"],
     final: values.final,
@@ -273,6 +295,7 @@ async function main(): Promise<number> {
     case "record":
     case "status":
     case "stop":
+    case "take-over":
     case "report": {
       const config = loadConfig(resolveBatchDir());
       const ctx = makeCtx(config, realDeps(config));
@@ -281,12 +304,13 @@ async function main(): Promise<number> {
         if (!(maxWait >= 0 && maxWait <= 590)) throw new UsageError("--max-wait must be 0 to 590 seconds");
         const action = await next(ctx, { maxWaitMs: maxWait * 1000 });
         console.log(JSON.stringify(action, null, 2));
-      } else if (command === "record") console.log(record(ctx, recordInput()));
+      } else if (command === "record") console.log(await record(ctx, recordInput()));
       else if (command === "status") console.log(statusText(ctx));
-      else if (command === "stop") console.log(requestStop(ctx));
+      else if (command === "stop") console.log(await requestStop(ctx));
+      else if (command === "take-over") console.log(await takeOver(ctx));
       else {
         const state = loadState(config.dir);
-        const branch = (await run("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: KIT_DIR })).stdout.trim();
+        const branch = (await run("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: KIT_DIR, timeoutMs: 60_000 })).stdout.trim();
         console.log(buildReport(config, state, ctx.deps.appDb, { branch: branch || null, commits: [], pushed: null }));
       }
       return 0;

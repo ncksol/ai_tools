@@ -24,7 +24,7 @@ function row(variant: string, run: number, features: string, calibration: "yes" 
 }
 
 function run(variant: string, n: number): RunState {
-  return { key: `${variant}#${n}`, variant, n, features: ALL_FEATURES, calibration: false, name: `orch-eval-${variant}-${n}`, repoDir: "", repo: `ncksol/orch-eval-${variant}-${n}`, status: "done", createdAt: "", judged: [], answers: [], askAttempts: {}, flags: [] };
+  return { key: `${variant}#${n}`, variant, n, features: ALL_FEATURES, calibration: false, name: `orch-eval-${variant}-${n}`, repoDir: "", repo: `ncksol/orch-eval-${variant}-${n}`, status: "done", createdAt: "", judged: [], answers: [], askAttempts: {}, requestIds: {}, flags: [] };
 }
 
 test("today's results.csv: run 1 at 65.7 minutes forces dropping Summary for two variants, with no calibration run", () => {

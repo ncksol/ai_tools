@@ -116,7 +116,7 @@ test("a stall is scored after 15 quiet minutes, and open tool calls are flagged 
 test("a create_session the driver made but never recorded is adopted, not repeated", async () => {
   const h = await make({ scenarios: ["ask-final"] });
   let action = await h.next();
-  h.drive(action); // create_project
+  await h.drive(action); // create_project
   action = await h.next();
   assert.equal(action.action, "create_session");
   h.app.createSession(action.tool!.args); // the driver called the tool, then died before recording it
@@ -134,15 +134,15 @@ test("a pending action is re-issued until it is recorded; unknown and repeated i
   const second = await h.next();
   assert.equal(second.id, first.id);
   assert.equal(second.reissued, true);
-  assert.throws(() => h.record({ action: "a99", projectId: "p" }), /not the pending action/);
-  assert.match(h.record({ action: first.id!, projectId: h.app.createProject(String(first.tool!.args.path)) }), /recorded/);
-  assert.match(h.record({ action: first.id!, projectId: "p" }), /already recorded/);
+  await assert.rejects(h.record({ action: "a99", projectId: "p" }), /not the pending action/);
+  assert.match(await h.record({ action: first.id!, projectId: h.app.createProject(String(first.tool!.args.path)) }), /recorded/);
+  assert.match(await h.record({ action: first.id!, projectId: "p" }), /already recorded/);
 });
 
 test("the batch resumes from its files: a fresh process picks up where the last one stopped", async () => {
   const h = await make({ scenarios: ["ask-final"] });
-  h.drive(await h.next()); // create_project
-  h.drive(await h.next()); // create_session
+  await h.drive(await h.next()); // create_project
+  await h.drive(await h.next()); // create_session
   // A new runner context (new process, empty caches) on the same batch folder.
   const { makeCtx, next } = await import("../lib/batch/runner.ts");
   const ctx2 = makeCtx(h.config, h.ctx.deps);
@@ -154,7 +154,7 @@ test("the batch resumes from its files: a fresh process picks up where the last 
 test("an ask_user without free text: the chosen choice is recorded and the run flagged", async () => {
   const h = await make({ scenarios: ["ask-final"] });
   const action = await h.until((a) => a.action === "answer_question");
-  h.record({ action: action.id!, answered: true, choice: "yes" });
+  await h.record({ action: action.id!, answered: true, choice: "yes" });
   const run = h.state().runs[0];
   assert.ok(run.flags.some((f) => f.code === "choice-answer" && /"yes" for row 1/.test(f.detail)));
 });
@@ -232,7 +232,7 @@ test("two runs in a row that fail to start stop the batch", async () => {
   for (let i = 0; i < 2; i++) {
     const action = await h.next();
     assert.equal(action.action, "create_project");
-    h.record({ action: action.id!, failed: "tool not available" });
+    await h.record({ action: action.id!, failed: "tool not available" });
   }
   const done = await h.next();
   assert.equal(done.action, "done");

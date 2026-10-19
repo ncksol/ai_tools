@@ -356,14 +356,15 @@ export function idleCandidate(
   return { messages: unjudged.slice(-3), swarmQuiet, reason };
 }
 
-// The data.source of the driver's plain-text reply, read from the run's log rather than guessed.
-export function findReplySource(events: LogEvent[], reply: string, sinceMs: number): string | null {
+// The driver's plain-text reply in the run's log: its data.source, read rather than guessed, and
+// its own timestamp.
+export function findReplySource(events: LogEvent[], reply: string, sinceMs: number): { source: string; timestamp: string } | null {
   for (const event of events) {
     if (event.agentId || event.type !== "user.message" || at(event) < sinceMs) continue;
     const source = str(event.data?.source);
     if (!source?.startsWith("agent-")) continue;
     const content = `${event.data?.content ?? ""}\n${event.data?.transformedContent ?? ""}`;
-    if (content.includes(reply)) return source;
+    if (content.includes(reply)) return { source, timestamp: event.timestamp };
   }
   return null;
 }

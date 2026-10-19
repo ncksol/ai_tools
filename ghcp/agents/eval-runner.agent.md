@@ -44,7 +44,11 @@ If the user asks you to create the batch or a self-test instead, run `init` (or 
 3. Run the action's `record` command with the result. Pick the one line from the action's `record` list that fits, and fill in its placeholders.
 4. Go back to step 1 straight away.
 
+Each action has `target`: `"self-test"` for the batch's self-test, or `"run"` for an eval run, with the run's name in `run`.
+
 If `next` says another runner process is working on the batch, an earlier `next` is still running in the background: wait for it with `read_bash` and use its output.
+
+Only one driver runs a batch. If `next` or `record` says another driver owns the batch and is still active, stop: show the message and call `task_complete`. Never try to take the batch over yourself; the runner hands it over on its own once the other driver is gone, and only the user runs `take-over`. If `next` says another batch is active on this machine, stop the same way.
 
 ## Actions
 
@@ -58,21 +62,23 @@ If `next` says another runner process is working on the batch, an earlier `next`
 
 **`answer_question`**: a run's orchestrator, or the self-test, is waiting on an `ask_user` question. Answer at once:
 
-1. Call `get_session` with the action's `project_session_id`. Take `awaiting_input.request_id`. If there is no `awaiting_input`, record `--not-pending`.
-2. Check that the question matches `details.question`.
+1. Call `get_session` with `tool.args.project_session_id`. If there is no `awaiting_input`, record `--not-pending`.
+2. Answer only the question the runner saw. If `awaiting_input.question` isn't exactly `details.question`, or `details.requestId` is set and `awaiting_input.request_id` differs from it, answer nothing and record `--failed "question mismatch"`.
 3. Choose the answer text:
-   - If `tool.args.answer` is text, use it as it is. The question's tag fixed the row, or this is the stop message.
-   - Otherwise, judge the row. Row 3 if the question is about the spec: what to build, the API's behaviour, data formats, validation, or anything `docs/spec-v2.md` or the run repo's README could answer. Row 4 for anything else. If it asks several things, row 3 wins if any part is about the spec. Use that row's text from `details.candidates`.
-4. Call `answer_session_input` with the `project_session_id`, the `request_id` and the answer text, as free text, word for word. If the prompt doesn't allow free text (`details.allowFreeform` is false, or the tool refuses free text), pick the choice closest in meaning to the answer text instead, and add `--choice "<choice>"` when you record.
-5. Record `--answered` if the answer was fixed, or `--row <3|4>` if you judged it. If the tool fails, for example because the prompt is an MCP elicitation that no tool can answer, record `--failed "<error>"`.
+   - If `tool.args` has an `answer`, use it as it is. The question's tag fixed the row, or this is the stop message.
+   - If `tool.args` has no `answer`, choose the row by `details.rule`: row 3 for a question about the spec, row 4 for anything else. Use `details.candidates["3"]` or `details.candidates["4"]`, word for word. Never write a reply of your own.
+4. Call `answer_session_input` with the `project_session_id`, `request_id` = `awaiting_input.request_id`, and the answer text, as free text, word for word. If the prompt doesn't allow free text (`details.allowFreeform` is false, or the tool refuses free text), pick the choice closest in meaning to the answer text instead, and add `--choice "<choice>"` when you record.
+5. Record `--answered` if `tool.args` had the answer, or `--row <3|4>` if you chose it, and always `--request-id <request_id>`. If the tool fails, for example because the prompt is an MCP elicitation that no tool can answer, record `--failed "<error>"`.
 
-**`judge_idle`**: the orchestrator has gone idle. Read `details.messages`, its latest messages, oldest first, and decide which one case fits:
+**`judge_idle`** with `target` `"self-test"`: the self-test session has gone idle. Its final message is the response it wrote after its `ask_user` question was answered, whatever it says. Record `--final` with the id of the latest message in `details.messages`. The runner checks the answer itself.
 
-- **Final report**: a message that tells the user the work is done, as the kickoff asked: every feature merged and CI on main green. Caveats don't matter, and neither does whether its claims are true; the acceptance suite checks that. Record `--final <messageId>` with the id of the report itself, not of a later short acknowledgement.
+**`judge_idle`** with `target` `"run"`: the orchestrator has gone idle, or its run has reached the 90-minute or stall limit (`details.reason` says which). Read `details.messages`, its latest messages, oldest first, and decide by `details.rule` which one case fits:
+
+- **Final report**: a message that tells the user the attempt has ended. It may claim success ("every feature is merged and CI on main is green") or report an honest failure ("I've stopped; import is unfinished"). Whether it succeeded doesn't matter, and neither does whether its claims are true: the acceptance suite decides between passed and gate-failed. Record `--final <messageId>` with the id of the report itself, not of a later short acknowledgement.
 - **Question**: the latest message asks the user something and waits for the answer: an approval, a choice or a clarification. Record `--question <messageId>`. Add `--row 3` for a question about the spec or `--row 4` for anything else, unless the question starts with a `need=plan` or `need=pr` tag, which fixes the row. Don't answer it yourself: the runner gives you a `send_message` action next.
-- **Neither**: progress updates, plans without a question, notes that it is waiting for its child sessions, a report that says work remains, or one that says it has given up without asking anything. Record `--neither`; a run that has given up ends as `stalled` after 15 quiet minutes, as in a manual run.
+- **Neither**: progress updates, plans without a question, notes that it is waiting for its child sessions, or anything that says work continues. Record `--neither`.
 
-If you are unsure whether a message is a final report, choose `--neither`: the stall and timeout rules still end the run. Only judge; never send anything for a `judge_idle` action.
+A final report needs no particular wording, but it must say the attempt is over. If a message could be a progress note, choose `--neither`: the stall and timeout rules still end the run. Only judge; never send anything for a `judge_idle` action.
 
 **`send_message`**: call `send_session_message` with `tool.args.session_id` and `tool.args.message`, word for word, and nothing else. Record `--sent`, or `--failed "<error>"`.
 
@@ -82,5 +88,6 @@ If you are unsure whether a message is a final report, choose `--neither`: the s
 
 - A tool call fails: record `--failed` with the error. The runner decides what happens to the run.
 - `record` says the action is not the pending one: run `next` and follow the action it gives.
+- `next` or `record` says another runner process is working on the batch and doesn't finish within its wait: run it again after `sleep 60`.
 - `next` exits with an error or prints no JSON: run it again after `sleep 60`. After three failures in a row, run `alert --batch <id> --message "<the error>"` so the user gets a phone notification, show the error and `status`, and call `task_complete`.
 - After your context is compacted, nothing is lost: the plan and state are in the batch folder. Run `status`, then carry on with `next`.

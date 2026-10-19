@@ -151,7 +151,7 @@ test("the driver's reply source is read from the log, not guessed", () => {
     ev("user.message", 5, { source: "agent-child-1", transformedContent: "<cross_session_message>\nreport\n</cross_session_message>" }),
     ev("user.message", 9, { source: "agent-1234abcd", content: reply, transformedContent: `<cross_session_message>\n${reply}\n</cross_session_message>` }),
   ]);
-  assert.equal(findReplySource(events, reply, BASE + 8 * MIN), "agent-1234abcd");
+  assert.deepEqual(findReplySource(events, reply, BASE + 8 * MIN), { source: "agent-1234abcd", timestamp: new Date(BASE + 9 * MIN).toISOString() });
   assert.equal(findReplySource(events, reply, BASE + 10 * MIN), null);
   assert.equal(messageArrived(events, reply, BASE + 8 * MIN), true);
   assert.equal(messageArrived(events, "other", BASE), false);

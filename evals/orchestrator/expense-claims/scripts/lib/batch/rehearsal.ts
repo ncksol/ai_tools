@@ -117,6 +117,7 @@ export async function rehearse(opts: { scenarios?: Scenario[]; runsPerVariant?: 
     minFreeGiB: 1,
     selfTest: { enabled: true, only: false, model: "claude-sonnet-5.5", effort: "low", agent: null },
     notify: { urlFile, envVar: "ORCH_EVAL_REHEARSAL_NO_ENV" },
+    activeGuard: join(dir, "active-batch.json"),
     keepAwake: true,
     push: false,
     dryRun: true,
@@ -139,7 +140,9 @@ export async function rehearse(opts: { scenarios?: Scenario[]; runsPerVariant?: 
       clock.now += ms;
       app.tick();
     },
-    exec: (cmd, args, execOpts) => runProc(cmd, args, { cwd: execOpts?.cwd, env: childEnv() }),
+    exec: (cmd, args, execOpts) => runProc(cmd, args, { cwd: execOpts?.cwd, env: childEnv(), timeoutMs: execOpts?.timeoutMs }),
+    driverId: "session:rehearsal-driver",
+    driverAlive: () => true,
     notify: async (notice: Notice) => {
       const url = readNtfyUrl({ envVar: config.notify.envVar, urlFile: config.notify.urlFile });
       return url ? sendNtfy(url, notice) : { ok: false, error: "no topic" };
@@ -163,7 +166,7 @@ export async function rehearse(opts: { scenarios?: Scenario[]; runsPerVariant?: 
     for (let guard = 0; guard < 2000 && !final; guard++) {
       const action = await next(ctx, { maxWaitMs: 540_000 });
       if (action.action === "done") final = action;
-      else actAsDriver(ctx, app, clock, action, say);
+      else await actAsDriver(ctx, app, clock, action, say);
     }
   } finally {
     await ntfy.close();
@@ -172,53 +175,62 @@ export async function rehearse(opts: { scenarios?: Scenario[]; runsPerVariant?: 
   return { dir, config, transcript, notifications: ntfy.received, final, app, awake };
 }
 
-// The scripted driver: does what the eval-runner agent would do for one action, against FakeApp.
-// Its judgments are simple text rules that fit FakeApp's scripted messages.
-export function actAsDriver(ctx: Ctx, app: FakeApp, clock: { now: number }, action: ActionOut, say: (line: string) => void = () => {}): void {
+// The scripted driver: does what the eval-runner agent file says for one action, against FakeApp.
+// It follows the same contract as the agent: a fixed answer only when tool.args.answer is present,
+// a question-text check before answering, and the self-test's own completion rule. Its judgments
+// are simple text rules that fit FakeApp's scripted messages.
+export async function actAsDriver(ctx: Ctx, app: FakeApp, clock: { now: number }, action: ActionOut, say: (line: string) => void = () => {}): Promise<void> {
   if (action.action === "wait" || action.action === "done") return;
-  say(`[${new Date(clock.now).toISOString().slice(11, 19)}] ${action.action}${action.id ? ` ${action.id}` : ""}: ${action.what.split(".")[0]}`);
-  const act = (input: Omit<RecordInput, "action">, line: string) => {
+  say(`[${new Date(clock.now).toISOString().slice(11, 19)}] ${action.action}${action.id ? ` ${action.id}` : ""} (${action.target}${action.run ? ` ${action.run}` : ""}): ${action.what.split(".")[0]}`);
+  const act = async (input: Omit<RecordInput, "action">, line: string) => {
     clock.now += 5_000;
-    say(`  -> ${line}: ${record(ctx, { action: action.id!, ...input })}`);
+    say(`  -> ${line}: ${await record(ctx, { action: action.id!, ...input })}`);
     app.tick();
   };
   const args = action.tool?.args ?? {};
+  const details = action.details ?? {};
   switch (action.action) {
     case "create_project":
-      act({ projectId: app.createProject(String(args.path)) }, "create_project");
+      await act({ projectId: app.createProject(String(args.path)) }, "create_project");
       break;
     case "create_session":
-      act({ sessionId: app.createSession(args) }, `create_session (agent ${String((args.kickoff as Record<string, unknown>).agent ?? "default")})`);
+      await act({ sessionId: app.createSession(args) }, `create_session (agent ${String((args.kickoff as Record<string, unknown>).agent ?? "default")})`);
       break;
     case "lookup_session":
-      act({ sessionId: app.workspaceForSession(String(args.project_session_id)) ?? undefined }, "get_session");
+      await act({ sessionId: app.workspaceForSession(String(args.project_session_id)) ?? undefined }, "get_session");
       break;
     case "answer_question": {
       const pending = app.getSession(String(args.project_session_id)).awaiting_input;
       if (!pending) {
-        act({ notPending: true }, "nothing pending");
+        await act({ notPending: true }, "nothing pending");
         break;
       }
-      const details = action.details ?? {};
-      const candidates = (details.candidates ?? {}) as Record<string, string>;
-      const row = typeof details.row === "number" || details.stop ? undefined : /spec/i.test(String(details.question)) ? 3 : 4;
-      const text = row === undefined ? String(args.answer) : candidates[String(row)];
+      if (pending.question !== details.question || (details.requestId && pending.request_id !== details.requestId)) {
+        await act({ failed: "question mismatch" }, "a different question is pending; not answered");
+        break;
+      }
+      const fixed = typeof args.answer === "string";
+      const row = fixed ? undefined : /spec|format|semicolon/i.test(String(details.question)) ? 3 : 4;
+      const text = fixed ? String(args.answer) : (details.candidates as Record<string, string>)[String(row)];
       app.answer(String(args.project_session_id), pending.request_id, text);
-      act({ answered: true, row }, `answer_session_input "${text}"`);
+      await act({ answered: fixed, row, requestId: pending.request_id }, `answer_session_input "${text}"`);
       break;
     }
     case "judge_idle": {
-      const messages = (action.details?.messages ?? []) as { messageId: string; text: string }[];
+      const messages = (details.messages ?? []) as { messageId: string; text: string }[];
       const last = messages[messages.length - 1];
-      const selfTest = messages.some((m) => m.text.startsWith("You answered:"));
-      if (selfTest || /work is done/i.test(last.text)) act({ final: last.messageId }, "judged final");
-      else if (/\?\s*$/.test(last.text)) act({ question: last.messageId, row: /spec/i.test(last.text) ? 3 : 4 }, "judged a plain-text question");
-      else act({ neither: true }, "judged neither");
+      if (action.target === "self-test") await act({ final: last.messageId }, "judged final (self-test rule)");
+      else {
+        const final = messages.find((m) => /work is done|final report|I've stopped|I have stopped/i.test(m.text));
+        if (final) await act({ final: final.messageId }, "judged final");
+        else if (/\?\s*$/.test(last.text)) await act({ question: last.messageId, row: /spec|semicolon|format/i.test(last.text) ? 3 : 4 }, "judged a plain-text question");
+        else await act({ neither: true }, "judged neither");
+      }
       break;
     }
     case "send_message":
       app.send(String(args.session_id), String(args.message));
-      act({ sent: true }, `send_session_message "${String(args.message)}"`);
+      await act({ sent: true }, `send_session_message "${String(args.message)}"`);
       break;
   }
 }

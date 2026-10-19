@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
+import { noAppDb } from "../lib/batch/appdb.ts";
 import { compareVersions, runPreflight, scoreSupportsRunner, type Host } from "../lib/batch/preflight.ts";
 import type { BatchConfig } from "../lib/batch/state.ts";
 import type { ProcResult } from "../lib/proc.ts";
@@ -57,6 +58,7 @@ function config(overrides: Partial<BatchConfig> = {}): BatchConfig {
     minFreeGiB: 20,
     selfTest: { enabled: true, only: false, model: "claude-sonnet-5.5", effort: "low", agent: null },
     notify: { urlFile: join(dir, "ntfy-url"), envVar: "ORCH_EVAL_TEST_NO_ENV" },
+    activeGuard: join(dir, "active-batch.json"),
     keepAwake: true,
     push: true,
     dryRun: false,
@@ -78,10 +80,11 @@ const healthy: Record<string, ProcResult> = {
   "git config user.email": ok("nick@example.invalid\n"),
 };
 
-function host(overrides: Record<string, ProcResult> = {}): Host {
+function host(overrides: Record<string, ProcResult> = {}, probe: string[] = []): Host {
   const table = { ...healthy, ...overrides };
   return {
     nodeVersion: "v24.19.0",
+    appDb: { ...noAppDb, probe: () => [...probe], takeErrors: () => [] },
     exec: async (cmd, args) => {
       const key = Object.keys(table).find((k) => `${cmd} ${args.join(" ")}`.startsWith(k));
       return key ? table[key] : { code: 1, stdout: "", stderr: `unexpected ${cmd} ${args.join(" ")}` };
@@ -131,8 +134,23 @@ test("each problem fails its own check", async () => {
 
 test("a dry run skips the checks that touch GitHub, power and the app", async () => {
   const checks = await runPreflight(config({ dryRun: true, keepAwake: false }), host({ "pmset -g batt": ok("Battery Power") }));
-  assert.deepEqual(checks.filter((c) => c.status === "SKIP").map((c) => c.name), ["AC power", "gh account", "gh token scopes", "GitHub API rate limits", "Copilot app version"]);
+  assert.deepEqual(checks.filter((c) => c.status === "SKIP").map((c) => c.name), ["AC power", "gh account", "gh token scopes", "GitHub API rate limits", "Copilot app version", "app database"]);
   assert.deepEqual(failing(checks), []);
+});
+
+test("another live batch on the machine and a changed app database fail the preflight", async () => {
+  const other = join(dir, "other-batch");
+  mkdirSync(other, { recursive: true });
+  writeFileSync(join(other, "config.json"), "{}");
+  writeFileSync(join(other, "state.json"), JSON.stringify({ phase: "runs" }));
+  writeFileSync(join(dir, "active-batch.json"), JSON.stringify({ id: "other", dir: other, claimedAt: "2026-10-19T21:00:00Z" }));
+  const checks = await runPreflight(config(), host({}, ["column sessions.was_interrupted is missing"]));
+  assert.deepEqual(failing(checks).sort(), ["app database", "no other batch active"]);
+  assert.match(checks.find((c) => c.name === "app database")!.detail, /was_interrupted is missing/);
+  // A finished batch no longer blocks.
+  writeFileSync(join(other, "state.json"), JSON.stringify({ phase: "done" }));
+  assert.deepEqual(failing(await runPreflight(config(), host())), []);
+  rmSync(join(dir, "active-batch.json"));
 });
 
 test("helpers", () => {
