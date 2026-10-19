@@ -199,7 +199,7 @@ async function init(): Promise<number> {
     selfTest: { enabled: true, only: values["self-test-only"], model: values["self-test-model"], effort: values["self-test-effort"], agent: values["self-test-agent"] ?? null },
     notify: { urlFile: resolve(values["ntfy-url-file"]), envVar: NTFY_ENV_VAR },
     // Machine-wide for real batches; a dry run (tests) keeps its own guard beside its batches.
-    activeGuard: values["dry-run"] ? join(values["batches-dir"], "active-batch.json") : paths.activeGuard,
+    activeGuard: values["dry-run"] ? join(values["batches-dir"], "active-batch") : paths.activeGuard,
     keepAwake: !values["dry-run"],
     push: !values["no-push"],
     dryRun: values["dry-run"],

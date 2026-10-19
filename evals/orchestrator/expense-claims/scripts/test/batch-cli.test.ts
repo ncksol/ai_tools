@@ -76,5 +76,5 @@ test("init, next, record and status work from the command line", async () => {
   assert.match(stop.stdout, /stops after the current run/);
   const released = await batch(["take-over", "--batch", "cli", ...common]);
   assert.match(released.stdout, /^Released batch cli from driver \S+; the next driver to run next owns it\.$/m);
-  assert.ok(existsSync(join(dir, "batches", "active-batch.json")), "a dry run keeps its guard beside its batches");
+  assert.ok(existsSync(join(dir, "batches", "active-batch")), "a dry run keeps its guard beside its batches");
 });

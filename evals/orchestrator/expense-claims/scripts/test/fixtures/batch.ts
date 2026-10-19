@@ -110,7 +110,7 @@ export async function harness(opts: {
     minFreeGiB: 1,
     selfTest: { enabled: Boolean(opts.selfTest), only: false, model: "claude-sonnet-5.5", effort: "low", agent: null },
     notify: { urlFile: join(dir, "none"), envVar: "ORCH_EVAL_TEST_NO_ENV" },
-    activeGuard: opts.activeGuard ?? join(dir, "active-batch.json"),
+    activeGuard: opts.activeGuard ?? join(dir, "active-batch"),
     keepAwake: true,
     push: false,
     dryRun: true,

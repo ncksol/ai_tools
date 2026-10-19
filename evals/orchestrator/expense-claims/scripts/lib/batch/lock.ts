@@ -8,9 +8,9 @@
 // when the holder exits, crash included: when this process dies, `cat` reads end-of-file and exits.
 // So no stale lock ever needs reclaiming, and the lock file's content means nothing.
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync, writeSync } from "node:fs";
+import { existsSync, realpathSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import { loadState } from "./state.ts";
+import { createRevision, latestRevision, loadState, readRevision } from "./state.ts";
 
 export class LockBusyError extends Error {}
 export class ActiveBatchError extends Error {}
@@ -89,14 +89,19 @@ export function tryOsLock(path: string): Promise<HeldLock | null> {
       }
     });
     child.stderr!.on("data", (chunk) => (err += chunk));
+    // After the lock is taken, only one ending is normal: the release ends cat's stdin, cat exits 0 and
+    // so does lockf. Any other ending, including one that is only noticed during the release, means
+    // the lock may already belong to someone else.
     child.once("error", (error) => {
-      if (acquired && !releasing) holderLost(path, `holder error: ${error.message}`);
+      if (acquired) holderLost(path, `holder error: ${error.message}`);
       if (settled) return;
       settled = true;
       reject(error);
     });
     child.once("exit", (code, signal) => {
-      if (acquired && !releasing) holderLost(path, `holder exited (${signal ?? `code ${code}`})`);
+      if (acquired && (!releasing || code !== 0 || signal !== null)) {
+        holderLost(path, `holder exited (${signal ?? `code ${code}`})${releasing ? " before its release" : ""}`);
+      }
       if (settled) return;
       settled = true;
       if (code === BUSY_EXIT) resolve(null);
@@ -155,27 +160,28 @@ const canonical = (dir: string): string => {
   }
 };
 
-// The guard file is only ever replaced whole (temp file, then rename), so a reader sees either the
-// old claim or the new one, never a partial one.
-function readActive(path: string): ActiveBatch | null {
-  let text: string;
-  try {
-    text = readFileSync(path, "utf8");
-  } catch {
-    return null;
-  }
-  try {
-    const value = JSON.parse(text) as ActiveBatch;
-    return typeof value?.id === "string" && typeof value?.dir === "string" ? value : null;
-  } catch {
-    return null;
-  }
+// The guard is a revisions folder (see createRevision in state.ts): every claim and every release is a
+// new numbered revision, published with link(2) and so complete or absent, never partial. The newest
+// revision names the active batch, or none after a release.
+interface GuardView {
+  revision: number;
+  active: ActiveBatch | null;
 }
 
-function writeActive(path: string, value: ActiveBatch): void {
-  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync(tmp, JSON.stringify(value));
-  renameSync(tmp, path);
+export function readGuard(guard: string): GuardView {
+  const revision = latestRevision(guard);
+  if (revision === 0) return { revision, active: null };
+  const active = (JSON.parse(readRevision(guard, revision)) as { active?: ActiveBatch | null }).active;
+  return { revision, active: typeof active?.id === "string" && typeof active?.dir === "string" ? active : null };
+}
+
+// Publishes the next guard revision, fenced on the revision read under the guard's lock. Only a
+// holder of that lock writes the guard, so if the next revision is already taken, another process
+// held the lock meanwhile and this process lost it: stop at once, having written nothing.
+function writeGuard(guard: string, lock: string, base: number, active: ActiveBatch | null): void {
+  if (!createRevision(guard, base, JSON.stringify({ active }) + "\n")) {
+    holderLost(lock, `another process wrote guard revision ${base + 1} after this one read revision ${base}`);
+  }
 }
 
 const sameBatch = (active: ActiveBatch, id: string, dir: string): boolean => active.id === id && canonical(active.dir) === canonical(dir);
@@ -193,7 +199,7 @@ export function batchIsLive(dir: string): boolean {
 
 // The other live batch holding the guard, or null. Read-only, for the preflight.
 export function otherActiveBatch(guard: string, id: string, dir: string): ActiveBatch | null {
-  const active = readActive(guard);
+  const active = readGuard(guard).active;
   return active && !sameBatch(active, id, dir) && batchIsLive(active.dir) ? active : null;
 }
 
@@ -201,35 +207,37 @@ const GUARD_LOCK_WAIT_MS = 30_000;
 const guardOpts = { waitMs: GUARD_LOCK_WAIT_MS, sleep: (ms: number) => new Promise<void>((done) => setTimeout(done, ms)), now: () => Date.now() };
 
 // Claims the machine for this batch. Every read-decide-write of the guard holds the guard's own
-// flock, so two batches can't both decide the machine is free. No guard write happens outside it,
-// and losing that flock stops the process (holderLost) before any further write.
+// flock, so two batches can't both decide the machine is free, and every write is fenced on the
+// revision read under it (writeGuard), so a process that lost that flock writes nothing.
 export async function claimActive(guard: string, id: string, dir: string, now: string): Promise<void> {
-  const mine = readActive(guard);
+  const mine = readGuard(guard).active;
   if (mine && sameBatch(mine, id, dir)) return;
+  const lock = `${guard}.lock`;
   await withOsLock(
-    `${guard}.lock`,
+    lock,
     () => {
-      const active = readActive(guard);
+      const { revision, active } = readGuard(guard);
       if (active && sameBatch(active, id, dir)) return;
       if (active && batchIsLive(active.dir)) {
         throw new ActiveBatchError(
           `Batch ${active.id} (${active.dir}) is active on this machine. Only one batch runs at a time: stop it (npm run batch -- stop --batch ${active.id}) and let it finish first.`,
         );
       }
-      writeActive(guard, { id, dir: canonical(dir), claimedAt: now });
+      writeGuard(guard, lock, revision, { id, dir: canonical(dir), claimedAt: now });
     },
     { ...guardOpts, busyMessage: "Another process is claiming the machine for a batch. Try again." },
   );
 }
 
 export async function releaseActive(guard: string, id: string, dir: string): Promise<void> {
-  const mine = readActive(guard);
+  const mine = readGuard(guard).active;
   if (!mine || !sameBatch(mine, id, dir)) return;
+  const lock = `${guard}.lock`;
   await withOsLock(
-    `${guard}.lock`,
+    lock,
     () => {
-      const active = readActive(guard);
-      if (active && sameBatch(active, id, dir)) rmSync(guard, { force: true });
+      const { revision, active } = readGuard(guard);
+      if (active && sameBatch(active, id, dir)) writeGuard(guard, lock, revision, null);
     },
     { ...guardOpts, busyMessage: "Another process is changing the machine's active batch. Try again." },
   );

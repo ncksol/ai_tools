@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { noAppDb } from "../lib/batch/appdb.ts";
+import { claimActive } from "../lib/batch/lock.ts";
 import { compareVersions, runPreflight, scoreSupportsRunner, type Host } from "../lib/batch/preflight.ts";
 import type { BatchConfig } from "../lib/batch/state.ts";
 import type { ProcResult } from "../lib/proc.ts";
@@ -58,7 +59,7 @@ function config(overrides: Partial<BatchConfig> = {}): BatchConfig {
     minFreeGiB: 20,
     selfTest: { enabled: true, only: false, model: "claude-sonnet-5.5", effort: "low", agent: null },
     notify: { urlFile: join(dir, "ntfy-url"), envVar: "ORCH_EVAL_TEST_NO_ENV" },
-    activeGuard: join(dir, "active-batch.json"),
+    activeGuard: join(dir, "active-batch"),
     keepAwake: true,
     push: true,
     dryRun: false,
@@ -144,14 +145,14 @@ test("another live batch on the machine and a changed app database fail the pref
   mkdirSync(other, { recursive: true });
   writeFileSync(join(other, "config.json"), "{}");
   writeFileSync(join(other, "state.json"), JSON.stringify({ phase: "runs" }));
-  writeFileSync(join(dir, "active-batch.json"), JSON.stringify({ id: "other", dir: other, claimedAt: "2026-10-19T21:00:00Z" }));
+  await claimActive(join(dir, "active-batch"), "other", other, "2026-10-19T21:00:00Z");
   const checks = await runPreflight(config(), host({}, ["column sessions.was_interrupted is missing"]));
   assert.deepEqual(failing(checks).sort(), ["app database", "no other batch active"]);
   assert.match(checks.find((c) => c.name === "app database")!.detail, /was_interrupted is missing/);
   // A finished batch no longer blocks.
   writeFileSync(join(other, "state.json"), JSON.stringify({ phase: "done" }));
   assert.deepEqual(failing(await runPreflight(config(), host())), []);
-  rmSync(join(dir, "active-batch.json"));
+  rmSync(join(dir, "active-batch"), { recursive: true });
 });
 
 test("helpers", () => {

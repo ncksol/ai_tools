@@ -49,7 +49,7 @@ const session = (h: Harness, i = 0) => [...h.app.sessions.values()][i];
 test("H1: a second batch can't run while another batch is active on the machine", async () => {
   const guardDir = mkdtempSync(join(tmpdir(), "orch-eval-guard-"));
   scratch.push(guardDir);
-  const guard = join(guardDir, "active-batch.json");
+  const guard = join(guardDir, "active-batch");
   const first = await make({ scenarios: ["ask-final"], activeGuard: guard, id: "first" });
   const second = await make({ scenarios: ["ask-final"], activeGuard: guard, id: "second" });
   assert.equal((await first.next()).action, "create_project");

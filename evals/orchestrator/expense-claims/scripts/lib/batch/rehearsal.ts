@@ -118,7 +118,7 @@ export async function rehearse(opts: { scenarios?: Scenario[]; runsPerVariant?: 
     minFreeGiB: 1,
     selfTest: { enabled: true, only: false, model: "claude-sonnet-5.5", effort: "low", agent: null },
     notify: { urlFile, envVar: "ORCH_EVAL_REHEARSAL_NO_ENV" },
-    activeGuard: join(dir, "active-batch.json"),
+    activeGuard: join(dir, "active-batch"),
     keepAwake: true,
     push: false,
     dryRun: true,

@@ -261,7 +261,7 @@ export function defaultPaths() {
     cliVersionFile: "/Applications/GitHub.app/Contents/Resources/copilot-sdk/cliVersion.d.ts",
     resultsPath: join(KIT_DIR, "results.csv"),
     ntfyUrlFile: join(home, ".config", "orch-evals", "ntfy-url"),
-    activeGuard: join(home, "orch-evals", "active-batch.json"),
+    activeGuard: join(home, "orch-evals", "active-batch"),
   };
 }
 
@@ -321,50 +321,66 @@ export function loadConfig(dir: string): BatchConfig {
 
 export class StaleStateError extends Error {}
 
-// Every saved state is a numbered revision file in state/, and the newest one is the state.
-// state.json is a copy of it for people and tools to read, never read back by the runner.
-export const revisionsDir = (dir: string): string => join(dir, "state");
-const revisionFile = (dir: string, revision: number): string => join(revisionsDir(dir), `${String(revision).padStart(9, "0")}.json`);
-const KEEP_REVISIONS = 20;
+// A revisions folder holds numbered files (000000001.json, ...); the newest one is the current value.
+// Batch state (state/ in the batch folder) and the machine guard (see lock.ts) are kept this way.
+const revisionFile = (revDir: string, revision: number): string => join(revDir, `${String(revision).padStart(9, "0")}.json`);
 
-function latestRevision(dir: string): number {
+// The newest revision in a revisions folder, or 0 when the folder doesn't exist yet. Any other
+// error reading the folder is thrown, never taken to mean there are no revisions.
+export function latestRevision(revDir: string): number {
   let names: string[];
   try {
-    names = readdirSync(revisionsDir(dir));
-  } catch {
-    return 0;
+    names = readdirSync(revDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    throw error;
   }
   return names.reduce((max, name) => Math.max(max, Number(/^(\d+)\.json$/.exec(name)?.[1] ?? 0)), 0);
 }
 
-// Compare-and-swap: the save creates the next revision's file with link(2), which fails if that
-// file already exists. So a save writes only if no other save happened since this state was loaded;
-// otherwise it writes nothing and throws StaleStateError. Revision files are numbered without gaps
-// and never deleted (old ones are only emptied), so this holds however stale the state is.
-export function saveState(dir: string, state: BatchState): void {
-  const next = (state.revision ?? 0) + 1;
-  mkdirSync(revisionsDir(dir), { recursive: true });
-  const tmp = join(revisionsDir(dir), `.${process.pid}.${Date.now()}.tmp`);
+export const readRevision = (revDir: string, revision: number): string => readFileSync(revisionFile(revDir, revision), "utf8");
+
+// Compare-and-swap: creates revision base + 1 with link(2), which fails if that file already exists.
+// So the write happens only if no other write happened since revision `base` was read. Returns false,
+// having written nothing, when the revision is already taken. The file appears complete or not at all.
+export function createRevision(revDir: string, base: number, body: string): boolean {
+  mkdirSync(revDir, { recursive: true });
+  const tmp = join(revDir, `.${process.pid}.${Date.now()}.tmp`);
   try {
-    writeFileSync(tmp, JSON.stringify({ ...state, revision: next }, null, 2) + "\n");
-    linkSync(tmp, revisionFile(dir, next));
+    writeFileSync(tmp, body);
+    linkSync(tmp, revisionFile(revDir, base + 1));
+    return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-      throw new StaleStateError(`The batch state changed since revision ${next - 1} was read (another process saved it); nothing was written.`);
-    }
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
     throw error;
   } finally {
     rmSync(tmp, { force: true });
   }
+}
+
+// Every saved state is a numbered revision file in state/, and the newest one is the state.
+// state.json is a copy of it for people and tools to read. The runner reads it only for a batch
+// saved before revisions existed, that is, when state/ doesn't exist.
+export const revisionsDir = (dir: string): string => join(dir, "state");
+const KEEP_REVISIONS = 20;
+
+// A save writes only if no other save happened since this state was loaded; otherwise it writes
+// nothing and throws StaleStateError. Revision files are numbered without gaps and never deleted
+// (old ones are only emptied), so this holds however stale the state is.
+export function saveState(dir: string, state: BatchState): void {
+  const next = (state.revision ?? 0) + 1;
+  if (!createRevision(revisionsDir(dir), next - 1, JSON.stringify({ ...state, revision: next }, null, 2) + "\n")) {
+    throw new StaleStateError(`The batch state changed since revision ${next - 1} was read (another process saved it); nothing was written.`);
+  }
   state.revision = next;
   writeJsonAtomic(statePath(dir), state);
   // Empty, not delete: the file keeps its revision number taken, so a stale save still fails.
-  if (next > KEEP_REVISIONS) writeFileSync(revisionFile(dir, next - KEEP_REVISIONS), "");
+  if (next > KEEP_REVISIONS) writeFileSync(revisionFile(revisionsDir(dir), next - KEEP_REVISIONS), "");
 }
 
 export function loadState(dir: string): BatchState {
-  const revision = latestRevision(dir);
-  const path = revision > 0 ? revisionFile(dir, revision) : statePath(dir);
+  const revision = latestRevision(revisionsDir(dir));
+  const path = revision > 0 ? revisionFile(revisionsDir(dir), revision) : statePath(dir);
   const state = JSON.parse(readFileSync(path, "utf8")) as BatchState;
   state.revision = revision;
   return state;
