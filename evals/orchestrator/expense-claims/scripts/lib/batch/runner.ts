@@ -16,7 +16,7 @@ import { readResults } from "../results.ts";
 import { readAnswerSheet, replyFor, rowForQuestion, settleRow, type AnswerRow } from "./answers.ts";
 import type { AppDb } from "./appdb.ts";
 import { scanSession, scanSwarm } from "./hygiene.ts";
-import { claimActive, releaseActive, withLock } from "./lock.ts";
+import { claimActive, releaseActive } from "./lock.ts";
 import { notices, type Notice } from "./notify.ts";
 import { computePins, diffPins } from "./pins.ts";
 import { calibrationDecision, describePlan, nextRunNumber, planNext, runRowFor, scoredCount } from "./plan.ts";
@@ -67,7 +67,6 @@ const MAX_CREATE_REISSUES = 1;
 const COMMIT_RETRY_MS = 60_000;
 const MAX_COMMIT_ATTEMPTS = 3;
 const CLOCK_JUMP_MS = 60_000;
-const LOCK_WAIT_MS = 2 * 60_000;
 export const TIMEOUTS = { git: 2 * 60_000, newRun: 10 * 60_000, score: 30 * 60_000 };
 
 export interface Deps {
@@ -81,6 +80,9 @@ export interface Deps {
   // (null when that can't be told).
   driverId: string;
   driverAlive(id: string): boolean | null;
+  // Runs fn while holding the batch lock: lock.ts withLock (a kernel flock) in the CLI and the
+  // rehearsal; tests may pass an in-process lock.
+  lock<T>(dir: string, fn: () => Promise<T> | T): Promise<T>;
   log(line: string): void;
 }
 
@@ -224,7 +226,8 @@ export function render(ctx: Ctx, state: BatchState, pending: PendingAction, reis
           recordCommand(ctx, pending.id, `${fixed ? "--answered" : "--row <3|4>"} --request-id <awaiting_input.request_id>`),
           recordCommand(ctx, pending.id, `${fixed ? "--answered" : "--row <3|4>"} --request-id <awaiting_input.request_id> --choice "<choice>"   (only if free text was not allowed and you picked a choice)`),
           recordCommand(ctx, pending.id, "--not-pending   (get_session shows no open question)"),
-          recordCommand(ctx, pending.id, '--failed "<error>"   (including "question mismatch")'),
+          recordCommand(ctx, pending.id, '--failed "<error>" --request-id <awaiting_input.request_id>   (the question matched, but answering failed)'),
+          recordCommand(ctx, pending.id, '--failed "question mismatch"   (a different question or request_id is pending; nothing was answered)'),
         ],
       };
     }
@@ -363,6 +366,13 @@ function releaseAwake(ctx: Ctx, state: BatchState): void {
   state.caffeinate = null;
 }
 
+// Flag codes a run gained after its outcome notification went out.
+function lateFlagCodes(run: RunState): string[] {
+  if (!run.notified) return [];
+  const sent = new Set(run.notifiedFlags ?? []);
+  return [...new Set(run.flags.map((flag) => flag.code))].filter((code) => !sent.has(code));
+}
+
 // ---------- phase control ----------
 
 function stopBatch(ctx: Ctx, state: BatchState, reason: string, failure: boolean): void {
@@ -395,9 +405,18 @@ async function finish(ctx: Ctx, state: BatchState): Promise<ActionOut> {
     outcomes.set(outcome, (outcomes.get(outcome) ?? 0) + 1);
   }
   const counts = `${state.runs.length} run(s)${outcomes.size > 0 ? ` (${[...outcomes].map(([k, v]) => `${v} ${k}`).join(", ")})` : ""}`;
-  await notify(ctx, state, failed ? notices.stopped(ctx.config.id, state.stopReason ?? "unknown", reportPath) : notices.done(ctx.config.id, `${counts}; ${state.stopReason}`, reportPath));
+  const late = state.runs
+    .map((run) => ({ run, codes: lateFlagCodes(run) }))
+    .filter(({ codes }) => codes.length > 0)
+    .map(({ run, codes }) => `${run.key} ${codes.join(",")}`);
+  const lateText = late.length > 0 ? `; late flags (after scoring): ${late.join("; ")}` : "";
+  await notify(
+    ctx,
+    state,
+    failed ? notices.stopped(ctx.config.id, `${state.stopReason ?? "unknown"}${lateText}`, reportPath) : notices.done(ctx.config.id, `${counts}; ${state.stopReason}${lateText}`, reportPath),
+  );
   state.phase = failed ? "stopped" : "done";
-  releaseActive(ctx.config.activeGuard, ctx.config.id);
+  await releaseActive(ctx.config.activeGuard, ctx.config.id, ctx.config.dir);
   log(ctx, `batch ${state.phase}: ${state.stopReason}`);
   return doneAction(ctx, state);
 }
@@ -415,6 +434,15 @@ function doneAction(ctx: Ctx, state: BatchState): ActionOut {
 function admissionBlock(ctx: Ctx, state: BatchState): { reason: string; failure: boolean } | null {
   if (state.fatal) return { reason: state.fatal, failure: true };
   if (state.stopRequested) return { reason: "you asked the batch to stop", failure: false };
+  // A run given up because its create_session was never confirmed must not have started after all.
+  for (const run of state.runs) {
+    if (!run.unconfirmedSince) continue;
+    const late = resolveRunSession(ctx, run) ?? createdSinceInDb(ctx, run.projectId, run.unconfirmedSince)?.appId;
+    if (late) {
+      state.fatal ??= `a session (${late}) appeared for ${run.key} after it was given up as never started; archive it before starting another batch`;
+      return { reason: state.fatal, failure: true };
+    }
+  }
   if (state.startFailures >= 2) return { reason: "two runs in a row failed to start", failure: true };
   if (state.scoreFailures >= 2) return { reason: "score failed for two runs in a row", failure: true };
   const drift = diffPins(state.pins, currentPins(ctx.config));
@@ -504,7 +532,7 @@ async function selfTestStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
       }
       test.sessionId ??= resolveSelfTestSession(ctx, test) ?? undefined;
       if (!test.sessionId) {
-        if (since(now, ms(test.startRequestedAt)) > minutes(config.sessionAppearMin)) fail("its session never appeared in the session-state folder");
+        if (since(now, ms(test.lastStartAt ?? test.startRequestedAt)) > minutes(config.sessionAppearMin)) fail("its session never appeared in the session-state folder");
         return { progressed: test.status !== "running" };
       }
       const events = ctx.logs.read(eventsPath(config.stateDir, test.sessionId));
@@ -513,7 +541,7 @@ async function selfTestStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
       if (orch.openAsk) {
         const answered = test.answered?.toolCallId === orch.openAsk.toolCallId;
         if (!answered || (since(now, ms(test.answered!.at)) > ANSWER_RETRY_MS && test.askAttempts < MAX_ASK_ATTEMPTS)) {
-          return { action: askAction(ctx, state, "selftest", session, orch, answered ? test.answered!.requestId : undefined) };
+          return { action: askAction(ctx, state, "selftest", session, orch, test.requestIds?.[orch.openAsk.toolCallId] ?? (answered ? test.answered!.requestId : undefined)) };
         }
         return {};
       }
@@ -716,7 +744,7 @@ async function watchRun(ctx: Ctx, state: BatchState, run: RunState, index: numbe
   const { config, deps } = ctx;
   const now = deps.now();
   run.sessionId ??= resolveRunSession(ctx, run) ?? undefined;
-  const waitedMs = since(now, ms(run.startRequestedAt));
+  const waitedMs = since(now, ms(run.lastStartAt ?? run.startRequestedAt));
   if (!run.sessionId) {
     if (waitedMs > minutes(config.sessionAppearMin)) {
       voidRun(ctx, state, run, "the run's session never appeared in the session-state folder", true);
@@ -977,6 +1005,7 @@ async function runsStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
           }),
         );
         run.notified = true;
+        run.notifiedFlags = [...new Set(run.flags.map((flag) => flag.code))];
       }
       if (run.endReason === "final") {
         run.status = "settling";
@@ -1026,7 +1055,16 @@ async function runsStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
     }
     case "done":
     case "void":
-      if (run.status === "done" && run.row) scanHygiene(ctx, run);
+      if (run.status === "done") {
+        scanHygiene(ctx, run);
+        // Flags found after the outcome notification (cleanup, memory use after scoring) go out as a
+        // short follow-up. The score and the row's note stay as they were.
+        const late = lateFlagCodes(run);
+        if (run.notified && late.length > 0 && late.join(",") !== (run.lateNotified ?? []).join(",")) {
+          await notify(ctx, state, notices.lateFlags(config.id, run.variant, run.n, late));
+          run.lateNotified = late;
+        }
+      }
       run.endedAt ??= iso(now);
       state.current = null;
       return { progressed: true };
@@ -1076,8 +1114,10 @@ function reconcileCreate(ctx: Ctx, state: BatchState, pending: PendingAction, ta
   const selfTest = pending.target === "selftest";
   let found = selfTest ? resolveSelfTestSession(ctx, target as SelfTestState) : resolveRunSession(ctx, target as RunState);
   let appId = found ? ctx.deps.appDb.workspaceForSession(found) : null;
+  // Every attempt counts: look for a session created since the first issue, not the latest.
+  const firstIssuedAt = pending.firstIssuedAt ?? pending.issuedAt;
   if (!found) {
-    const fromDb = createdSinceInDb(ctx, target.projectId, pending.issuedAt);
+    const fromDb = createdSinceInDb(ctx, target.projectId, firstIssuedAt);
     if (fromDb) {
       appId = fromDb.appId;
       found = fromDb.sessionId ?? null;
@@ -1100,7 +1140,10 @@ function reconcileCreate(ctx: Ctx, state: BatchState, pending: PendingAction, ta
     state.pending = null;
     const why = "create_session was issued twice and no session appeared";
     if (selfTest) Object.assign(target, { status: "failed", failure: why });
-    else voidRun(ctx, state, target as RunState, why, true);
+    else {
+      voidRun(ctx, state, target as RunState, why, true);
+      (target as RunState).unconfirmedSince = firstIssuedAt;
+    }
     return "cleared";
   }
   if (!selfTest) {
@@ -1113,8 +1156,9 @@ function reconcileCreate(ctx: Ctx, state: BatchState, pending: PendingAction, ta
     }
   }
   pending.reissues = (pending.reissues ?? 0) + 1;
+  pending.firstIssuedAt = firstIssuedAt;
   pending.issuedAt = iso(now);
-  target.startRequestedAt = iso(now);
+  target.lastStartAt = iso(now);
   log(ctx, `reissuing ${pending.id} create_session: no session after ${Math.round(CREATE_RECONCILE_MS / 60_000)} min`);
   return "emit";
 }
@@ -1177,7 +1221,7 @@ export async function step(ctx: Ctx, state: BatchState): Promise<StepResult> {
   }
   state.lastHeartbeatAt = iso(now);
   if (state.phase === "selftest" || state.phase === "runs") {
-    claimActive(ctx.config.activeGuard, ctx.config.id, ctx.config.dir, iso(now));
+    await claimActive(ctx.config.activeGuard, ctx.config.id, ctx.config.dir, iso(now));
     if (!state.caffeinate) ensureAwake(ctx, state);
     if (!state.notified.includes("batch-started")) {
       const { config } = ctx;
@@ -1218,28 +1262,20 @@ export async function step(ctx: Ctx, state: BatchState): Promise<StepResult> {
   return result;
 }
 
-function lockOpts(ctx: Ctx) {
-  return { waitMs: LOCK_WAIT_MS, sleep: ctx.deps.sleep, now: ctx.deps.now };
-}
-
 export async function next(ctx: Ctx, opts: { maxWaitMs: number }): Promise<ActionOut> {
   const until = ctx.deps.now() + opts.maxWaitMs;
   for (;;) {
     // The lock is held for one step at a time and released while waiting, so record and stop
     // can take it between polls.
-    const result = await withLock(
-      ctx.config.dir,
-      async () => {
-        const state = loadState(ctx.config.dir);
-        try {
-          checkOwner(ctx, state);
-          return await step(ctx, state);
-        } finally {
-          saveState(ctx.config.dir, state);
-        }
-      },
-      lockOpts(ctx),
-    );
+    const result = await ctx.deps.lock(ctx.config.dir, async () => {
+      const state = loadState(ctx.config.dir);
+      try {
+        checkOwner(ctx, state);
+        return await step(ctx, state);
+      } finally {
+        saveState(ctx.config.dir, state);
+      }
+    });
     if (result.action) return result.action;
     if (result.progressed) continue;
     const left = until - ctx.deps.now();
@@ -1315,12 +1351,17 @@ function applyRecord(ctx: Ctx, state: BatchState, input: RecordInput): string {
         message = input.failed ? "stop answer failed" : "stop answer recorded";
         break;
       }
+      // The request_id the driver saw guards every retry of this question, even after a failed
+      // attempt; a mismatch's id belongs to another question, so it is never kept.
+      const keepId = input.requestId && !input.notPending && !/mismatch/i.test(input.failed ?? "") ? input.requestId : undefined;
       if (test) {
         test.askAttempts++;
+        if (keepId) (test.requestIds ??= {})[toolCallId] ??= keepId;
         if (!input.failed && !input.notPending) test.answered = { toolCallId, at, text: String(p.answer ?? ""), requestId: input.requestId };
         message = input.failed ? "answer failed" : "answer recorded";
         break;
       }
+      if (keepId) run!.requestIds[toolCallId] ??= keepId;
       const attempt = run!.askAttempts[toolCallId];
       run!.askAttempts[toolCallId] = { count: (attempt?.count ?? 0) + 1, at };
       if (input.failed) {
@@ -1331,7 +1372,6 @@ function applyRecord(ctx: Ctx, state: BatchState, input: RecordInput): string {
         message = "no open question; the log is checked again";
         break;
       }
-      if (input.requestId) run!.requestIds[toolCallId] ??= input.requestId;
       const row = settleRow(String(p.question ?? ""), input.row);
       const text = replyFor(ctx.sheet, row);
       run!.answers.push({ kind: "ask_user", ref: toolCallId, row, text, choice: input.choice, at });
@@ -1385,46 +1425,34 @@ function applyRecord(ctx: Ctx, state: BatchState, input: RecordInput): string {
 }
 
 export async function record(ctx: Ctx, input: RecordInput): Promise<string> {
-  return withLock(
-    ctx.config.dir,
-    () => {
-      const state = loadState(ctx.config.dir);
-      checkOwner(ctx, state);
-      const message = applyRecord(ctx, state, input);
-      saveState(ctx.config.dir, state);
-      return message;
-    },
-    lockOpts(ctx),
-  );
+  return ctx.deps.lock(ctx.config.dir, () => {
+    const state = loadState(ctx.config.dir);
+    checkOwner(ctx, state);
+    const message = applyRecord(ctx, state, input);
+    saveState(ctx.config.dir, state);
+    return message;
+  });
 }
 
 export async function requestStop(ctx: Ctx): Promise<string> {
-  return withLock(
-    ctx.config.dir,
-    () => {
-      const state = loadState(ctx.config.dir);
-      state.stopRequested = true;
-      saveState(ctx.config.dir, state);
-      return "The batch stops after the current run; no new run starts.";
-    },
-    lockOpts(ctx),
-  );
+  return ctx.deps.lock(ctx.config.dir, () => {
+    const state = loadState(ctx.config.dir);
+    state.stopRequested = true;
+    saveState(ctx.config.dir, state);
+    return "The batch stops after the current run; no new run starts.";
+  });
 }
 
 // For the user only, when the owning driver is gone but the runner can't tell.
 export async function takeOver(ctx: Ctx): Promise<string> {
-  return withLock(
-    ctx.config.dir,
-    () => {
-      const state = loadState(ctx.config.dir);
-      const old = state.owner?.id ?? "none";
-      state.owner = null;
-      warn(state, `the user released the batch from driver ${old} at ${iso(ctx.deps.now())}`);
-      saveState(ctx.config.dir, state);
-      return `Released batch ${ctx.config.id} from driver ${old}; the next driver to run next owns it.`;
-    },
-    lockOpts(ctx),
-  );
+  return ctx.deps.lock(ctx.config.dir, () => {
+    const state = loadState(ctx.config.dir);
+    const old = state.owner?.id ?? "none";
+    state.owner = null;
+    warn(state, `the user released the batch from driver ${old} at ${iso(ctx.deps.now())}`);
+    saveState(ctx.config.dir, state);
+    return `Released batch ${ctx.config.id} from driver ${old}; the next driver to run next owns it.`;
+  });
 }
 
 export function statusText(ctx: Ctx): string {

@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { openAppDb, noAppDb } from "./lib/batch/appdb.ts";
-import { pidAlive } from "./lib/batch/lock.ts";
+import { pidAlive, withLock } from "./lib/batch/lock.ts";
 import { notices, readNtfyUrl, sendNtfy } from "./lib/batch/notify.ts";
 import { describePlan, calibrationDecision } from "./lib/batch/plan.ts";
 import { formatChecks, MANUAL_STEPS, runPreflight } from "./lib/batch/preflight.ts";
@@ -145,6 +145,7 @@ function realDeps(config: BatchConfig): Deps {
         if (ps.status === 0 && ps.stdout.includes("caffeinate")) process.kill(pid, "SIGTERM");
       },
     },
+    lock: (dir, fn) => withLock(dir, fn, { waitMs: 2 * 60_000, sleep: (ms) => new Promise((done) => setTimeout(done, ms)), now: () => Date.now() }),
     log: (line) => console.error(line),
   };
 }

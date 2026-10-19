@@ -112,6 +112,13 @@ export const notices = {
     priority: "high",
     tags: ["rotating_light"],
   }),
+  lateFlags: (id: string, variant: string, n: number, codes: string[]): Notice => ({
+    key: `late-${variant}-${n}-${codes.join(",")}`,
+    title: "Eval run: late flags",
+    body: `Batch ${id}: ${variant} #${n} got flags after it was scored: ${codes.join(", ")}. Its score and results.csv row are unchanged; see the report.`,
+    priority: "high",
+    tags: ["warning"],
+  }),
   done: (id: string, counts: string, reportPath: string): Notice => ({
     key: "batch-done",
     title: "Eval batch done",

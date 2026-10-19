@@ -78,6 +78,7 @@ const healthy: Record<string, ProcResult> = {
   "git status --porcelain": ok(""),
   "git config user.name": ok("Nick\n"),
   "git config user.email": ok("nick@example.invalid\n"),
+  "sh -c command -v flock": ok("/usr/bin/flock\n"),
 };
 
 function host(overrides: Record<string, ProcResult> = {}, probe: string[] = []): Host {

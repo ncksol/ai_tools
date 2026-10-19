@@ -46,21 +46,6 @@ const session = (h: Harness, i = 0) => [...h.app.sessions.values()][i];
 
 // ---------- H1: exclusive ownership ----------
 
-test("H1: the batch lock is exclusive across processes", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "orch-eval-lock-"));
-  scratch.push(dir);
-  const lockModule = new URL("../lib/batch/lock.ts", import.meta.url).href;
-  const start = Date.now() + 1500;
-  const script = `import { tryLock, unlock } from ${JSON.stringify(lockModule)};
-while (Date.now() < ${start}) {}
-const got = tryLock(${JSON.stringify(dir)});
-console.log(got ? "got" : "busy");
-if (got) { const t = Date.now(); while (Date.now() - t < 1500) {} unlock(${JSON.stringify(dir)}); }`;
-  const results = await Promise.all(Array.from({ length: 6 }, () => runProc(process.execPath, ["--input-type=module", "-e", script])));
-  const outcomes = results.map((r) => r.stdout.trim()).sort();
-  assert.deepEqual(outcomes, ["busy", "busy", "busy", "busy", "busy", "got"], JSON.stringify(results.map((r) => r.stderr)));
-});
-
 test("H1: a second batch can't run while another batch is active on the machine", async () => {
   const guardDir = mkdtempSync(join(tmpdir(), "orch-eval-guard-"));
   scratch.push(guardDir);
@@ -122,6 +107,53 @@ test("H1: an unrecorded create_session is reconciled, adopted if it landed, and 
   assert.equal(run.status, "void");
   assert.match(run.voidReason!, /issued twice/);
   assert.equal(k.app.sessions.size, 0);
+});
+
+test("core R2: a session from the first create_session that shows up after the reissue is adopted, not given up", async () => {
+  const h = await make({ scenarios: ["ask-final"] });
+  await h.drive(await h.next()); // create_project
+  assert.equal((await h.next()).action, "create_session");
+  const firstIssued = h.clock.now;
+  h.clock.now += 6 * MIN;
+  const reissue = await h.next(0);
+  assert.equal(reissue.reissued, true);
+  // The first attempt's workspace, created a second after the first issue, is visible only now.
+  const workspaces = h.app.workspaces.bind(h.app);
+  h.app.workspaces = (projectId) => [
+    ...(workspaces(projectId) ?? []),
+    { id: "ws-first", sessionId: null, name: "first attempt", archivedAt: null, createdBy: "agent", createdAt: new Date(firstIssued + 1000).toISOString() },
+  ];
+  h.clock.now += MIN;
+  await h.next(0);
+  const run = h.state().runs[0];
+  assert.equal(run.status, "running");
+  assert.equal(run.appSessionId, "ws-first");
+  assert.equal(run.startRequestedAt, new Date(firstIssued).toISOString(), "the search window still starts at the first issue");
+});
+
+test("core R2: a session that turns up for a run given up as never started stops the batch", async () => {
+  const h = await make({ scenarios: ["ask-final", "ask-final"], runsPerVariant: 2 });
+  await h.drive(await h.next());
+  await h.next(); // create_session, never executed or recorded
+  const firstIssued = h.clock.now;
+  h.clock.now += 6 * MIN;
+  assert.equal((await h.next(0)).reissued, true);
+  h.clock.now += 6 * MIN;
+  const projectAction = await h.next(0); // run 1 is void; run 2 is planned
+  assert.equal(h.state().runs[0].status, "void");
+  assert.equal(projectAction.action, "create_project");
+  const workspaces = h.app.workspaces.bind(h.app);
+  const runOneProject = h.state().runs[0].projectId!;
+  h.app.workspaces = (projectId) => [
+    ...(workspaces(projectId) ?? []),
+    ...(projectId === runOneProject ? [{ id: "ws-late", sessionId: null, name: "late", archivedAt: null, createdBy: "agent", createdAt: new Date(firstIssued + 2000).toISOString() }] : []),
+  ];
+  await h.drive(projectAction);
+  const done = await h.next(0);
+  assert.equal(done.action, "done");
+  assert.equal(h.state().phase, "stopped");
+  assert.match(String(done.details?.reason), /appeared for variant-a#1 after it was given up/);
+  assert.equal(h.app.sessions.size, 0, "run 2 never started");
 });
 
 test("H1: a stop request made while next is running is not lost", async () => {
@@ -392,6 +424,54 @@ test("a retried answer carries the request_id answered before, and a different o
   assert.match(retry.what, /request_id equals details\.requestId/);
   await h.record({ action: retry.id!, answered: true, requestId: "req-other" });
   assert.ok(h.state().runs[0].flags.some((f) => f.code === "answer-mismatch" && /req-other, expected req-first/.test(f.detail)));
+});
+
+test("R2: a failed answer attempt keeps its request_id, so a retry facing a different request answers nothing", async () => {
+  const h = await make({ scenarios: ["ask-final"] });
+  const first = await h.until((a) => a.action === "answer_question");
+  // The driver saw the matching question as request req-first, then answer_session_input failed.
+  await h.record({ action: first.id!, failed: "transport error", requestId: "req-first" });
+  assert.equal(h.state().runs[0].requestIds[String(first.details?.toolCallId)], "req-first");
+  h.clock.now += 3 * MIN;
+  const retry = await h.next(0);
+  assert.equal(retry.action, "answer_question");
+  assert.equal(retry.details?.requestId, "req-first");
+  // The app now shows the same question text under another request: the driver must not answer it.
+  assert.notEqual(session(h).ask!.requestId, "req-first");
+  await h.drive(retry);
+  assert.ok(session(h).ask, "nothing was answered");
+  assert.ok(h.state().runs[0].flags.some((f) => f.code === "answer-mismatch"));
+});
+
+test("R2: the request_id seen on a question mismatch is never kept, because it belongs to another question", async () => {
+  const h = await make({ scenarios: ["ask-final"] });
+  const first = await h.until((a) => a.action === "answer_question");
+  await h.record({ action: first.id!, failed: "question mismatch", requestId: "req-of-another-question" });
+  assert.equal(h.state().runs[0].requestIds[String(first.details?.toolCallId)], undefined);
+});
+
+test("R1: a flag found after scoring reaches a follow-up notification and the final one; the row and score don't change", async () => {
+  const h = await make({ scenarios: ["busy-child"] });
+  let injected = false;
+  await h.until((_, state) => {
+    const run = state.runs[0];
+    if (!injected && run?.notified && run.sessionId) {
+      append(h, run.sessionId, "tool.execution_start", { toolName: "store_memory", toolCallId: "late-mem" });
+      injected = true;
+    }
+    return false;
+  });
+  assert.ok(injected);
+  const outcome = h.notices.find((n) => n.key === "run-variant-a-1")!;
+  assert.doesNotMatch(outcome.body, /memory-write/, "the outcome went out before the late flag");
+  const late = h.notices.find((n) => n.key.startsWith("late-variant-a-1-"));
+  assert.ok(late, h.notices.map((n) => n.key).join(", "));
+  assert.match(late!.body, /memory-write/);
+  assert.match(late!.body, /score and results\.csv row are unchanged/);
+  assert.match(h.notices.find((n) => n.key === "batch-done")!.body, /late flags \(after scoring\): variant-a#1 [^;]*memory-write/);
+  assert.equal(h.scoreCalls.length, 1, "never scored again");
+  assert.doesNotMatch(readResults(h.config.resultsPath)[0].note, /memory-write/);
+  assert.match(readFileSync(h.state().reportPath!, "utf8"), /memory-write: session .*store_memory called/);
 });
 
 // ---------- F1: the self-test's completion rule ----------

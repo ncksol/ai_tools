@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { FakeApp, type Scenario } from "../../lib/batch/fake-app.ts";
 import type { Notice } from "../../lib/batch/notify.ts";
+import { processLock } from "../../lib/batch/lock.ts";
 import { actAsDriver } from "../../lib/batch/rehearsal.ts";
 import { currentPins, makeCtx, next, record, type ActionOut, type Ctx, type Deps, type RecordInput } from "../../lib/batch/runner.ts";
 import { initialState, loadState, saveConfig, saveState, type BatchConfig, type BatchState } from "../../lib/batch/state.ts";
@@ -160,6 +161,8 @@ export async function harness(opts: {
     },
     driverId: "session:driver-1",
     driverAlive: (id) => (h.alive.has(id) ? h.alive.get(id)! : true),
+    // In-process exclusion; the OS lock itself is tested in batch-lock.test.ts.
+    lock: processLock(),
     notify: async (notice) => {
       notices.push(notice);
       return { ok: true };

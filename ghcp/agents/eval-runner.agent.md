@@ -68,7 +68,7 @@ Only one driver runs a batch. If `next` or `record` says another driver owns the
    - If `tool.args` has an `answer`, use it as it is. The question's tag fixed the row, or this is the stop message.
    - If `tool.args` has no `answer`, choose the row by `details.rule`: row 3 for a question about the spec, row 4 for anything else. Use `details.candidates["3"]` or `details.candidates["4"]`, word for word. Never write a reply of your own.
 4. Call `answer_session_input` with the `project_session_id`, `request_id` = `awaiting_input.request_id`, and the answer text, as free text, word for word. If the prompt doesn't allow free text (`details.allowFreeform` is false, or the tool refuses free text), pick the choice closest in meaning to the answer text instead, and add `--choice "<choice>"` when you record.
-5. Record `--answered` if `tool.args` had the answer, or `--row <3|4>` if you chose it, and always `--request-id <request_id>`. If the tool fails, for example because the prompt is an MCP elicitation that no tool can answer, record `--failed "<error>"`.
+5. Record `--answered` if `tool.args` had the answer, or `--row <3|4>` if you chose it, and always `--request-id <request_id>`. If the question matched but `answer_session_input` failed, for example because the prompt is an MCP elicitation that no tool can answer, record `--failed "<error>" --request-id <request_id>`, so a retry can check it is still the same request.
 
 **`judge_idle`** with `target` `"self-test"`: the self-test session has gone idle. Its final message is the response it wrote after its `ask_user` question was answered, whatever it says. Record `--final` with the id of the latest message in `details.messages`. The runner checks the answer itself.
 

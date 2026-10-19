@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { run as runProc } from "../proc.ts";
 import { KIT_DIR } from "../suite.ts";
 import { FakeApp, type Scenario } from "./fake-app.ts";
+import { withLock } from "./lock.ts";
 import { readNtfyUrl, sendNtfy, type Notice } from "./notify.ts";
 import { currentPins, makeCtx, next, record, type ActionOut, type Ctx, type Deps, type RecordInput } from "./runner.ts";
 import { initialState, saveConfig, saveState, type BatchConfig } from "./state.ts";
@@ -143,6 +144,8 @@ export async function rehearse(opts: { scenarios?: Scenario[]; runsPerVariant?: 
     exec: (cmd, args, execOpts) => runProc(cmd, args, { cwd: execOpts?.cwd, env: childEnv(), timeoutMs: execOpts?.timeoutMs }),
     driverId: "session:rehearsal-driver",
     driverAlive: () => true,
+    // The real OS lock, as in a batch.
+    lock: (lockDir, fn) => withLock(lockDir, fn, { waitMs: 60_000, sleep: (ms) => new Promise((done) => setTimeout(done, ms)), now: () => Date.now() }),
     notify: async (notice: Notice) => {
       const url = readNtfyUrl({ envVar: config.notify.envVar, urlFile: config.notify.urlFile });
       return url ? sendNtfy(url, notice) : { ok: false, error: "no topic" };

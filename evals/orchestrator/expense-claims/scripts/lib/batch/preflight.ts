@@ -142,11 +142,13 @@ export async function runPreflight(config: BatchConfig, host: Host): Promise<Che
   add("git identity", name && email ? "PASS" : "FAIL", name && email ? `${name} <${email}>` : "set git user.name and user.email");
 
   if (config.keepAwake) add("caffeinate", existsSync("/usr/bin/caffeinate") ? "PASS" : "FAIL", "/usr/bin/caffeinate");
+  const lockTool = existsSync("/usr/bin/lockf") ? "/usr/bin/lockf" : (await exec("sh", ["-c", "command -v flock"])).stdout.trim();
+  add("lock tool", lockTool ? "PASS" : "FAIL", lockTool ? `${lockTool} (kernel flock for the batch lock)` : "neither /usr/bin/lockf nor flock found");
   if (live) {
     const problems = [...host.appDb.probe(), ...host.appDb.takeErrors()];
     add("app database", problems.length === 0 ? "PASS" : "FAIL", problems.length === 0 ? `${config.appDb}: every column the runner reads is there (read-only)` : problems.join("; "));
   } else add("app database", "SKIP", "dry run");
-  const other = otherActiveBatch(config.activeGuard, config.id);
+  const other = otherActiveBatch(config.activeGuard, config.id, config.dir);
   add("no other batch active", other ? "FAIL" : "PASS", other ? `batch ${other.id} (${other.dir}) is active; only one batch runs at a time` : `guard ${config.activeGuard}`);
 
   const url = readNtfyUrl({ envVar: config.notify.envVar, urlFile: config.notify.urlFile });

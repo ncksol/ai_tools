@@ -125,7 +125,9 @@ export interface RunState {
   projectId?: string;
   appSessionId?: string;
   sessionId?: string;
+  // When create_session was first issued (the window for finding the session) and last issued.
   startRequestedAt?: string;
+  lastStartAt?: string;
   kickoffAt?: string;
   kickoffChecked?: boolean;
   judged: string[];
@@ -150,12 +152,18 @@ export interface RunState {
   commitAttempts?: number;
   lastCommitAttemptAt?: string;
   notified?: boolean;
+  // The flag codes the run's outcome notification carried; later ones go out as late flags.
+  notifiedFlags?: string[];
+  lateNotified?: string[];
   settlingSince?: string;
   stopSentAt?: string;
   stopAttempts?: number;
   drainingSince?: string;
   flags: Flag[];
   voidReason?: string;
+  // Set when the run was voided because create_session was never confirmed: if its session turns
+  // up later, no further run may start beside it.
+  unconfirmedSince?: string;
   endedAt?: string;
 }
 
@@ -169,7 +177,10 @@ export interface SelfTestState {
   appSessionId?: string;
   sessionId?: string;
   startRequestedAt?: string;
+  lastStartAt?: string;
   answered?: { toolCallId: string; at: string; text: string; requestId?: string };
+  // The request_id the driver saw for each ask_user call, kept even when answering failed.
+  requestIds?: Record<string, string>;
   askAttempts: number;
   judged: string[];
   final?: FinalMessage;
@@ -193,6 +204,9 @@ export interface PendingAction {
   payload: Record<string, unknown>;
   // How often an unconfirmed create_session was issued again after reconciling found no session.
   reissues?: number;
+  // When a create_session was first issued: the lower bound for finding its session across every
+  // reissue. issuedAt is when it was last issued.
+  firstIssuedAt?: string;
 }
 
 export interface Pins {
