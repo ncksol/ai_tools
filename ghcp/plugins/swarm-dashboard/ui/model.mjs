@@ -104,7 +104,7 @@ export function feedText(item) {
   return item.kind.startsWith('subagent-') && item.label && once.endsWith(ending) ? once.slice(0, -ending.length) : once;
 }
 
-/** Its PR closed without merging and it is not archived: it stays in its PR stage, with a badge (approved decision 5). */
+/** Its PR closed without merging: it stays in its PR stage, with a badge (approved decision 5), archived or not. */
 export const closedNotMerged = unit => Boolean(unit.closedWithoutMerge && unit.pr && unit.stage !== 'archived' && (unit.pr.state === 'closed' || unit.outcome === 'closed'));
 
 export const stateLine = session => STATE_LINES[session.statusDetail] ?? STATE_LINES[session.status] ?? '{t}';
@@ -133,20 +133,22 @@ export function nextCardChange(snapshot, now) {
   return next;
 }
 
+/** The unit is archived. Its status and stage show its outcome when one is known (merged, failed), so they cannot tell. */
+export const isArchived = unit => (unit.archivedAt !== null && unit.archivedAt !== undefined) || unit.status === 'archived';
+
 /**
- * Units shown as cards at `now`: attention first, then creation order. Archived units leave the Cards tab: those with status
- * archived, and those on the Archived stage, whose status shows their outcome (failed). Sub-agent
+ * Units shown as cards at `now`: attention first, then creation order. Archived units leave the Cards tab. Sub-agent
  * units stay on it while they run or are stuck, and a finished one for SUBAGENT_CARD_GRACE_MS after it ended; the Board
  * shows them all.
  */
 export function cardUnits(snapshot, now) {
   return snapshot.units
     .map((unit, index) => ({ unit, index }))
-    .filter(({ unit }) => unit.status !== 'archived' && unit.stage !== 'archived' && (!isFinishedSubagent(unit) || cardTimeLeft(unit, now) > 0))
+    .filter(({ unit }) => !isArchived(unit) && (!isFinishedSubagent(unit) || cardTimeLeft(unit, now) > 0))
     .sort((a, b) => (STATUS_ORDER[a.unit.status] ?? 9) - (STATUS_ORDER[b.unit.status] ?? 9) || a.index - b.index)
     .map(({ unit }) => unit);
 }
-export const archivedUnits = snapshot => snapshot.units.filter(unit => unit.status === 'archived');
+export const archivedUnits = snapshot => snapshot.units.filter(isArchived);
 export const findUnit = (snapshot, id) => snapshot.units.find(unit => unit.id === id) ?? null;
 const sameLabel = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 export const findByLabel = (snapshot, label) => snapshot.units.find(unit => sameLabel(unit.label, label)) ?? null;

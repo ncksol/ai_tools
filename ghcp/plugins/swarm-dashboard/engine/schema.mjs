@@ -97,6 +97,7 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  *
  * @typedef {SessionView & {
  *   parentId: string, depth: number, stage: string, closedWithoutMerge: boolean, outcome: 'merged'|'closed'|'failed'|null,
+ *   archivedAt: EpochMs|null,
  *   pr: PrView|null, monitor: MonitorView, dependsOn: string|null, todoId: string|null,
  *   agent: { type: string, mode: 'sync'|'background', effort: string|null }|null }} UnitView
  *   `dependsOn` is the label of the unit or planned entry it stacks on.
@@ -139,7 +140,7 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  *                   bars for its own sub-agents; a 'report' mark when it finishes
  *   recent          its own feed items: started, resumed by a follow-up, finished, failed or cancelled, and its own
  *                   sub-agents
- *   parentId        the orchestrator's id   depth: 1   stage: 'subagent'   closedWithoutMerge: false   outcome: null
+ *   parentId        the orchestrator's id   depth: 1   stage: 'subagent'   closedWithoutMerge: false   outcome: null   archivedAt: null
  *   pr              null          monitor: { state: 'none', lastCheckAt: null, nextCheckAt: null, everyMinutes: null,
  *                                 since: null }      dependsOn: null      todoId: null
  *   agent           { type, mode, effort }: its agent type, 'sync' or 'background', and its reasoning effort
@@ -330,7 +331,7 @@ const PR = {
 };
 const UNIT = {
   ...SESSION,
-  parentId: is.id, depth: is.count, stage: oneOf(STAGES), closedWithoutMerge: is.bool, outcome: nullable(oneOf(OUTCOMES)),
+  parentId: is.id, depth: is.count, stage: oneOf(STAGES), closedWithoutMerge: is.bool, outcome: nullable(oneOf(OUTCOMES)), archivedAt: OPT_TIME,
   pr: nullable(PR),
   monitor: { state: oneOf(MONITOR_STATES), lastCheckAt: OPT_TIME, nextCheckAt: OPT_TIME, everyMinutes: nullable(is.count), since: OPT_TIME },
   dependsOn: OPT_TEXT, todoId: OPT_TEXT,

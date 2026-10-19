@@ -32,7 +32,8 @@ function bestMention(mentions, host) {
 /** PR identity: registry row, latest contract status line, the app's PR columns, then the most-mentioned PR. */
 export function resolvePr({ registry = null, statusLines = [], createdPr = null, mentions = new Map(), host = null } = {}) {
   const repoFor = provider => (host?.provider === provider ? host.repo : null);
-  // When the unit first reported this PR on a status line, or null.
+  // The earliest retained status line that names this PR, or null. Sent history is capped, so older lines may be gone:
+  // this is when the PR was known by, not when it was created.
   const firstReported = (provider, id) => {
     const same = statusLines.filter(item => item.pr && item.pr.provider === provider && item.pr.id === id);
     return same.length ? Math.min(...same.map(item => item.at)) : null;
@@ -78,15 +79,16 @@ export function prView(pr, info, createdPr) {
 }
 
 /**
- * coding → PR open → in review → merged → archived (builder decision 4). A merged unit stays under merged once archived:
- * the orchestrator archives each unit after its PR merges. Archived is for units with no better-known stage.
+ * coding → PR open → in review → merged → archived (builder decision 4). A known outcome places a unit even once it is
+ * archived (the orchestrator archives each unit when it ends): merged under merged, closed or failed in its PR stage.
+ * Archived is only for archived units with no known outcome.
  */
 export function deriveStage({ archivedAt = null, outcome = null, pr = null, monitorEver = false }) {
   const merged = outcome === 'merged' || pr?.state === 'merged';
   const closedWithoutMerge = !merged && (outcome === 'closed' || outcome === 'failed' || pr?.state === 'closed');
   let stage;
   if (merged) stage = 'merged';
-  else if (archivedAt !== null && archivedAt !== undefined) stage = 'archived';
+  else if (archivedAt !== null && archivedAt !== undefined && !closedWithoutMerge) stage = 'archived';
   else if (!pr) stage = 'coding';
   else if (pr.state === 'open' || (pr.state === 'unknown' && monitorEver)) stage = 'in_review';
   else stage = 'pr_open';

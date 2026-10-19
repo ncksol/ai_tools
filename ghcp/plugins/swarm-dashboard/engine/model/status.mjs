@@ -139,7 +139,7 @@ export function evaluateStatus(input) {
 
   // A failed outcome comes first, so an archived failed unit still counts as failed.
   if (input.outcome === 'failed') return result('failed', lastAt, 'The orchestrator recorded this unit as failed.');
-  if (archivedAt !== null && archivedAt !== undefined) return result('archived', archivedAt);
+  if (archivedAt !== null && archivedAt !== undefined) return input.merged ? result('merged', input.mergedAt ?? archivedAt) : result('archived', archivedAt);
   if (input.merged && !turnOpen) return result('merged', input.mergedAt ?? lastAt);
   if (alive === false) {
     if (state?.lastEventType === 'session.shutdown') return result('stopped', state.shutdownAt ?? lastAt, 'The session process exited normally.');

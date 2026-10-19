@@ -377,7 +377,7 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
     ...sessionView(input, c, label, evaluation, report, row?.title ?? null, marks, outcomeAt),
     // The registry's branch wins over the app's, which can be missing or stale; assignDependencies matches base branches on it.
     branch: row?.branch ?? node.branch ?? null,
-    parentId: node.parentId, depth: node.depth, stage, closedWithoutMerge, outcome, pr, monitor, dependsOn: null, todoId: row?.todoId ?? null,
+    parentId: node.parentId, depth: node.depth, stage, closedWithoutMerge, outcome, archivedAt: node.archivedAt ?? null, pr, monitor, dependsOn: null, todoId: row?.todoId ?? null,
     agent: null,
   };
 }
@@ -544,7 +544,7 @@ function subagentUnitView(input, rootContext, root, sub, evaluation, label, roll
       subagents: unit.children.map(child => ({ id: child.id, start: child.startedAt ?? child.launchedAt, end: child.endedAt ?? evaluation.endedAt, type: child.type })),
       marks: report && !running ? [{ at: evaluation.endedAt, kind: 'report', text: report.title || 'Report', status: report.status }] : [],
     },
-    parentId: root.id, depth: 1, stage: 'subagent', closedWithoutMerge: false, outcome: null, pr: null,
+    parentId: root.id, depth: 1, stage: 'subagent', closedWithoutMerge: false, outcome: null, archivedAt: null, pr: null,
     monitor: { state: 'none', lastCheckAt: null, nextCheckAt: null, everyMinutes: null, since: null }, dependsOn: null, todoId: null,
     agent: { type: sub.type, mode: sub.mode, effort: sub.effort },
   };
@@ -738,7 +738,7 @@ export function buildSnapshot(input) {
     && item.pausedAt === null && item.nextRunAt !== null && item.nextRunAt > now - thresholds.monitorGraceMs);
   // An archived unit is over, whatever its status shows (an archived failed unit shows failed).
   const stalled = lifecycle === 'live'
-    ? swarmStalled({ orchestratorDetail: orchestrator.statusDetail, unitDetails: everyUnit.map(unit => (unit.stage === 'archived' ? 'archived' : unit.statusDetail)), monitorDue, lastActivityAt })
+    ? swarmStalled({ orchestratorDetail: orchestrator.statusDetail, unitDetails: everyUnit.map(unit => (unit.archivedAt !== null ? 'archived' : unit.statusDetail)), monitorDue, lastActivityAt })
     : null;
   const { feed, recent } = buildFeed(contexts, labels, extraFeed, flags);
   for (const view of [orchestrator, ...everyUnit]) view.recent = recent.get(view.id) ?? [];
