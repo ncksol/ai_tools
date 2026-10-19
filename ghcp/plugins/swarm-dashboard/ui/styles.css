@@ -46,7 +46,7 @@
   --stg-subagent: var(--sunk);
   --stg-ink: oklch(0.62 0.07 185);
   --pr-ink: oklch(0.45 0.07 190);
-  /* The run summary's busy line, which its legend calls dark against the light start-to-finish bar. */
+  /* The run summary's busy line, which its legend calls dark against the light start-to-finish bar; at least 3:1 against it in both themes. */
   --g-busy: var(--merged-ink);
   --g-busy-no: var(--blocked-ink);
   /* The slate of the cockpit control's spaceship, which the theme switch's icons share. */
@@ -97,7 +97,7 @@
   --stg-archived: oklch(0.30 0.008 250);
   --stg-ink: oklch(0.70 0.08 185);
   --pr-ink: oklch(0.80 0.07 190);
-  --g-busy: oklch(0.36 0.06 160);
+  --g-busy: oklch(0.32 0.06 160);
   --g-busy-no: oklch(0.38 0.07 55);
   --icon: oklch(0.76 0.03 255);
 }

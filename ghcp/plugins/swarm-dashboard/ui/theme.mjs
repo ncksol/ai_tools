@@ -24,19 +24,63 @@ export function themeControlHtml(theme) {
   return `<div class="seg th-open"><button type="button" data-theme-toggle aria-label="${label}" title="${label}"><span class="th-icon">${MOON_ICON}${SUN_ICON}</span></button></div>`;
 }
 
-export function readTheme(storage) {
+/** The page's localStorage, or null where reading it throws (a SecurityError in a locked-down webview) or it is missing. */
+export function storageOf(win) {
   try {
-    const saved = storage.getItem(THEME_KEY);
+    return win.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function readTheme(win) {
+  try {
+    const saved = storageOf(win)?.getItem(THEME_KEY);
     return THEMES.includes(saved) ? saved : null;
   } catch {
     return null;
   }
 }
 
-export function saveTheme(storage, theme) {
+/** Saves the choice; false when storage is unavailable or refuses the write. */
+export function saveTheme(win, theme) {
   try {
+    const storage = storageOf(win);
+    if (!storage) return false;
     storage.setItem(THEME_KEY, theme);
+    return true;
   } catch {
-    // Storage can be unavailable; the switch still works until the page reloads.
+    return false;
   }
+}
+
+/**
+ * The theme the page shows: the user's choice, else the system setting. The choice is kept in memory as well as saved,
+ * so it holds until the page reloads even where it cannot be saved. show(theme) applies a theme.
+ */
+export function createThemeChoice({ win, prefersDark, show }) {
+  let chosen = readTheme(win);
+  const current = () => startTheme(chosen, prefersDark());
+  return {
+    current,
+    /** The switch: pick the other theme. */
+    toggle() {
+      chosen = otherTheme(current());
+      saveTheme(win, chosen);
+      show(chosen);
+    },
+    /** The system setting changed; it only shows while there is no choice. */
+    systemChanged() {
+      show(current());
+    },
+    /** Another tab saved or cleared the choice. Storage events never reach the tab that wrote. */
+    storageChanged(event) {
+      const storage = storageOf(win);
+      if (!storage || event.storageArea !== storage) return;
+      if (event.key === THEME_KEY) chosen = THEMES.includes(event.newValue) ? event.newValue : null;
+      else if (event.key === null) chosen = null;
+      else return;
+      show(current());
+    },
+  };
 }

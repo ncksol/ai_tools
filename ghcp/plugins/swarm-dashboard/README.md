@@ -39,7 +39,7 @@ npm start
 
 ## Light and dark
 
-The dashboard has a light and a dark theme. It starts in the one your system uses, and follows the system while you have not picked one. The button beside the Cockpit button switches between them: it shows a moon in the light theme and a sun in the dark one. The dashboard remembers your choice for that browser or for the app's panel. The cockpit always has its own dark look, so it has no such button.
+The dashboard has a light and a dark theme. It starts in the one your system uses, and follows the system while you have not picked one. The button beside the Cockpit button switches between them: it shows a moon in the light theme and a sun in the dark one. The dashboard remembers your choice for that browser or for the app's panel; where the browser blocks storage, it keeps the choice until the page reloads. The cockpit always has its own dark look, so it has no such button.
 
 ## The cockpit
 
