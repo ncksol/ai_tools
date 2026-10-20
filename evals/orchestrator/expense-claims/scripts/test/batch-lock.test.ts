@@ -1,11 +1,12 @@
 // The batch lock and the machine guard, with real processes racing for them.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { after, before, test } from "node:test";
-import { ActiveBatchError, claimActive, HOLDER_LOST_EXIT, readGuard, releaseActive, tryOsLock, withLock } from "../lib/batch/lock.ts";
+import { ActiveBatchError, claimActive, HOLDER_LOST_EXIT, pidAlive, readGuard, releaseActive, tryOsLock, withLock } from "../lib/batch/lock.ts";
 import { createRevision, loadState, saveState, StaleStateError, type BatchState } from "../lib/batch/state.ts";
 import { run as runProc } from "../lib/proc.ts";
 
@@ -43,17 +44,61 @@ test("only one of six racing processes gets the batch lock", async () => {
   assert.deepEqual(await racers(join(dir, "race.lock"), 6), ["busy", "busy", "busy", "busy", "busy", "got"]);
 });
 
-test("a holder killed with SIGKILL leaves nothing stale: the next racers still get exactly one lock", async () => {
+test("a runner killed with SIGKILL leaves no native holder or stale lock", { timeout: 15_000 }, async () => {
   const path = join(dir, "killed.lock");
-  const holder = spawn(process.execPath, ["--input-type=module", "-e", `import { tryOsLock } from ${JSON.stringify(lockModule)};
+  const runner = spawn(process.execPath, ["--input-type=module", "-e", `import { tryOsLock } from ${JSON.stringify(lockModule)};
 const held = await tryOsLock(${JSON.stringify(path)}); console.log(held ? "held" : "busy"); setInterval(() => {}, 1000);`]);
-  await new Promise<void>((done) => holder.stdout.on("data", (chunk) => String(chunk).includes("held") && done()));
-  assert.equal(await tryOsLock(path), null, "busy while the holder lives");
-  holder.kill("SIGKILL");
-  await new Promise((done) => holder.once("exit", done));
-  await new Promise((done) => setTimeout(done, 300));
-  assert.deepEqual(await racers(path, 4), ["busy", "busy", "busy", "got"]);
+  const ended = once(runner, "exit");
+  const holders: number[] = [];
+  try {
+    await new Promise<void>((done) => runner.stdout.on("data", (chunk) => String(chunk).includes("held") && done()));
+    const native = await childOf(runner.pid!, existsSync("/usr/bin/lockf") ? "lockf" : "flock");
+    holders.push(native, await childOf(native, basename(process.execPath)));
+    assert.equal(await tryOsLock(path), null, "busy while the runner lives");
+    runner.kill("SIGKILL");
+    await ended;
+    const deadline = Date.now() + 5000;
+    while (holders.some(pidAlive) && Date.now() < deadline) await new Promise((done) => setTimeout(done, 25));
+    for (const pid of holders) assert.equal(pidAlive(pid), false, `native holder ${pid} survived its runner`);
+    assert.deepEqual(await racers(path, 4), ["busy", "busy", "busy", "got"]);
+  } finally {
+    if (runner.exitCode === null && runner.signalCode === null) runner.kill("SIGKILL");
+    await ended;
+    for (const pid of holders) if (pidAlive(pid)) process.kill(pid, "SIGKILL");
+  }
 });
+
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  test(`${signal} to a locked runner's whole group still kills a command that ignores SIGTERM`, { timeout: 15_000 }, async () => {
+    const path = join(dir, `group-${signal}.lock`);
+    const pidFile = join(dir, `group-${signal}.pid`);
+    const leaf = `process.on("SIGTERM", () => {}); require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000);`;
+    const runner = spawn(process.execPath, ["--input-type=module", "-e", `import { withOsLock } from ${JSON.stringify(lockModule)};
+import { run } from ${JSON.stringify(procModule)};
+await withOsLock(${JSON.stringify(path)}, () => run(process.execPath, ["-e", ${JSON.stringify(leaf)}], { timeoutMs: 60_000 }),
+  { waitMs: 0, now: Date.now, sleep: async () => {}, busyMessage: "busy" });`], { detached: true });
+    let err = "";
+    runner.stderr.on("data", (chunk) => (err += chunk));
+    runner.stdout.resume();
+    const ended = once(runner, "exit");
+    let pid: number | undefined;
+    try {
+      const deadline = Date.now() + 5000;
+      while (!existsSync(pidFile) && Date.now() < deadline) await new Promise((done) => setTimeout(done, 25));
+      assert.ok(existsSync(pidFile), `command did not start: ${err}`);
+      pid = Number(readFileSync(pidFile, "utf8"));
+      process.kill(-runner.pid!, signal);
+      const [code] = await ended;
+      assert.equal(pidAlive(pid), false, `command survived group ${signal}: ${err}`);
+      assert.equal(code, signal === "SIGTERM" ? 143 : 130, err);
+      assert.doesNotMatch(err, /lost the lock/);
+    } finally {
+      if (pid !== undefined && pidAlive(pid)) process.kill(-pid, "SIGKILL");
+      if (runner.exitCode === null && runner.signalCode === null) process.kill(-runner.pid!, "SIGKILL");
+      await ended;
+    }
+  });
+}
 
 test("an empty or garbled lock file left by a crash doesn't block anyone", async () => {
   for (const content of ["", "0", "12345", "not a pid"]) {
@@ -171,10 +216,10 @@ console.log("A returned");`]);
   caller.stderr.on("data", (chunk) => (err += chunk));
   const exited = new Promise<number | null>((done) => caller.once("exit", (code) => done(code)));
   await new Promise<void>((done) => caller.stdout.on("data", () => out.includes("inside") && done()));
-  // Kill the native holder (cat, under lockf), not the Node caller.
+  // Kill the holder under lockf, not the Node caller.
   const lockf = await childOf(caller.pid!, "lockf");
-  const cat = await childOf(lockf, "cat");
-  process.kill(cat, "SIGKILL");
+  const holder = await childOf(lockf, basename(process.execPath));
+  process.kill(holder, "SIGKILL");
   await withLock(batch, () => {
     const state = loadState(batch);
     (state as unknown as { marker: string }).marker = "B";
@@ -234,10 +279,10 @@ ${body}`]);
   };
 }
 
-// Kills the caller's native lock holder (cat, under lockf), leaving the caller itself alive.
+// Kills the caller's lock holder under lockf, leaving the caller itself alive.
 async function killHolder(caller: number): Promise<void> {
   const lockf = await childOf(caller, "lockf");
-  process.kill(await childOf(lockf, "cat"), "SIGKILL");
+  process.kill(await childOf(lockf, basename(process.execPath)), "SIGKILL");
 }
 
 // Pauses just before the guard publishes a revision (the link(2) into the guard folder).

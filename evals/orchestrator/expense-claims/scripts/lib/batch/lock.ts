@@ -3,9 +3,10 @@
 // - the active-batch guard: one batch at a time on this machine, because runs share the app, the
 //   runs folder, results.csv and the account's limits.
 //
-// Both use a kernel flock(2) on a lock file, held by a small child process (`lockf ... cat`) whose
+// Both use a kernel flock(2) on a lock file, held by a small Node child process whose
 // stdin this process keeps open. The kernel grants the lock to one holder at a time and releases it
-// when the holder exits, crash included: when this process dies, `cat` reads end-of-file and exits.
+// when the holder exits, crash included: when this process dies, stdin reaches EOF and it exits.
+// Its own process group keeps runner-group signals from dropping the lock before command cleanup.
 // So no stale lock ever needs reclaiming, and the lock file's content means nothing.
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, realpathSync, writeSync } from "node:fs";
@@ -29,7 +30,8 @@ export function pidAlive(pid: number): boolean {
 }
 
 function lockCommand(path: string): [string, string[]] {
-  const hold = ["/bin/sh", "-c", "echo locked; exec cat"];
+  // macOS cat intermittently fails on this pipe with EBADF; Node drains it through libuv.
+  const hold = [process.execPath, "-e", 'process.stdin.resume(); process.stdout.write("locked\\n");'];
   // macOS and the BSDs: lockf(1). -k keeps the file, so every holder locks the same inode.
   if (existsSync("/usr/bin/lockf")) return ["/usr/bin/lockf", ["-k", "-s", "-t", "0", path, ...hold]];
   // Linux (util-linux): flock(1).
@@ -60,7 +62,7 @@ export function tryOsLock(path: string): Promise<HeldLock | null> {
   return new Promise((resolve, reject) => {
     let child: ChildProcess;
     try {
-      child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
+      child = spawn(cmd, args, { detached: true, stdio: ["pipe", "pipe", "pipe"] });
     } catch (error) {
       reject(error);
       return;
@@ -89,7 +91,7 @@ export function tryOsLock(path: string): Promise<HeldLock | null> {
       }
     });
     child.stderr!.on("data", (chunk) => (err += chunk));
-    // After the lock is taken, only one ending is normal: the release ends cat's stdin, cat exits 0 and
+    // After the lock is taken, only one ending is normal: the release ends stdin, the child exits 0 and
     // so does lockf. Any other ending, including one that is only noticed during the release, means
     // the lock may already belong to someone else.
     child.once("error", (error) => {
