@@ -140,6 +140,27 @@ test("pinned variants finish all three calibrations and a three-run pilot with m
   assert.equal(readResults(second.config.resultsPath).length, 12);
 });
 
+test("a manifest batch stops after its first wrong-agent run without counting or freezing it", async () => {
+  for (const agent of ["orchestrator", ""]) {
+    const h = await make({ scenarios: ["ask-final"], variants: policyLabels });
+    pinPolicy(h);
+    const action = await h.until((a) => a.action === "create_session");
+    await h.drive(action);
+    const session = [...h.app.sessions.values()][0];
+    const path = eventsPath(h.config.stateDir, session.id);
+    const events = readFileSync(path, "utf8").trim().split("\n").map((line) => JSON.parse(line) as LogEvent);
+    const changed = events.flatMap((event) => event.type !== "subagent.selected" ? [event] :
+      agent ? [{ ...event, data: { ...event.data, agentName: agent } }] : []);
+    writeFileSync(path, changed.map((event) => JSON.stringify(event)).join("\n") + "\n");
+    await h.until(() => false);
+    assert.equal(h.state().runs.length, 1);
+    assert.equal(h.state().phase, "stopped");
+    assert.equal(h.state().policyCalibration, undefined);
+    assert.match(h.state().stopReason!, /logged agent.*expected/);
+    assert.equal(readResults(h.config.resultsPath)[0].agent, agent);
+    assert.ok(h.notices.some((notice) => notice.key === "batch-stopped"));
+  }
+});
 test("a contradictory calibration decision stops through the usual notification and report path", async () => {
   const h = await make({ scenarios: ["ask-final", "ask-final", "ask-final"], variants: policyLabels, runsPerVariant: 3, minutes: () => 10 });
   pinPolicy(h);

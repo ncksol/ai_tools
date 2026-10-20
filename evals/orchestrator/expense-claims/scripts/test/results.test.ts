@@ -104,15 +104,20 @@ test("old result files migrate without fabricating missing cost or changing hist
 
 test("pinned policy calibrations stay excluded and different agent bundles are never pooled", () => {
   const summary = summarize([
-    row({ variant: "a", calibration: "yes", agent_bundle_sha256: "first", minutes: "10" }),
-    row({ variant: "a", features: THREE, agent_bundle_sha256: "first", minutes: "15", robustness_status: "failed" }),
-    row({ variant: "a", features: THREE, agent_bundle_sha256: "second", minutes: "25" }),
+    row({ variant: "a", agent: "a", calibration: "yes", agent_bundle_sha256: "first", minutes: "10" }),
+    row({ variant: "a", agent: "a", features: THREE, agent_bundle_sha256: "first", minutes: "15", robustness_status: "failed" }),
+    row({ variant: "a", agent: "a", features: THREE, agent_bundle_sha256: "second", minutes: "25" }),
+    row({ variant: "a", agent: "orchestrator", calibration: "yes", agent_bundle_sha256: "first", minutes: "99" }),
+    row({ variant: "a", features: THREE, agent_bundle_sha256: "first", minutes: "99" }),
   ]);
   assert.equal(summary.groups.find((g) => g.features === FULL)!.runs, 0);
   assert.deepEqual(summary.groups.filter((g) => g.features === THREE).map((g) => g.medianMinutes), [15, 25]);
+  assert.equal(summary.calibration.median, 10);
+  assert.deepEqual(summary.groups.filter((g) => g.features === THREE).map((g) => g.runs), [1, 1]);
   assert.match(formatSummary(summary), /Pinned policy calibrations: 1.*never counted/);
   assert.doesNotMatch(formatSummary(summary), /Calibration runs count as scored/);
   assert.doesNotMatch(formatSummary(summary), /The median is over 30 minutes/);
+  assert.match(formatSummary(summary), /Excluded 2 pinned row\(s\).*logged agent/);
 });
 
 test("median handles odd, even and empty lists", () => {

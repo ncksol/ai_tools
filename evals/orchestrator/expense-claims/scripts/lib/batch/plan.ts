@@ -3,7 +3,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { ALL_FEATURES, featureSetName, type Feature } from "../features.ts";
 import { parseRunName } from "../new-run.ts";
-import { CALIBRATION_LIMIT_MINUTES, median, type ResultRow } from "../results.ts";
+import { CALIBRATION_LIMIT_MINUTES, matchesPinnedAgent, median, type ResultRow } from "../results.ts";
 import type { RunState } from "./state.ts";
 import { variantBundle, type VariantDefinition, type VariantSet } from "../variants.ts";
 
@@ -27,7 +27,7 @@ export interface PolicyCalibration {
 }
 
 const matchesVariant = (row: ResultRow, variant: VariantDefinition) =>
-  row.agent_sha256 === variant.sha256 && row.agent_bundle_sha256 === variantBundle(variant);
+  row.agent === variant.agent && row.agent_sha256 === variant.sha256 && row.agent_bundle_sha256 === variantBundle(variant);
 const show = (value: number | null): string => (value === null ? "none" : Number.isFinite(value) ? `${value.toFixed(1)} min` : "unfinished");
 
 // The calibration batch is every full-feature-set calibration row in results.csv plus one run for
@@ -35,11 +35,8 @@ const show = (value: number | null): string => (value === null ? "none" : Number
 // fixed if it is the same when every missing run takes 0 minutes and when every missing run never
 // finishes; then no calibration run is needed.
 export function calibrationDecision(rows: ResultRow[], variants: string[], set?: VariantSet, frozen?: PolicyCalibration): CalibrationDecision {
+  rows = rows.filter(matchesPinnedAgent);
   if (set) {
-    if (frozen) return {
-      state: frozen.dropSummary ? "drop" : "full", features: frozen.dropSummary ? WITHOUT_SUMMARY : ALL_FEATURES,
-      pending: [], best: null, worst: null, reason: frozen.reason,
-    };
     const pending = variants.filter((variant) => !rows.some((row) =>
       row.variant === variant && matchesVariant(row, set.variants[variant]) &&
       row.features === FULL_SET && row.calibration === "yes",
@@ -47,6 +44,10 @@ export function calibrationDecision(rows: ResultRow[], variants: string[], set?:
     if (pending.length > 0) return {
       state: "undecided", features: ALL_FEATURES, pending, best: null, worst: null,
       reason: `pinned policy variants need full-feature calibration: ${pending.join(", ")}`,
+    };
+    if (frozen) return {
+      state: frozen.dropSummary ? "drop" : "full", features: frozen.dropSummary ? WITHOUT_SUMMARY : ALL_FEATURES,
+      pending: [], best: null, worst: null, reason: frozen.reason,
     };
     const priorPilot = rows.filter((row) => variants.includes(row.variant) &&
       matchesVariant(row, set.variants[row.variant]) && row.calibration === "no");

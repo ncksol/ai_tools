@@ -203,6 +203,7 @@ test("score attributes driver answers and caps a completed log at the observed r
       transformedContent: "<cross_session_message>\nsynthetic answer\n</cross_session_message>",
     }),
     ev("assistant.turn_start", 13),
+    ev("session.usage_record", 13.1, { usage: { model: "claude-opus-5.5", inputTokens: 1000, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 100 } }),
     ev("user.message", 14, { content: "<cross_session_message>\nsynthetic child report\n</cross_session_message>" }),
     ev("assistant.message", 21),
     ev("session.task_complete", 21.1),
@@ -228,6 +229,11 @@ test("score attributes driver answers and caps a completed log at the observed r
   assert.equal(row.suite_total, "65");
   assert.match(row.note, /^driver-run; .*2 .*session\.task_complete.*last/);
   assert.match(row.note, /another session.*later human kickoff/);
+  assert.equal(row.cost_status, "incomplete");
+  assert.equal(row.cost_usd, "");
+  assert.equal(row.usage_records, "1");
+  assert.match(row.note, /cost:.*no-app\.db not found/);
+  assert.match(result.stdout, /Warning: cost:.*no-app\.db not found/);
 });
 
 test("score rejects invalid log timing options before scoring", async () => {

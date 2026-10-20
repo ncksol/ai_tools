@@ -808,6 +808,9 @@ async function watchRun(ctx: Ctx, state: BatchState, run: RunState, index: numbe
     if (orch.effort !== config.effort) wrong.push(`effort ${orch.effort ?? "none"}`);
     if (orch.contextTier !== config.contextTier) wrong.push(`context tier ${orch.contextTier ?? "none"}`);
     if (wrong.length > 0) addFlag(run, "session-settings", `session.start differs from the request: ${wrong.join(", ")}`, at);
+    if (config.variantSet && orch.agent !== run.variant) {
+      state.fatal ??= `${run.key} logged agent ${orch.agent ?? "none"}; expected ${run.variant}; no further run may start`;
+    }
     log(ctx, `${run.key} kickoff at ${run.kickoffAt} in session ${run.sessionId}`);
   }
 
@@ -943,6 +946,9 @@ async function scoreRun(ctx: Ctx, state: BatchState, run: RunState): Promise<voi
   if (row) {
     run.row = { ...row };
     state.scoreFailures = 0;
+    if (config.variantSet && row.agent !== run.variant) {
+      state.fatal ??= `${run.key} logged agent ${row.agent || "none"}; expected ${run.variant}; no further run may start`;
+    }
     if (result.code !== 0) addFlag(run, "score-warning", `score exited ${result.code} after saving its gate row; diagnostics may be incomplete (log: ${run.scoreLog})`, run.scoredAt);
   } else {
     state.scoreFailures++;

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { readVariants, verifyVariants, variantBundle } from "../lib/variants.ts";
-import { planNext } from "../lib/batch/plan.ts";
+import { calibrationDecision, planNext, scoredCount } from "../lib/batch/plan.ts";
 import type { RunState } from "../lib/batch/state.ts";
 import { RESULT_COLUMNS, type ResultRow } from "../lib/results.ts";
 import { chooseRunSession } from "../lib/events.ts";
@@ -86,7 +86,7 @@ test("every pinned variant calibrates before Summary drops, regardless of legacy
     const labels = Object.keys(set.variants);
     const row = (variant: string, bundle: string): ResultRow => ({
       ...Object.fromEntries(RESULT_COLUMNS.map((key) => [key, ""])),
-      variant, agent_bundle_sha256: bundle, agent_sha256: set.variants[variant]?.sha256 ?? "", run: "1", repo: `o/${variant}`,
+      variant, agent: variant, agent_bundle_sha256: bundle, agent_sha256: set.variants[variant]?.sha256 ?? "", run: "1", repo: `o/${variant}`,
       features: "policy+reports+import+summary", calibration: "yes", outcome: "passed", minutes: "65.7",
     }) as ResultRow;
     const rows = [row("old-agent", "")];
@@ -130,7 +130,7 @@ test("fast completed calibrations stop the approved no-Summary pilot instead of 
     const labels = Object.keys(set.variants);
     const rows = labels.map((variant) => ({
       ...Object.fromEntries(RESULT_COLUMNS.map((key) => [key, ""])),
-      variant, agent_sha256: set.variants[variant].sha256, agent_bundle_sha256: variantBundle(set.variants[variant]),
+      variant, agent: variant, agent_sha256: set.variants[variant].sha256, agent_bundle_sha256: variantBundle(set.variants[variant]),
       calibration: "yes", features: "policy+reports+import+summary", outcome: "passed", minutes: "10",
     }) as ResultRow);
     rows.push({ ...rows[0], variant: "legacy", agent_sha256: "", agent_bundle_sha256: "", minutes: "65.7" });
@@ -138,5 +138,27 @@ test("fast completed calibrations stop the approved no-Summary pilot instead of 
     assert.equal(result.decision.state, "full");
     assert.equal(result.decision.best, 10);
     assert.equal(result.next, null);
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test("wrong or missing logged agents cannot satisfy calibrations, change the median or fill a pilot", () => {
+  const f = fixture();
+  try {
+    const set = readVariants(f.path);
+    const labels = Object.keys(set.variants);
+    const valid = labels.map((variant) => ({
+      ...Object.fromEntries(RESULT_COLUMNS.map((key) => [key, ""])),
+      variant, agent: variant, agent_sha256: set.variants[variant].sha256, agent_bundle_sha256: variantBundle(set.variants[variant]),
+      calibration: "yes", features: "policy+reports+import+summary", outcome: "passed", minutes: "40",
+    }) as ResultRow);
+    for (const agent of ["orchestrator", ""]) {
+      const wrong = valid.map((row) => ({ ...row, agent, minutes: "1" }));
+      assert.deepEqual(calibrationDecision(wrong, labels, set).pending, labels);
+      assert.deepEqual(calibrationDecision(wrong, labels, set, { dropSummary: true, reason: "old decision" }).pending, labels);
+      assert.equal(calibrationDecision([...valid, ...wrong, ...wrong], labels, set).best, 40);
+      const pilot = Array.from({ length: 3 }, () => ({ ...wrong[2], calibration: "no", features: "policy+reports+import" }));
+      assert.equal(scoredCount([], pilot, labels[2], ["policy", "reports", "import"], set.variants[labels[2]]), 0);
+      assert.equal(calibrationDecision([...valid, { ...wrong[2], calibration: "no" }], labels, set).state, "drop");
+    }
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
 });

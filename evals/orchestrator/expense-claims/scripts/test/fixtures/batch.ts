@@ -14,6 +14,8 @@ import { parseRunName } from "../../lib/new-run.ts";
 import { run as runProc } from "../../lib/proc.ts";
 import { appendResult, defaultCalibration, readResults, RESULT_COLUMNS, type ResultRow } from "../../lib/results.ts";
 import { KIT_DIR } from "../../lib/suite.ts";
+import { readEventLog } from "../../lib/events.ts";
+import { orchestratorView } from "../../lib/batch/swarm.ts";
 
 export interface Harness {
   dir: string;
@@ -147,6 +149,7 @@ export async function harness(opts: {
           run: String(parsed.n),
           repo: basename(repoDir),
           session: flag("--session") ?? "",
+          agent: orchestratorView(readEventLog(join(config.stateDir, flag("--session")!, "events.jsonl")).events).agent ?? "",
           features,
           calibration: flag("--calibration") ?? defaultCalibration(rows, parsed.variant, features),
           agent_revision: flag("--agent-revision") ?? "",

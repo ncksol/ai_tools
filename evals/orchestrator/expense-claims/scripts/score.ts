@@ -281,24 +281,22 @@ async function main(): Promise<number> {
     try {
       const pricing = readPricing(resolve(values.pricing));
       pricingVersion = pricing.version;
-      const db = existsSync(values["app-db"]) ? openAppDb(values["app-db"]) : null;
+      const db = openAppDb(values["app-db"]);
       usage = collectUsage({
         stateDir: resolve(values["state-dir"]), rootId: timing.session, start: timing.start, capturedAt, pricing,
-        ...(db ? {
-          resolveSession: (id: string) => db.sessionForWorkspace(id),
-          children: (id: string) => {
-            const children = db.childSessions(id);
-            const errors = db.takeErrors();
-            if (children === null || errors.length > 0) throw new Error(errors.join("; ") || "Cannot discover descendant sessions");
-            return children;
-          },
-          aliases: (id: string) => {
-            const aliases = db.sessionAliases(id);
-            const errors = db.takeErrors();
-            if (aliases === null || errors.length > 0) throw new Error(errors.join("; ") || "Cannot discover session aliases");
-            return aliases;
-          },
-        } : {}),
+        resolveSession: (id: string) => db.sessionForWorkspace(id),
+        children: (id: string) => {
+          const children = db.childSessions(id);
+          const errors = db.takeErrors();
+          if (children === null || errors.length > 0) throw new Error(errors.join("; ") || "Cannot discover descendant sessions");
+          return children;
+        },
+        aliases: (id: string) => {
+          const aliases = db.sessionAliases(id);
+          const errors = db.takeErrors();
+          if (aliases === null || errors.length > 0) throw new Error(errors.join("; ") || "Cannot discover session aliases");
+          return aliases;
+        },
       });
       costWarnings.push(...usage.warnings.map((warning) => `cost: ${warning}`));
     } catch (error) {
@@ -308,6 +306,8 @@ async function main(): Promise<number> {
   for (const warning of costWarnings) console.log(`Warning: ${warning}`);
 
   const tmp = mkdtempSync(join(tmpdir(), "orch-eval-score-"));
+  const cleanup = () => rmSync(tmp, { recursive: true, force: true });
+  process.once("exit", cleanup);
   try {
     const cloneDir = join(tmp, "main");
     const clone = github
@@ -426,7 +426,8 @@ async function main(): Promise<number> {
     console.log(`\nNow check for user-level memories saved during this run (README "Memory hygiene") and remove eval-related ones.`);
     return 0;
   } finally {
-    rmSync(tmp, { recursive: true, force: true });
+    process.off("exit", cleanup);
+    cleanup();
   }
 }
 

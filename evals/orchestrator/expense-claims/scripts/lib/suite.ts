@@ -99,7 +99,8 @@ export async function runSuite(appDir: string, files: string[], opts: { timeoutM
   // Set by a parent `node --test`; a nested runner would then report to it instead of printing TAP.
   delete env.NODE_TEST_CONTEXT;
   // One file at a time, so two suite processes never race for the same free port.
-  const result = await run(process.execPath, suiteArgs(files), { cwd: KIT_DIR, env, timeoutMs: opts.timeoutMs });
+  // Leave time for score's exit cleanup before its own supervisor's five-second shutdown grace ends.
+  const result = await run(process.execPath, suiteArgs(files), { cwd: KIT_DIR, env, timeoutMs: opts.timeoutMs, shutdownGraceMs: 1000 });
   const summary = parseTap(result.stdout);
   const timedOut = result.timedOut === true;
   return {

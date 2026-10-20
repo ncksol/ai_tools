@@ -93,6 +93,9 @@ export function median(values: number[]): number | null {
   return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
+export const matchesPinnedAgent = (row: ResultRow): boolean =>
+  !row.agent_bundle_sha256 || row.agent === row.variant;
+
 export interface VariantSummary {
   features: string;
   variant: string;
@@ -106,6 +109,7 @@ export interface VariantSummary {
 export interface Summary {
   calibration: { runs: number; median: number | null; counted: boolean };
   pinnedCalibrations: number;
+  excludedAgentRuns: number;
   groups: VariantSummary[];
 }
 
@@ -116,12 +120,13 @@ export interface Summary {
 // otherwise only the batch is left out, and every other row counts. The per-variant comparison
 // below still uses passed runs only.
 export function summarize(rows: ResultRow[]): Summary {
+  const eligible = rows.filter(matchesPinnedAgent);
   const inBatch = (row: ResultRow) => row.calibration === "yes" && row.features === FULL_SET;
-  const batch = rows.filter(inBatch);
+  const batch = eligible.filter(inBatch);
   const times = batch.map((row) => (row.outcome === "passed" || row.outcome === "gate-failed" ? Number(row.minutes) : Infinity));
   const batchMedian = median(times);
   const counted = batchMedian !== null && batchMedian <= CALIBRATION_LIMIT_MINUTES;
-  const scored = rows.filter((row) => !inBatch(row) || (counted && !row.agent_bundle_sha256));
+  const scored = eligible.filter((row) => !inBatch(row) || (counted && !row.agent_bundle_sha256));
   const groupKey = (row: ResultRow) => `${row.features}\u0000${row.variant}\u0000${row.agent_bundle_sha256}`;
   const groups = new Map<string, ResultRow[]>();
   for (const row of rows) {
@@ -131,7 +136,8 @@ export function summarize(rows: ResultRow[]): Summary {
   for (const row of scored) groups.get(groupKey(row))!.push(row);
   return {
     calibration: { runs: batch.length, median: batchMedian, counted },
-    pinnedCalibrations: rows.filter((row) => inBatch(row) && row.agent_bundle_sha256).length,
+    pinnedCalibrations: eligible.filter((row) => inBatch(row) && row.agent_bundle_sha256).length,
+    excludedAgentRuns: rows.length - eligible.length,
     groups: [...groups.entries()].map(([key, group]) => {
       const [features, variant, agentBundle] = key.split("\u0000");
       const passed = group.filter((row) => row.outcome === "passed");
@@ -150,6 +156,7 @@ export function summarize(rows: ResultRow[]): Summary {
 
 export function formatSummary(summary: Summary): string {
   const lines: string[] = [];
+  if (summary.excludedAgentRuns > 0) lines.push(`Excluded ${summary.excludedAgentRuns} pinned row(s): the logged agent does not match the variant label.`);
   const { calibration } = summary;
   if (calibration.runs === 0) {
     lines.push("Calibration: no calibration runs yet.");
