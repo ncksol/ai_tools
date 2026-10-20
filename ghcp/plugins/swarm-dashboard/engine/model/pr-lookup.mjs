@@ -529,6 +529,7 @@ export function createPrLookup({
   const queue = [];
   const inflight = new Set();
   let active = 0;
+  let started = 0;
   let waiters = [];
   const isFinal = info => info.state === 'merged';
   const due = key => {
@@ -592,6 +593,7 @@ export function createPrLookup({
     const key = prKey(pr, cwd);
     if (inflight.has(key) || !due(key)) return;
     inflight.add(key);
+    started += 1;
     // The label goes into diagnostics, so it never holds the worktree path, nor a repository value that is not a usable repository.
     queue.push({ pr, key, label: `${pr.provider}:${target ? pr.repo : 'worktree'}:${pr.id}`, cwd: target ? null : cwd });
     pump();
@@ -602,6 +604,8 @@ export function createPrLookup({
     request,
     pending: (pr, { cwd = null } = {}) => Boolean(pr) && inflight.has(prKey(pr, cwd)),
     settle: () => (active || queue.length ? new Promise(resolve => waiters.push(resolve)) : Promise.resolve()),
+    /** How many lookups have been started, so a caller can tell whether a refresh started new ones. */
+    started: () => started,
     errors: () => [...cache.values()].filter(({ info }) => info.error).map(({ label, info }) => ({ key: label, error: info.error })),
   };
 }
