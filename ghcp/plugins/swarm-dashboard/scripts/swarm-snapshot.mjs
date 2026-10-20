@@ -3,6 +3,7 @@ import { realpath } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { createSwarmEngine } from '../engine/engine.mjs';
 import { createPrLookup } from '../engine/model/pr-lookup.mjs';
+import { MENTION_CANDIDATES } from '../engine/model/stage.mjs';
 import { parseTime } from '../engine/time.mjs';
 
 const USAGE = `Usage: swarm-snapshot [--list | --swarm <id> | --history | --run <id>] [options]
@@ -26,6 +27,19 @@ const VALUE_OPTIONS = new Set(['--swarm', '--run', '--copilot-home', '--history-
 const FLAG_OPTIONS = new Set(['--list', '--history', '--persist-history', '--no-pr-lookup', '--compact', '--help']);
 
 class UsageError extends Error {}
+
+/**
+ * Lets the PR lookups finish and refreshes so the engine uses them. A unit whose mentioned PR is rejected after its lookup starts
+ * the next candidate's lookup on that refresh, so this repeats while a refresh starts new lookups, at most MENTION_CANDIDATES times.
+ */
+async function settleLookups(engine, lookup) {
+  for (let pass = 0; pass < MENTION_CANDIDATES; pass += 1) {
+    const started = lookup.started();
+    await lookup.settle();
+    await engine.refresh();
+    if (lookup.started() === started) return;
+  }
+}
 
 const timeOption = value => parseTime(/^\d+$/.test(value) ? Number(value) : value);
 
@@ -52,7 +66,7 @@ export function parseArguments(argv) {
   return options;
 }
 
-export async function main(argv, { stdout = process.stdout, stderr = process.stderr } = {}) {
+export async function main(argv, { stdout = process.stdout, stderr = process.stderr, createLookup = createPrLookup } = {}) {
   let options;
   try {
     options = parseArguments(argv);
@@ -66,7 +80,7 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
   }
   const fixed = options.now === undefined ? null : timeOption(options.now);
   const now = fixed === null ? Date.now : () => fixed;
-  const lookup = options['no-pr-lookup'] || options.list || options.history ? null : createPrLookup({ now });
+  const lookup = options['no-pr-lookup'] || options.list || options.history ? null : createLookup({ now });
   const engine = createSwarmEngine({
     copilotHome: options['copilot-home'], historyDir: options['history-dir'], persistHistory: Boolean(options['persist-history']),
     now, prLookup: lookup ?? 'off', sqlite: options.sqlite ?? 'auto',
@@ -81,15 +95,13 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
     } else if (options.run !== undefined) {
       if (lookup) {
         await engine.getSnapshot(options.run);
-        await lookup.settle();
-        await engine.refresh();
+        await settleLookups(engine, lookup);
       }
       result = await engine.getRunSummary(options.run);
     } else {
       result = await engine.getSnapshot(options.swarm);
       if (result && lookup) {
-        await lookup.settle();
-        await engine.refresh();
+        await settleLookups(engine, lookup);
         result = await engine.getSnapshot(result.run.id);
       }
     }

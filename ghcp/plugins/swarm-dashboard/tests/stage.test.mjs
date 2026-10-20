@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_THRESHOLDS } from '../engine/config.mjs';
-import { deriveMonitor, deriveStage, hostOf, prView, resolvePr } from '../engine/model/stage.mjs';
+import { MENTION_CANDIDATES, deriveMonitor, deriveStage, hostOf, mentionFits, prView, resolvePr } from '../engine/model/stage.mjs';
 import { MINUTE } from '../engine/time.mjs';
 
 const T0 = Date.UTC(2026, 9, 15, 8, 0, 0);
@@ -37,6 +37,41 @@ test('the most-mentioned PR is used for Azure DevOps hosts only', () => {
     { provider: 'ado', id: 12, repo: 'org/project/repo', url: null, source: 'heuristic', knownAt: T0 });
   assert.equal(resolvePr({ mentions, host: { provider: 'github', repo: 'sample-org/sample-repo' } }), null);
   assert.equal(resolvePr({ mentions, host: { provider: null, repo: null } }), null);
+});
+
+test('a unit with a registry row gets no PR from mentions; its status line and app PR still apply', () => {
+  const mentions = new Map([mention('ado', null, 55, 3)]);
+  const host = { provider: 'ado', repo: 'org/project/repo' };
+  const row = { prProvider: null, prId: null, prRepo: null, prUrl: null, outcome: 'closed' };
+  assert.equal(resolvePr({ registry: row, mentions, host }), null);
+  assert.equal(resolvePr({ registry: row, statusLines: [{ at: T0, pr: { provider: 'ado', id: 9 } }], mentions, host }).source, 'status_line');
+  assert.equal(resolvePr({ registry: row, createdPr: { number: 4, repo: 'sample-org/sample-repo' }, mentions, host }).source, 'app');
+});
+
+test('mentioned PRs that `accepts` rejects fall through to the next most-mentioned, at most MENTION_CANDIDATES of them', () => {
+  const host = { provider: 'ado', repo: 'org/project/repo' };
+  const mentions = new Map([mention('ado', null, 1, 5), mention('ado', null, 2, 4), mention('ado', null, 3, 3), mention('ado', null, 4, 2)]);
+  const tried = [];
+  const pick = keep => resolvePr({ mentions, host, accepts: candidate => { tried.push(candidate.id); return keep.includes(candidate.id); } });
+  assert.equal(pick([2, 3]).id, 2);
+  assert.deepEqual(tried.splice(0), [1, 2]);
+  assert.equal(MENTION_CANDIDATES, 3);
+  assert.equal(pick([4]), null);
+  assert.deepEqual(tried, [1, 2, 3]);
+});
+
+test('a mentioned PR fits the unit unless it ended before the unit started, is on another branch, or opened earlier with a branch unknown', () => {
+  const start = { startedAt: T0, branch: 'feature/ui' };
+  const info = (extra = {}) => ({ state: 'open', openedAt: T0 + MINUTE, mergedAt: null, closedAt: null, sourceBranch: null, ...extra });
+  assert.equal(mentionFits(null, start), true);
+  assert.equal(mentionFits(info(), start), true);
+  assert.equal(mentionFits(info({ state: 'merged', openedAt: T0 - 9 * MINUTE, mergedAt: T0 - MINUTE, closedAt: T0 - MINUTE, sourceBranch: 'feature/ui' }), start), false);
+  assert.equal(mentionFits(info({ state: 'closed', closedAt: T0 - MINUTE, sourceBranch: 'refs/heads/feature/ui' }), start), false);
+  assert.equal(mentionFits(info({ sourceBranch: 'refs/heads/feature/api' }), start), false);
+  assert.equal(mentionFits(info({ openedAt: T0 - 60 * MINUTE, sourceBranch: 'refs/heads/feature/ui' }), start), true);
+  assert.equal(mentionFits(info({ openedAt: T0 - 60 * MINUTE }), start), false);
+  assert.equal(mentionFits(info({ openedAt: T0 - 60 * MINUTE, sourceBranch: 'feature/api' }), { startedAt: T0, branch: null }), false);
+  assert.equal(mentionFits(info({ state: 'merged', mergedAt: T0 + 9 * MINUTE, closedAt: T0 + 9 * MINUTE }), start), true);
 });
 
 test('the code host comes from workspace.yaml, else from the project', () => {

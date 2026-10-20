@@ -499,6 +499,8 @@ export function mapAdo(json) {
     state, title: typeof json.title === 'string' ? json.title : null, openedAt: parseTime(json.creationDate),
     mergedAt: state === 'merged' ? parseTime(json.closedDate) : null, closedAt: parseTime(json.closedDate), reviewNote,
     url: typeof webUrl === 'string' && json.pullRequestId ? `${webUrl}/pullrequest/${json.pullRequestId}` : null,
+    // Only Azure DevOps PRs are inferred from mentions, and only they need the branch to check that a mention is the unit's PR.
+    sourceBranch: typeof json.sourceRefName === 'string' && json.sourceRefName ? json.sourceRefName.replace(/^refs\/heads\//, '') : null,
   };
 }
 
@@ -527,6 +529,7 @@ export function createPrLookup({
   const queue = [];
   const inflight = new Set();
   let active = 0;
+  let started = 0;
   let waiters = [];
   const isFinal = info => info.state === 'merged';
   const due = key => {
@@ -590,6 +593,7 @@ export function createPrLookup({
     const key = prKey(pr, cwd);
     if (inflight.has(key) || !due(key)) return;
     inflight.add(key);
+    started += 1;
     // The label goes into diagnostics, so it never holds the worktree path, nor a repository value that is not a usable repository.
     queue.push({ pr, key, label: `${pr.provider}:${target ? pr.repo : 'worktree'}:${pr.id}`, cwd: target ? null : cwd });
     pump();
@@ -600,6 +604,8 @@ export function createPrLookup({
     request,
     pending: (pr, { cwd = null } = {}) => Boolean(pr) && inflight.has(prKey(pr, cwd)),
     settle: () => (active || queue.length ? new Promise(resolve => waiters.push(resolve)) : Promise.resolve()),
+    /** How many lookups have been started, so a caller can tell whether a refresh started new ones. */
+    started: () => started,
     errors: () => [...cache.values()].filter(({ info }) => info.error).map(({ label, info }) => ({ key: label, error: info.error })),
   };
 }
