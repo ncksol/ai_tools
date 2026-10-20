@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { after, before, test } from "node:test";
-import { stripFeatures } from "../lib/features.ts";
+import { ALL_FEATURES, stripFeatures } from "../lib/features.ts";
 import { run } from "../lib/proc.ts";
 import { readResults } from "../lib/results.ts";
-import { KIT_DIR } from "../lib/suite.ts";
+import { KIT_DIR, robustnessFiles, robustnessSha256 } from "../lib/suite.ts";
 import { basic, childLog, ev, withEvents, writeSession } from "./fixtures/events.ts";
 import { PERMISSIVE_CSV } from "./fixtures/permissive-csv.ts";
 
@@ -21,11 +22,33 @@ async function git(cwd: string, args: string[]): Promise<void> {
   assert.equal(result.code, 0, result.stderr);
 }
 
-function score(args: string[]) {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  delete env.NODE_TEST_CONTEXT;
-  return run(process.execPath, ["scripts/score.ts", ...args], { cwd: KIT_DIR, env });
+// Every synthetic score run reads a scratch app DB and session folder that don't exist, unless the
+// test passes its own; never the user's ~/.copilot.
+function scoreArgs(args: string[]): string[] {
+  const scratch = [];
+  if (!args.includes("--app-db")) scratch.push("--app-db", join(dir, "no-app.db"));
+  if (!args.includes("--state-dir")) scratch.push("--state-dir", join(dir, "no-state"));
+  return [...args, ...scratch];
 }
+
+function score(args: string[], extraEnv: NodeJS.ProcessEnv = {}) {
+  const env: NodeJS.ProcessEnv = { ...process.env, ...extraEnv };
+  delete env.NODE_TEST_CONTEXT;
+  return run(process.execPath, ["scripts/score.ts", ...scoreArgs(args)], { cwd: KIT_DIR, env });
+}
+
+test("synthetic score runs never default to the real app DB or session folder", () => {
+  for (const args of [[], ["--repo-dir", "x"]]) {
+    const full = scoreArgs(args);
+    for (const flag of ["--app-db", "--state-dir"]) {
+      const path = full[full.indexOf(flag) + 1];
+      assert.ok(path.startsWith(dir), `${flag} ${path}`);
+      assert.equal(existsSync(path), false, path);
+    }
+  }
+  const own = scoreArgs(["--app-db", "/scratch/a.db", "--state-dir", "/scratch/state"]);
+  assert.deepEqual(own, ["--app-db", "/scratch/a.db", "--state-dir", "/scratch/state"]);
+});
 
 test("score times a synthetic session, runs the seed's suite on a fresh clone and appends or replaces a row", { timeout: 300_000 }, async () => {
   const repoDir = join(dir, "orch-eval-e2e-1");
@@ -58,9 +81,20 @@ test("score times a synthetic session, runs the seed's suite on a fresh clone an
   const child = [...childLog(), ev("session.usage_record", 22.1, { usage: { model: "claude-opus-5.5", inputTokens: 1000, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 100, interactionType: "conversation-agent" } })];
   writeSession(stateDir, "c1", repository, "2026-01-01T10:20:00Z", child);
   writeSession(stateDir, "c2", repository, "2026-01-01T10:20:01Z", child);
+  writeSession(stateDir, "old-root", repository, "2026-01-01T09:00:00Z", [
+    ev("session.usage_record", 4, { usage: { model: "claude-opus-5.5", inputTokens: 1000, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 100, interactionType: "conversation-agent" } }),
+  ]);
+  const appDb = join(dir, "aliases.db");
+  const fixtureDb = new DatabaseSync(appDb);
+  fixtureDb.exec("CREATE TABLE workspaces (id TEXT, session_id TEXT, creator_session_id TEXT, coordinating_creator_session_id TEXT);");
+  fixtureDb.exec("CREATE TABLE workspace_session_aliases (session_id TEXT, workspace_id TEXT);");
+  fixtureDb.exec("INSERT INTO workspaces (id,session_id) VALUES ('root-workspace','s1');");
+  fixtureDb.exec("INSERT INTO workspace_session_aliases VALUES ('old-root','root-workspace');");
+  fixtureDb.close();
+  const originalDb = readFileSync(appDb);
 
   const results = join(dir, "results.csv");
-  const common = ["--repo-dir", repoDir, "--state-dir", stateDir, "--app-db", join(dir, "missing.db"), "--no-github", "--results", results];
+  const common = ["--repo-dir", repoDir, "--state-dir", stateDir, "--app-db", appDb, "--no-github", "--results", results];
 
   const ok = await score(common);
   assert.equal(ok.code, 0, ok.stdout + ok.stderr);
@@ -90,15 +124,20 @@ test("score times a synthetic session, runs the seed's suite on a fresh clone an
     robustness_passed: "12",
     robustness_total: "12",
     cost_status: "complete",
-    cost_usd: "0.021000000",
-    cost_sessions: "3",
-    usage_records: "4",
-    input_tokens: "4000",
-    cache_read_tokens: "0",
-    cache_write_tokens: "0",
-    output_tokens: "400",
+    cost_usd: "0.027000000",
+    cost_sessions: "4",
+    usage_records: "5",
+    input_tokens_all_models: "5000",
+    cache_read_tokens_all_models: "0",
+    cache_write_tokens_all_models: "0",
+    output_tokens_all_models: "500",
   };
   for (const [column, value] of Object.entries(expected)) assert.equal(rows[0][column as keyof typeof expected], value, column);
+  assert.deepEqual(readFileSync(appDb), originalDb, "scoring must not write the alias database");
+  const suiteHash = robustnessSha256(robustnessFiles(ALL_FEATURES));
+  assert.match(suiteHash, /^[a-f0-9]{64}$/);
+  assert.equal(rows[0].robustness_sha256, suiteHash);
+  assert.ok(ok.stdout.includes(`Robustness suite sha256: ${suiteHash}\n`), ok.stdout);
   assert.match(rows[0].main_sha, /^[a-f0-9]{40}$/);
   assert.match(rows[0].pricing_version, /^2026-10-20:[a-f0-9]{64}$/);
   assert.match(rows[0].note, /spec on main lists policy\+reports\+import; scored against the seed's policy\+reports\+import\+summary/);
@@ -266,4 +305,84 @@ test("robustness failures do not change a passing gate outcome or the timed scor
   assert.equal(row.robustness_total, "12");
   assert.equal(row.cost_status, "unavailable");
   assert.equal(row.cost_usd, "");
+});
+
+// The reference's parser, wrapped so that an import body with a lone CR (only the robustness suite
+// sends one) blocks the app for good. While blocked it ignores SIGTERM, so only SIGKILL stops it,
+// and it records its pid in $HANG_PID_DIR so the test can check that it was stopped.
+function hangingCsv(strict: string): string {
+  return [
+    'import { mkdirSync, writeFileSync } from "node:fs";',
+    'import { join } from "node:path";',
+    strict.replace("export function parseCsv(", "function strictParseCsv("),
+    "export function parseCsv(text: string): CsvRow[] {",
+    "  if (/\\r(?!\\n)/.test(text)) {",
+    '    process.on("SIGTERM", () => {});',
+    "    const dir = process.env.HANG_PID_DIR;",
+    "    if (dir) {",
+    "      mkdirSync(dir, { recursive: true });",
+    '      writeFileSync(join(dir, String(process.pid)), "");',
+    "    }",
+    "    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);",
+    "  }",
+    "  return strictParseCsv(text);",
+    "}",
+    "",
+  ].join("\n");
+}
+
+test("a hung robustness suite is stopped at its budget and leaves the gate row intact", { timeout: 180_000 }, async () => {
+  const repoDir = join(dir, "orch-eval-hang-1");
+  cpSync(join(KIT_DIR, "reference"), repoDir, { recursive: true, filter: (src) => !/[\\/](node_modules|\.DS_Store)$/.test(src) });
+  const csvPath = join(repoDir, "src", "csv.ts");
+  writeFileSync(csvPath, hangingCsv(readFileSync(csvPath, "utf8")));
+  await git(repoDir, ["init", "-q", "-b", "main"]);
+  await git(repoDir, ["add", "-A"]);
+  await git(repoDir, ["commit", "-q", "-m", "Hangs on a lone CR"]);
+  const pidDir = join(dir, "hang-pids");
+  const results = join(dir, "hang-results.csv");
+  const started = Date.now();
+  const completion = score(
+    ["--repo-dir", repoDir, "--no-github", "--results", results, "--start", "2026-01-01T10:00:00Z", "--end", "2026-01-01T10:20:00Z"],
+    { ORCH_EVAL_ROBUSTNESS_TIMEOUT_MS: "3000", HANG_PID_DIR: pidDir },
+  );
+  while (!existsSync(pidDir) && Date.now() - started < 60_000) await new Promise((done) => setTimeout(done, 50));
+  const savedBeforeRobustnessEnded = existsSync(results) ? readResults(results)[0] : null;
+  const result = await completion;
+  const elapsed = Date.now() - started;
+  assert.equal(result.code, 0, result.stdout + result.stderr);
+  assert.equal(savedBeforeRobustnessEnded?.outcome, "passed", "persist the gate before diagnostics can hit the outer score deadline");
+  assert.equal(savedBeforeRobustnessEnded?.robustness_status, "error");
+  assert.match(savedBeforeRobustnessEnded!.note, /robustness has not completed/);
+  // Without the budget, each hung request would wait out the harness's 30 s request limit.
+  assert.ok(elapsed < 90_000, `score took ${elapsed} ms`);
+
+  const [row] = readResults(results);
+  assert.equal(row.outcome, "passed");
+  assert.equal(row.minutes, "20.0");
+  assert.equal(row.wall_minutes, "20.0");
+  assert.equal(row.suite_passed, "65");
+  assert.equal(row.suite_total, "65");
+  assert.equal(row.robustness_status, "error");
+  assert.equal(row.robustness_passed, "");
+  assert.equal(row.robustness_total, "");
+  assert.equal(row.robustness_sha256, robustnessSha256(robustnessFiles(ALL_FEATURES), { timeoutMs: 3000 }));
+  assert.notEqual(row.robustness_sha256, robustnessSha256(robustnessFiles(ALL_FEATURES)));
+  assert.match(row.note, /robustness error: stopped after its 3 s budget/);
+
+  const pids = readdirSync(pidDir).map(Number);
+  assert.ok(pids.length > 0, "the app never hung");
+  for (const pid of pids) assert.throws(() => process.kill(pid, 0), { code: "ESRCH" }, `app ${pid} is still running`);
+});
+
+test("score rejects a bad robustness budget before scoring", async () => {
+  for (const budget of ["soon", "0", "120001"]) {
+    const result = await score(
+      ["--repo-dir", dir, "--variant", "invalid", "--n", "1", "--no-github", "--results", join(dir, "budget.csv")],
+      { ORCH_EVAL_ROBUSTNESS_TIMEOUT_MS: budget },
+    );
+    assert.equal(result.code, 2, result.stdout + result.stderr);
+    assert.match(result.stderr, /ORCH_EVAL_ROBUSTNESS_TIMEOUT_MS/);
+    assert.doesNotMatch(result.stdout, /acceptance suite/);
+  }
 });

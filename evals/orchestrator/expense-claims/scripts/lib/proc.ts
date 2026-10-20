@@ -52,6 +52,23 @@ export function run(
     const closedOnce = new Promise<void>((done) => (closed = done));
     let escalation: Promise<string> | null = null;
 
+    const onTerm = () => stopWithParent("SIGTERM");
+    const onInt = () => stopWithParent("SIGINT");
+    function removeSignalHandlers(): void {
+      process.off("SIGTERM", onTerm);
+      process.off("SIGINT", onInt);
+    }
+    function stopWithParent(signal: "SIGTERM" | "SIGINT"): void {
+      if (child.pid) signalGroup(child.pid, "SIGKILL");
+      removeSignalHandlers();
+      process.kill(process.pid, signal);
+    }
+    if (grouped) {
+      // An outer supervisor cannot reach this detached group when it terminates our own group.
+      process.on("SIGTERM", onTerm);
+      process.on("SIGINT", onInt);
+    }
+
     const timer = grouped
       ? setTimeout(() => {
           const pgid = child.pid;
@@ -74,6 +91,7 @@ export function run(
       await Promise.race([closedOnce, delay(2000)]);
       if (settled) return;
       settled = true;
+      removeSignalHandlers();
       child.stdout?.destroy();
       child.stderr?.destroy();
       const sep = stderr.endsWith("\n") || stderr === "" ? "" : "\n";
@@ -84,6 +102,7 @@ export function run(
     child.stderr.on("data", (chunk) => (stderr += chunk));
     child.on("error", (error) => {
       if (timer) clearTimeout(timer);
+      removeSignalHandlers();
       if (settled) return;
       settled = true;
       reject(error);
@@ -93,6 +112,7 @@ export function run(
       closed();
       if (escalation) return; // settleAfterTimeout resolves once the group is gone
       if (timer) clearTimeout(timer);
+      removeSignalHandlers();
       if (settled) return;
       settled = true;
       resolve({ code: exitCode ?? 1, stdout, stderr });

@@ -41,17 +41,17 @@ test("init selects all pinned aliases and refuses ambiguous selection or a varia
     const agent = `orchestrator-review-${label}`;
     const text = `---\nname: ${agent}\nuser-invocable: false\n---\nPolicy ${label}.\n`;
     writeFileSync(join(dir, "agents", `${agent}.agent.md`), text);
-    return [`review-${label}`, { agent, revision: "a".repeat(40), file: `agents/${agent}.agent.md`,
-      sha256: createHash("sha256").update(text).digest("hex"), workers: {} }];
+    return [agent, { agent, revision: "a".repeat(40), file: `agents/${agent}.agent.md`,
+      sha256: createHash("sha256").update(text).digest("hex") }];
   }));
   const manifest = join(dir, "manifest.json");
-  writeFileSync(manifest, JSON.stringify({ id: "review-policy", calibration: "all-variants-then-drop-summary", variants }));
+  writeFileSync(manifest, JSON.stringify({ id: "review-policy", calibration: "all-variants-then-drop-summary", variants, workers: {} }));
   const args = ["init", "--dry-run", "--memory-off", "--variants-file", manifest, "--id", "pinned", ...common];
   const result = await batch(args);
   assert.equal(result.code, 0, result.stdout + result.stderr);
   const config = JSON.parse(readFileSync(join(dir, "batches", "pinned", "config.json"), "utf8"));
-  assert.deepEqual(config.variants, ["review-a", "review-b", "review-c"]);
-  assert.equal(config.variantSet.variants["review-a"].agent, "orchestrator-review-a");
+  assert.deepEqual(config.variants, ["orchestrator-review-a", "orchestrator-review-b", "orchestrator-review-c"]);
+  assert.equal(config.variantSet.variants["orchestrator-review-a"].agent, "orchestrator-review-a");
   assert.match(result.stdout, /PASS variant snapshot hashes/);
   for (const extra of [["--variants", "variant-a"], ["--self-test-only"]]) {
     const rejected = await batch([...args, ...extra]);

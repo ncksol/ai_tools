@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { ALL_FEATURES } from "../lib/features.ts";
 import { run } from "../lib/proc.ts";
-import { KIT_DIR, robustnessFiles, runSuite, suiteFiles } from "../lib/suite.ts";
+import { KIT_DIR, robustnessFiles, robustnessSha256, runSuite, suiteFiles } from "../lib/suite.ts";
 import { PERMISSIVE_CSV } from "./fixtures/permissive-csv.ts";
 
 const REFERENCE = join(KIT_DIR, "reference");
@@ -35,8 +35,8 @@ before(() => {
 
 after(() => rmSync(scratch, { recursive: true, force: true }));
 
-function cli(args: string[]) {
-  const env: NodeJS.ProcessEnv = { ...process.env };
+function cli(args: string[], extraEnv: NodeJS.ProcessEnv = {}) {
+  const env: NodeJS.ProcessEnv = { ...process.env, ...extraEnv };
   delete env.NODE_TEST_CONTEXT;
   return run(process.execPath, ["scripts/robustness.ts", ...args], { cwd: KIT_DIR, env });
 }
@@ -73,6 +73,7 @@ test("the CLI reports passes on the reference and failures on the permissive cop
   const good = await cli(["--app", REFERENCE]);
   assert.equal(good.code, 0, good.stdout + good.stderr);
   assert.match(good.stdout, /^(\d+)\/\1 robustness tests passed$/m);
+  assert.ok(good.stdout.startsWith(`Robustness suite sha256: ${robustnessSha256(robustnessFiles(ALL_FEATURES))}\n`), good.stdout);
   assert.doesNotMatch(good.stdout, /^(0\/0|.*acceptance)/m);
 
   const bad = await cli(["--app", permissive, "--features", "policy,import"]);
@@ -96,4 +97,16 @@ test("the CLI runs nothing for features without robustness tests, and checks its
 
   const only = await cli(["--app", REFERENCE, "--only", "import"]);
   assert.equal(only.code, 2);
+
+  const badBudget = await cli(["--app", REFERENCE], { ORCH_EVAL_ROBUSTNESS_TIMEOUT_MS: "0" });
+  assert.equal(badBudget.code, 2);
+  assert.match(badBudget.stderr, /ORCH_EVAL_ROBUSTNESS_TIMEOUT_MS/);
+});
+
+test("the CLI stops at its budget and reports an error, not counts", { timeout: 60_000 }, async () => {
+  // 1 ms ends the run before any test file can report.
+  const result = await cli(["--app", REFERENCE], { ORCH_EVAL_ROBUSTNESS_TIMEOUT_MS: "1" });
+  assert.equal(result.code, 1, result.stdout + result.stderr);
+  assert.match(result.stdout, /^Robustness error: stopped after its 1 s budget$/m);
+  assert.doesNotMatch(result.stdout, /robustness tests passed/);
 });

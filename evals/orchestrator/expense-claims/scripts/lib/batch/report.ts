@@ -55,14 +55,15 @@ export function buildReport(config: BatchConfig, state: BatchState, appDb: AppDb
   if (config.dryRun) out.push("- DRY RUN: no GitHub repos; app steps were stubbed.");
   out.push("");
 
-  out.push("## Robustness and cost", "", "Post-score robustness never changes the gate or minutes. Cost covers the run's swarm up to the recorded snapshot, not the batch driver. Missing prices or logs leave USD blank.", "");
-  out.push("| Run | Robustness | Cost status | USD | Sessions | Usage records | Pricing version |");
-  out.push("|---|---|---|---|---|---|---|");
+  out.push("## Robustness and cost", "", "Post-score robustness never changes the gate or minutes; compare counts only within the same suite hash. Cost covers the run's swarm up to the recorded snapshot, not the batch driver. Missing prices or logs leave USD blank.", "");
+  out.push("| Run | Robustness | Suite SHA-256 | Cost status | USD | Sessions | Usage records | Pricing version |");
+  out.push("|---|---|---|---|---|---|---|---|");
   for (const run of state.runs) {
     const row = runRowFor(rows, run);
     if (!row) continue;
-    const robustness = row.robustness_status ? `${row.robustness_status} (${row.robustness_passed}/${row.robustness_total})` : "not recorded";
-    out.push(`| ${cell(runLabel(run))} | ${cell(robustness)} | ${cell(row.cost_status || "not recorded")} | ${cell(row.cost_usd)} | ${cell(row.cost_sessions)} | ${cell(row.usage_records)} | ${cell(row.pricing_version)} |`);
+    const robustness = row.robustness_status
+      ? `${row.robustness_status}${row.robustness_total ? ` (${row.robustness_passed}/${row.robustness_total})` : ""}` : "not recorded";
+    out.push(`| ${cell(runLabel(run))} | ${cell(robustness)} | ${cell(row.robustness_sha256)} | ${cell(row.cost_status || "not recorded")} | ${cell(row.cost_usd)} | ${cell(row.cost_sessions)} | ${cell(row.usage_records)} | ${cell(row.pricing_version)} |`);
   }
   out.push("");
 

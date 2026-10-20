@@ -18,7 +18,7 @@ import {
   summarize,
   type ResultRow,
 } from "./lib/results.ts";
-import { KIT_DIR, robustnessFiles, runSuite, suiteFiles } from "./lib/suite.ts";
+import { KIT_DIR, ROBUSTNESS_TIMEOUT_MS, robustnessFiles, robustnessSha256, runSuite, suiteFiles } from "./lib/suite.ts";
 import { collectUsage, readPricing, type UsageSummary } from "./lib/usage.ts";
 
 const USAGE = `Usage:
@@ -30,6 +30,17 @@ const USAGE = `Usage:
                    [--agent-revision <sha> --agent-sha256 <hash> --agent-bundle-sha256 <hash>]
   npm run score -- --summary [--results <csv>]`;
 const TIMEOUT_MS = 90 * 60_000;
+
+// Test-only: a shorter robustness budget, in milliseconds, so tests can show a hung suite being stopped.
+function robustnessBudget(): number {
+  const value = process.env.ORCH_EVAL_ROBUSTNESS_TIMEOUT_MS;
+  if (value === undefined) return ROBUSTNESS_TIMEOUT_MS;
+  const ms = Number(value);
+  if (!Number.isInteger(ms) || ms <= 0 || ms > ROBUSTNESS_TIMEOUT_MS) {
+    throw new UsageError(`ORCH_EVAL_ROBUSTNESS_TIMEOUT_MS "${value}" must be a positive integer no greater than ${ROBUSTNESS_TIMEOUT_MS}`);
+  }
+  return ms;
+}
 
 class UsageError extends Error {}
 
@@ -202,6 +213,7 @@ async function main(): Promise<number> {
   for (const flag of ["answer-source", "end-at"] as const) {
     if (values.start && values[flag] !== undefined) throw new UsageError(`--${flag} cannot be used with manual timing (--start/--end)`);
   }
+  const robustnessTimeoutMs = robustnessBudget();
   const cutoff = values["end-at"] === undefined ? undefined : parseTime(values["end-at"], "--end-at");
   const provenance = ["agent-revision", "agent-sha256", "agent-bundle-sha256"] as const;
   if (provenance.some((key) => values[key] !== undefined)) {
@@ -280,6 +292,12 @@ async function main(): Promise<number> {
             if (children === null || errors.length > 0) throw new Error(errors.join("; ") || "Cannot discover descendant sessions");
             return children;
           },
+          aliases: (id: string) => {
+            const aliases = db.sessionAliases(id);
+            const errors = db.takeErrors();
+            if (aliases === null || errors.length > 0) throw new Error(errors.join("; ") || "Cannot discover session aliases");
+            return aliases;
+          },
         } : {}),
       });
       costWarnings.push(...usage.warnings.map((warning) => `cost: ${warning}`));
@@ -331,25 +349,6 @@ async function main(): Promise<number> {
     const head = await run("git", ["rev-parse", "HEAD"], { cwd: cloneDir });
     if (head.code !== 0) throw new Error(`Cannot identify scored main commit: ${head.stderr.trim()}`);
     const files = robustnessFiles(runFeatures);
-    let robustnessStatus = files.length === 0 ? "not-applicable" : "error";
-    let robustnessPassed = "";
-    let robustnessTotal = "";
-    // Timing and the acceptance outcome are fixed before this diagnostic suite runs.
-    if (files.length > 0) {
-      try {
-        const robustness = await runSuite(cloneDir, files);
-        robustnessPassed = String(robustness.passed);
-        robustnessTotal = String(robustness.total);
-        robustnessStatus = robustness.ok ? "passed" : robustness.total > 0 ? "failed" : "error";
-        console.log(`Robustness (not the gate): ${robustness.passed}/${robustness.total} passed`);
-        for (const failure of robustness.failures) console.log(`ROBUSTNESS FAIL ${failure}`);
-        if (!robustness.ok) warnings.push(`robustness ${robustnessStatus}: ${robustness.failures.join("; ") || "no passing complete suite"}`);
-      } catch (error) {
-        const warning = `robustness execution error: ${(error as Error).message}`;
-        warnings.push(warning);
-        console.log(`Warning: ${warning}`);
-      }
-    }
     const row: ResultRow = {
       date: new Date().toISOString(),
       variant,
@@ -375,23 +374,51 @@ async function main(): Promise<number> {
       agent_sha256: values["agent-sha256"] ?? "",
       agent_bundle_sha256: values["agent-bundle-sha256"] ?? "",
       main_sha: head.stdout.trim(),
-      robustness_status: robustnessStatus,
-      robustness_passed: robustnessPassed,
-      robustness_total: robustnessTotal,
+      robustness_status: files.length === 0 ? "not-applicable" : "error",
+      robustness_passed: "",
+      robustness_total: "",
+      robustness_sha256: "",
       cost_status: usage?.status ?? "unavailable",
       cost_usd: usage?.usd == null ? "" : usage.usd.toFixed(9),
       pricing_version: pricingVersion,
       cost_captured_at: timing.session === "manual" ? "" : capturedAt,
       cost_sessions: usage ? String(usage.sessions) : "",
       usage_records: usage ? String(usage.records) : "",
-      input_tokens: usage?.records ? String(usage.tokens.inputTokens) : "",
-      cache_read_tokens: usage?.records ? String(usage.tokens.cacheReadTokens) : "",
-      cache_write_tokens: usage?.records ? String(usage.tokens.cacheWriteTokens) : "",
-      output_tokens: usage?.records ? String(usage.tokens.outputTokens) : "",
-      note: [values.note, ...warnings].filter(Boolean).join("; "),
+      input_tokens_all_models: usage?.records ? String(usage.tokens.inputTokens) : "",
+      cache_read_tokens_all_models: usage?.records ? String(usage.tokens.cacheReadTokens) : "",
+      cache_write_tokens_all_models: usage?.records ? String(usage.tokens.cacheWriteTokens) : "",
+      output_tokens_all_models: usage?.records ? String(usage.tokens.outputTokens) : "",
+      note: [values.note, ...warnings, ...(files.length ? ["robustness has not completed"] : [])].filter(Boolean).join("; "),
     };
+    // Persist the gate first: even an outer score timeout during diagnostics must leave a scored row.
     if (replaced.length > 0) replaceResult(resultsPath, repo, runId, row);
     else appendResult(resultsPath, row);
+
+    if (files.length > 0) {
+      try {
+        row.robustness_sha256 = robustnessSha256(files, { timeoutMs: robustnessTimeoutMs });
+        console.log(`Robustness suite sha256: ${row.robustness_sha256}`);
+        const robustness = await runSuite(cloneDir, files, { timeoutMs: robustnessTimeoutMs });
+        if (robustness.timedOut) {
+          const warning = `robustness error: stopped after its ${Math.ceil(robustnessTimeoutMs / 1000)} s budget`;
+          warnings.push(warning);
+          console.log(`Warning: ${warning}`);
+        } else {
+          row.robustness_passed = String(robustness.passed);
+          row.robustness_total = String(robustness.total);
+          row.robustness_status = robustness.ok ? "passed" : robustness.total > 0 ? "failed" : "error";
+          console.log(`Robustness (not the gate): ${robustness.passed}/${robustness.total} passed`);
+          for (const failure of robustness.failures) console.log(`ROBUSTNESS FAIL ${failure}`);
+          if (!robustness.ok) warnings.push(`robustness ${row.robustness_status}: ${robustness.failures.join("; ") || "no passing complete suite"}`);
+        }
+      } catch (error) {
+        const warning = `robustness execution error: ${(error as Error).message}`;
+        warnings.push(warning);
+        console.log(`Warning: ${warning}`);
+      }
+      row.note = [values.note, ...warnings].filter(Boolean).join("; ");
+      replaceResult(resultsPath, repo, runId, row);
+    }
 
     console.log(`\n${replaced.length > 0 ? "Replaced the earlier row in" : "Appended to"} ${resultsPath}:`);
     for (const column of RESULT_COLUMNS) console.log(`  ${column}: ${row[column]}`);

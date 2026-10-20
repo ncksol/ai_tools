@@ -92,6 +92,14 @@ test("old result files migrate without fabricating missing cost or changing hist
   assert.equal(migrated[0].cost_usd, "");
   assert.equal(migrated[1].cost_usd, "1.234");
   assert.equal(readFileSync(path, "utf8").split("\n")[0], RESULT_COLUMNS.join(","));
+  const replacePath = join(dir, "legacy-replace.csv");
+  writeFileSync(replacePath, `${header}\n${values.join(",")}\n`);
+  replaceResult(replacePath, "new-repo", "2", row({ repo: "new-repo", run: "2", variant: "new", robustness_sha256: "suite-id" }));
+  const replaced = readResults(replacePath);
+  assert.deepEqual(replaced[0], old);
+  assert.equal(replaced[0].robustness_sha256, "");
+  assert.equal(replaced[1].robustness_sha256, "suite-id");
+  assert.equal(readFileSync(replacePath, "utf8").split("\n")[0], RESULT_COLUMNS.join(","));
 });
 
 test("pinned policy calibrations stay excluded and different agent bundles are never pooled", () => {
@@ -104,6 +112,7 @@ test("pinned policy calibrations stay excluded and different agent bundles are n
   assert.deepEqual(summary.groups.filter((g) => g.features === THREE).map((g) => g.medianMinutes), [15, 25]);
   assert.match(formatSummary(summary), /Pinned policy calibrations: 1.*never counted/);
   assert.doesNotMatch(formatSummary(summary), /Calibration runs count as scored/);
+  assert.doesNotMatch(formatSummary(summary), /The median is over 30 minutes/);
 });
 
 test("median handles odd, even and empty lists", () => {

@@ -8,7 +8,7 @@ import { saveState, validateConfig } from "../lib/batch/state.ts";
 import { currentPins, STOP_MESSAGE } from "../lib/batch/runner.ts";
 import { eventsPath } from "../lib/batch/swarm.ts";
 import { run as runProc } from "../lib/proc.ts";
-import { readResults } from "../lib/results.ts";
+import { readResults, replaceResult } from "../lib/results.ts";
 import { FIXTURE_HEADER, harness, type Harness } from "./fixtures/batch.ts";
 
 const made: Harness[] = [];
@@ -22,6 +22,21 @@ after(() => {
 });
 
 const flag = (args: string[], name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
+const policyLabels = ["orchestrator-review-a", "orchestrator-review-b", "orchestrator-review-c"];
+
+function pinPolicy(h: Harness) {
+  const variants = Object.fromEntries(h.config.variants.map((agent) => {
+    const file = join(h.config.agentsDir, `${agent}.agent.md`);
+    const text = `---\nname: ${agent}\n---\nYou are the orchestrator.\n`;
+    writeFileSync(file, text);
+    return [agent, { agent, revision: "a".repeat(40), file, sha256: createHash("sha256").update(text).digest("hex"), workers: {} }];
+  }));
+  const path = join(h.dir, "manifest.json");
+  writeFileSync(path, JSON.stringify({ id: "review-policy", calibration: "all-variants-then-drop-summary", variants, workers: {} }));
+  h.config.variantSet = { id: "review-policy", calibration: "all-variants-then-drop-summary", path, variants };
+  saveState(h.config.dir, { ...h.state(), pins: currentPins(h.config) });
+  return variants;
+}
 
 function appendEvent(h: Harness, sessionId: string, type: string, data: Record<string, unknown>, agentId?: string): void {
   const event: LogEvent = { type, timestamp: new Date(h.clock.now).toISOString(), data };
@@ -59,21 +74,35 @@ test("a run with a question and a final report: answered from the sheet, scored 
   assert.match(readFileSync(state.reportPath!, "utf8"), /Turn Copilot Memory back on/);
 });
 
-test("the manifest's alias, not its variant label, is launched and moving ordinary agents are not pinned", async () => {
-  const h = await make({ scenarios: ["silent"], variants: ["review-a", "review-b", "review-c"] });
-  const variants = Object.fromEntries(h.config.variants.map((label) => {
-    const agent = `orchestrator-${label}`;
-    const file = join(h.config.agentsDir, `${agent}.agent.md`);
-    const text = `---\nname: ${agent}\n---\nYou are the orchestrator.\n`;
-    writeFileSync(file, text);
-    return [label, { agent, revision: "a".repeat(40), file, sha256: createHash("sha256").update(text).digest("hex"), workers: {} }];
-  }));
-  const manifest = join(h.dir, "variants.json");
-  writeFileSync(manifest, "manifest pinned as an input\n");
-  h.config.variantSet = { id: "review-policy", calibration: "all-variants-then-drop-summary", path: manifest, variants };
+test("an interrupted diagnostic step preserves and commits the already-saved gate result", async () => {
+  const h = await make({ scenarios: ["ask-final"] });
+  const exec = h.ctx.deps.exec;
+  h.ctx.deps.exec = async (cmd, args, opts) => {
+    const result = await exec(cmd, args, opts);
+    if (cmd !== process.execPath || args[0] !== h.config.scoreScript) return result;
+    const row = readResults(h.config.resultsPath)[0];
+    replaceResult(h.config.resultsPath, row.repo, row.run, { ...row, robustness_status: "error", note: "robustness has not completed" });
+    return { code: 124, stdout: "", stderr: "score timed out during robustness", timedOut: true };
+  };
+  await h.until(() => false);
+  const state = h.state();
+  assert.equal(state.runs[0].status, "done");
+  assert.equal(state.runs[0].row?.outcome, "passed");
+  assert.equal(state.runs[0].row?.robustness_status, "error");
+  assert.equal(state.scoreFailures, 0);
+  assert.equal(state.runs[0].scoreExit, 124);
+  assert.ok(state.runs[0].flags.some((flag) => flag.code === "score-warning" && flag.detail.includes("saving its gate row")));
+  assert.ok(!state.runs[0].flags.some((flag) => flag.code === "score-failed"));
+  const commit = await runProc("git", ["log", "-1", "--format=%s"], { cwd: h.resultsRepo });
+  assert.match(commit.stdout, /\(passed\)/);
+});
+
+test("the alias file ID, name and result label agree and moving ordinary agents are not pinned", async () => {
+  const h = await make({ scenarios: ["silent"], variants: policyLabels });
+  pinPolicy(h);
   assert.deepEqual(validateConfig(h.config), []);
   assert.match(validateConfig({ ...h.config, selfTest: { ...h.config.selfTest, agent: "orchestrator-review-a" } }).join(), /must not use/);
-  assert.match(validateConfig({ ...h.config, variants: ["review-a"] }).join(), /every label/);
+  assert.match(validateConfig({ ...h.config, variants: [policyLabels[0]] }).join(), /every label/);
   assert.match(validateConfig({ ...h.config, selfTest: { ...h.config.selfTest, only: true } }).join(), /self-test-only/);
   writeFileSync(join(h.config.agentsDir, "orchestrator.agent.md"), "normal installed orchestrator");
   saveState(h.config.dir, { ...h.state(), pins: currentPins(h.config) });
@@ -87,19 +116,9 @@ test("the manifest's alias, not its variant label, is launched and moving ordina
 });
 
 test("pinned variants finish all three calibrations and a three-run pilot with matching provenance", async () => {
-  const h = await make({ scenarios: Array.from({ length: 12 }, () => "ask-final"), variants: ["review-a", "review-b", "review-c"] });
+  const h = await make({ scenarios: Array.from({ length: 12 }, () => "ask-final"), variants: policyLabels, minutes: () => 40 });
   h.config.runsPerVariant = 3;
-  const variants = Object.fromEntries(h.config.variants.map((label) => {
-    const agent = `orchestrator-${label}`;
-    const file = join(h.config.agentsDir, `${agent}.agent.md`);
-    const text = `---\nname: ${agent}\n---\nPolicy ${label}.\n`;
-    writeFileSync(file, text);
-    return [label, { agent, revision: "a".repeat(40), file, sha256: createHash("sha256").update(text).digest("hex"), workers: {} }];
-  }));
-  const path = join(h.dir, "manifest.json");
-  writeFileSync(path, JSON.stringify(variants));
-  h.config.variantSet = { id: "review-policy", calibration: "all-variants-then-drop-summary", path, variants };
-  saveState(h.config.dir, { ...h.state(), pins: currentPins(h.config) });
+  const variants = pinPolicy(h);
   await h.until(() => false);
   const rows = readResults(h.config.resultsPath);
   assert.equal(rows.length, 12);
@@ -108,6 +127,42 @@ test("pinned variants finish all three calibrations and a three-run pilot with m
   assert.ok(rows.slice(3).every((row) => row.calibration === "no" && row.features === "policy+reports+import"));
   assert.ok(rows.every((row) => row.agent_revision === "a".repeat(40) && row.agent_sha256 === variants[row.variant].sha256 && row.agent_bundle_sha256.length === 64));
   assert.ok(h.scoreCalls.every((args) => flag(args, "--app-db") === h.config.appDb));
+  assert.equal(h.state().policyCalibration?.dropSummary, true);
+  assert.ok(h.state().runs.every((run) => !run.flags.some((flag) => flag.code === "session-settings")));
+
+  const firstNight = readFileSync(h.config.resultsPath, "utf8").split("\n").slice(0, 6).join("\n") + "\n";
+  const second = await make({ scenarios: Array.from({ length: 7 }, () => "ask-final"), variants: policyLabels, runsPerVariant: 3, results: firstNight, minutes: () => 40 });
+  pinPolicy(second);
+  await second.until(() => false);
+  assert.equal(second.state().runs.length, 7, "two prior scored attempts leave seven, not nine");
+  assert.equal(second.state().runs[0].variant, policyLabels[2]);
+  assert.ok(second.state().runs.every((run) => !run.calibration));
+  assert.equal(readResults(second.config.resultsPath).length, 12);
+});
+
+test("a contradictory calibration decision stops through the usual notification and report path", async () => {
+  const h = await make({ scenarios: ["ask-final", "ask-final", "ask-final"], variants: policyLabels, runsPerVariant: 3, minutes: () => 10 });
+  pinPolicy(h);
+  await h.until(() => false);
+  assert.equal(h.state().runs.length, 3);
+  assert.equal(h.state().policyCalibration?.dropSummary, false);
+  assert.equal(h.state().failed, true);
+  assert.match(h.state().stopReason!, /conflicts.*no-Summary.*user approval/);
+  assert.match(readFileSync(h.state().reportPath!, "utf8"), /conflicts.*no-Summary/);
+  assert.ok(h.notices.some((notice) => notice.key === "batch-stopped"));
+});
+
+test("a registered alias changed during a run is flagged while the launch hash remains recorded", async () => {
+  const h = await make({ scenarios: ["ask-final"], variants: policyLabels });
+  const variants = pinPolicy(h);
+  await h.until((_, state) => state.runs[0]?.status === "running");
+  const original = variants[policyLabels[0]].sha256;
+  appendFileSync(variants[policyLabels[0]].file, "changed after launch\n");
+  await h.until(() => false);
+  const row = readResults(h.config.resultsPath)[0];
+  assert.equal(row.agent_sha256, original);
+  assert.match(row.note, /agent-drift/);
+  assert.ok(h.state().runs[0].flags.some((flag) => flag.code === "agent-drift"));
 });
 
 test("a plain-text question is answered with send_message, flagged, and its observed source goes to --answer-source", async () => {

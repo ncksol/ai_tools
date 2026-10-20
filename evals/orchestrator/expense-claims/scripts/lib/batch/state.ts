@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { Feature } from "../features.ts";
 import { KIT_DIR } from "../suite.ts";
 import { variantAgents, type VariantSet } from "../variants.ts";
+import type { PolicyCalibration } from "./plan.ts";
 
 export const ORCHESTRATOR_AGENTS = ["orchestrator", "session-orchestrator"];
 
@@ -64,6 +65,7 @@ export type FlagCode =
   | "kickoff-text"
   | "kickoff-shape"
   | "session-settings"
+  | "agent-drift"
   | "swarm-not-quiet"
   | "driver-gap"
   | "answer-source-unknown"
@@ -127,6 +129,8 @@ export interface RunState {
   projectId?: string;
   appSessionId?: string;
   sessionId?: string;
+  agentSha256?: string;
+  agentBundleSha256?: string;
   // When create_session was first issued (the window for finding the session) and last issued.
   startRequestedAt?: string;
   lastStartAt?: string;
@@ -243,6 +247,7 @@ export interface BatchState {
   lastHeartbeatAt: string | null;
   stopRequested: boolean;
   calibration: string;
+  policyCalibration?: PolicyCalibration;
   startedAt: string;
   // The ai_tools commit results.csv was at when the batch started; the report lists commits after it.
   resultsBase?: string;
@@ -296,6 +301,7 @@ export function validateConfig(config: BatchConfig): string[] {
   if (config.variantSet) {
     const labels = Object.keys(config.variantSet.variants);
     if (labels.length !== config.variants.length || labels.some((label) => !names.has(label))) problems.push("variants must match every label in the pinned manifest");
+    if (labels.some((label) => label !== config.variantSet!.variants[label].agent)) problems.push("each variant label must equal its agent file ID and name");
     if (config.selfTest.only) problems.push("a variant manifest cannot be used for a self-test-only batch");
   }
   if (!Number.isSafeInteger(config.runsPerVariant) || config.runsPerVariant < 1) problems.push("--runs must be a positive integer");

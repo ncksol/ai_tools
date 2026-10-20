@@ -9,9 +9,9 @@ export const LEGACY_RESULT_COLUMNS = [
 export const RESULT_COLUMNS = [
   ...LEGACY_RESULT_COLUMNS,
   "agent_revision", "agent_sha256", "agent_bundle_sha256", "main_sha",
-  "robustness_status", "robustness_passed", "robustness_total",
+  "robustness_status", "robustness_passed", "robustness_total", "robustness_sha256",
   "cost_status", "cost_usd", "pricing_version", "cost_captured_at",
-  "cost_sessions", "usage_records", "input_tokens", "cache_read_tokens", "cache_write_tokens", "output_tokens",
+  "cost_sessions", "usage_records", "input_tokens_all_models", "cache_read_tokens_all_models", "cache_write_tokens_all_models", "output_tokens_all_models",
 ] as const;
 export type ResultRow = Record<(typeof RESULT_COLUMNS)[number], string>;
 
@@ -117,7 +117,7 @@ export interface Summary {
 // below still uses passed runs only.
 export function summarize(rows: ResultRow[]): Summary {
   const inBatch = (row: ResultRow) => row.calibration === "yes" && row.features === FULL_SET;
-  const batch = rows.filter((row) => inBatch(row) && !row.agent_bundle_sha256);
+  const batch = rows.filter(inBatch);
   const times = batch.map((row) => (row.outcome === "passed" || row.outcome === "gate-failed" ? Number(row.minutes) : Infinity));
   const batchMedian = median(times);
   const counted = batchMedian !== null && batchMedian <= CALIBRATION_LIMIT_MINUTES;
@@ -152,17 +152,19 @@ export function formatSummary(summary: Summary): string {
   const lines: string[] = [];
   const { calibration } = summary;
   if (calibration.runs === 0) {
-    lines.push("Calibration: no legacy calibration runs yet.");
+    lines.push("Calibration: no calibration runs yet.");
   } else {
     const shown = calibration.median === null ? "n/a" : Number.isFinite(calibration.median) ? `${calibration.median.toFixed(1)} min` : `over ${CALIBRATION_LIMIT_MINUTES} min (unfinished runs count as longest)`;
     lines.push(`Calibration: ${calibration.runs} run(s), median ${shown}.`);
-    if (calibration.counted) lines.push("Calibration runs count as scored runs.");
-    else if (calibration.median !== null) {
+    if (calibration.counted && calibration.runs > summary.pinnedCalibrations) {
+      lines.push(summary.pinnedCalibrations ? "Only unpinned calibration runs count as scored runs." : "Calibration runs count as scored runs.");
+    }
+    else if (!calibration.counted && calibration.median !== null) {
       lines.push(`The median is over ${CALIBRATION_LIMIT_MINUTES} minutes: drop Summary. Start every scored run with --features policy,reports,import.`);
     }
   }
   if (summary.pinnedCalibrations > 0) {
-    lines.push(`Pinned policy calibrations: ${summary.pinnedCalibrations} run(s), never counted as scored runs. The policy batch requires every pinned variant to calibrate, then drops Summary.`);
+    lines.push(`Pinned policy calibrations: ${summary.pinnedCalibrations} run(s), never counted as scored runs. The batch requires every pinned variant to calibrate, freezes the shared median decision before the pilot, and stops if that decision keeps Summary.`);
   }
   for (const features of new Set(summary.groups.map((group) => group.features))) {
     lines.push("", `Feature set ${features}:`, "variant                      runs  passed  pass rate  median min (passed)");

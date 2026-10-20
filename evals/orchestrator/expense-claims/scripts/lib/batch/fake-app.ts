@@ -47,6 +47,7 @@ export class FakeApp implements AppDb {
   childSessions(sessionId: string): string[] {
     return [...this.sessions.values()].find((session) => session.id === sessionId)?.children ?? [];
   }
+  sessionAliases(): string[] { return []; }
 
   constructor(stateDir: string, clock: { now: number }, scenarios: Scenario[]) {
     this.stateDir = stateDir;

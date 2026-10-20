@@ -40,6 +40,7 @@ test("Argon promotion expiry is exclusive and unsupported cache writes are not f
 
 test("unknown models and impossible or missing counters fail explicitly", () => {
   assert.throws(() => priceUsage(usage("unknown"), at, pricing()), /price/i);
+  assert.throws(() => priceUsage(usage(undefined, { isAuto: true }), at, pricing()), /discounted rate/);
   for (const extra of [{ inputTokens: 799 }, { outputTokens: -1 }, { inputTokens: 1.5 }, { cacheReadTokens: undefined }]) {
     assert.throws(() => priceUsage(usage(undefined, extra), at, pricing()), /token|counter/i);
   }
@@ -149,6 +150,7 @@ test("unknown prices, unresolved creations, broken logs and failed discovery nev
     const valid = ev("session.usage_record", 2, { usage: usage() });
     const cases = [
       [valid, ev("session.usage_record", 3, { usage: usage("unknown") })],
+      [valid, ev("session.usage_record", 3, { usage: usage(undefined, { isAuto: true }) })],
       [valid, ev("tool.execution_start", 3, { toolName: "create_session", toolCallId: "created" }),
         ev("tool.execution_complete", 4, { toolCallId: "created", success: true, result: { content: "unrecognized result" } })],
       [valid, ev("tool.execution_start", 3, { toolName: "create_session", toolCallId: "pending" })],
@@ -164,11 +166,40 @@ test("unknown prices, unresolved creations, broken logs and failed discovery nev
     const failedDiscovery = collectUsage({ ...options, children: () => { throw new Error("schema changed"); } });
     assert.equal(failedDiscovery.usd, null);
     assert.match(failedDiscovery.warnings.join("; "), /schema changed/);
+    const failedAliases = collectUsage({ ...options, aliases: () => { throw new Error("alias schema changed"); } });
+    assert.equal(failedAliases.status, "incomplete");
+    assert.equal(failedAliases.usd, null);
+    assert.match(failedAliases.warnings.join("; "), /alias discovery failed/);
+    const missingAlias = collectUsage({ ...options, aliases: () => ["missing-alias"] });
+    assert.equal(missingAlias.status, "incomplete");
+    assert.equal(missingAlias.usd, null);
+    assert.match(missingAlias.warnings.join("; "), /missing-alias/);
     appendFileSync(join(dir, "root", "events.jsonl"), "{broken}\n");
     const broken = collectUsage(options);
     assert.equal(broken.status, "unavailable");
     assert.equal(broken.usd, null);
     assert.match(broken.warnings.join("; "), /valid JSON/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("rotated CLI session logs contribute usage and their descendants without counting mirrors twice", () => {
+  const dir = mkdtempSync(join(tmpdir(), "orch-usage-"));
+  try {
+    const shared = usage(undefined, { accounting: { sourceSessionId: "old-root", usageId: "shared" } });
+    writeSession(dir, "root", "test/repo", at, [ev("session.usage_record", 2, { usage: shared })]);
+    writeSession(dir, "old-root", "test/repo", at, [
+      ev("session.usage_record", 2, { usage: shared }), ev("session.usage_record", 3, { usage: usage() }),
+    ]);
+    writeSession(dir, "old-child", "test/repo", at, [ev("session.usage_record", 4, { usage: usage() })]);
+    const result = collectUsage({
+      stateDir: dir, rootId: "root", start: "2026-01-01T10:01:00Z", capturedAt: "2026-01-01T10:05:00Z", pricing: pricing(),
+      aliases: (id) => id === "root" ? ["old-root"] : id === "old-root" ? ["root"] : [],
+      children: (id) => id === "old-root" ? ["old-child"] : [],
+    });
+    assert.equal(result.status, "complete", result.warnings.join("; "));
+    assert.equal(result.records, 3);
+    assert.equal(result.sessions, 3);
+    assert.equal(result.usd, 0.01176);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

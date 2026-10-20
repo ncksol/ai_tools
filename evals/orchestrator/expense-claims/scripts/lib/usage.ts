@@ -75,6 +75,7 @@ function tokensOf(usage: Record<string, unknown>): Tokens {
 export function priceUsage(value: unknown, timestamp: string, pricing: Pricing): number {
   const usage = object(value);
   if (!usage) throw new Error("Missing usage counters");
+  if (usage.isAuto === true) throw new Error("Auto-routed usage needs its discounted rate; list prices do not apply");
   const tokens = tokensOf(usage);
   const model = typeof usage.model === "string" ? usage.model : "";
   const tiers = pricing.models[model];
@@ -115,6 +116,7 @@ export function collectUsage(opts: {
   capturedAt: string;
   pricing: Pricing;
   children?: (sessionId: string) => string[];
+  aliases?: (sessionId: string) => string[];
   resolveSession?: (reference: string) => string | null;
 }): UsageSummary {
   const start = Date.parse(opts.start);
@@ -157,6 +159,13 @@ export function collectUsage(opts: {
         queue.push(...opts.children(id));
       } catch (error) {
         warnings.push(`${id}: descendant discovery failed: ${(error as Error).message}`);
+      }
+    }
+    if (opts.aliases) {
+      try {
+        queue.push(...opts.aliases(id));
+      } catch (error) {
+        warnings.push(`${id}: alias discovery failed: ${(error as Error).message}`);
       }
     }
     const creations = new Set<string>();

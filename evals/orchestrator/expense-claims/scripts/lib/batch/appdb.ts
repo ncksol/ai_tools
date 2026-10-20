@@ -26,6 +26,7 @@ export interface AppDb {
   workspaces(projectId: string): WorkspaceRow[] | null;
   creatorLinks(appSessionId: string): { creator: string | null; coordinator: string | null; createdBy: string | null } | null;
   childSessions(sessionId: string): string[] | null;
+  sessionAliases(sessionId: string): string[] | null;
   // Every table and column the runner reads, checked against the database's schema.
   probe(): string[];
   // Query failures since the last call, for flags.
@@ -37,6 +38,7 @@ export const APP_DB_COLUMNS: Record<string, string[]> = {
   workspaces: ["id", "session_id", "project_id", "name", "archived_at", "created_by", "created_at", "creator_session_id", "coordinating_creator_session_id"],
   projects: ["id", "auto_approve"],
   sessions: ["id", "was_interrupted", "interruption_reason"],
+  workspace_session_aliases: ["session_id", "workspace_id"],
 };
 
 const text = (value: unknown): string | null => (typeof value === "string" && value !== "" ? value : null);
@@ -69,10 +71,12 @@ export function openAppDb(path: string): AppDb {
       const row = db.prepare(`SELECT ${column} AS v FROM ${table} WHERE ${key} = ?`).get(value) as { v: unknown } | undefined;
       return row ? row.v : null;
     });
+  const workspaceId = (id: string) => text(cell("workspaces", "id", "session_id", id)) ??
+    text(cell("workspace_session_aliases", "workspace_id", "session_id", id));
 
   return {
     sessionForWorkspace: (id) => text(cell("workspaces", "session_id", "id", id)),
-    workspaceForSession: (id) => text(cell("workspaces", "id", "session_id", id)),
+    workspaceForSession: workspaceId,
     projectAutoApprove: (id) => {
       const value = cell("projects", "auto_approve", "id", id);
       if (typeof value === "number") return value;
@@ -108,14 +112,23 @@ export function openAppDb(path: string): AppDb {
       };
     },
     childSessions: (id) => {
-      const workspace = withDb("workspaces.id by session_id", (db) =>
-        (db.prepare("SELECT id FROM workspaces WHERE session_id = ?").get(id) as { id: unknown } | undefined)?.id,
-      );
+      const workspace = workspaceId(id);
       const ids = withDb("workspaces.id by creator", (db) =>
         (db.prepare("SELECT id FROM workspaces WHERE creator_session_id IN (?, ?) OR coordinating_creator_session_id IN (?, ?)")
-          .all(id, text(workspace) ?? id, id, text(workspace) ?? id) as { id: unknown }[]).map((row) => String(row.id)),
+          .all(id, workspace ?? id, id, workspace ?? id) as { id: unknown }[]).map((row) => String(row.id)),
       );
       return ids ? ids.map((child) => text(cell("workspaces", "session_id", "id", child)) ?? child) : null;
+    },
+    sessionAliases: (id) => {
+      const workspace = workspaceId(id);
+      if (!workspace) return [];
+      const aliases = withDb("workspace_session_aliases.session_id by workspace_id", (db) =>
+        (db.prepare("SELECT session_id FROM workspace_session_aliases WHERE workspace_id = ?")
+          .all(workspace) as { session_id: unknown }[]).map((row) => String(row.session_id)),
+      );
+      if (!aliases) return null;
+      const current = text(cell("workspaces", "session_id", "id", workspace));
+      return [...new Set([...aliases, ...(current ? [current] : [])])].filter((alias) => alias !== id);
     },
     probe: () => {
       const problems: string[] = [];
@@ -147,6 +160,7 @@ export const noAppDb: AppDb = {
   workspaces: () => null,
   creatorLinks: () => null,
   childSessions: () => null,
+  sessionAliases: () => null,
   probe: () => ["no app database (dry run)"],
   takeErrors: () => [],
 };

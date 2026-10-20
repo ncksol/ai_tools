@@ -1,6 +1,6 @@
 import { parseArgs } from "node:util";
 import { ALL_FEATURES, featureSetName, parseFeatures, type Feature } from "./lib/features.ts";
-import { robustnessFiles, runSuite } from "./lib/suite.ts";
+import { ROBUSTNESS_TIMEOUT_MS, robustnessFiles, robustnessSha256, runSuite } from "./lib/suite.ts";
 
 // Runs the hidden robustness suite (robustness/) against an app. It is never the gate: run it after
 // scoring, for information only.
@@ -40,8 +40,22 @@ if (files.length === 0) {
   process.exit(0);
 }
 
-const result = await runSuite(values.app, files);
+// Test-only: a shorter budget in milliseconds, as for score.
+const budget = process.env.ORCH_EVAL_ROBUSTNESS_TIMEOUT_MS;
+const timeoutMs = budget === undefined ? ROBUSTNESS_TIMEOUT_MS : Number(budget);
+if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > ROBUSTNESS_TIMEOUT_MS) {
+  console.error(`ORCH_EVAL_ROBUSTNESS_TIMEOUT_MS "${budget}" must be a positive integer no greater than ${ROBUSTNESS_TIMEOUT_MS}`);
+  process.exit(2);
+}
+
+// Counts are comparable only between runs with the same suite sha256.
+console.log(`Robustness suite sha256: ${robustnessSha256(files, { timeoutMs })}`);
+const result = await runSuite(values.app, files, { timeoutMs });
 if (values.verbose) console.log(result.output);
+if (result.timedOut) {
+  console.log(`Robustness error: stopped after its ${Math.ceil(timeoutMs / 1000)} s budget`);
+  process.exit(1);
+}
 for (const name of result.failures) console.log(`FAIL ${name}`);
 console.log(`${result.passed}/${result.total} robustness tests passed`);
 process.exit(result.ok ? 0 : 1);

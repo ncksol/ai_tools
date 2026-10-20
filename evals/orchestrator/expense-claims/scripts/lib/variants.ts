@@ -29,8 +29,9 @@ export function readVariants(path: string): VariantSet {
   path = resolve(path);
   const data = object(JSON.parse(readFileSync(path, "utf8")));
   const entries = object(data?.variants);
+  const sharedWorkers = object(data?.workers);
   if (!data || data.id !== "review-policy" || data.calibration !== "all-variants-then-drop-summary" ||
-      !entries || Object.keys(entries).length !== 3) throw new Error(`Invalid A/B/C variant manifest ${path}`);
+      !entries || Object.keys(entries).length !== 3 || !sharedWorkers) throw new Error(`Invalid A/B/C variant manifest ${path}`);
   const file = (value: Record<string, unknown>, label: string): AgentFile => {
     if (typeof value.file !== "string" || typeof value.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(value.sha256)) {
       throw new Error(`Invalid file/hash for ${label}`);
@@ -40,23 +41,23 @@ export function readVariants(path: string): VariantSet {
     return { file: absolute, sha256: value.sha256 };
   };
   const variants: VariantSet["variants"] = {};
+  const workers: VariantDefinition["workers"] = {};
+  for (const [worker, entry] of Object.entries(sharedWorkers)) {
+    const workerFile = object(entry);
+    if (!name(worker) || !workerFile) throw new Error(`Invalid shared worker ${worker}`);
+    workers[worker] = file(workerFile, worker);
+  }
   const aliases = new Set<string>();
   for (const [label, value] of Object.entries(entries)) {
     const variant = object(value);
-    if (!name(label) || !variant || !name(variant.agent) || ["orchestrator", "session-orchestrator"].includes(variant.agent) ||
-        typeof variant.revision !== "string" || !/^[a-f0-9]{40}$/.test(variant.revision) || !object(variant.workers) || aliases.has(variant.agent)) {
+    if (!name(label) || !variant || !name(variant.agent) || label !== variant.agent || ["orchestrator", "session-orchestrator"].includes(variant.agent) ||
+        typeof variant.revision !== "string" || !/^[a-f0-9]{40}$/.test(variant.revision) || aliases.has(variant.agent)) {
       throw new Error(`Invalid variant ${label} in manifest ${path}`);
     }
     aliases.add(variant.agent);
     const source = file(variant, label);
     const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(readFileSync(source.file, "utf8"))?.[1];
     if (!frontmatter || !frontmatter.split(/\r?\n/).includes(`name: ${variant.agent}`)) throw new Error(`Variant ${label} has the wrong agent name`);
-    const workers: VariantDefinition["workers"] = {};
-    for (const [worker, entry] of Object.entries(object(variant.workers)!)) {
-      const workerFile = object(entry);
-      if (!name(worker) || !workerFile) throw new Error(`Invalid worker ${worker} for ${label}`);
-      workers[worker] = file(workerFile, worker);
-    }
     variants[label] = { ...source, agent: variant.agent, revision: variant.revision, workers };
   }
   return { id: "review-policy", calibration: "all-variants-then-drop-summary", path, variants };

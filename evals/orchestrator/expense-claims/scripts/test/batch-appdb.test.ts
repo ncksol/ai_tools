@@ -19,7 +19,7 @@ function makeDb(name: string, drop: string[] = []): string {
   const db = new DatabaseSync(path);
   const extra: Record<string, string[]> = { sessions: ["title", "model"], workspaces: ["branch"], projects: ["name"] };
   for (const [table, columns] of Object.entries(APP_DB_COLUMNS)) {
-    const keep = [...new Set([...columns, ...extra[table]])].filter((column) => !drop.includes(`${table}.${column}`));
+    const keep = [...new Set([...columns, ...(extra[table] ?? [])])].filter((column) => !drop.includes(`${table}.${column}`));
     const type = (column: string) => (["auto_approve", "was_interrupted"].includes(column) ? "INTEGER" : "TEXT");
     db.exec(`CREATE TABLE ${table} (${keep.map((column) => `${column} ${type(column)}`).join(", ")})`);
   }
@@ -83,6 +83,22 @@ test("child discovery follows both parent id forms and retains archived children
   const db = openAppDb(path);
   assert.deepEqual(db.childSessions("s1")?.sort(), ["s2", "s3"]);
   assert.deepEqual(db.childSessions("s2"), []);
+  assert.deepEqual(db.takeErrors(), []);
+  assert.equal(sha(path), before);
+});
+
+test("workspace aliases retain old CLI logs and children linked to those logs", () => {
+  const path = makeDb("aliases.db");
+  const fixture = new DatabaseSync(path);
+  fixture.exec("INSERT INTO workspace_session_aliases (session_id,workspace_id) VALUES ('old-s1','w1'), ('s1','w1');");
+  fixture.exec("INSERT INTO workspaces (id,session_id,creator_session_id) VALUES ('w2','s2','old-s1');");
+  fixture.close();
+  const before = sha(path);
+  const db = openAppDb(path);
+  assert.equal(db.workspaceForSession("old-s1"), "w1");
+  assert.deepEqual(db.sessionAliases("s1"), ["old-s1"]);
+  assert.deepEqual(db.sessionAliases("old-s1"), ["s1"]);
+  assert.deepEqual(db.childSessions("old-s1"), ["s2"]);
   assert.deepEqual(db.takeErrors(), []);
   assert.equal(sha(path), before);
 });
