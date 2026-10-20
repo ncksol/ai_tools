@@ -386,6 +386,96 @@ test('the same report-inferred PR number in two worktrees keeps each worktree\'s
   assert.notEqual(ui.stage, 'merged');
 });
 
+/**
+ * Issue #44: the ui unit runs on an Azure DevOps host with no PR of its own, and its reports mention another unit's PR 4800 as
+ * background. `pr4800` is what the lookup says about that PR. With `registry: false` the unit has no registry row, so mentions apply.
+ */
+function mentionsOtherPr(pr4800, { finished = false, registry = true } = {}) {
+  const data = input(true);
+  const ui = new EventLog(at(6));
+  ui.start();
+  ui.turnStart();
+  ui.at(at(8));
+  ui.report('ws-root', 'swarm-status: progress unit=ui\nSummary: PR 4800 is now merged in origin/main, so it is no longer a blocker.\nEvidence:\n- none\nBlockers: none', 'progress');
+  ui.at(at(119));
+  ui.message('Still working');
+  if (finished) {
+    ui.taskComplete('Done. PR 4800 was already merged, so nothing was blocked.');
+    ui.turnEnd();
+  }
+  data.states.set('cli-ui', fold(ui, 'cli-ui'));
+  data.workspaceFiles.set('cli-ui', { cwd: '/synthetic/worktrees/ui', branch: 'feature/ui', hostType: 'ado', repository: 'org/project/repo' });
+  const db = data.sessionDbs.get('cli-root');
+  if (!registry) db.children = db.children.filter(item => item.unit !== 'ui');
+  else if (finished) Object.assign(db.children.find(item => item.unit === 'ui'), { outcome: 'closed', ended_at: iso(119), updated_at: iso(119) });
+  const lookup = data.prInfo;
+  data.prInfo = (pr, options) => (pr.provider === 'ado' && pr.id === 4800
+    ? { title: 'Another unit', reviewNote: null, url: null, checkedAt: at(115), error: null, sourceBranch: null, ...pr4800 }
+    : lookup(pr, options));
+  return data;
+}
+
+const MERGED_BEFORE_START = { state: 'merged', openedAt: at(-30), mergedAt: at(-1), closedAt: at(-1) };
+const uiOf = data => buildSnapshot(data).units.find(unit => unit.id === 'ws-ui');
+
+test('a running unit that mentions another unit\'s PR merged before it started keeps running, with busy time and a timeline', () => {
+  for (const registry of [true, false]) {
+    const ui = uiOf(mentionsOtherPr(MERGED_BEFORE_START, { registry }));
+    assert.equal(ui.pr, null, `registry ${registry}`);
+    assert.equal(ui.stage, 'coding');
+    assert.deepEqual([ui.status, ui.statusDetail, ui.bucket], ['busy', 'busy', 'working']);
+    assert.equal(ui.outcome, null);
+    assert.equal(ui.endedAt, null);
+    assert.ok(ui.busyMs >= 113 * MINUTE);
+    assert.ok(ui.timeline.segments.length > 0);
+    assert.ok(!ui.timeline.marks.some(mark => mark.kind === 'pr-merged'));
+  }
+});
+
+test('a unit that mentions another unit\'s PR and ends with registry outcome closed shows closed, not merged', () => {
+  const ui = uiOf(mentionsOtherPr(MERGED_BEFORE_START, { finished: true }));
+  assert.equal(ui.pr, null);
+  assert.equal(ui.outcome, 'closed');
+  assert.equal(ui.closedWithoutMerge, true);
+  assert.equal(ui.stage, 'coding');
+  assert.notEqual(ui.status, 'merged');
+  assert.equal(ui.endedAt, at(119));
+});
+
+test('a unit with a registry row gets no PR from mentions, even one from its own branch', () => {
+  const own = { state: 'open', openedAt: at(20), mergedAt: null, closedAt: null, sourceBranch: 'refs/heads/feature/ui' };
+  assert.equal(uiOf(mentionsOtherPr(own)).pr, null);
+  assert.deepEqual([uiOf(mentionsOtherPr(own, { registry: false })).pr?.id, uiOf(mentionsOtherPr(own, { registry: false })).pr?.source], [4800, 'heuristic']);
+});
+
+test('without a registry row, a mentioned PR opened before the unit started, still open or draft, is not the unit\'s PR', () => {
+  for (const state of ['open', 'draft']) {
+    const ui = uiOf(mentionsOtherPr({ state, openedAt: at(-14 * 24 * 60), mergedAt: null, closedAt: null }, { registry: false }));
+    assert.equal(ui.pr, null, state);
+    assert.equal(ui.stage, 'coding', state);
+  }
+});
+
+test('without a registry row, a mentioned PR from another branch is not the unit\'s PR, and one from its own branch is', () => {
+  const during = { state: 'merged', openedAt: at(20), mergedAt: at(40), closedAt: at(40) };
+  const other = uiOf(mentionsOtherPr({ ...during, sourceBranch: 'feature/api' }, { registry: false }));
+  assert.equal(other.pr, null);
+  assert.equal(other.statusDetail, 'busy');
+  assert.equal(other.endedAt, null);
+  const own = uiOf(mentionsOtherPr({ ...during, sourceBranch: 'feature/ui' }, { registry: false }));
+  assert.deepEqual([own.pr?.id, own.pr?.source, own.stage], [4800, 'heuristic', 'merged']);
+});
+
+test('without a registry row, a unit that took over a PR opened before it started on that PR\'s own branch keeps it', () => {
+  const taken = { state: 'open', openedAt: at(-3 * 24 * 60), mergedAt: null, closedAt: null };
+  const own = uiOf(mentionsOtherPr({ ...taken, sourceBranch: 'refs/heads/feature/ui' }, { registry: false }));
+  assert.deepEqual([own.pr?.id, own.pr?.source, own.stage, own.statusDetail], [4800, 'heuristic', 'in_review', 'busy']);
+  assert.equal(uiOf(mentionsOtherPr({ ...taken, sourceBranch: 'refs/heads/feature/api' }, { registry: false })).pr, null);
+  const mergedOnOwnBranch = uiOf(mentionsOtherPr({ ...MERGED_BEFORE_START, sourceBranch: 'feature/ui' }, { registry: false }));
+  assert.equal(mergedOnOwnBranch.pr, null);
+  assert.equal(mergedOnOwnBranch.endedAt, null);
+});
+
 /** The unit sent no report of its own; only the orchestrator's received copy of its status line exists. */
 function receivedOnly({ registry }) {
   const data = input(true);

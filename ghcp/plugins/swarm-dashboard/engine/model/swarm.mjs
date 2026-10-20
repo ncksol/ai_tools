@@ -5,7 +5,7 @@ import { UNIT_LABEL_RE, normaliseRegistry, parseQuestionTag, parseReportBody, pa
 import { descendants, resolveNodeId } from './forest.mjs';
 import { setRunStats } from './run-stats.mjs';
 import { effortOf, mergeStates } from './session-state.mjs';
-import { deriveMonitor, deriveStage, hostOf, prView, resolvePr } from './stage.mjs';
+import { deriveMonitor, deriveStage, hostOf, mentionFits, prView, resolvePr } from './stage.mjs';
 import { ACTIVE_DETAILS, displayOf, evaluateStatus, evaluateSubagentUnit, subagentLimitMs, swarmStalled, toolLimitMs, toolView } from './status.mjs';
 
 const SEGMENT_GAP_MS = 2 * MINUTE;
@@ -359,8 +359,18 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
   const parentRepliedAt = report ? report.repliedAt : null;
 
   const host = hostOf(c.workspaceFile, (node.projectId ? input.app.projects.get(node.projectId) : null) ?? project);
-  const identity = resolvePr({ registry: row, statusLines, createdPr: node.createdPr, mentions: c.all.prMentions, host });
-  const pr = identity ? prView(identity, input.prInfo(identity, { cwd: c.cwd }), node.createdPr) : null;
+  const startedAt = node.createdAt ?? c.all.firstEventAt ?? input.now;
+  const lookups = new Map();
+  const lookup = identity => {
+    if (!lookups.has(identity)) lookups.set(identity, input.prInfo(identity, { cwd: c.cwd }));
+    return lookups.get(identity);
+  };
+  const branch = row?.branch ?? node.branch ?? c.workspaceFile?.branch ?? null;
+  const identity = resolvePr({
+    registry: row, statusLines, createdPr: node.createdPr, mentions: c.all.prMentions, host,
+    accepts: candidate => mentionFits(lookup(candidate), { startedAt, branch }),
+  });
+  const pr = identity ? prView(identity, lookup(identity), node.createdPr) : null;
   const automations = input.app.automations.filter(item => c.ids.has(item.sessionId));
   const monitorEver = automations.length > 0 || c.all.automation.wakes.length > 0 || c.all.automation.saves.some(save => !save.clear);
   const { stage, merged, closedWithoutMerge } = deriveStage({ archivedAt: node.archivedAt, outcome: row?.outcome ?? null, pr, monitorEver });
@@ -372,7 +382,7 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
     state: c.current, alive: c.alive, archivedAt: node.archivedAt, merged, mergedAt: pr?.mergedAt ?? row?.endedAt ?? null,
     outcome: row?.outcome ?? null, hasRegistry: registry.present, report: report ? { status: report.status, at: report.at } : null,
     parentRepliedAt, monitorDueAt: monitor.state === 'alive' ? monitor.nextCheckAt : null, isRunningFlag: Boolean(c.sessionRow?.isRunning),
-    startedAt: node.createdAt ?? c.all.firstEventAt ?? input.now, now: input.now, thresholds: input.thresholds,
+    startedAt, now: input.now, thresholds: input.thresholds,
   });
 
   const marks = sent.map(({ item, view }) => ({ at: item.at, kind: view.status === 'needs_input' ? 'question' : 'report', text: view.title || 'Report', status: view.status }));

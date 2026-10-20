@@ -499,6 +499,8 @@ export function mapAdo(json) {
     state, title: typeof json.title === 'string' ? json.title : null, openedAt: parseTime(json.creationDate),
     mergedAt: state === 'merged' ? parseTime(json.closedDate) : null, closedAt: parseTime(json.closedDate), reviewNote,
     url: typeof webUrl === 'string' && json.pullRequestId ? `${webUrl}/pullrequest/${json.pullRequestId}` : null,
+    // Only Azure DevOps PRs are inferred from mentions, and only they need the branch to check that a mention is the unit's PR.
+    sourceBranch: typeof json.sourceRefName === 'string' && json.sourceRefName ? json.sourceRefName.replace(/^refs\/heads\//, '') : null,
   };
 }
 

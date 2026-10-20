@@ -10,9 +10,30 @@ export function hostOf(workspaceFile, project) {
   return { provider: null, repo: null };
 }
 
-/** Most-mentioned PR in the unit's reports, for Azure DevOps hosts only (design section 12). */
-function bestMention(mentions, host) {
-  if (host?.provider !== 'ado') return null;
+/** How many mentioned PRs, most-mentioned first, are tried before the unit is left with no PR. Each one tried can start a lookup. */
+export const MENTION_CANDIDATES = 3;
+
+const branchName = branch => (typeof branch === 'string' && branch ? branch.replace(/^refs\/heads\//, '') : null);
+
+/**
+ * A mentioned PR can be another unit's PR named as background. It is not the unit's own when its lookup shows it merged or closed
+ * before the unit started. Otherwise, when the PR's source branch and the unit's branch are both known, they must be equal; a unit
+ * can take over a PR opened before it started on that PR's own branch. With a branch unknown, a PR opened before the unit started is
+ * not its own. With no lookup yet, it is kept.
+ */
+export function mentionFits(info, { startedAt = null, branch = null } = {}) {
+  if (!info) return true;
+  const before = time => startedAt !== null && typeof time === 'number' && time < startedAt;
+  if (before(info.mergedAt) || before(info.closedAt)) return false;
+  const source = branchName(info.sourceBranch);
+  const own = branchName(branch);
+  if (source && own) return source === own;
+  return !before(info.openedAt);
+}
+
+/** Mentioned PRs in the unit's reports, most-mentioned first, for Azure DevOps hosts only (design section 12). */
+function rankMentions(mentions, host) {
+  if (host?.provider !== 'ado') return [];
   const totals = new Map();
   for (const mention of mentions.values()) {
     if (mention.provider !== 'ado' && mention.provider !== null) continue;
@@ -22,15 +43,17 @@ function bestMention(mentions, host) {
     total.lastAt = Math.max(total.lastAt, mention.lastAt);
     totals.set(mention.id, total);
   }
-  let best = null;
-  for (const total of totals.values()) {
-    if (!best || total.count > best.count || (total.count === best.count && total.lastAt > best.lastAt)) best = total;
-  }
-  return best ? { provider: 'ado', id: best.id, repo: host.repo, knownAt: best.firstAt } : null;
+  return [...totals.values()]
+    .sort((a, b) => b.count - a.count || b.lastAt - a.lastAt)
+    .map(total => ({ provider: 'ado', id: total.id, repo: host.repo, knownAt: total.firstAt }));
 }
 
-/** PR identity: registry row, latest contract status line, the app's PR columns, then the most-mentioned PR. */
-export function resolvePr({ registry = null, statusLines = [], createdPr = null, mentions = new Map(), host = null } = {}) {
+/**
+ * PR identity: registry row, latest contract status line, the app's PR columns, then the most-mentioned PR that `accepts` takes,
+ * trying at most MENTION_CANDIDATES of them. Mentions are used only for a unit with no registry row (design section 11): the
+ * contract fills a row's PR as soon as one exists, so a row without one means the unit has no PR.
+ */
+export function resolvePr({ registry = null, statusLines = [], createdPr = null, mentions = new Map(), host = null, accepts = () => true } = {}) {
   const repoFor = provider => (host?.provider === provider ? host.repo : null);
   // The earliest retained status line that names this PR, or null. Sent history is capped, so older lines may be gone:
   // this is when the PR was known by, not when it was created.
@@ -50,8 +73,12 @@ export function resolvePr({ registry = null, statusLines = [], createdPr = null,
   if (createdPr?.number) {
     return { provider: 'github', id: createdPr.number, repo: createdPr.repo ?? repoFor('github'), url: createdPr.url ?? null, source: 'app', knownAt: null };
   }
-  const best = bestMention(mentions, host);
-  return best ? { ...best, url: null, source: 'heuristic' } : null;
+  if (registry) return null;
+  for (const candidate of rankMentions(mentions, host).slice(0, MENTION_CANDIDATES)) {
+    const identity = { ...candidate, url: null, source: 'heuristic' };
+    if (accepts(identity)) return identity;
+  }
+  return null;
 }
 
 /** The app's PR record is this PR: it is the identity's own source, or a GitHub PR with the same repository and number. */

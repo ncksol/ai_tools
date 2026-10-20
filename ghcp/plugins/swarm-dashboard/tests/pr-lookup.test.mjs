@@ -21,8 +21,9 @@ test('Azure DevOps PR JSON maps to a PR state and review note', () => {
   const base = { pullRequestId: 4711, title: 'Add API', creationDate: '2026-10-15T08:00:00Z', closedDate: null, repository: { webUrl: 'https://dev.azure.com/org/project/_git/repo' } };
   assert.deepEqual(mapAdo({ ...base, status: 'active', isDraft: true, reviewers: [] }), {
     state: 'draft', title: 'Add API', openedAt: T0, mergedAt: null, closedAt: null, reviewNote: 'no approvals yet',
-    url: 'https://dev.azure.com/org/project/_git/repo/pullrequest/4711',
+    url: 'https://dev.azure.com/org/project/_git/repo/pullrequest/4711', sourceBranch: null,
   });
+  assert.equal(mapAdo({ ...base, status: 'active', sourceRefName: 'refs/heads/feature/api' }).sourceBranch, 'feature/api');
   assert.equal(mapAdo({ ...base, status: 'active', isDraft: false, reviewers: [{ vote: 10 }, { vote: 5 }] }).reviewNote, '2 approvals');
   assert.equal(mapAdo({ ...base, status: 'active', reviewers: [{ vote: -5 }] }).reviewNote, 'waiting for the author');
   const merged = mapAdo({ ...base, status: 'completed', closedDate: '2026-10-15T09:00:00Z', reviewers: [{ vote: -10 }] });
