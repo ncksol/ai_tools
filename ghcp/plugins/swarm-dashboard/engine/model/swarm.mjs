@@ -5,7 +5,7 @@ import { UNIT_LABEL_RE, normaliseRegistry, parseQuestionTag, parseReportBody, pa
 import { descendants, resolveNodeId } from './forest.mjs';
 import { setRunStats } from './run-stats.mjs';
 import { effortOf, mergeStates } from './session-state.mjs';
-import { deriveMonitor, deriveStage, hostOf, prView, resolvePr } from './stage.mjs';
+import { deriveMonitor, deriveStage, hostOf, prForeignToUnit, prView, resolvePr } from './stage.mjs';
 import { ACTIVE_DETAILS, displayOf, evaluateStatus, evaluateSubagentUnit, subagentLimitMs, swarmStalled, toolLimitMs, toolView } from './status.mjs';
 
 const SEGMENT_GAP_MS = 2 * MINUTE;
@@ -282,8 +282,12 @@ function sessionView(input, c, label, evaluation, report, title, extraMarks, out
   const { node, current, all } = c;
   const { now, thresholds } = input;
   const { status, bucket } = displayOf(evaluation.detail);
-  const endedAt = outcomeAt ?? node.archivedAt ?? (c.alive === false ? all.lastEventAt : null);
   const startedAt = node.createdAt ?? all.firstEventAt ?? now;
+  let endedAt = outcomeAt ?? node.archivedAt ?? (c.alive === false ? all.lastEventAt : null);
+  // An end before the start is bad attribution (a misattributed PR can merge before
+  // the unit began, issue #44), not an end: treat it as unknown so the unit keeps its
+  // live runtime and timeline instead of collapsing to a negative, clamped duration.
+  if (endedAt !== null && endedAt !== undefined && endedAt < startedAt) endedAt = null;
   const openTool = current && current.openTools.size ? [...current.openTools.values()].sort((a, b) => a.startedAt - b.startedAt)[0] : null;
   const tool = evaluation.tool ?? (openTool ? toolView(openTool, toolLimitMs(openTool, thresholds)) : null);
   const openWaits = current ? [...current.waits.values()] : [];
@@ -360,7 +364,12 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
 
   const host = hostOf(c.workspaceFile, (node.projectId ? input.app.projects.get(node.projectId) : null) ?? project);
   const identity = resolvePr({ registry: row, statusLines, createdPr: node.createdPr, mentions: c.all.prMentions, host });
-  const pr = identity ? prView(identity, input.prInfo(identity, { cwd: c.cwd }), node.createdPr) : null;
+  const resolvedPr = identity ? prView(identity, input.prInfo(identity, { cwd: c.cwd }), node.createdPr) : null;
+  const startedAt = node.createdAt ?? c.all.firstEventAt ?? input.now;
+  // A guessed PR whose record predates the unit belongs to someone else (issue #44):
+  // drop it rather than letting its state and timestamps drive this unit's stage,
+  // outcome, status and runtime.
+  const pr = prForeignToUnit(resolvedPr, startedAt) ? null : resolvedPr;
   const automations = input.app.automations.filter(item => c.ids.has(item.sessionId));
   const monitorEver = automations.length > 0 || c.all.automation.wakes.length > 0 || c.all.automation.saves.some(save => !save.clear);
   const { stage, merged, closedWithoutMerge } = deriveStage({ archivedAt: node.archivedAt, outcome: row?.outcome ?? null, pr, monitorEver });
@@ -382,7 +391,9 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
   if (evaluation.detail === 'stuck_tool' && evaluation.tool) marks.push({ at: evaluation.tool.startedAt, kind: 'tool', text: 'Tool call started, no events since', status: null });
 
   const outcome = row?.outcome ?? (merged ? 'merged' : closedWithoutMerge ? 'closed' : evaluation.detail === 'failed' ? 'failed' : null);
-  const outcomeAt = outcome ? row?.endedAt ?? pr?.mergedAt ?? pr?.closedAt ?? null : null;
+  // Only the registry or an authoritative PR can end a live unit's clock; a guessed
+  // (heuristic) PR cannot (issue #44).
+  const outcomeAt = outcome ? row?.endedAt ?? (c.alive && pr?.source === 'heuristic' ? null : pr?.mergedAt ?? pr?.closedAt ?? null) : null;
   return {
     ...sessionView(input, c, label, evaluation, report, row?.title ?? null, marks, outcomeAt),
     // The registry's branch wins over the app's, which can be missing or stale; assignDependencies matches base branches on it.

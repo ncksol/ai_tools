@@ -84,7 +84,11 @@ export function prView(pr, info, createdPr) {
  * Archived is only for archived units with no known outcome.
  */
 export function deriveStage({ archivedAt = null, outcome = null, pr = null, monitorEver = false }) {
-  const merged = outcome === 'merged' || pr?.state === 'merged';
+  // The registry outcome wins over the PR state for a closed unit: a unit the
+  // orchestrator recorded as closed is not "merged" because a lookup said its PR
+  // merged — the PR can belong to another unit (issue #44). A failed outcome keeps
+  // its stage (an archived failed unit still lands under Merged, off the Cards tab).
+  const merged = outcome === 'closed' ? false : outcome === 'merged' || pr?.state === 'merged';
   const closedWithoutMerge = !merged && (outcome === 'closed' || outcome === 'failed' || pr?.state === 'closed');
   let stage;
   if (merged) stage = 'merged';
@@ -93,6 +97,20 @@ export function deriveStage({ archivedAt = null, outcome = null, pr = null, moni
   else if (pr.state === 'open' || (pr.state === 'unknown' && monitorEver)) stage = 'in_review';
   else stage = 'pr_open';
   return { stage, merged, closedWithoutMerge };
+}
+
+/**
+ * A guessed (heuristic) PR is a mention in report text, so its record can belong to
+ * another unit (issue #44). It is foreign when the record shows the PR opened,
+ * merged or closed before this unit started: a PR this unit created cannot predate
+ * the unit. Authoritative identities (registry, status line, the app's PR columns)
+ * are never dropped by this check.
+ */
+export function prForeignToUnit(pr, startedAt) {
+  if (!pr || pr.source !== 'heuristic' || !Number.isFinite(startedAt)) return false;
+  if (pr.openedAt !== null && pr.openedAt !== undefined && pr.openedAt < startedAt) return true;
+  const endedAt = pr.mergedAt ?? pr.closedAt ?? null;
+  return endedAt !== null && endedAt !== undefined && endedAt < startedAt;
 }
 
 /** Monitor state from the unit's automation rows and its wake and schedule history (builder decision 8). */
