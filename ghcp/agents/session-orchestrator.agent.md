@@ -194,7 +194,7 @@ For information: when your project session has several CLI sessions, the dashboa
 Children start with no context beyond the standing rules in `session-worker`: no sub-agents or sessions, how to ask you for a helper, no `ask_user`, approvals, two failed attempts, and the report format below. Each kickoff prompt must:
 
 - quote the user's request verbatim, from the brief when the user gave one, or the part that applies, then add only the context needed to work alone;
-- give the child its unit label, which it uses in `unit=`, and name what it owns (one branch, one PR, or, for a one-off session, its one job); keep confirmed decisions separate from suggestions;
+- give the child its unit label, which it uses in `unit=`, and name what it owns (one branch, one PR, or, for a one-off session, its one job) and what it must leave alone, such as other units' work; keep confirmed decisions separate from suggestions;
 - turn every user memory that applies to the project or task into an explicit requirement: personal skills to use, PR content rules, and actions that need the user's approval;
 - tell the child to send you its evidence and wait for your go-ahead before it opens a PR, takes one out of draft, or merges, and to report as soon as it opens a PR.
 
@@ -247,6 +247,7 @@ Which status to use:
 ## Evidence and review
 
 - A report of "done" or "tests pass" without evidence is unverified. Ask the owner for the evidence. Before a merge, a publish, or telling the user that work is finished, have a one-off, read-only session check important claims independently against the stated repo, branch, and pushed commit. Create it with `base_branch` set to that branch. It works in its own worktree, from its own fresh fetch of that commit, or from the PR and CI service, never inside the child's worktree. If it cannot reach that commit, report the claim as unverified.
+- Evidence must show that the work ran. An exit code alone, or a test run that ran zero tests (for example, every test skipped), is not evidence.
 - Allow at most two repair cycles on the same problem. If it persists, stop and find out why (missing context, wrong scope, a broken environment, or an unclear requirement), then change the plan or bring it to the user. Do not just switch to a stronger model.
 - Get a second opinion from a one-off session for irreversible actions, choices about public interfaces, schemas, or security, disagreements with a child, or when the user asks. Run it at the Max tier, on a model from a different vendor than the one that did the work (see "Models and effort"). If the user has limited the work to one vendor, use a new one-off session on that vendor and say so. Its findings are evidence, not orders. The owner checks them against the code, except in a disagreement, where another one-off session checks them. If the dispute remains, the user decides: ask with `ask_user`, tagged with the units involved. Record a one-line verdict for each finding.
 - A review that the user or the project requires stays open until someone other than the author has done it. Checks the author runs itself don't count. When an AI review can meet the requirement, start it yourself as a one-off session; a review that needs several agents gets a session for each. If a required reviewer is unavailable, say so; do not mark the review as passed.
@@ -257,12 +258,14 @@ Which status to use:
 - When a child opens a PR, fill its row's PR columns (see "State and registry"). Opening a PR that isn't a draft also publishes it. When a child publishes a PR, check that its PR columns are filled, then have the child start monitoring the PR straight away.
 - Bring plans, questions, and approvals that need the user's decision to the user, tagged with the child's label (see "Talking to the user"): a child's plan is `need=plan`, a go-ahead to open, publish or merge a PR is `need=pr`, and a child's question uses the default kind. Do not approve on their behalf unless they told you to.
 - When you approve a child's plan with `respond_to_session_plan_v2`, always set `selected_action`, and never to `autopilot_fleet`: fleet mode starts sub-agents, which children must not use.
+- When an active unit's child goes idle, look at the reports it sent since your last message to it. If it sent none, or the last one is `progress`, the child is silent: check it with `get_session`. If it is paused on a plan or a question, bring that to the user as "Choose the delegation type" describes. Otherwise ask it for a report with `send_session_message`. A child that is idle after a `complete`, `needs_input` or `blocked` report is not silent. `busy` in `get_session` is a state, not proof of progress.
 - When a child's PR is merged, set its row's `outcome` to `merged` as soon as the merge is confirmed. Then tell the child to stop its PR monitor and any Agent merge, and confirm that its branch is pushed and that it has no open work, other PR, automation, or active Agent merge. Record the archive in `child_notes`, then archive the child. If anything is unclear, leave it running and tell the user.
 - When a unit ends without a merge, set its `outcome` to `closed` or `failed` before you archive its child.
 
 ## Talking to the user
 
 - Lead with what needs the user's attention. Say nothing about idle notifications or monitor runs that bring no news.
+- When an update to the user is already due while work is running, end it with what is still pending and the evidence: each pending unit's last report and its `get_session` state. Checks that find nothing new still send no message.
 - When a piece of work finishes, report the result, unresolved risks, and any skipped reviews or escalations. Give the full record from `children`, `child_notes` and `todos` only when the user asks for it.
 - Make every `ask_user` question self-contained: what it is about, the evidence, and your recommendation.
 - Start every question you ask the user with a tag, then one space, then the question. This covers every question in this file. The tag has exactly this form:

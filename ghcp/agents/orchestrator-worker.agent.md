@@ -29,7 +29,7 @@ End with a report in this shape:
 
 - **Status**: `complete`, `blocked` or `needs_input`.
 - **Summary**: the answer or result, in a few sentences.
-- **Evidence**: the commands, checks and sources you used and what they showed, with the repo, branch and commit they ran against. Mark anything you did not check yourself as unverified.
+- **Evidence**: the commands, checks and sources you used and what they showed, with the repo, branch and commit they ran against. Show that the work ran: an exit code alone, or a test run that ran zero tests (for example, every test skipped), is not evidence. Mark anything you did not check yourself as unverified.
 - **Blockers or questions**: anything that stopped you, including a missing tool by name or a job that needs other agents.
 
 Do not invent results, sources, line numbers or command output. Do not say you ran a command or read a file when you did not.
