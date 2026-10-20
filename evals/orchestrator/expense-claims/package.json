@@ -7,6 +7,7 @@
   "scripts": {
     "test": "node --test \"scripts/test/*.test.ts\"",
     "acceptance": "node scripts/acceptance.ts",
+    "robustness": "node scripts/robustness.ts",
     "new-run": "node scripts/new-run.ts",
     "score": "node scripts/score.ts",
     "check": "node scripts/check-kit.ts",

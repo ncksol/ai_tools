@@ -3,6 +3,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { chooseRunSession, computeTiming, EventLogError, readEventLog, SessionChoiceError } from "./lib/events.ts";
+import { openAppDb } from "./lib/batch/appdb.ts";
 import { detectFeatures, featureSetName, parseFeatures, type Feature } from "./lib/features.ts";
 import { parseRunName } from "./lib/new-run.ts";
 import { run } from "./lib/proc.ts";
@@ -17,13 +18,16 @@ import {
   summarize,
   type ResultRow,
 } from "./lib/results.ts";
-import { KIT_DIR, runSuite, suiteFiles } from "./lib/suite.ts";
+import { KIT_DIR, robustnessFiles, runSuite, suiteFiles } from "./lib/suite.ts";
+import { collectUsage, readPricing, type UsageSummary } from "./lib/usage.ts";
 
 const USAGE = `Usage:
   npm run score -- --repo-dir <run clone> [--session <id>] [--state-dir <dir>] [--variant <name>] [--n <k>]
                    [--features <list>] [--outcome <timeout|stalled>] [--calibration <yes|no>] [--results <csv>]
                    [--no-github] [--start <iso> --end <iso> [--blocked-min <m>] [--questions <n>]] [--note <text>]
                    [--answer-source <value>] [--end-at <iso>] [--replace]
+                   [--app-db <path>] [--pricing <json>]
+                   [--agent-revision <sha> --agent-sha256 <hash> --agent-bundle-sha256 <hash>]
   npm run score -- --summary [--results <csv>]`;
 const TIMEOUT_MS = 90 * 60_000;
 
@@ -34,6 +38,11 @@ const { values } = parseArgs({
     "repo-dir": { type: "string" },
     session: { type: "string" },
     "state-dir": { type: "string", default: join(homedir(), ".copilot", "session-state") },
+    "app-db": { type: "string", default: join(homedir(), ".copilot", "data.db") },
+    pricing: { type: "string", default: join(KIT_DIR, "pricing", "2026-10-20.json") },
+    "agent-revision": { type: "string" },
+    "agent-sha256": { type: "string" },
+    "agent-bundle-sha256": { type: "string" },
     variant: { type: "string" },
     n: { type: "string" },
     features: { type: "string" },
@@ -78,6 +87,7 @@ function githubSlug(origin: string): string | null {
 }
 
 interface RunTiming {
+  start: string;
   session: string;
   wallMs: number;
   blockedMs: number;
@@ -97,6 +107,7 @@ function manualTiming(): RunTiming {
   const blockedMs = values["blocked-min"] === undefined ? 0 : parseCount(values["blocked-min"], "--blocked-min", false) * 60_000;
   if (blockedMs > wallMs) throw new UsageError("--blocked-min is longer than the run");
   return {
+    start: values.start!,
     session: "manual",
     wallMs,
     blockedMs,
@@ -129,6 +140,7 @@ function logTiming(stateDir: string, repository: string, variant: string, endAt:
   const timing = computeTiming(log.events, { endAt, cutoff, answerSource: values["answer-source"] });
   console.log(`Agent: ${timing.agent ?? "unknown"}; model: ${timing.model ?? "unknown"}, effort: ${timing.effort ?? "unknown"}`);
   return {
+    start: timing.start,
     session: id,
     wallMs: timing.wallMs,
     blockedMs: timing.blockedMs,
@@ -191,6 +203,14 @@ async function main(): Promise<number> {
     if (values.start && values[flag] !== undefined) throw new UsageError(`--${flag} cannot be used with manual timing (--start/--end)`);
   }
   const cutoff = values["end-at"] === undefined ? undefined : parseTime(values["end-at"], "--end-at");
+  const provenance = ["agent-revision", "agent-sha256", "agent-bundle-sha256"] as const;
+  if (provenance.some((key) => values[key] !== undefined)) {
+    for (const key of provenance) {
+      const pattern = key === "agent-revision" ? /^[a-f0-9]{40}$/ : /^[a-f0-9]{64}$/;
+      if (!pattern.test(values[key] ?? "")) throw new UsageError(`--${key} must be supplied with the other provenance flags and contain its full hash`);
+    }
+    if (values.start) throw new UsageError("Agent provenance requires session-log timing, not manual timing");
+  }
 
   const repoDir = resolve(values["repo-dir"]);
   const parsed = parseRunName(basename(repoDir));
@@ -241,6 +261,34 @@ async function main(): Promise<number> {
   }
   for (const warning of timing.warnings) console.log(`Warning: ${warning}`);
 
+  const capturedAt = new Date().toISOString();
+  let usage: UsageSummary | null = null;
+  let pricingVersion = "";
+  const costWarnings: string[] = [];
+  if (timing.session !== "manual") {
+    try {
+      const pricing = readPricing(resolve(values.pricing));
+      pricingVersion = pricing.version;
+      const db = existsSync(values["app-db"]) ? openAppDb(values["app-db"]) : null;
+      usage = collectUsage({
+        stateDir: resolve(values["state-dir"]), rootId: timing.session, start: timing.start, capturedAt, pricing,
+        ...(db ? {
+          resolveSession: (id: string) => db.sessionForWorkspace(id),
+          children: (id: string) => {
+            const children = db.childSessions(id);
+            const errors = db.takeErrors();
+            if (children === null || errors.length > 0) throw new Error(errors.join("; ") || "Cannot discover descendant sessions");
+            return children;
+          },
+        } : {}),
+      });
+      costWarnings.push(...usage.warnings.map((warning) => `cost: ${warning}`));
+    } catch (error) {
+      costWarnings.push(`cost unavailable: ${(error as Error).message}`);
+    }
+  }
+  for (const warning of costWarnings) console.log(`Warning: ${warning}`);
+
   const tmp = mkdtempSync(join(tmpdir(), "orch-eval-score-"));
   try {
     const cloneDir = join(tmp, "main");
@@ -250,7 +298,7 @@ async function main(): Promise<number> {
     if (clone.code !== 0) throw new Error(`Cloning main failed: ${clone.stderr.trim()}`);
     console.log(github ? `Cloned main of ${github}` : `Cloned main of the local repo ${repoDir}`);
 
-    const warnings = [...timing.warnings];
+    const warnings = [...timing.warnings, ...costWarnings];
     let runFeatures: Feature[];
     if (features) {
       runFeatures = features;
@@ -270,7 +318,7 @@ async function main(): Promise<number> {
         throw new Error("Neither the run repo's first commit nor main has docs/spec-v2.md; pass --features");
       }
     }
-    for (const warning of warnings.slice(timing.warnings.length)) console.log(`Warning: ${warning}`);
+    for (const warning of warnings.slice(timing.warnings.length + costWarnings.length)) console.log(`Warning: ${warning}`);
     console.log(`Running the acceptance suite for ${featureSetName(runFeatures)}...`);
     const suite = await runSuite(cloneDir, suiteFiles(runFeatures));
     console.log(`Suite: ${suite.passed}/${suite.total} passed`);
@@ -280,6 +328,28 @@ async function main(): Promise<number> {
 
     const outcome = values.outcome ?? (timing.wallMs > TIMEOUT_MS ? "timeout" : suite.ok ? "passed" : "gate-failed");
     const calibration = values.calibration ?? defaultCalibration(others, variant, featureSetName(runFeatures));
+    const head = await run("git", ["rev-parse", "HEAD"], { cwd: cloneDir });
+    if (head.code !== 0) throw new Error(`Cannot identify scored main commit: ${head.stderr.trim()}`);
+    const files = robustnessFiles(runFeatures);
+    let robustnessStatus = files.length === 0 ? "not-applicable" : "error";
+    let robustnessPassed = "";
+    let robustnessTotal = "";
+    // Timing and the acceptance outcome are fixed before this diagnostic suite runs.
+    if (files.length > 0) {
+      try {
+        const robustness = await runSuite(cloneDir, files);
+        robustnessPassed = String(robustness.passed);
+        robustnessTotal = String(robustness.total);
+        robustnessStatus = robustness.ok ? "passed" : robustness.total > 0 ? "failed" : "error";
+        console.log(`Robustness (not the gate): ${robustness.passed}/${robustness.total} passed`);
+        for (const failure of robustness.failures) console.log(`ROBUSTNESS FAIL ${failure}`);
+        if (!robustness.ok) warnings.push(`robustness ${robustnessStatus}: ${robustness.failures.join("; ") || "no passing complete suite"}`);
+      } catch (error) {
+        const warning = `robustness execution error: ${(error as Error).message}`;
+        warnings.push(warning);
+        console.log(`Warning: ${warning}`);
+      }
+    }
     const row: ResultRow = {
       date: new Date().toISOString(),
       variant,
@@ -301,6 +371,23 @@ async function main(): Promise<number> {
       model: timing.model,
       effort: timing.effort,
       copilot_version: timing.copilotVersion,
+      agent_revision: values["agent-revision"] ?? "",
+      agent_sha256: values["agent-sha256"] ?? "",
+      agent_bundle_sha256: values["agent-bundle-sha256"] ?? "",
+      main_sha: head.stdout.trim(),
+      robustness_status: robustnessStatus,
+      robustness_passed: robustnessPassed,
+      robustness_total: robustnessTotal,
+      cost_status: usage?.status ?? "unavailable",
+      cost_usd: usage?.usd == null ? "" : usage.usd.toFixed(9),
+      pricing_version: pricingVersion,
+      cost_captured_at: timing.session === "manual" ? "" : capturedAt,
+      cost_sessions: usage ? String(usage.sessions) : "",
+      usage_records: usage ? String(usage.records) : "",
+      input_tokens: usage?.records ? String(usage.tokens.inputTokens) : "",
+      cache_read_tokens: usage?.records ? String(usage.tokens.cacheReadTokens) : "",
+      cache_write_tokens: usage?.records ? String(usage.tokens.cacheWriteTokens) : "",
+      output_tokens: usage?.records ? String(usage.tokens.outputTokens) : "",
       note: [values.note, ...warnings].filter(Boolean).join("; "),
     };
     if (replaced.length > 0) replaceResult(resultsPath, repo, runId, row);

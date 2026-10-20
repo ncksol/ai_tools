@@ -26,6 +26,15 @@ export function suiteFiles(features: readonly Feature[]): string[] {
   return [suiteFile("v1"), ...features.map((feature) => suiteFile(feature))];
 }
 
+// Features with a hidden robustness file in robustness/: edge cases the acceptance gate leaves out.
+const ROBUSTNESS_FEATURES: readonly Feature[] = ["import"];
+
+// The robustness files for `features`, in the order given; empty when none of them has one.
+// Never part of the gate: these run after scoring.
+export function robustnessFiles(features: readonly Feature[]): string[] {
+  return features.filter((feature) => ROBUSTNESS_FEATURES.includes(feature)).map((feature) => join(KIT_DIR, "robustness", `${feature}.test.ts`));
+}
+
 function count(output: string, label: string): number {
   const match = output.match(new RegExp(`^# ${label} (\\d+)$`, "m"));
   return match ? Number(match[1]) : 0;

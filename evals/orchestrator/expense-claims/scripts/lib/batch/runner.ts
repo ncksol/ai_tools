@@ -6,13 +6,14 @@
 // Exclusive access: every read-modify-write of a batch's state (next, record, stop) holds the batch
 // lock; only the batch's owning driver may run next and record; and only one batch is active on the
 // machine (the active-batch guard). See lock.ts.
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describeSession, type LogEvent } from "../events.ts";
 import { featureSetName } from "../features.ts";
 import { runName } from "../new-run.ts";
 import type { ProcResult } from "../proc.ts";
 import { readResults } from "../results.ts";
+import { variantAgents, variantBundle, variantFiles } from "../variants.ts";
 import { readAnswerSheet, replyFor, rowForQuestion, settleRow, type AnswerRow } from "./answers.ts";
 import type { AppDb } from "./appdb.ts";
 import { scanSession, scanSwarm } from "./hygiene.ts";
@@ -607,9 +608,12 @@ export function verifySelfTest(ctx: Ctx, test: SelfTestState): void {
 
 function plannedTotal(ctx: Ctx, state: BatchState): number {
   const rows = readResults(ctx.config.resultsPath);
-  const decision = calibrationDecision(rows, ctx.config.variants);
+  const decision = calibrationDecision(rows, ctx.config.variants, ctx.config.variantSet);
   const done = state.runs.filter((run) => runRowFor(rows, run)).length;
-  const remaining = ctx.config.variants.reduce((sum, variant) => sum + Math.max(0, ctx.config.runsPerVariant - scoredCount(state.runs, rows, variant, decision.features)), 0);
+  const remaining = ctx.config.variants.reduce((sum, variant) => sum + Math.max(0, ctx.config.runsPerVariant - scoredCount(
+    state.runs, rows, variant, decision.features,
+    ctx.config.variantSet ? variantBundle(ctx.config.variantSet.variants[variant]) : undefined,
+  )), 0);
   return done + remaining;
 }
 
@@ -622,7 +626,7 @@ async function startNextRun(ctx: Ctx, state: BatchState): Promise<StepResult> {
     return { progressed: true };
   }
   const rows = readResults(config.resultsPath);
-  const { next, decision } = planNext(state.runs, rows, config.variants, config.runsPerVariant);
+  const { next, decision } = planNext(state.runs, rows, config.variants, config.runsPerVariant, config.variantSet);
   state.calibration = decision.reason;
   if (!next) {
     stopBatch(ctx, state, "every variant has its scored runs", false);
@@ -655,10 +659,26 @@ async function startNextRun(ctx: Ctx, state: BatchState): Promise<StepResult> {
 }
 
 export function currentPins(config: BatchConfig) {
+  const files: Record<string, string> = {
+    "kickoff.md": join(config.kitDir, "kickoff.md"), "answers.md": join(config.kitDir, "answers.md"),
+    "score.ts": config.scoreScript,
+    ...(config.variantSet ? variantFiles(config.variantSet) : {}),
+  };
+  const addFiles = (relative: string) => {
+    const path = join(config.kitDir, relative);
+    if (!existsSync(path)) return;
+    for (const entry of readdirSync(path, { withFileTypes: true })) {
+      const next = join(relative, entry.name);
+      if (entry.isDirectory()) addFiles(next);
+      else files[next] = join(config.kitDir, next);
+    }
+  };
+  for (const dir of ["acceptance", "robustness", "pricing", "scripts/lib"]) addFiles(dir);
   return computePins({
     agentsDir: config.agentsDir,
-    variants: config.variants,
-    files: { "kickoff.md": join(config.kitDir, "kickoff.md"), "answers.md": join(config.kitDir, "answers.md") },
+    variants: config.variantSet ? variantAgents(config.variantSet) : config.variants,
+    explicitAgents: Boolean(config.variantSet),
+    files,
     appPlist: config.appPlist,
     cliVersionFile: config.cliVersionFile,
   });
@@ -687,7 +707,7 @@ function runCreateArgs(ctx: Ctx, run: RunState): Record<string, unknown> {
     workspace_type: "worktree",
     detached: true,
     coordinate_with_creator: false,
-    kickoff: { prompt: kickoffPrompt(config, run), agent: run.variant, model: config.model, reasoning_effort: config.effort, context_tier: config.contextTier, mode: "interactive" },
+    kickoff: { prompt: kickoffPrompt(config, run), agent: config.variantSet?.variants[run.variant].agent ?? run.variant, model: config.model, reasoning_effort: config.effort, context_tier: config.contextTier, mode: "interactive" },
   };
 }
 
@@ -771,7 +791,7 @@ async function watchRun(ctx: Ctx, state: BatchState, run: RunState, index: numbe
     if (orch.startedBy !== "user") addFlag(run, "kickoff-shape", "the kickoff carries a data.source or a cross-session tag, so score can't treat it as typed by the user", at);
     if (kickoffText(orch) !== kickoffPrompt(config, run)) addFlag(run, "kickoff-text", "the kickoff differs from kickoff.md as a manual paste delivers it", at);
     const wrong: string[] = [];
-    if (orch.agent !== run.variant) wrong.push(`agent ${orch.agent ?? "none"}`);
+    if (orch.agent !== (config.variantSet?.variants[run.variant].agent ?? run.variant)) wrong.push(`agent ${orch.agent ?? "none"}`);
     if (orch.model !== config.model) wrong.push(`model ${orch.model ?? "none"}`);
     if (orch.effort !== config.effort) wrong.push(`effort ${orch.effort ?? "none"}`);
     if (orch.contextTier !== config.contextTier) wrong.push(`context tier ${orch.contextTier ?? "none"}`);
@@ -875,6 +895,11 @@ async function scoreRun(ctx: Ctx, state: BatchState, run: RunState): Promise<voi
   scanHygiene(ctx, run);
   run.note = noteFor(config, run);
   const args = [config.scoreScript, "--repo-dir", run.repoDir, "--session", run.sessionId ?? "", "--state-dir", config.stateDir, "--results", config.resultsPath, "--note", run.note];
+  args.push("--app-db", config.appDb, "--calibration", run.calibration ? "yes" : "no");
+  if (config.variantSet) {
+    const variant = config.variantSet.variants[run.variant];
+    args.push("--agent-revision", variant.revision, "--agent-sha256", variant.sha256, "--agent-bundle-sha256", variantBundle(variant));
+  }
   if (config.dryRun) args.push("--no-github");
   if (run.endReason === "final" && run.final) args.push("--end-at", run.final.timestamp);
   else args.push("--outcome", run.endReason ?? "stalled");
@@ -1227,7 +1252,7 @@ export async function step(ctx: Ctx, state: BatchState): Promise<StepResult> {
       const { config } = ctx;
       const plan = config.selfTest.only
         ? "self-test only"
-        : `${config.selfTest.enabled ? "self-test, then " : ""}${describePlan(config.variants, config.runsPerVariant, calibrationDecision(readResults(config.resultsPath), config.variants))}`;
+        : `${config.selfTest.enabled ? "self-test, then " : ""}${describePlan(config.variants, config.runsPerVariant, calibrationDecision(readResults(config.resultsPath), config.variants, config.variantSet))}`;
       const deadline = new Date(config.deadline).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
       await notify(ctx, state, notices.batchStarted(config.id, plan, deadline));
     }

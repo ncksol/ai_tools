@@ -77,6 +77,35 @@ test("readResults rejects a different header", () => {
   assert.throws(() => readResults(path));
 });
 
+test("old result files migrate without fabricating missing cost or changing historical outcomes", () => {
+  const path = join(dir, "legacy.csv");
+  const header = "date,variant,run,repo,session,agent,features,calibration,outcome,minutes,wall_minutes,blocked_minutes,questions,suite_passed,suite_total,prs_merged,main_ci,model,effort,copilot_version,note";
+  const values = header.split(",").map((key) => ({ variant: "legacy", run: "1", outcome: "passed", minutes: "65.7" })[key] ?? "");
+  writeFileSync(path, `${header}\n${values.join(",")}\n`);
+  const [old] = readResults(path);
+  assert.equal(old.cost_usd, "");
+  appendResult(path, row({ variant: "new", run: "1", cost_status: "complete", cost_usd: "1.234" }));
+  const migrated = readResults(path);
+  assert.equal(migrated.length, 2);
+  assert.equal(migrated[0].outcome, "passed");
+  assert.equal(migrated[0].minutes, "65.7");
+  assert.equal(migrated[0].cost_usd, "");
+  assert.equal(migrated[1].cost_usd, "1.234");
+  assert.equal(readFileSync(path, "utf8").split("\n")[0], RESULT_COLUMNS.join(","));
+});
+
+test("pinned policy calibrations stay excluded and different agent bundles are never pooled", () => {
+  const summary = summarize([
+    row({ variant: "a", calibration: "yes", agent_bundle_sha256: "first", minutes: "10" }),
+    row({ variant: "a", features: THREE, agent_bundle_sha256: "first", minutes: "15", robustness_status: "failed" }),
+    row({ variant: "a", features: THREE, agent_bundle_sha256: "second", minutes: "25" }),
+  ]);
+  assert.equal(summary.groups.find((g) => g.features === FULL)!.runs, 0);
+  assert.deepEqual(summary.groups.filter((g) => g.features === THREE).map((g) => g.medianMinutes), [15, 25]);
+  assert.match(formatSummary(summary), /Pinned policy calibrations: 1.*never counted/);
+  assert.doesNotMatch(formatSummary(summary), /Calibration runs count as scored/);
+});
+
 test("median handles odd, even and empty lists", () => {
   assert.equal(median([3, 1, 2]), 2);
   assert.equal(median([4, 1, 3, 2]), 2.5);

@@ -8,6 +8,7 @@ import { run } from "../lib/proc.ts";
 import { readResults } from "../lib/results.ts";
 import { KIT_DIR } from "../lib/suite.ts";
 import { basic, childLog, ev, withEvents, writeSession } from "./fixtures/events.ts";
+import { PERMISSIVE_CSV } from "./fixtures/permissive-csv.ts";
 
 let dir: string;
 before(() => {
@@ -45,14 +46,21 @@ test("score times a synthetic session, runs the seed's suite on a fresh clone an
     ev("tool.execution_complete", 5, { toolCallId: "q1", success: true }),
     ev("session.task_complete", 21.1),
     ev("assistant.message", 40),
+    ev("tool.execution_start", 2, { toolName: "create_session", toolCallId: "child1" }),
+    ev("tool.execution_complete", 2.1, { toolCallId: "child1", success: true, result: { content: "Created session 'one' (id: c1) in project 'test'." } }),
+    ev("tool.execution_start", 2.2, { toolName: "create_session", toolCallId: "child2" }),
+    ev("tool.execution_complete", 2.3, { toolCallId: "child2", success: true, result: { content: "Created session 'two' (id: c2) in project 'test'." } }),
+    ev("session.usage_record", 3, { usage: { model: "claude-opus-5.5", inputTokens: 1000, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 100, interactionType: "conversation-agent" } }),
+    ev("session.usage_record", 7, { usage: { model: "claude-sonnet-5.5", inputTokens: 1000, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 100, interactionType: "conversation-subagent" } }, "subagent"),
   ]);
   writeSession(stateDir, "s0", repository, "2026-01-01T09:00:00Z", null);
   writeSession(stateDir, "s1", repository, "2026-01-01T10:00:00Z", events);
-  writeSession(stateDir, "c1", repository, "2026-01-01T10:20:00Z", childLog());
-  writeSession(stateDir, "c2", repository, "2026-01-01T10:20:01Z", childLog());
+  const child = [...childLog(), ev("session.usage_record", 22.1, { usage: { model: "claude-opus-5.5", inputTokens: 1000, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 100, interactionType: "conversation-agent" } })];
+  writeSession(stateDir, "c1", repository, "2026-01-01T10:20:00Z", child);
+  writeSession(stateDir, "c2", repository, "2026-01-01T10:20:01Z", child);
 
   const results = join(dir, "results.csv");
-  const common = ["--repo-dir", repoDir, "--state-dir", stateDir, "--no-github", "--results", results];
+  const common = ["--repo-dir", repoDir, "--state-dir", stateDir, "--app-db", join(dir, "missing.db"), "--no-github", "--results", results];
 
   const ok = await score(common);
   assert.equal(ok.code, 0, ok.stdout + ok.stderr);
@@ -78,8 +86,21 @@ test("score times a synthetic session, runs the seed's suite on a fresh clone an
     model: "claude-opus-5.5",
     effort: "max",
     copilot_version: "1.0.99-2",
+    robustness_status: "passed",
+    robustness_passed: "12",
+    robustness_total: "12",
+    cost_status: "complete",
+    cost_usd: "0.021000000",
+    cost_sessions: "3",
+    usage_records: "4",
+    input_tokens: "4000",
+    cache_read_tokens: "0",
+    cache_write_tokens: "0",
+    output_tokens: "400",
   };
   for (const [column, value] of Object.entries(expected)) assert.equal(rows[0][column as keyof typeof expected], value, column);
+  assert.match(rows[0].main_sha, /^[a-f0-9]{40}$/);
+  assert.match(rows[0].pricing_version, /^2026-10-20:[a-f0-9]{64}$/);
   assert.match(rows[0].note, /spec on main lists policy\+reports\+import; scored against the seed's policy\+reports\+import\+summary/);
   const firstFile = readFileSync(results, "utf8");
 
@@ -220,4 +241,29 @@ test("a new variant's first run with fewer features is not a calibration run", {
   assert.equal(only.features, "policy+reports+import");
   assert.equal(only.calibration, "no");
   assert.equal(only.outcome, "passed");
+});
+
+test("robustness failures do not change a passing gate outcome or the timed score", { timeout: 180_000 }, async () => {
+  const repoDir = join(dir, "orch-eval-permissive-1");
+  cpSync(join(KIT_DIR, "reference"), repoDir, { recursive: true });
+  writeFileSync(join(repoDir, "src", "csv.ts"), PERMISSIVE_CSV);
+  await git(repoDir, ["init", "-q", "-b", "main"]);
+  await git(repoDir, ["add", "-A"]);
+  await git(repoDir, ["commit", "-q", "-m", "Permissive reference"]);
+  const results = join(dir, "permissive-results.csv");
+  const result = await score([
+    "--repo-dir", repoDir, "--no-github", "--results", results,
+    "--start", "2026-01-01T10:00:00Z", "--end", "2026-01-01T10:20:00Z",
+  ]);
+  assert.equal(result.code, 0, result.stdout + result.stderr);
+  const [row] = readResults(results);
+  assert.equal(row.outcome, "passed");
+  assert.equal(row.minutes, "20.0");
+  assert.equal(row.suite_passed, "65");
+  assert.equal(row.suite_total, "65");
+  assert.equal(row.robustness_status, "failed");
+  assert.equal(row.robustness_passed, "3");
+  assert.equal(row.robustness_total, "12");
+  assert.equal(row.cost_status, "unavailable");
+  assert.equal(row.cost_usd, "");
 });

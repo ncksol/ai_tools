@@ -38,7 +38,7 @@ export function installedAgents(agentsDir: string): string[] {
 
 // The variants plus every installed agent whose name appears in a variant's file, such as
 // orchestrator-worker for orchestrator and session-worker for session-orchestrator.
-export function agentsToPin(agentsDir: string, variants: string[]): { names: string[]; missing: string[] } {
+export function agentsToPin(agentsDir: string, variants: string[], explicit = false): { names: string[]; missing: string[] } {
   const installed = installedAgents(agentsDir);
   const names = new Set<string>();
   const missing: string[] = [];
@@ -48,6 +48,7 @@ export function agentsToPin(agentsDir: string, variants: string[]): { names: str
       continue;
     }
     names.add(variant);
+    if (explicit) continue;
     const text = readFileSync(join(agentsDir, `${variant}${AGENT_SUFFIX}`), "utf8");
     for (const other of installed) {
       if (other !== variant && new RegExp(`(?<![\\w-])${other.replace(/[-]/g, "\\-")}(?![\\w-])`).test(text)) names.add(other);
@@ -56,9 +57,10 @@ export function agentsToPin(agentsDir: string, variants: string[]): { names: str
   return { names: [...names].sort(), missing };
 }
 
-export function computePins(opts: { agentsDir: string; variants: string[]; files: Record<string, string>; appPlist: string; cliVersionFile: string }): Pins {
+export function computePins(opts: { agentsDir: string; variants: string[]; explicitAgents?: boolean; files: Record<string, string>; appPlist: string; cliVersionFile: string }): Pins {
   const agents: Pins["agents"] = {};
-  for (const name of agentsToPin(opts.agentsDir, opts.variants).names) {
+  const names = agentsToPin(opts.agentsDir, opts.variants, opts.explicitAgents).names;
+  for (const name of names) {
     const path = realpathSync(join(opts.agentsDir, `${name}${AGENT_SUFFIX}`));
     agents[name] = { path, sha256: sha256(path) };
   }

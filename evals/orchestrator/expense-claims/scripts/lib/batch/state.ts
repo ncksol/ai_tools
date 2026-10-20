@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Feature } from "../features.ts";
 import { KIT_DIR } from "../suite.ts";
+import { variantAgents, type VariantSet } from "../variants.ts";
 
 export const ORCHESTRATOR_AGENTS = ["orchestrator", "session-orchestrator"];
 
@@ -13,6 +14,7 @@ export interface BatchConfig {
   createdAt: string;
   dir: string;
   variants: string[];
+  variantSet?: VariantSet;
   runsPerVariant: number;
   // No new run starts at or after this time (ISO).
   deadline: string;
@@ -291,9 +293,15 @@ export function validateConfig(config: BatchConfig): string[] {
     names.add(variant);
   }
   if (!config.selfTest.only && config.variants.length === 0) problems.push("no variants");
+  if (config.variantSet) {
+    const labels = Object.keys(config.variantSet.variants);
+    if (labels.length !== config.variants.length || labels.some((label) => !names.has(label))) problems.push("variants must match every label in the pinned manifest");
+    if (config.selfTest.only) problems.push("a variant manifest cannot be used for a self-test-only batch");
+  }
   if (!Number.isSafeInteger(config.runsPerVariant) || config.runsPerVariant < 1) problems.push("--runs must be a positive integer");
   const agent = config.selfTest.agent;
-  if (agent && (ORCHESTRATOR_AGENTS.includes(agent) || config.variants.includes(agent))) {
+  if (agent && (ORCHESTRATOR_AGENTS.includes(agent) || config.variants.includes(agent) ||
+      (config.variantSet && variantAgents(config.variantSet).includes(agent)))) {
     problems.push(`the self-test must not use the agent "${agent}": never an orchestrator or a variant under test`);
   }
   if (config.selfTest.only && !config.selfTest.enabled) problems.push("--self-test-only needs the self-test");

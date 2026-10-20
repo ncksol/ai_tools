@@ -44,6 +44,10 @@ export class FakeApp implements AppDb {
   readonly clock: { now: number };
   private scenarios: Scenario[];
 
+  childSessions(sessionId: string): string[] {
+    return [...this.sessions.values()].find((session) => session.id === sessionId)?.children ?? [];
+  }
+
   constructor(stateDir: string, clock: { now: number }, scenarios: Scenario[]) {
     this.stateDir = stateDir;
     this.clock = clock;
@@ -88,6 +92,7 @@ export class FakeApp implements AppDb {
     this.write(id, "system.message", { role: "system", content: "You are a rehearsal session. No memories." });
     this.write(id, "user.message", { content: kickoff.prompt });
     this.write(id, "assistant.turn_start");
+    this.write(id, "session.usage_record", { usage: { model: kickoff.model, inputTokens: 1000, cacheReadTokens: 500, cacheWriteTokens: 100, outputTokens: 100, interactionType: "conversation-agent" } });
     this.sessions.set(appId, {
       appId,
       id,
@@ -143,9 +148,13 @@ export class FakeApp implements AppDb {
 
   private child(session: FakeSession): string {
     const id = this.id("child");
+    const toolCallId = this.id("create-child");
+    this.write(session.id, "tool.execution_start", { toolName: "create_session", toolCallId });
     this.newSessionDir(id, session.repository);
     this.write(id, "session.start", { selectedModel: "claude-sonnet-5.5", reasoningEffort: "medium" });
     this.write(id, "user.message", { transformedContent: "<cross_session_message>\nchild kickoff\n</cross_session_message>" });
+    this.write(id, "session.usage_record", { usage: { model: "claude-sonnet-5.5", inputTokens: 1000, cacheReadTokens: 500, cacheWriteTokens: 100, outputTokens: 100, interactionType: "conversation-agent" } });
+    this.write(session.id, "tool.execution_complete", { toolCallId, success: true, result: { content: `Created session 'Synthetic child' (id: ${id}) in project 'rehearsal'.` } });
     session.children.push(id);
     return id;
   }

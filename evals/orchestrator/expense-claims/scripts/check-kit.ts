@@ -7,7 +7,7 @@ import { KICKOFF_MAX_CHARS, KICKOFF_SPEC_PATH, kickoffProblems } from "./lib/kic
 import { listSeedFiles } from "./lib/new-run.ts";
 import { run, type ProcResult } from "./lib/proc.ts";
 import { readResults } from "./lib/results.ts";
-import { KIT_DIR, runSuite, suiteFile, suiteFiles } from "./lib/suite.ts";
+import { KIT_DIR, robustnessFiles, runSuite, suiteFile, suiteFiles } from "./lib/suite.ts";
 
 const { values } = parseArgs({ options: { session: { type: "string" } } });
 
@@ -98,7 +98,7 @@ async function seedOnly(repoDir: string): Promise<Outcome> {
   const files = (await git(repoDir, ["ls-files"])).split("\n").filter(Boolean).sort();
   const expected = listSeedFiles(SEED);
   if (files.join("\n") !== expected.join("\n")) problems.push(`git ls-files (${files.length}) differs from the seed (${expected.length})`);
-  const leaked = files.filter((file) => file.startsWith("acceptance/") || file.startsWith("reference/") || FORBIDDEN_FILES.has(file));
+  const leaked = files.filter((file) => /^(acceptance|reference|robustness|variants|pricing)\//.test(file) || FORBIDDEN_FILES.has(file));
   if (leaked.length > 0) problems.push(`kit-only files: ${leaked.join(", ")}`);
   const subjects = (await git(repoDir, ["log", "--format=%s"])).split("\n").filter(Boolean);
   if (subjects.join("\n") !== "Seed v1") problems.push(`commits: ${JSON.stringify(subjects)}`);
@@ -114,6 +114,7 @@ try {
 
   await check("suite passes 100% on the reference", () => mustPass(REFERENCE, suiteFiles(ALL_FEATURES)));
   await check("suite passes on the reference without Summary", () => mustPass(REFERENCE, suiteFiles(["policy", "reports", "import"])));
+  await check("robustness passes on the reference", () => mustPass(REFERENCE, robustnessFiles(ALL_FEATURES)));
   await check("v1 regressions pass on the seed", () => mustPass(SEED, [suiteFile("v1")]));
 
   await check("every v2 test fails on the seed", async () => {

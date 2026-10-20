@@ -71,3 +71,18 @@ test("a missing database is reported, not thrown", () => {
   assert.match(db.takeErrors()[0], /missing\.db not found/);
   assert.ok(db.probe().length > 0);
 });
+
+test("child discovery follows both parent id forms and retains archived children without writing", () => {
+  const path = makeDb("children.db");
+  const fixture = new DatabaseSync(path);
+  fixture.exec("INSERT INTO workspaces (id,session_id,creator_session_id,archived_at) VALUES ('w2','s2','s1','archived');");
+  fixture.exec("INSERT INTO workspaces (id,session_id,coordinating_creator_session_id) VALUES ('w3','s3','w1');");
+  fixture.exec("INSERT INTO workspaces (id,session_id,creator_session_id) VALUES ('other','unrelated','another');");
+  fixture.close();
+  const before = sha(path);
+  const db = openAppDb(path);
+  assert.deepEqual(db.childSessions("s1")?.sort(), ["s2", "s3"]);
+  assert.deepEqual(db.childSessions("s2"), []);
+  assert.deepEqual(db.takeErrors(), []);
+  assert.equal(sha(path), before);
+});

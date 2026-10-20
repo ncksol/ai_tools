@@ -28,9 +28,10 @@ import {
 import { run } from "./lib/proc.ts";
 import { readResults } from "./lib/results.ts";
 import { KIT_DIR } from "./lib/suite.ts";
+import { readVariants } from "./lib/variants.ts";
 
 const USAGE = `Usage (from evals/orchestrator/expense-claims):
-  npm run batch -- init [--variants a,b] [--runs 3] [--deadline 07:00] [--memory-off] [--self-test-only] [options]
+  npm run batch -- init [--variants a,b | --variants-file <json>] [--runs 3] [--deadline 07:00] [--memory-off] [--self-test-only] [options]
   npm run batch -- next --batch <id|path|latest> [--max-wait 420]
   npm run batch -- record --batch <id|path|latest> --action <id> <result flags>
   npm run batch -- status|stop|report --batch <id|path|latest>
@@ -53,6 +54,7 @@ const { values, positionals } = parseArgs({
     "max-wait": { type: "string", default: "420" },
     // init
     variants: { type: "string", default: "orchestrator,session-orchestrator" },
+    "variants-file": { type: "string" },
     runs: { type: "string", default: "3" },
     deadline: { type: "string", default: "07:00" },
     model: { type: "string", default: "claude-opus-5.5" },
@@ -162,7 +164,11 @@ async function confirmMemoryOff(): Promise<boolean> {
 async function init(): Promise<number> {
   const now = new Date();
   const paths = defaultPaths();
-  const variants = values["self-test-only"] ? [] : values.variants.split(",").map((name) => name.trim()).filter(Boolean);
+  if (values["variants-file"] && (process.argv.includes("--variants") || process.argv.some((arg) => arg.startsWith("--variants=")) || values["self-test-only"])) {
+    throw new UsageError("--variants-file cannot be combined with --variants or --self-test-only");
+  }
+  const variantSet = values["variants-file"] ? readVariants(values["variants-file"]) : undefined;
+  const variants = values["self-test-only"] ? [] : variantSet ? Object.keys(variantSet.variants) : values.variants.split(",").map((name) => name.trim()).filter(Boolean);
   const id = values.id ?? batchId(now);
   const dir = join(values["batches-dir"], id);
   if (existsSync(join(dir, "config.json"))) throw new Error(`Batch ${id} already exists at ${dir}`);
@@ -171,6 +177,7 @@ async function init(): Promise<number> {
     createdAt: now.toISOString(),
     dir,
     variants,
+    ...(variantSet ? { variantSet } : {}),
     runsPerVariant: Number(values.runs),
     deadline: nextLocalTime(values.deadline, now).toISOString(),
     model: values.model,
@@ -224,7 +231,7 @@ async function init(): Promise<number> {
   const state = initialState(currentPins(config), config.selfTest.enabled, now.toISOString());
   state.resultsBase = (await run("git", ["rev-parse", "HEAD"], { cwd: dirname(config.resultsPath), timeoutMs: 60_000 })).stdout.trim() || undefined;
   saveState(dir, state);
-  const decision = calibrationDecision(readResults(config.resultsPath), config.variants);
+  const decision = calibrationDecision(readResults(config.resultsPath), config.variants, config.variantSet);
   console.log(`Batch ${id} created at ${dir}.`);
   if (!config.selfTest.only) console.log(`Plan: ${describePlan(config.variants, config.runsPerVariant, decision)}. Calibration: ${decision.reason}`);
   console.log(`No new run starts after ${new Date(config.deadline).toString()}.`);

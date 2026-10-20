@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -33,6 +34,33 @@ test("init refuses a self-test agent that is an orchestrator", async () => {
   const result = await batch(["init", "--dry-run", "--memory-off", "--variants", "variant-a", "--self-test-agent", "session-orchestrator", ...common]);
   assert.equal(result.code, 2);
   assert.match(result.stderr, /must not use the agent "session-orchestrator"/);
+});
+
+test("init selects all pinned aliases and refuses ambiguous selection or a variant self-test", async () => {
+  const variants = Object.fromEntries(["a", "b", "c"].map((label) => {
+    const agent = `orchestrator-review-${label}`;
+    const text = `---\nname: ${agent}\nuser-invocable: false\n---\nPolicy ${label}.\n`;
+    writeFileSync(join(dir, "agents", `${agent}.agent.md`), text);
+    return [`review-${label}`, { agent, revision: "a".repeat(40), file: `agents/${agent}.agent.md`,
+      sha256: createHash("sha256").update(text).digest("hex"), workers: {} }];
+  }));
+  const manifest = join(dir, "manifest.json");
+  writeFileSync(manifest, JSON.stringify({ id: "review-policy", calibration: "all-variants-then-drop-summary", variants }));
+  const args = ["init", "--dry-run", "--memory-off", "--variants-file", manifest, "--id", "pinned", ...common];
+  const result = await batch(args);
+  assert.equal(result.code, 0, result.stdout + result.stderr);
+  const config = JSON.parse(readFileSync(join(dir, "batches", "pinned", "config.json"), "utf8"));
+  assert.deepEqual(config.variants, ["review-a", "review-b", "review-c"]);
+  assert.equal(config.variantSet.variants["review-a"].agent, "orchestrator-review-a");
+  assert.match(result.stdout, /PASS variant snapshot hashes/);
+  for (const extra of [["--variants", "variant-a"], ["--self-test-only"]]) {
+    const rejected = await batch([...args, ...extra]);
+    assert.equal(rejected.code, 2);
+    assert.match(rejected.stderr, /cannot be combined/);
+  }
+  const selftest = await batch([...args.map((arg) => arg === "pinned" ? "pinned-selftest" : arg), "--self-test-agent", "orchestrator-review-a"]);
+  assert.equal(selftest.code, 2);
+  assert.match(selftest.stderr, /must not use the agent "orchestrator-review-a"/);
 });
 
 test("init without the Memory confirmation fails the preflight and creates nothing", async () => {

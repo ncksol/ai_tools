@@ -25,6 +25,11 @@ export function importExpenses(ctx: Ctx): Result {
   }
 
   const [header, ...rows] = parseCsv(ctx.rawBody);
+  if (header?.error) {
+    throw new HttpError(400, "INVALID_CSV", "The CSV header is not valid CSV", [
+      { field: "row", message: `Line ${header.line}: ${header.error}` },
+    ]);
+  }
   const columns = header?.fields ?? [];
   const missing = REQUIRED.filter((name) => !columns.includes(name));
   if (missing.length > 0) {
@@ -39,6 +44,10 @@ export function importExpenses(ctx: Ctx): Result {
   const created: string[] = [];
   const errors: RowError[] = [];
   for (const row of rows) {
+    if (row.error) {
+      errors.push({ line: row.line, details: [{ field: "row", message: row.error }] });
+      continue;
+    }
     if (row.fields.length !== columns.length) {
       errors.push({ line: row.line, details: [{ field: "row", message: `Must have ${columns.length} fields` }] });
       continue;

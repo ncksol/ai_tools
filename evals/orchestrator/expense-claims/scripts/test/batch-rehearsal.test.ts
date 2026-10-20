@@ -31,6 +31,9 @@ test("a rehearsal of a whole batch runs the self-test and four runs, scores each
   assert.ok(Number(rows[1].blocked_minutes) > 0);
   // Real score saw the driver's runs as started by the user (no kickoff warning).
   assert.ok(rows.every((row) => !/another session/i.test(row.note)), rows.map((r) => r.note).join(" | "));
+  assert.ok(rows.every((row) => row.cost_status === "complete" && Number(row.cost_usd) > 0), rows.map((r) => r.note).join(" | "));
+  assert.ok(Number(rows[0].cost_sessions) > 1, "the synthetic child contributes usage");
+  assert.ok(rows.every((row) => row.robustness_status === "failed" && row.robustness_total === "12"));
 
   const created = transcript.filter((line) => line.includes("create_session ("));
   assert.deepEqual(

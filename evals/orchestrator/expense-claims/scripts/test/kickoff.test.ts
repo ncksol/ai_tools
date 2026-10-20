@@ -61,7 +61,7 @@ test("a kickoff that names a feature or counts them fails", () => {
 });
 
 test("a kickoff that mentions the kit fails", () => {
-  for (const text of ["A hidden suite checks it.", "See the reference.", "This is an eval.", "You are scored on time.", "Acceptance tests run later."]) {
+  for (const text of ["A hidden suite checks it.", "See the reference.", "This is an eval.", "You are scored on time.", "Acceptance tests run later.", "Robustness checks run later.", "Read pricing/2026-10-20.json.", "Read variants/review-policy.json."]) {
     problem(`${base} ${text}`, /mentions the kit/);
   }
 });

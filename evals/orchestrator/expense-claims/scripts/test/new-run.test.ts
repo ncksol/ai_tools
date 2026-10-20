@@ -52,6 +52,7 @@ test("dry run builds a seed-only repo and never calls gh", async () => {
   assert.equal(result.repoDir, join(runsDir, "orch-eval-t-1"));
   const tracked = (await run("git", ["ls-files"], { cwd: result.repoDir })).stdout.split("\n").filter(Boolean).sort();
   assert.deepEqual(tracked, listSeedFiles(seed).sort());
+  assert.ok(!tracked.some((path) => /^(acceptance|reference|robustness|variants|pricing)\//.test(path)));
   assert.equal((await run("git", ["log", "--format=%s"], { cwd: result.repoDir })).stdout.trim(), "Seed v1");
   assert.equal((await run("git", ["branch", "--show-current"], { cwd: result.repoDir })).stdout.trim(), "main");
   assert.equal(readFileSync(join(result.repoDir, "docs/spec-v2.md"), "utf8"), readFileSync(join(seed, "docs/spec-v2.md"), "utf8"));

@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import type { LogEvent } from "../lib/events.ts";
-import { validateConfig } from "../lib/batch/state.ts";
-import { STOP_MESSAGE } from "../lib/batch/runner.ts";
+import { saveState, validateConfig } from "../lib/batch/state.ts";
+import { currentPins, STOP_MESSAGE } from "../lib/batch/runner.ts";
 import { eventsPath } from "../lib/batch/swarm.ts";
 import { run as runProc } from "../lib/proc.ts";
 import { readResults } from "../lib/results.ts";
@@ -56,6 +57,57 @@ test("a run with a question and a final report: answered from the sheet, scored 
   assert.deepEqual(h.awake, { started: 1, stopped: 1 });
   assert.equal(state.phase, "done");
   assert.match(readFileSync(state.reportPath!, "utf8"), /Turn Copilot Memory back on/);
+});
+
+test("the manifest's alias, not its variant label, is launched and moving ordinary agents are not pinned", async () => {
+  const h = await make({ scenarios: ["silent"], variants: ["review-a", "review-b", "review-c"] });
+  const variants = Object.fromEntries(h.config.variants.map((label) => {
+    const agent = `orchestrator-${label}`;
+    const file = join(h.config.agentsDir, `${agent}.agent.md`);
+    const text = `---\nname: ${agent}\n---\nYou are the orchestrator.\n`;
+    writeFileSync(file, text);
+    return [label, { agent, revision: "a".repeat(40), file, sha256: createHash("sha256").update(text).digest("hex"), workers: {} }];
+  }));
+  const manifest = join(h.dir, "variants.json");
+  writeFileSync(manifest, "manifest pinned as an input\n");
+  h.config.variantSet = { id: "review-policy", calibration: "all-variants-then-drop-summary", path: manifest, variants };
+  assert.deepEqual(validateConfig(h.config), []);
+  assert.match(validateConfig({ ...h.config, selfTest: { ...h.config.selfTest, agent: "orchestrator-review-a" } }).join(), /must not use/);
+  assert.match(validateConfig({ ...h.config, variants: ["review-a"] }).join(), /every label/);
+  assert.match(validateConfig({ ...h.config, selfTest: { ...h.config.selfTest, only: true } }).join(), /self-test-only/);
+  writeFileSync(join(h.config.agentsDir, "orchestrator.agent.md"), "normal installed orchestrator");
+  saveState(h.config.dir, { ...h.state(), pins: currentPins(h.config) });
+  writeFileSync(join(h.config.agentsDir, "orchestrator.agent.md"), "ordinary agent changed");
+  const action = await h.until((a) => a.action === "create_session");
+  assert.equal(action.action, "create_session");
+  const kickoff = action.tool!.args.kickoff as Record<string, unknown>;
+  assert.equal(kickoff.agent, "orchestrator-review-a");
+  assert.equal(action.tool!.args.detached, true);
+  assert.equal(h.state().runs[0].calibration, true);
+});
+
+test("pinned variants finish all three calibrations and a three-run pilot with matching provenance", async () => {
+  const h = await make({ scenarios: Array.from({ length: 12 }, () => "ask-final"), variants: ["review-a", "review-b", "review-c"] });
+  h.config.runsPerVariant = 3;
+  const variants = Object.fromEntries(h.config.variants.map((label) => {
+    const agent = `orchestrator-${label}`;
+    const file = join(h.config.agentsDir, `${agent}.agent.md`);
+    const text = `---\nname: ${agent}\n---\nPolicy ${label}.\n`;
+    writeFileSync(file, text);
+    return [label, { agent, revision: "a".repeat(40), file, sha256: createHash("sha256").update(text).digest("hex"), workers: {} }];
+  }));
+  const path = join(h.dir, "manifest.json");
+  writeFileSync(path, JSON.stringify(variants));
+  h.config.variantSet = { id: "review-policy", calibration: "all-variants-then-drop-summary", path, variants };
+  saveState(h.config.dir, { ...h.state(), pins: currentPins(h.config) });
+  await h.until(() => false);
+  const rows = readResults(h.config.resultsPath);
+  assert.equal(rows.length, 12);
+  assert.deepEqual(rows.slice(0, 3).map((row) => [row.variant, row.calibration, row.features]), h.config.variants.map((variant) => [variant, "yes", "policy+reports+import+summary"]));
+  assert.deepEqual(rows.slice(3).map((row) => row.variant), [...h.config.variants, ...h.config.variants, ...h.config.variants]);
+  assert.ok(rows.slice(3).every((row) => row.calibration === "no" && row.features === "policy+reports+import"));
+  assert.ok(rows.every((row) => row.agent_revision === "a".repeat(40) && row.agent_sha256 === variants[row.variant].sha256 && row.agent_bundle_sha256.length === 64));
+  assert.ok(h.scoreCalls.every((args) => flag(args, "--app-db") === h.config.appDb));
 });
 
 test("a plain-text question is answered with send_message, flagged, and its observed source goes to --answer-source", async () => {

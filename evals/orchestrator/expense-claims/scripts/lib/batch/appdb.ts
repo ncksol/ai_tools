@@ -25,6 +25,7 @@ export interface AppDb {
   interruption(sessionId: string): Interruption | null;
   workspaces(projectId: string): WorkspaceRow[] | null;
   creatorLinks(appSessionId: string): { creator: string | null; coordinator: string | null; createdBy: string | null } | null;
+  childSessions(sessionId: string): string[] | null;
   // Every table and column the runner reads, checked against the database's schema.
   probe(): string[];
   // Query failures since the last call, for flags.
@@ -106,6 +107,16 @@ export function openAppDb(path: string): AppDb {
         createdBy: text(cell("workspaces", "created_by", "id", id)),
       };
     },
+    childSessions: (id) => {
+      const workspace = withDb("workspaces.id by session_id", (db) =>
+        (db.prepare("SELECT id FROM workspaces WHERE session_id = ?").get(id) as { id: unknown } | undefined)?.id,
+      );
+      const ids = withDb("workspaces.id by creator", (db) =>
+        (db.prepare("SELECT id FROM workspaces WHERE creator_session_id IN (?, ?) OR coordinating_creator_session_id IN (?, ?)")
+          .all(id, text(workspace) ?? id, id, text(workspace) ?? id) as { id: unknown }[]).map((row) => String(row.id)),
+      );
+      return ids ? ids.map((child) => text(cell("workspaces", "session_id", "id", child)) ?? child) : null;
+    },
     probe: () => {
       const problems: string[] = [];
       for (const [table, columns] of Object.entries(APP_DB_COLUMNS)) {
@@ -135,6 +146,7 @@ export const noAppDb: AppDb = {
   interruption: () => null,
   workspaces: () => null,
   creatorLinks: () => null,
+  childSessions: () => null,
   probe: () => ["no app database (dry run)"],
   takeErrors: () => [],
 };

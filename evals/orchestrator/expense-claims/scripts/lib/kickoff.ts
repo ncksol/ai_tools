@@ -12,7 +12,7 @@ const SHARED_LINE_CHARS = 24;
 
 const FEATURE_NAMES = FEATURES.map((feature) => FEATURE_HEADINGS[feature].replace(/^## Feature: /, ""));
 const COUNT_WORDS = "one|two|three|four|five|six|\\d+";
-const KIT_TERMS = /acceptance|hidden|reference|suite|\bkit\b|\bevals?\b|scor(?:e|ed|ing)\b|answers\.md|results\.csv|ai_tools|orch-evals?|expense-claims\//i;
+const KIT_TERMS = /acceptance|hidden|reference|robustness|suite|(?:variants|pricing)\/|\bkit\b|\bevals?\b|scor(?:e|ed|ing)\b|answers\.md|results\.csv|ai_tools|orch-evals?|expense-claims\//i;
 
 function words(text: string): string[] {
   return text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);

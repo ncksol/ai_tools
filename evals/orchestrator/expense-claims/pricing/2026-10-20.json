@@ -1,0 +1,28 @@
+{
+  "date": "2026-10-20",
+  "currency": "USD",
+  "perTokens": 1000000,
+  "source": "https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing",
+  "models": {
+    "claude-sonnet-5.5": [
+      { "aboveInputTokens": -1, "input": 2, "cachedInput": 0.1, "cacheWrite": 2.5, "output": 10 }
+    ],
+    "claude-opus-5.5": [
+      { "aboveInputTokens": -1, "input": 4, "cachedInput": 0.2, "cacheWrite": 5, "output": 20 }
+    ],
+    "gpt-6-astra": [
+      { "aboveInputTokens": -1, "input": 10, "cachedInput": 1, "cacheWrite": 12.5, "output": 50 },
+      { "aboveInputTokens": 272000, "input": 20, "cachedInput": 2, "cacheWrite": 25, "output": 75 }
+    ],
+    "gpt-6.1-sol": [
+      { "aboveInputTokens": -1, "input": 2, "cachedInput": 0.1, "cacheWrite": 2.5, "output": 10 },
+      { "aboveInputTokens": 272000, "input": 4, "cachedInput": 0.2, "cacheWrite": 5, "output": 15 }
+    ],
+    "gemini-4-argon": [
+      { "aboveInputTokens": -1, "input": 2, "cachedInput": 0.1, "cacheWrite": null, "output": 10, "expiresAt": "2026-12-01T00:00:00Z" }
+    ],
+    "claude-fable-5.1": [
+      { "aboveInputTokens": -1, "input": 10, "cachedInput": 0.25, "cacheWrite": 12.5, "output": 50 }
+    ]
+  }
+}
