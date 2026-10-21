@@ -386,6 +386,18 @@ test("the self-test runs first, checks the whole path, and its pass lets the run
   assert.equal(kickoff.scenario, "selftest");
 });
 
+test("a self-test whose project runs as another account stops the batch before any run", async () => {
+  const h = await make({ scenarios: ["ask-final"], selfTest: true });
+  h.app.account = "someone-else";
+  await h.until(() => false);
+  const state = h.state();
+  assert.equal(state.selftests[0].status, "failed");
+  const check = state.selftests[0].checks.find((c) => c.name === "session runs as the batch owner")!;
+  assert.equal(check.ok, false);
+  assert.equal(check.detail, "project account someone-else, owner ncksol");
+  assert.equal(state.runs.length, 0);
+});
+
 test("a failed self-test (memories loaded) stops the batch before any run", async () => {
   const h = await make({ scenarios: ["ask-final"], selfTest: true });
   await h.until((action, state) => {

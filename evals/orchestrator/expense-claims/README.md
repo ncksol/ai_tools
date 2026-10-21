@@ -356,7 +356,8 @@ Each run's flags are listed in the report and the run's phone notification. A fl
 ### Starting a batch
 
 1. Do the manual steps. The preflight prints them too:
-   - Turn Copilot Memory off at https://github.com/settings/copilot/features.
+   - In the Copilot app, make the batch owner (`--owner`, default `ncksol`) the default account. The projects the runner creates have no account of their own, so their sessions run as the default account, with its Memory setting, GitHub access and quota. Switch it back in the morning.
+   - Turn Copilot Memory off at https://github.com/settings/copilot/features, signed in as that account.
    - Keep the laptop on AC power with the lid open. Don't log out, restart or quit the app.
    - Defer macOS updates and app updates for the night.
    - Leave nothing else heavy running, and don't use this account's Copilot for other work.
@@ -364,7 +365,7 @@ Each run's flags are listed in the report and the run's phone notification. A fl
 
    > Create an overnight eval batch: variants orchestrator,session-orchestrator,hands-on-orchestrator,hands-on-session-orchestrator, 3 runs each. Copilot Memory is off.
 
-   The driver runs `npm run batch -- init` with `--memory-off` only because your message says Memory is off. The preflight checks AC power, free disk space, the `gh` account and its `repo` and `workflow` scopes, API rate limits, Node 24, the app version (1.1.30 or later), every `~/.copilot/data.db` column the runner reads, that no other batch is active, that `score` supports the runner, the agents under test, the results branch and git identity, and the notification topic. Any FAIL creates no batch.
+   The driver runs `npm run batch -- init` with `--memory-off` only because your message says Memory is off. The preflight checks AC power, free disk space, the `gh` account and its `repo` and `workflow` scopes, API rate limits, Node 24, the app version (1.1.30 or later), every `~/.copilot/data.db` column the runner reads, that the app's default account is the owner, that no other batch is active, that `score` supports the runner, the agents under test, the results branch and git identity, and the notification topic. Any FAIL creates no batch.
 3. The batch starts with the self-test. Wait for the "self-test passed" notification, a few minutes later, before you leave. A failed self-test stops the batch.
 
 To create the batch from a terminal instead, run `npm run batch -- init` in the driver's worktree; it asks you to confirm that Memory is off. Then send the driver `Run eval batch <id>.` To resume a stopped driver, for example after an app restart, send a new `eval-runner` session in the same worktree `Resume eval batch <id>.` The new driver takes over once the old driver's session has stopped; if the old session is still open, archive it first. If the runner can't tell whether the old driver is gone, `npm run batch -- take-over --batch <id>` releases the batch; only you run that.
@@ -380,6 +381,7 @@ Every batch starts with a self-test, and `npm run batch -- selftest` (or asking 
 - the end is detected;
 - the new project auto-approves tools, as run 1's hand-added project did (`projects.auto_approve` in `~/.copilot/data.db`, read read-only);
 - the session has no creator link;
+- the new project runs as the batch owner (its Copilot account, else its GitHub account, else the app's default account, from `~/.copilot/data.db`);
 - every `~/.copilot/data.db` lookup the runner uses answers for this session and project;
 - no memories were loaded, which shows that Memory is off.
 
@@ -388,7 +390,7 @@ The driver has its own rule for the self-test: the response after the answered q
 ### In the morning
 
 1. The batch has no deadline, so it may still be running. `npm run batch -- status --batch <id>` shows where it stands, and `npm run batch -- stop --batch <id>` starts no new run and lets the runs in progress finish. When the batch ends, your phone has the final notification. The report is `~/orch-evals/batches/<id>/report.md`; the driver prints it too.
-2. Turn Copilot Memory back on.
+2. Turn Copilot Memory back on, and switch the app's default account back if you changed it.
 3. Archive the sessions the report lists. The driver can't archive detached sessions.
 4. Review the flagged runs.
 5. Land the results: the report lists the `results.csv` commits on the driver's branch, which the runner pushed. Open a pull request from that branch into `main`.

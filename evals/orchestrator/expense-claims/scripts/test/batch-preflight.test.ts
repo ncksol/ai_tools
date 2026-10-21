@@ -81,11 +81,11 @@ const healthy: Record<string, ProcResult> = {
   "sh -c command -v flock": ok("/usr/bin/flock\n"),
 };
 
-function host(overrides: Record<string, ProcResult> = {}, probe: string[] = []): Host {
+function host(overrides: Record<string, ProcResult> = {}, probe: string[] = [], account: string | null = "ncksol"): Host {
   const table = { ...healthy, ...overrides };
   return {
     nodeVersion: "v24.19.0",
-    appDb: { ...noAppDb, probe: () => [...probe], takeErrors: () => [] },
+    appDb: { ...noAppDb, probe: () => [...probe], takeErrors: () => [], defaultAccount: () => account },
     exec: async (cmd, args) => {
       const key = Object.keys(table).find((k) => `${cmd} ${args.join(" ")}`.startsWith(k));
       return key ? table[key] : { code: 1, stdout: "", stderr: `unexpected ${cmd} ${args.join(" ")}` };
@@ -131,6 +131,16 @@ test("each problem fails its own check", async () => {
     "results.csv committed",
     "score supports the runner",
   ]);
+});
+
+test("the app's default account must be the owner, because new projects run as it", async () => {
+  for (const account of ["nicksologoub_microsoft", null]) {
+    const check = (await runPreflight(config(), host({}, [], account))).find((c) => c.name === "app default account")!;
+    assert.equal(check.status, "FAIL");
+    assert.equal(check.detail, `default account ${account ?? "unreadable"}, owner ncksol; make ncksol the default account in the Copilot app`);
+  }
+  const ok = (await runPreflight(config(), host({}, [], "NCKSOL"))).find((c) => c.name === "app default account")!;
+  assert.equal(ok.status, "PASS");
 });
 
 test("a dry run skips the checks that touch GitHub, power and the app", async () => {

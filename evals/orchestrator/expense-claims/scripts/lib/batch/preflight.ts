@@ -152,6 +152,10 @@ export async function runPreflight(config: BatchConfig, host: Host): Promise<Che
   if (live) {
     const problems = [...host.appDb.probe(), ...host.appDb.takeErrors()];
     add("app database", problems.length === 0 ? "PASS" : "FAIL", problems.length === 0 ? `${config.appDb}: every column the runner reads is there (read-only)` : problems.join("; "));
+    // The projects the runner creates have no account of their own, so their sessions run as the default account.
+    const account = host.appDb.defaultAccount();
+    add("app default account", account?.toLowerCase() === config.owner.toLowerCase() ? "PASS" : "FAIL",
+      account?.toLowerCase() === config.owner.toLowerCase() ? `${account}: new projects run as the owner` : `default account ${account ?? "unreadable"}, owner ${config.owner}; make ${config.owner} the default account in the Copilot app`);
   } else add("app database", "SKIP", "dry run");
   const other = otherActiveBatch(config.activeGuard, config.id, config.dir);
   add("no other batch active", other ? "FAIL" : "PASS", other ? `batch ${other.id} (${other.dir}) is active; only one batch runs at a time` : `guard ${config.activeGuard}`);

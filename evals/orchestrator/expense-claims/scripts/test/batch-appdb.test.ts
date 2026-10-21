@@ -20,7 +20,7 @@ function makeDb(name: string, drop: string[] = []): string {
   const extra: Record<string, string[]> = { sessions: ["title", "model"], workspaces: ["branch"], projects: ["name"] };
   for (const [table, columns] of Object.entries(APP_DB_COLUMNS)) {
     const keep = [...new Set([...columns, ...(extra[table] ?? [])])].filter((column) => !drop.includes(`${table}.${column}`));
-    const type = (column: string) => (["auto_approve", "was_interrupted"].includes(column) ? "INTEGER" : "TEXT");
+    const type = (column: string) => (["auto_approve", "was_interrupted", "is_default"].includes(column) ? "INTEGER" : "TEXT");
     db.exec(`CREATE TABLE ${table} (${keep.map((column) => `${column} ${type(column)}`).join(", ")})`);
   }
   const insert = (table: string, values: Record<string, string | number>) => {
@@ -28,7 +28,11 @@ function makeDb(name: string, drop: string[] = []): string {
     const cols = Object.keys(values).filter((column) => have.includes(column));
     db.prepare(`INSERT INTO ${table} (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`).run(...cols.map((column) => values[column]));
   };
-  insert("projects", { id: "p1", auto_approve: 1, name: "orch-eval-a-1" });
+  insert("projects", { id: "p1", auto_approve: 1, name: "orch-eval-a-1", copilot_account_id: "", github_account_id: "" });
+  insert("projects", { id: "p2", auto_approve: 1, copilot_account_id: "", github_account_id: "a2" });
+  insert("projects", { id: "p3", auto_approve: 1, copilot_account_id: "a1", github_account_id: "a2" });
+  insert("accounts", { id: "a1", login: "corp_account", is_default: 1 });
+  insert("accounts", { id: "a2", login: "ncksol", is_default: 0 });
   insert("workspaces", { id: "w1", session_id: "s1", project_id: "p1", name: "run", archived_at: "", created_by: "agent", created_at: "2026-10-19T22:00:00.000Z", creator_session_id: "", coordinating_creator_session_id: "" });
   insert("sessions", { id: "s1", was_interrupted: 1, interruption_reason: "shutdown", title: "x", model: "m" });
   db.close();
@@ -50,6 +54,15 @@ test("every lookup the runner uses works on the full schema, and the file is nev
   assert.deepEqual(db.creatorLinks("w1"), { creator: null, coordinator: null, createdBy: "agent" });
   assert.deepEqual(db.takeErrors(), []);
   assert.equal(sha(path), before);
+});
+
+test("a project runs as its Copilot account, else its GitHub account, else the app's default account", () => {
+  const db = openAppDb(makeDb("accounts.db"));
+  assert.equal(db.defaultAccount(), "corp_account");
+  assert.equal(db.projectAccount("p1"), "corp_account");
+  assert.equal(db.projectAccount("p2"), "ncksol");
+  assert.equal(db.projectAccount("p3"), "corp_account");
+  assert.deepEqual(db.takeErrors(), []);
 });
 
 test("a missing column loses only its own value: was_interrupted still reads, and the failure is reported", () => {
