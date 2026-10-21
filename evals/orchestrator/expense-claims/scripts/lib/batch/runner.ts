@@ -20,7 +20,7 @@ import { scanSession, scanSwarm } from "./hygiene.ts";
 import { claimActive, releaseActive } from "./lock.ts";
 import { notices, type Notice } from "./notify.ts";
 import { computePins, diffPins } from "./pins.ts";
-import { calibrationDecision, describePlan, nextRunNumber, planNext, runRowFor, scoredCount } from "./plan.ts";
+import { calibrationDecision, describePlan, nextRunNumber, planRound, runRowFor, scoredCount } from "./plan.ts";
 import { buildReport } from "./report.ts";
 import {
   addFlag,
@@ -376,7 +376,26 @@ function lateFlagCodes(run: RunState): string[] {
 
 // ---------- phase control ----------
 
+type Stop = { reason: string; failure: boolean };
+
+// The first failure wins, then the first reason.
+function firstStop(...stops: (Stop | null | undefined)[]): Stop | null {
+  return stops.find((stop) => stop?.failure) ?? stops.find((stop) => stop) ?? null;
+}
+
+// While a round has runs, the stop waits for them: no new run starts, and the batch stops when the
+// next round would start, after every run of this one has ended.
 function stopBatch(ctx: Ctx, state: BatchState, reason: string, failure: boolean): void {
+  if (state.phase === "runs" && state.active.length > 0) {
+    const halt = firstStop(state.halt, { reason, failure })!;
+    if (halt !== state.halt) {
+      state.halt = halt;
+      const busy = state.active.some((index) => !NOT_STARTED.has(state.runs[index].status) && !["done", "void"].includes(state.runs[index].status));
+      log(ctx, `no new run starts: ${reason}${busy ? "; the runs in progress finish first" : ""}`);
+    }
+    return;
+  }
+  delete state.halt;
   state.stopReason = reason;
   state.phase = "finishing";
   state.failed = failure;
@@ -432,7 +451,8 @@ function doneAction(ctx: Ctx, state: BatchState): ActionOut {
 }
 
 // The checks before a kickoff: at planning time and again just before create_session is issued.
-function admissionBlock(ctx: Ctx, state: BatchState): { reason: string; failure: boolean } | null {
+// Once a run of a round has started, the deadline no longer holds back the round's other runs.
+function admissionBlock(ctx: Ctx, state: BatchState, opts: { deadline?: boolean } = {}): Stop | null {
   if (state.fatal) return { reason: state.fatal, failure: true };
   if (state.stopRequested) return { reason: "you asked the batch to stop", failure: false };
   // A run given up because its create_session was never confirmed must not have started after all.
@@ -452,7 +472,7 @@ function admissionBlock(ctx: Ctx, state: BatchState): { reason: string; failure:
     const mismatches = verifyVariants(ctx.config.variantSet, ctx.config.agentsDir);
     if (mismatches.length > 0) return { reason: `variant registration differs from manifest: ${mismatches.join("; ")}`, failure: true };
   }
-  if (ctx.deps.now() >= ms(ctx.config.deadline)) return { reason: `the deadline ${ctx.config.deadline} passed`, failure: false };
+  if (opts.deadline !== false && ctx.deps.now() >= ms(ctx.config.deadline)) return { reason: `the deadline ${ctx.config.deadline} passed`, failure: false };
   return null;
 }
 
@@ -622,16 +642,17 @@ function plannedTotal(ctx: Ctx, state: BatchState): number {
   return done + remaining + (ctx.config.variantSet ? decision.pending.length : 0);
 }
 
-async function startNextRun(ctx: Ctx, state: BatchState): Promise<StepResult> {
+// Plans the next round and starts all of its runs together; called only when no run is active.
+async function startNextRound(ctx: Ctx, state: BatchState): Promise<StepResult> {
   const { config, deps } = ctx;
   const now = deps.now();
-  const block = admissionBlock(ctx, state);
-  if (block) {
-    stopBatch(ctx, state, block.reason, block.failure);
+  const stop = firstStop(state.halt, admissionBlock(ctx, state));
+  if (stop) {
+    stopBatch(ctx, state, stop.reason, stop.failure);
     return { progressed: true };
   }
   const rows = readResults(config.resultsPath);
-  const { next, decision } = planNext(state.runs, rows, config.variants, config.runsPerVariant, config.variantSet, state.policyCalibration);
+  const { round, decision } = planRound(state.runs, rows, config.variants, config.runsPerVariant, config.parallel ?? 1, config.variantSet, state.policyCalibration);
   state.calibration = decision.reason;
   if (config.variantSet && decision.state !== "undecided") {
     state.policyCalibration ??= { dropSummary: decision.state === "drop", reason: decision.reason };
@@ -640,33 +661,36 @@ async function startNextRun(ctx: Ctx, state: BatchState): Promise<StepResult> {
       return { progressed: true };
     }
   }
-  if (!next) {
+  if (round.length === 0) {
     stopBatch(ctx, state, "every variant has its scored runs", false);
     return { progressed: true };
   }
   ensureAwake(ctx, state);
-  const n = nextRunNumber(next.variant, rows, config.runsDir, state.runs);
-  const name = runName(next.variant, n);
-  const run: RunState = {
-    key: `${next.variant}#${n}`,
-    variant: next.variant,
-    n,
-    features: next.features,
-    calibration: next.calibration,
-    name,
-    repoDir: join(config.runsDir, name),
-    repo: config.dryRun ? name : `${config.owner}/${name}`,
-    status: "new",
-    createdAt: iso(now),
-    judged: [],
-    answers: [],
-    askAttempts: {},
-    requestIds: {},
-    flags: [],
-  };
-  state.runs.push(run);
-  state.current = state.runs.length - 1;
-  log(ctx, `planned ${run.key} on ${featureSetName(run.features)}${run.calibration ? " (calibration)" : ""}`);
+  for (const next of round) {
+    const n = nextRunNumber(next.variant, rows, config.runsDir, state.runs);
+    const name = runName(next.variant, n);
+    const run: RunState = {
+      key: `${next.variant}#${n}`,
+      variant: next.variant,
+      n,
+      features: next.features,
+      calibration: next.calibration,
+      name,
+      repoDir: join(config.runsDir, name),
+      repo: config.dryRun ? name : `${config.owner}/${name}`,
+      status: "new",
+      createdAt: iso(now),
+      judged: [],
+      answers: [],
+      askAttempts: {},
+      requestIds: {},
+      flags: [],
+    };
+    state.runs.push(run);
+    state.active.push(state.runs.length - 1);
+    log(ctx, `planned ${run.key} on ${featureSetName(run.features)}${run.calibration ? " (calibration)" : ""}`);
+  }
+  if (round.length > 1) log(ctx, `round of ${round.length}: ${state.active.map((index) => state.runs[index].key).join(", ")}`);
   return { progressed: true };
 }
 
@@ -984,10 +1008,49 @@ function swarmQuietFor(ctx: Ctx, run: RunState, now: number): number {
   return since(now, swarmView(readLogs(ctx, runSessionIds(ctx, run))).lastActivityAt);
 }
 
+// Runs that haven't asked for their session yet.
+const NOT_STARTED = new Set(["new", "repo", "project"]);
+
+// Whether another run of the round has asked for its session. Then the deadline no longer holds
+// this run back: the round ends with that run anyway.
+function roundStarted(state: BatchState, index: number): boolean {
+  return state.active.some((other) => other !== index && !NOT_STARTED.has(state.runs[other].status) && state.runs[other].status !== "void");
+}
+
+// A stop that is already known without the full admission checks.
+function knownStop(state: BatchState): Stop | null {
+  return firstStop(
+    state.halt,
+    state.fatal ? { reason: state.fatal, failure: true } : null,
+    state.stopRequested ? { reason: "you asked the batch to stop", failure: false } : null,
+  );
+}
+
+// Steps every run of the round until one needs the driver. Once a stop is known, the round's runs
+// that haven't started are void; the others finish first.
 async function runsStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
+  if (state.active.length === 0) return startNextRound(ctx, state);
+  // Scored runs go first, so a run's row is committed before another run writes its own.
+  const order = [...state.active].sort((a, b) => Number(state.runs[b].status === "scored") - Number(state.runs[a].status === "scored"));
+  let progressed = false;
+  for (const index of order) {
+    const before = state.runs[index].status;
+    const stop = knownStop(state);
+    if (stop && NOT_STARTED.has(before)) voidRun(ctx, state, state.runs[index], `not started: ${stop.reason}`, false);
+    const result = await runStep(ctx, state, index);
+    for (const error of ctx.deps.appDb.takeErrors()) {
+      addFlag(state.runs[index], "app-db", error, iso(ctx.deps.now()));
+      warn(state, `app database: ${error}`);
+    }
+    if (result.action) return result;
+    if (result.progressed) progressed = true;
+    if (before === "scoring") return { progressed: true };
+  }
+  return { progressed };
+}
+
+async function runStep(ctx: Ctx, state: BatchState, index: number): Promise<StepResult> {
   const { config, deps } = ctx;
-  if (state.current === null) return startNextRun(ctx, state);
-  const index = state.current;
   const run = state.runs[index];
   const now = deps.now();
   switch (run.status) {
@@ -997,7 +1060,7 @@ async function runsStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
       return { action: issue(ctx, state, "create_project", index, { args: { path: run.repoDir } }) };
     case "project": {
       // The last runner-controlled point before a run starts: check the deadline and pins again.
-      const block = admissionBlock(ctx, state);
+      const block = firstStop(state.halt, admissionBlock(ctx, state, { deadline: !roundStarted(state, index) }));
       if (block) {
         voidRun(ctx, state, run, `not started: ${block.reason}`, false);
         stopBatch(ctx, state, block.reason, block.failure);
@@ -1039,8 +1102,10 @@ async function runsStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
           log(ctx, `${run.key} results commit failed (attempt ${run.commitAttempts}): ${error}`);
           if (run.commitAttempts < MAX_COMMIT_ATTEMPTS) return {};
           addFlag(run, "commit-failed", `results.csv could not be committed after ${run.commitAttempts} attempts: ${error}`, iso(now));
-          state.fatal = `the results commit for ${run.key} failed ${run.commitAttempts} times (${error}); its row is in results.csv but not committed`;
-          await notify(ctx, state, notices.failure(config.id, `commit-${run.key}`, `${state.fatal}. No further run starts.`));
+          // Another run of the round may have set the first fatal; this failure still has its own notice and flag.
+          const reason = `the results commit for ${run.key} failed ${run.commitAttempts} times (${error}); its row is in results.csv but not committed`;
+          state.fatal ??= reason;
+          await notify(ctx, state, notices.failure(config.id, `commit-${run.key}`, `${reason}. No further run starts.`));
         } else run.committed = true;
       }
       if (!run.notified) {
@@ -1125,7 +1190,7 @@ async function runsStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
         }
       }
       run.endedAt ??= iso(now);
-      state.current = null;
+      state.active = state.active.filter((other) => other !== index);
       return { progressed: true };
   }
 }
@@ -1206,7 +1271,7 @@ function reconcileCreate(ctx: Ctx, state: BatchState, pending: PendingAction, ta
     return "cleared";
   }
   if (!selfTest) {
-    const block = admissionBlock(ctx, state);
+    const block = firstStop(state.halt, admissionBlock(ctx, state, { deadline: !roundStarted(state, pending.target as number) }));
     if (block) {
       state.pending = null;
       voidRun(ctx, state, target as RunState, `not started: ${block.reason}`, false);
@@ -1267,15 +1332,17 @@ const IN_FLIGHT = new Set(["project", "starting", "running", "ending", "scoring"
 
 export async function step(ctx: Ctx, state: BatchState): Promise<StepResult> {
   const now = ctx.deps.now();
-  const current = state.current === null ? null : state.runs[state.current];
+  const active = state.active.map((index) => state.runs[index]);
   if (state.lastHeartbeatAt) {
     const last = ms(state.lastHeartbeatAt);
     if (now < last - CLOCK_JUMP_MS) {
       const detail = `the clock went back ${Math.round((last - now) / 1000)} s (from ${state.lastHeartbeatAt} to ${iso(now)})`;
-      if (current) addFlag(current, "clock-jump", detail, iso(now));
+      for (const run of active) addFlag(run, "clock-jump", detail, iso(now));
       warn(state, detail);
-    } else if (current && IN_FLIGHT.has(current.status) && now - last > DRIVER_GAP_MS) {
-      addFlag(current, "driver-gap", `the driver was away for ${Math.round((now - last) / 60_000)} min (from ${state.lastHeartbeatAt})`, iso(now));
+    } else if (now - last > DRIVER_GAP_MS) {
+      for (const run of active.filter((r) => IN_FLIGHT.has(r.status))) {
+        addFlag(run, "driver-gap", `the driver was away for ${Math.round((now - last) / 60_000)} min (from ${state.lastHeartbeatAt})`, iso(now));
+      }
     }
   }
   state.lastHeartbeatAt = iso(now);
@@ -1286,7 +1353,7 @@ export async function step(ctx: Ctx, state: BatchState): Promise<StepResult> {
       const { config } = ctx;
       const plan = config.selfTest.only
         ? "self-test only"
-        : `${config.selfTest.enabled ? "self-test, then " : ""}${describePlan(config.variants, config.runsPerVariant, calibrationDecision(readResults(config.resultsPath), config.variants, config.variantSet))}`;
+        : `${config.selfTest.enabled ? "self-test, then " : ""}${describePlan(config.variants, config.runsPerVariant, calibrationDecision(readResults(config.resultsPath), config.variants, config.variantSet), config.parallel)}`;
       const deadline = new Date(config.deadline).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
       await notify(ctx, state, notices.batchStarted(config.id, plan, deadline));
     }
@@ -1312,12 +1379,15 @@ export async function step(ctx: Ctx, state: BatchState): Promise<StepResult> {
         break;
     }
   }
-  // Failed app-database queries are flagged, so a schema change can't hide a signal silently.
+  // Failed app-database queries are flagged, so a schema change can't hide a signal silently. A
+  // failure while a run was stepped is flagged on that run (runsStep); any other goes on every
+  // active run.
   for (const error of ctx.deps.appDb.takeErrors()) {
-    const run = state.current === null ? null : state.runs[state.current];
-    if (run) addFlag(run, "app-db", error, iso(now));
+    for (const index of state.active) addFlag(state.runs[index], "app-db", error, iso(now));
     warn(state, `app database: ${error}`);
   }
+  // Time spent in this step (a score can take many minutes) is not time the driver was away.
+  state.lastHeartbeatAt = iso(ctx.deps.now());
   return result;
 }
 
@@ -1498,7 +1568,7 @@ export async function requestStop(ctx: Ctx): Promise<string> {
     const state = loadState(ctx.config.dir);
     state.stopRequested = true;
     saveState(ctx.config.dir, state);
-    return "The batch stops after the current run; no new run starts.";
+    return "The batch stops after the runs in progress finish; no new run starts.";
   });
 }
 
@@ -1521,6 +1591,8 @@ export function statusText(ctx: Ctx): string {
   if (state.owner) lines.push(`Driver: ${state.owner.id}, last seen ${state.owner.lastSeenAt}`);
   if (state.fatal) lines.push(`No new run starts: ${state.fatal}`);
   if (state.pending) lines.push(`Pending action: ${state.pending.id} ${state.pending.kind} (issued ${state.pending.issuedAt})`);
+  if (state.active.length) lines.push(`Active runs: ${state.active.map((index) => state.runs[index].key).join(", ")}`);
+  if (state.halt) lines.push(`No new run starts once the runs in progress end: ${state.halt.reason}`);
   for (const test of state.selftests) lines.push(`Self-test: ${test.status}${test.failure ? ` (${test.failure})` : ""}`);
   for (const run of state.runs) {
     const row = runRowFor(rows, run);

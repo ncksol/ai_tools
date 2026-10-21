@@ -71,11 +71,28 @@ test("init without the Memory confirmation fails the preflight and creates nothi
   assert.match(result.stdout, /no batch was created/);
 });
 
+test("init runs the four orchestrators in parallel by default and refuses more runs at once than variants", async () => {
+  const four = ["orchestrator", "session-orchestrator", "hands-on-orchestrator", "hands-on-session-orchestrator"];
+  for (const agent of four) writeFileSync(join(dir, "agents", `${agent}.agent.md`), `${agent}\n`);
+  const init = await batch(["init", "--dry-run", "--memory-off", "--id", "four", ...common]);
+  assert.equal(init.code, 0, init.stdout + init.stderr);
+  const config = JSON.parse(readFileSync(join(dir, "batches", "four", "config.json"), "utf8"));
+  assert.deepEqual(config.variants, four);
+  assert.equal(config.parallel, 4);
+  assert.match(init.stdout, /up to 4 runs at a time/);
+  for (const [parallel, error] of [["2", /--parallel can't be more than the number of variants/], ["two", /--parallel must be a positive integer/]] as const) {
+    const rejected = await batch(["init", "--dry-run", "--memory-off", "--variants", "variant-a", "--parallel", parallel, "--id", "over", ...common]);
+    assert.equal(rejected.code, 2);
+    assert.match(rejected.stderr, error);
+  }
+});
+
 test("init, next, record and status work from the command line", async () => {
   const init = await batch(["init", "--dry-run", "--memory-off", "--variants", "variant-a", "--runs", "1", "--id", "cli", ...common]);
   assert.equal(init.code, 0, init.stdout + init.stderr);
   assert.match(init.stdout, /DRY RUN: for tests only/);
   const config = JSON.parse(readFileSync(join(dir, "batches", "cli", "config.json"), "utf8"));
+  assert.equal(config.parallel, 1);
   assert.equal(config.timeoutMin, 90);
   assert.equal(config.stallMin, 15);
   assert.equal(config.keepAwake, false, "a dry run never holds caffeinate");
@@ -101,7 +118,7 @@ test("init, next, record and status work from the command line", async () => {
   assert.match(status.stdout, /Batch cli: phase selftest/);
   assert.match(status.stdout, /Pending action: a2 create_session/);
   const stop = await batch(["stop", "--batch", "cli", ...common]);
-  assert.match(stop.stdout, /stops after the current run/);
+  assert.match(stop.stdout, /stops after the runs in progress finish/);
   const released = await batch(["take-over", "--batch", "cli", ...common]);
   assert.match(released.stdout, /^Released batch cli from driver \S+; the next driver to run next owns it\.$/m);
   assert.ok(existsSync(join(dir, "batches", "active-batch")), "a dry run keeps its guard beside its batches");

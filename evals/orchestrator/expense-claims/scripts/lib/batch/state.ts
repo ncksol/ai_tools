@@ -17,6 +17,8 @@ export interface BatchConfig {
   variants: string[];
   variantSet?: VariantSet;
   runsPerVariant: number;
+  // How many runs a round may hold; they start together and the next round waits for all of them. Missing means 1.
+  parallel?: number;
   // No new run starts at or after this time (ISO).
   deadline: string;
   model: string;
@@ -239,7 +241,11 @@ export interface BatchState {
   recorded: string[];
   selftests: SelfTestState[];
   runs: RunState[];
-  current: number | null;
+  // Indexes into runs of the current round's runs that are not done or void yet.
+  active: number[];
+  // Set when the batch must stop but runs are still in progress: no new run starts, and the batch
+  // stops once those runs end.
+  halt?: { reason: string; failure: boolean };
   startFailures: number;
   scoreFailures: number;
   notified: string[];
@@ -305,6 +311,10 @@ export function validateConfig(config: BatchConfig): string[] {
     if (config.selfTest.only) problems.push("a variant manifest cannot be used for a self-test-only batch");
   }
   if (!Number.isSafeInteger(config.runsPerVariant) || config.runsPerVariant < 1) problems.push("--runs must be a positive integer");
+  if (config.parallel !== undefined) {
+    if (!Number.isSafeInteger(config.parallel) || config.parallel < 1) problems.push("--parallel must be a positive integer");
+    else if (config.variants.length > 0 && config.parallel > config.variants.length) problems.push("--parallel can't be more than the number of variants");
+  }
   const agent = config.selfTest.agent;
   if (agent && (ORCHESTRATOR_AGENTS.includes(agent) || config.variants.includes(agent) ||
       (config.variantSet && variantAgents(config.variantSet).includes(agent)))) {
@@ -397,6 +407,10 @@ export function loadState(dir: string): BatchState {
   const path = revision > 0 ? revisionFile(revisionsDir(dir), revision) : statePath(dir);
   const state = JSON.parse(readFileSync(path, "utf8")) as BatchState;
   state.revision = revision;
+  // A batch saved before rounds kept one run index in current.
+  const legacy = state as BatchState & { current?: number | null };
+  state.active ??= legacy.current == null ? [] : [legacy.current];
+  delete legacy.current;
   return state;
 }
 
@@ -409,7 +423,7 @@ export function initialState(pins: Pins, selfTest: boolean, now: string): BatchS
     recorded: [],
     selftests: [],
     runs: [],
-    current: null,
+    active: [],
     startFailures: 0,
     scoreFailures: 0,
     notified: [],

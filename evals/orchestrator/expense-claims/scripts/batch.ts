@@ -31,7 +31,7 @@ import { KIT_DIR } from "./lib/suite.ts";
 import { readVariants } from "./lib/variants.ts";
 
 const USAGE = `Usage (from evals/orchestrator/expense-claims):
-  npm run batch -- init [--variants a,b | --variants-file <json>] [--runs 3] [--deadline 07:00] [--memory-off] [--self-test-only] [options]
+  npm run batch -- init [--variants a,b | --variants-file <json>] [--runs 3] [--parallel <n>] [--deadline 07:00] [--memory-off] [--self-test-only] [options]
   npm run batch -- next --batch <id|path|latest> [--max-wait 420]
   npm run batch -- record --batch <id|path|latest> --action <id> <result flags>
   npm run batch -- status|stop|report --batch <id|path|latest>
@@ -41,6 +41,7 @@ const USAGE = `Usage (from evals/orchestrator/expense-claims):
   npm run batch -- rehearse
 
 init options: --model claude-opus-5.5 --effort max --context-tier long_context --owner ncksol
+  --parallel <n> (runs at once, at most one per variant; default: every variant)
   --self-test-model claude-sonnet-5.5 --self-test-effort low --self-test-agent <name>
   --runs-dir <dir> --batches-dir <dir> --no-push --dry-run (tests only; never drive it with app tools)
 record flags: --project-id <id> | --session-id <id> | --answered | --row <n> [--request-id <id>] [--choice <text>] | --not-pending
@@ -53,9 +54,10 @@ const { values, positionals } = parseArgs({
     "batches-dir": { type: "string", default: defaultPaths().batchesDir },
     "max-wait": { type: "string", default: "420" },
     // init
-    variants: { type: "string", default: "orchestrator,session-orchestrator" },
+    variants: { type: "string", default: "orchestrator,session-orchestrator,hands-on-orchestrator,hands-on-session-orchestrator" },
     "variants-file": { type: "string" },
     runs: { type: "string", default: "3" },
+    parallel: { type: "string" },
     deadline: { type: "string", default: "07:00" },
     model: { type: "string", default: "claude-opus-5.5" },
     effort: { type: "string", default: "max" },
@@ -179,6 +181,7 @@ async function init(): Promise<number> {
     variants,
     ...(variantSet ? { variantSet } : {}),
     runsPerVariant: Number(values.runs),
+    parallel: values.parallel === undefined ? Math.max(1, variants.length) : Number(values.parallel),
     deadline: nextLocalTime(values.deadline, now).toISOString(),
     model: values.model,
     effort: values.effort,
@@ -233,7 +236,7 @@ async function init(): Promise<number> {
   saveState(dir, state);
   const decision = calibrationDecision(readResults(config.resultsPath), config.variants, config.variantSet);
   console.log(`Batch ${id} created at ${dir}.`);
-  if (!config.selfTest.only) console.log(`Plan: ${describePlan(config.variants, config.runsPerVariant, decision)}. Calibration: ${decision.reason}`);
+  if (!config.selfTest.only) console.log(`Plan: ${describePlan(config.variants, config.runsPerVariant, decision, config.parallel)}. Calibration: ${decision.reason}`);
   console.log(`No new run starts after ${new Date(config.deadline).toString()}.`);
   if (config.dryRun) console.log("\nDRY RUN: for tests only. Never drive this batch with app tools.");
   else {

@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 # Eval runner
 
-You drive one overnight batch of the orchestrator speed eval in `evals/orchestrator/expense-claims/` of the `ai_tools` repository, while the user is asleep. The batch runs the orchestrator agents under test one at a time, scores each run and commits the results.
+You drive one overnight batch of the orchestrator speed eval in `evals/orchestrator/expense-claims/` of the `ai_tools` repository, while the user is asleep. The batch runs the orchestrator agents under test in rounds, by default one run of each at the same time, scores each run and commits the results.
 
 A runner script does every deterministic step: it creates run repos, watches the runs, scores them, commits `results.csv`, sends phone notifications and keeps all state in a batch folder outside the repo. You take only the steps it can't: calls to the Copilot app's tools, and a few judgments. The script tells you each step as a JSON action. You do it, record the result, and ask for the next one, until the batch is done.
 
@@ -35,7 +35,7 @@ cd evals/orchestrator/expense-claims && node scripts/batch.ts <command> ...
 
 The user's first message names the batch, for example "Run eval batch 20261019-2215". Run `status --batch <id>` once to see where it stands, then start the loop. "latest" works as the id for the newest batch.
 
-If the user asks you to create the batch or a self-test instead, run `init` (or `selftest`) with the options from their message, such as `--variants`, `--runs` and `--deadline`. Pass `--memory-off` only if the user's own message says Copilot Memory is turned off. If `init` prints FAIL lines, show them to the user and stop with `task_complete`; don't work around a failed check.
+If the user asks you to create the batch or a self-test instead, run `init` (or `selftest`) with the options from their message, such as `--variants`, `--runs`, `--parallel` and `--deadline`. Pass `--memory-off` only if the user's own message says Copilot Memory is turned off. If `init` prints FAIL lines, show them to the user and stop with `task_complete`; don't work around a failed check.
 
 ## The loop
 
@@ -44,7 +44,7 @@ If the user asks you to create the batch or a self-test instead, run `init` (or 
 3. Run the action's `record` command with the result. Pick the one line from the action's `record` list that fits, and fill in its placeholders.
 4. Go back to step 1 straight away.
 
-Each action has `target`: `"self-test"` for the batch's self-test, or `"run"` for an eval run, with the run's name in `run`.
+Each action has `target`: `"self-test"` for the batch's self-test, or `"run"` for an eval run, with the run's name in `run`. Several runs can be in progress at once, so actions for different runs come in any order. Each action is about the run it names: use only its own `tool.args` and `details`, never those of an earlier action.
 
 If `next` says another runner process is working on the batch, an earlier `next` is still running in the background: wait for it with `read_bash` and use its output.
 

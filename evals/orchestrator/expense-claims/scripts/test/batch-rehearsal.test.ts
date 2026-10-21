@@ -17,7 +17,10 @@ test("a rehearsal of a whole batch runs the self-test and four runs, scores each
   const { config, transcript, notifications, final, app } = result;
   assert.equal(final.details?.phase, "done");
 
-  const rows = readResults(config.resultsPath).filter((row) => REHEARSAL_VARIANTS.includes(row.variant));
+  // Runs of a round end in any order, so the rows are compared by run number, then variant.
+  const rows = readResults(config.resultsPath)
+    .filter((row) => REHEARSAL_VARIANTS.includes(row.variant))
+    .sort((a, b) => Number(a.run) - Number(b.run) || a.variant.localeCompare(b.variant));
   assert.deepEqual(
     rows.map((row) => [row.variant, row.run, row.outcome, row.calibration, row.questions]),
     [
@@ -40,13 +43,17 @@ test("a rehearsal of a whole batch runs the self-test and four runs, scores each
     created.map((line) => line.match(/agent (\S+)\)/)![1]),
     ["default", "variant-a", "variant-b", "variant-a", "variant-b"],
   );
+  // Both runs of a round run at once: variant-b#1 starts before any run reaches its final report.
+  const startedB = transcript.findIndex((line) => /-> create_session \(agent variant-b\)/.test(line));
+  const firstFinal = transcript.findIndex((line) => /-> judged final:/.test(line));
+  assert.ok(startedB >= 0 && firstFinal > startedB, `variant-b#1 started at line ${startedB}; the first final report was at line ${firstFinal}`);
   assert.equal(transcript.filter((line) => /send_session_message "This run is over/.test(line)).length, 2, "stop messages only after the stalled and timed-out runs");
 
   assert.deepEqual(
     notifications.map((n) => n.title),
     ["Eval batch started", "Eval self-test passed", "Eval run 1/4: gate-failed", "Eval run 2/4: gate-failed", "Eval run 3/4: stalled", "Eval run 4/4: timeout", "Eval batch done"],
   );
-  assert.match(notifications[0].body, /^Batch rehearsal started\. Plan: self-test, then calibration runs first \(variant-a, variant-b\), then variant-a x2, variant-b x2\. No new run starts after \d\d:\d\d\.$/);
+  assert.match(notifications[0].body, /^Batch rehearsal started\. Plan: self-test, then calibration runs first \(variant-a, variant-b\), then variant-a x2, variant-b x2; up to 2 runs at a time\. No new run starts after \d\d:\d\d\.$/);
   assert.deepEqual(result.awake, { started: 1, stopped: 1 });
 
   const log = await runProc("git", ["log", "--format=%s"], { cwd: config.resultsPath.replace(/\/results\.csv$/, "") });
