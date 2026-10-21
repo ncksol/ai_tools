@@ -347,11 +347,17 @@ test("changed agent files stop the batch before the next run", async () => {
   assert.ok(h.notices.some((n) => n.key === "batch-stopped"));
 });
 
-test("no new run starts after the deadline", async () => {
-  const h = await make({ scenarios: ["ask-final", "ask-final"], runsPerVariant: 2, deadlineMin: 10 });
-  const done = await h.until(() => false);
-  assert.equal(h.state().runs.length, 1);
-  assert.match(String(done.details?.reason), /deadline/);
+test("a round start renews the keep-awake hold only when less than half of it is left", async () => {
+  const h = await make({ scenarios: ["ask-final", "ask-final", "ask-final"], runsPerVariant: 3 });
+  let projects = 0;
+  await h.until((action) => action.action === "create_project" && ++projects === 2);
+  assert.deepEqual(h.awake, { started: 1, stopped: 0 }, "a hold with more than half of it left is kept");
+  const state = h.state();
+  state.caffeinate!.until = new Date(h.clock.now + 60_000).toISOString();
+  saveState(h.config.dir, state);
+  await h.until(() => false);
+  assert.deepEqual(h.awake, { started: 2, stopped: 2 });
+  assert.equal(h.state().runs.length, 3);
   assert.equal(h.state().phase, "done");
 });
 
@@ -509,31 +515,19 @@ test("changed pinned files mid-round let the round finish, then stop the batch",
   assert.match(String(done.details?.reason), /pinned inputs changed: agent variant-a-worker changed/);
 });
 
-test("once a run of the round has started, the deadline doesn't hold back the others", async () => {
-  const h = await make({ scenarios: ["ask-final", "ask-final", "ask-final", "ask-final"], variants: PAIR, runsPerVariant: 2, parallel: 2, deadlineMin: 2 });
-  await h.drive(await h.until((action) => action.action === "create_session"));
-  h.clock.now = Date.parse(h.config.deadline) + 1000;
-  const done = await h.until(() => false);
-  const state = h.state();
-  assert.deepEqual(state.runs.map((r) => [r.key, r.status]), [["variant-a#1", "done"], ["variant-b#1", "done"]]);
-  assert.equal(h.scoreCalls.length, 2);
-  assert.equal(state.phase, "done");
-  assert.match(String(done.details?.reason), /deadline/);
-});
-
-test("a round that hasn't started by the deadline is void, with no notice and no start failure", async () => {
-  const h = await make({ scenarios: ["ask-final", "ask-final"], variants: PAIR, parallel: 2, deadlineMin: 2 });
+test("a stop before the round's runs start voids them, with no notice and no start failure", async () => {
+  const h = await make({ scenarios: ["ask-final", "ask-final"], variants: PAIR, parallel: 2 });
   await h.until((action) => action.action === "create_project");
-  h.clock.now = Date.parse(h.config.deadline) + 1000;
+  await requestStop(h.ctx);
   const done = await h.until(() => false);
   const state = h.state();
   assert.deepEqual(state.runs.map((r) => r.status), ["void", "void"]);
-  for (const run of state.runs) assert.match(run.voidReason!, /^not started: the deadline .* passed$/);
+  for (const run of state.runs) assert.match(run.voidReason!, /^not started: you asked the batch to stop$/);
   assert.equal(h.app.sessions.size, 0);
   assert.equal(state.startFailures, 0);
   assert.equal(h.notices.filter((n) => n.key.startsWith("void-")).length, 0);
   assert.equal(state.phase, "done");
-  assert.match(String(done.details?.reason), /deadline/);
+  assert.match(String(done.details?.reason), /you asked the batch to stop/);
 });
 
 test("--parallel is a whole number from 1 to the number of variants", () => {

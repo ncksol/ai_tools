@@ -94,7 +94,6 @@ export async function rehearse(opts: { scenarios?: Scenario[]; runsPerVariant?: 
     runsPerVariant: opts.runsPerVariant ?? 2,
     // As in init: every variant at once unless told otherwise.
     parallel: opts.parallel ?? REHEARSAL_VARIANTS.length,
-    deadline: new Date(clock.now + 10 * 60 * 60_000).toISOString(),
     model: "claude-opus-5.5",
     effort: "max",
     contextTier: "long_context",

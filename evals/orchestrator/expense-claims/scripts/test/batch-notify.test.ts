@@ -23,7 +23,7 @@ test("the topic URL comes from the environment first, then the private file", ()
 });
 
 test("notification text", () => {
-  assert.equal(notices.batchStarted("20261019-2200", "orchestrator x3, session-orchestrator x3 on policy+reports+import", "07:00").body, "Batch 20261019-2200 started. Plan: orchestrator x3, session-orchestrator x3 on policy+reports+import. No new run starts after 07:00.");
+  assert.equal(notices.batchStarted("20261019-2200", "orchestrator x3, session-orchestrator x3 on policy+reports+import").body, "Batch 20261019-2200 started. Plan: orchestrator x3, session-orchestrator x3 on policy+reports+import.");
   const passed = notices.runOutcome("b1", { index: 2, total: 6, variant: "session-orchestrator", n: 1, outcome: "passed", minutes: "38.4", suite: "59/59", prs: "3", ci: "success", flags: [] });
   assert.equal(passed.title, "Eval run 2/6: passed");
   assert.equal(passed.body, "Batch b1, run 2 of 6: session-orchestrator #1 passed in 38.4 min (suite 59/59, PRs merged 3, main CI success). Flags: none.");

@@ -264,29 +264,18 @@ test("M1: a question still open after 30 minutes away is answered, and driver-ga
   assert.match(readFileSync(state.reportPath!, "utf8"), /driver-gap/);
 });
 
-// ---------- M2 / F6: deadline and pins just before the kickoff ----------
+// ---------- M2 / F6: stops and pins just before the kickoff ----------
 
-test("M2: no create_session after the deadline, even when the run was planned before it", async () => {
-  const h = await make({ scenarios: ["ask-final"], deadlineMin: 2 });
-  const project = await h.next();
-  assert.equal(project.action, "create_project");
-  h.clock.now += 3 * MIN;
-  await h.record({ action: project.id!, projectId: h.app.createProject(String(project.tool!.args.path)) });
-  const done = await h.next();
-  assert.equal(done.action, "done");
-  assert.match(h.state().runs[0].voidReason!, /not started: the deadline/);
-  assert.equal(h.state().phase, "done");
-  assert.equal(h.app.sessions.size, 0);
-});
-
-test("M2: an unconfirmed create_session is not reissued after the deadline", async () => {
-  const h = await make({ scenarios: ["ask-final"], deadlineMin: 4 });
+test("M2: an unconfirmed create_session is not reissued after a stop request", async () => {
+  const h = await make({ scenarios: ["ask-final"] });
   await h.drive(await h.next());
   assert.equal((await h.next()).action, "create_session");
+  await requestStop(h.ctx);
   h.clock.now += 6 * MIN;
   const done = await h.next();
   assert.equal(done.action, "done");
-  assert.match(h.state().runs[0].voidReason!, /not started: the deadline/);
+  assert.match(h.state().runs[0].voidReason!, /not started: you asked the batch to stop/);
+  assert.equal(h.state().phase, "done");
   assert.equal(h.app.sessions.size, 0);
 });
 

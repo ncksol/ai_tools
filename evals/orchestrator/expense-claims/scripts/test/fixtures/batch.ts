@@ -53,7 +53,6 @@ export async function harness(opts: {
   results?: string;
   selfTest?: boolean;
   minutes?: (runName: string) => number;
-  deadlineMin?: number;
   activeGuard?: string;
   id?: string;
   runsDir?: string;
@@ -88,7 +87,6 @@ export async function harness(opts: {
     variants,
     runsPerVariant: opts.runsPerVariant ?? 1,
     ...(opts.parallel ? { parallel: opts.parallel } : {}),
-    deadline: new Date(clock.now + (opts.deadlineMin ?? 600) * 60_000).toISOString(),
     model: "claude-opus-5.5",
     effort: "max",
     contextTier: "long_context",

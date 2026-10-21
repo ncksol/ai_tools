@@ -18,7 +18,6 @@ import {
   initialState,
   loadConfig,
   loadState,
-  nextLocalTime,
   NTFY_ENV_VAR,
   saveConfig,
   saveState,
@@ -31,7 +30,7 @@ import { KIT_DIR } from "./lib/suite.ts";
 import { readVariants } from "./lib/variants.ts";
 
 const USAGE = `Usage (from evals/orchestrator/expense-claims):
-  npm run batch -- init [--variants a,b | --variants-file <json>] [--runs 3] [--parallel <n>] [--deadline 07:00] [--memory-off] [--self-test-only] [options]
+  npm run batch -- init [--variants a,b | --variants-file <json>] [--runs 3] [--parallel <n>] [--memory-off] [--self-test-only] [options]
   npm run batch -- next --batch <id|path|latest> [--max-wait 420]
   npm run batch -- record --batch <id|path|latest> --action <id> <result flags>
   npm run batch -- status|stop|report --batch <id|path|latest>
@@ -58,7 +57,6 @@ const { values, positionals } = parseArgs({
     "variants-file": { type: "string" },
     runs: { type: "string", default: "3" },
     parallel: { type: "string" },
-    deadline: { type: "string", default: "07:00" },
     model: { type: "string", default: "claude-opus-5.5" },
     effort: { type: "string", default: "max" },
     "context-tier": { type: "string", default: "long_context" },
@@ -133,7 +131,7 @@ function realDeps(config: BatchConfig): Deps {
     },
     appDb: config.dryRun ? noAppDb : openAppDb(config.appDb),
     awake: {
-      // A detached caffeinate with a time limit, so it outlives this short-lived process but not the night.
+      // A detached caffeinate with a time limit: it outlives this short-lived process and ends on its own if the batch is abandoned.
       start: (untilMs) => {
         const seconds = Math.max(60, Math.round((untilMs - Date.now()) / 1000));
         const child = spawn("/usr/bin/caffeinate", ["-i", "-s", "-t", String(seconds)], { detached: true, stdio: "ignore" });
@@ -182,7 +180,6 @@ async function init(): Promise<number> {
     ...(variantSet ? { variantSet } : {}),
     runsPerVariant: Number(values.runs),
     parallel: values.parallel === undefined ? Math.max(1, variants.length) : Number(values.parallel),
-    deadline: nextLocalTime(values.deadline, now).toISOString(),
     model: values.model,
     effort: values.effort,
     contextTier: values["context-tier"],
@@ -237,7 +234,6 @@ async function init(): Promise<number> {
   const decision = calibrationDecision(readResults(config.resultsPath), config.variants, config.variantSet);
   console.log(`Batch ${id} created at ${dir}.`);
   if (!config.selfTest.only) console.log(`Plan: ${describePlan(config.variants, config.runsPerVariant, decision, config.parallel)}. Calibration: ${decision.reason}`);
-  console.log(`No new run starts after ${new Date(config.deadline).toString()}.`);
   if (config.dryRun) console.log("\nDRY RUN: for tests only. Never drive this batch with app tools.");
   else {
     console.log(`\nNow start the driver: in the Copilot app, start a new session in your ai_tools project (a worktree, not main),`);
