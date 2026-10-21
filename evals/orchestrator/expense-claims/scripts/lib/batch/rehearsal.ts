@@ -58,7 +58,7 @@ export async function startNtfyStub(): Promise<{ url: string; received: { title:
   };
 }
 
-export async function rehearse(opts: { scenarios?: Scenario[]; runsPerVariant?: number; log?: (line: string) => void } = {}): Promise<RehearsalResult> {
+export async function rehearse(opts: { scenarios?: Scenario[]; runsPerVariant?: number; parallel?: number; log?: (line: string) => void } = {}): Promise<RehearsalResult> {
   const dir = mkdtempSync(join(tmpdir(), "orch-eval-rehearsal-"));
   const runsDir = join(dir, "runs");
   const stateDir = join(dir, "session-state");
@@ -92,6 +92,8 @@ export async function rehearse(opts: { scenarios?: Scenario[]; runsPerVariant?: 
     dir: join(dir, "batch"),
     variants: REHEARSAL_VARIANTS,
     runsPerVariant: opts.runsPerVariant ?? 2,
+    // As in init: every variant at once unless told otherwise.
+    parallel: opts.parallel ?? REHEARSAL_VARIANTS.length,
     deadline: new Date(clock.now + 10 * 60 * 60_000).toISOString(),
     model: "claude-opus-5.5",
     effort: "max",

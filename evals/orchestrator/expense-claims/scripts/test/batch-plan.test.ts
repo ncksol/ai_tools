@@ -3,8 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
-import { ALL_FEATURES } from "../lib/features.ts";
-import { calibrationDecision, nextRunNumber, planNext, scoredCount, WITHOUT_SUMMARY } from "../lib/batch/plan.ts";
+import { ALL_FEATURES, featureSetName } from "../lib/features.ts";
+import { calibrationDecision, describePlan, nextRunNumber, planNext, planRound, scoredCount, WITHOUT_SUMMARY } from "../lib/batch/plan.ts";
 import type { RunState } from "../lib/batch/state.ts";
 import { readResults, RESULT_COLUMNS, type ResultRow } from "../lib/results.ts";
 import { KIT_DIR } from "../lib/suite.ts";
@@ -96,6 +96,40 @@ test("variants alternate A1, B1, A2, B2 and a run without a row doesn't count", 
   runs.push(run("session-orchestrator", 3));
   all.push(row("session-orchestrator", 3, THREE, "no", "passed", 30));
   assert.equal(planNext(runs, all, variants, 3).next, null);
+});
+
+test("a round holds the pending calibration runs, up to the limit", () => {
+  const { round, decision } = planRound([], [], ["a", "b", "c"], 3, 2);
+  assert.equal(decision.state, "undecided");
+  assert.deepEqual(round, [
+    { variant: "a", features: ALL_FEATURES, calibration: true },
+    { variant: "b", features: ALL_FEATURES, calibration: true },
+  ]);
+});
+
+test("after calibration, a round takes one run per variant, fewest scored runs first", () => {
+  const variants = ["a", "b", "c", "d"];
+  const rows = variants.map((v) => row(v, 1, FULL, "yes", "passed", 20));
+  const runs = variants.map((v) => run(v, 1));
+  const order = (r: RunState[], rs: typeof rows, perVariant: number, limit: number) => planRound(r, rs, variants, perVariant, limit).round.map((next) => next.variant);
+  const first = planRound(runs, rows, variants, 3, 4);
+  assert.equal(first.decision.state, "full");
+  assert.deepEqual(first.round.map((next) => [next.variant, next.calibration]), [["a", false], ["b", false], ["c", false], ["d", false]]);
+
+  const more = [...rows, row("b", 2, FULL, "no", "passed", 20), row("d", 2, FULL, "no", "passed", 20)];
+  const moreRuns = [...runs, run("b", 2), run("d", 2)];
+  assert.deepEqual(order(moreRuns, more, 3, 2), ["a", "c"]);
+  assert.deepEqual(order(moreRuns, more, 3, 4), ["a", "c", "b", "d"]);
+  assert.deepEqual(order(moreRuns, more, 2, 4), ["a", "c"]);
+  assert.deepEqual(planRound(moreRuns, more, variants, 3, 1).round, [planNext(moreRuns, more, variants, 3).next]);
+});
+
+test("the plan names the round size only when runs go in parallel", () => {
+  assert.equal(describePlan(["a", "b"], 3, calibrationDecision([], ["a", "b"]), 2), "calibration runs first (a, b), then a x3, b x3; up to 2 runs at a time");
+  const full = calibrationDecision(["a", "b"].map((v) => row(v, 1, FULL, "yes", "passed", 20)), ["a", "b"]);
+  assert.equal(describePlan(["a", "b"], 3, full, 2), `a x3, b x3 on ${featureSetName(ALL_FEATURES)}; up to 2 runs at a time`);
+  assert.equal(describePlan(["a", "b"], 3, full), `a x3, b x3 on ${featureSetName(ALL_FEATURES)}`);
+  assert.equal(describePlan(["a", "b"], 3, full, 1), describePlan(["a", "b"], 3, full));
 });
 
 test("run numbers follow results.csv, the runs folder and the batch", () => {

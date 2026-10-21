@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import type { LogEvent } from "../lib/events.ts";
 import { saveState, validateConfig } from "../lib/batch/state.ts";
-import { currentPins, STOP_MESSAGE } from "../lib/batch/runner.ts";
+import { currentPins, requestStop, STOP_MESSAGE } from "../lib/batch/runner.ts";
 import { eventsPath } from "../lib/batch/swarm.ts";
 import { run as runProc } from "../lib/proc.ts";
 import { readResults, replaceResult } from "../lib/results.ts";
@@ -456,4 +456,101 @@ test("an empty results.csv still works", async () => {
   await h.until(() => false);
   assert.equal(readResults(h.config.resultsPath)[0].calibration, "yes");
   assert.equal(STOP_MESSAGE.startsWith("This run is over"), true);
+});
+
+// ---------- parallel rounds ----------
+
+const PAIR = ["variant-a", "variant-b"];
+const bothRunning = (_: unknown, state: { runs: { status: string }[] }) => state.runs.length === 2 && state.runs.every((r) => r.status === "running");
+
+test("a round starts every variant before any is scored and commits each row on its own", async () => {
+  const h = await make({ scenarios: ["ask-final", "ask-final"], variants: PAIR, parallel: 2 });
+  const starts: { run?: string; scored: number }[] = [];
+  await h.until((action) => {
+    if (action.action === "create_session") starts.push({ run: action.run, scored: h.scoreCalls.length });
+    return false;
+  });
+  assert.deepEqual(starts, [{ run: "variant-a#1", scored: 0 }, { run: "variant-b#1", scored: 0 }]);
+  const state = h.state();
+  assert.equal(state.phase, "done");
+  assert.deepEqual(state.active, []);
+  assert.deepEqual(state.runs.map((r) => [r.key, r.status]), [["variant-a#1", "done"], ["variant-b#1", "done"]]);
+  assert.equal(h.scoreCalls.length, 2);
+  const commits = (await runProc("git", ["log", "--format=%H %s"], { cwd: h.resultsRepo })).stdout.split("\n").filter((line) => line.includes("chore(evals): record"));
+  assert.equal(commits.length, 2);
+  for (const commit of commits) {
+    const stat = await runProc("git", ["show", "--numstat", "--format=", commit.split(" ")[0], "--", "results.csv"], { cwd: h.resultsRepo });
+    assert.match(stat.stdout.trim(), /^1\t0\tresults\.csv$/);
+  }
+  assert.deepEqual(h.notices.map((n) => n.key).filter((key) => key.startsWith("run-")).sort(), ["run-variant-a-1", "run-variant-b-1"]);
+});
+
+test("a stop request lets the round's runs finish and starts no new round", async () => {
+  const h = await make({ scenarios: ["ask-final", "ask-final", "ask-final", "ask-final"], variants: PAIR, runsPerVariant: 2, parallel: 2 });
+  await h.until(bothRunning);
+  assert.match(await requestStop(h.ctx), /stops after the runs in progress finish/);
+  const done = await h.until(() => false);
+  const state = h.state();
+  assert.deepEqual(state.runs.map((r) => r.status), ["done", "done"]);
+  assert.equal(h.scoreCalls.length, 2);
+  assert.equal(state.phase, "done");
+  assert.match(String(done.details?.reason), /you asked the batch to stop/);
+});
+
+test("changed pinned files mid-round let the round finish, then stop the batch", async () => {
+  const h = await make({ scenarios: ["ask-final", "ask-final", "ask-final", "ask-final"], variants: PAIR, runsPerVariant: 2, parallel: 2 });
+  await h.until(bothRunning);
+  writeFileSync(join(h.config.agentsDir, "variant-a-worker.agent.md"), "worker, edited mid-batch\n");
+  const done = await h.until(() => false);
+  const state = h.state();
+  assert.deepEqual(state.runs.map((r) => r.status), ["done", "done"]);
+  assert.equal(h.scoreCalls.length, 2);
+  assert.equal(state.phase, "stopped");
+  assert.match(String(done.details?.reason), /pinned inputs changed: agent variant-a-worker changed/);
+});
+
+test("once a run of the round has started, the deadline doesn't hold back the others", async () => {
+  const h = await make({ scenarios: ["ask-final", "ask-final", "ask-final", "ask-final"], variants: PAIR, runsPerVariant: 2, parallel: 2, deadlineMin: 2 });
+  await h.drive(await h.until((action) => action.action === "create_session"));
+  h.clock.now = Date.parse(h.config.deadline) + 1000;
+  const done = await h.until(() => false);
+  const state = h.state();
+  assert.deepEqual(state.runs.map((r) => [r.key, r.status]), [["variant-a#1", "done"], ["variant-b#1", "done"]]);
+  assert.equal(h.scoreCalls.length, 2);
+  assert.equal(state.phase, "done");
+  assert.match(String(done.details?.reason), /deadline/);
+});
+
+test("a round that hasn't started by the deadline is void, with no notice and no start failure", async () => {
+  const h = await make({ scenarios: ["ask-final", "ask-final"], variants: PAIR, parallel: 2, deadlineMin: 2 });
+  await h.until((action) => action.action === "create_project");
+  h.clock.now = Date.parse(h.config.deadline) + 1000;
+  const done = await h.until(() => false);
+  const state = h.state();
+  assert.deepEqual(state.runs.map((r) => r.status), ["void", "void"]);
+  for (const run of state.runs) assert.match(run.voidReason!, /^not started: the deadline .* passed$/);
+  assert.equal(h.app.sessions.size, 0);
+  assert.equal(state.startFailures, 0);
+  assert.equal(h.notices.filter((n) => n.key.startsWith("void-")).length, 0);
+  assert.equal(state.phase, "done");
+  assert.match(String(done.details?.reason), /deadline/);
+});
+
+test("--parallel is a whole number from 1 to the number of variants", () => {
+  const base = { variants: PAIR, runsPerVariant: 3, selfTest: { enabled: false, only: false, model: "m", effort: "low", agent: null } };
+  for (const parallel of [1, 2]) assert.deepEqual(validateConfig({ ...base, parallel } as never), []);
+  for (const parallel of [0, -1, 1.5, Number.NaN]) assert.match(validateConfig({ ...base, parallel } as never).join(), /--parallel must be a positive integer/);
+  assert.match(validateConfig({ ...base, parallel: 3 } as never).join(), /--parallel can't be more than the number of variants/);
+});
+
+test("a batch saved with one current run loads with that run active", async () => {
+  const h = await make({ scenarios: [] });
+  for (const [current, active] of [[0, [0]], [null, []]] as const) {
+    const legacy: Record<string, unknown> = { ...h.state(), current };
+    delete legacy.active;
+    saveState(h.config.dir, legacy as never);
+    const state = h.state();
+    assert.deepEqual(state.active, active);
+    assert.equal("current" in state, false);
+  }
 });

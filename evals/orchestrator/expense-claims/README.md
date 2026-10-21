@@ -278,7 +278,7 @@ Local clones and kickoff files are in `~/orch-evals/`. Delete them when you no l
 
 ## Overnight batches
 
-An overnight batch runs the eval for several agents while you sleep: one run at a time, scored and committed as it goes, with phone notifications and a report for the morning. It follows the manual protocol above as closely as the app allows. The differences are under [What can't be automated](#what-cant-be-automated).
+An overnight batch runs the eval for several agents while you sleep: in rounds of one run per agent, side by side, each run scored and committed as it ends, with phone notifications and a report for the morning. It follows the manual protocol above as closely as the app allows, apart from running agents side by side (see **Order** under [What the runner decides](#what-the-runner-decides)). The other differences are under [What can't be automated](#what-cant-be-automated).
 
 Two parts do the work:
 
@@ -301,18 +301,18 @@ Only one batch is active on the machine at a time (`~/orch-evals/active-batch/`,
    - **Timeout:** more than 90 minutes after the kickoff, `score --outcome timeout`. A final report written within the 90 minutes is still judged first and scored at its own time, however late the runner sees it.
    - **Stalled:** 15 minutes without a new event in any of the swarm's logs, `score --outcome stalled`. An open `ask_user` question is not a stall: the swarm is waiting on the user, and that wait is blocked time.
    - Scoring comes first. After a timeout or a stall, and only then, the driver tells the orchestrator to stop all work and archive its child sessions, and the runner waits up to 20 minutes for the swarm to go quiet.
-   - The next run starts only on a quiet swarm. After a final report, the runner gives the swarm 10 minutes to go quiet, then sends the same stop message and waits up to 20 minutes more. A swarm that is still busy after the stop message stops the batch, and the report lists its sessions.
+   - The next round starts only when every run of the round has ended on a quiet swarm. After a final report, the runner gives the swarm 10 minutes to go quiet, then sends the same stop message and waits up to 20 minutes more. A swarm that is still busy after the stop message stops the batch once the round's other runs have ended, and the report lists its sessions.
 5. Before scoring, the runner checks every log of the swarm for loaded memories, `store_memory`, `vote_memory` and `session_store_sql`, and flags any it finds. It passes `score` a note such as `batch=<id>; driver=eval-runner; memory=off; flags=<codes>`, so the row in `results.csv` records the batch, Memory being off and the flags known before scoring; `score` adds its own warnings after it. Flags found later, for example memory use after scoring, are in the report, a short follow-up notification and the batch's final notification; the row and the score stay as they were, and a run is never scored again for them.
 6. The runner commits `results.csv` on the driver's branch (never `main`) and pushes that branch. A commit that fails is tried again; after three failures no further run starts and you are notified. Then it sends the run's outcome to your phone.
 
 ### What the runner decides
 
-- **Order:** one run at a time, never in parallel. The variant with the fewest scored runs goes next: in the current batch for legacy `--variants`, or across matching history for `--variants-file`. Ties follow the listed variant order. A run with no row in `results.csv` doesn't count, so a void run is replaced. The defaults are `orchestrator` and `session-orchestrator` with 3 scored runs each.
-- **Deadline:** no run starts at or after the deadline, 07:00 local time by default. The runner checks it, and the pinned inputs, again just before it gives the driver a `create_session`, so a run planned before the deadline doesn't start after it. A run in progress finishes.
-- **Calibration:** the rule in [Calibration](#calibration), applied automatically. For ordinary `--variants` batches, the calibration median uses every full-feature calibration row, plus one run for each batch variant that has no row yet. If the decision is the same whether those missing runs take 0 minutes or never finish, no calibration run is needed. With today's `results.csv`, run 1's 65.7 minutes makes the median over 30 minutes for two variants even at 0 minutes, so every scored run uses `--features policy,reports,import`. `--variants-file` disables that shortcut and freezes the shared decision after every pinned variant calibrates, as described above.
+- **Order:** runs go in rounds. A round has at most one run per variant and at most `--parallel` runs, which defaults to the number of variants. A round's runs start together, and the next round starts only when all of them have ended. The variants with the fewest scored runs go first: in the current batch for legacy `--variants`, or across matching history for `--variants-file`. Ties follow the listed variant order. A run with no row in `results.csv` doesn't count, so a void run is replaced. The defaults are the four orchestrators, `orchestrator`, `session-orchestrator`, `hands-on-orchestrator` and `hands-on-session-orchestrator`, with 3 scored runs each, all four side by side. Runs side by side share the laptop and accounts, which a manual run has to itself (see [Known limits](#known-limits)); `--parallel 1` runs one at a time, as a manual run does.
+- **Deadline:** no round starts at or after the deadline, 07:00 local time by default. The runner checks it, and the pinned inputs, again just before it gives the driver a `create_session`, so a run planned before the deadline doesn't start after it. Once one run of a round has started, the deadline no longer holds back the round's other runs. Runs in progress finish.
+- **Calibration:** the rule in [Calibration](#calibration), applied automatically. For ordinary `--variants` batches, the calibration median uses every full-feature calibration row, plus one run for each batch variant that has no row yet. If the decision is the same whether those missing runs take 0 minutes or never finish, no calibration run is needed. While the decision is open, a round holds only calibration runs, so it is made before any scored run starts. With today's `results.csv` and the four default variants, run 1's 65.7 minutes doesn't decide it, so the first round is the calibration runs of the other three variants. `--variants-file` disables that shortcut and freezes the shared decision after every pinned variant calibrates, as described above.
 - **Pinning:** at the start the runner hashes the agent files under test and their workers, resolved through the `~/.copilot/agents` symlinks. Ordinary variants use named-agent discovery; manifest variants use only their explicitly declared aliases and workers. It also pins `kickoff.md`, `answers.md`, the scorer, acceptance and robustness suites, pricing files, script libraries, the manifest and snapshots if selected, and app/CLI versions. If any pinned input changes, no further run starts and the batch stops.
-- **Stopping:** the batch stops early after two runs in a row that fail to start, two runs in a row that `score` can't score, a failed self-test, a pinning change, a results commit that keeps failing, or a swarm that is still busy after the stop message. It notifies you either way.
-- **Unconfirmed starts:** if the driver stops after calling `create_session` but before recording it, the runner looks for the session in the logs and `~/.copilot/data.db`, from the time the action was first issued, before doing anything else. It adopts the session if it finds one; otherwise it waits 5 minutes, then gives the action once more if the run may still start. If a session turns up later for a run it gave up on, no further run starts.
+- **Stopping:** the batch stops early after two runs in a row that fail to start, two runs in a row that `score` can't score, a failed self-test, a pinning change, a results commit that keeps failing, or a swarm that is still busy after the stop message. It notifies you either way. A stop during a round starts no new run: the round's runs that have started finish, and those that haven't are void, with no notification, and don't count as failed starts.
+- **Unconfirmed starts:** if the driver stops after calling `create_session` but before recording it, the runner looks for the session in the logs and `~/.copilot/data.db`, from the time the action was first issued, before doing anything else. It adopts the session if it finds one; otherwise it waits 5 minutes, then gives the action once more if the run may still start. The round's other runs get no actions while it waits. If a session turns up later for a run it gave up on, no further run starts.
 
 Each run's flags are listed in the report and the run's phone notification. A flag doesn't change the run's row in `results.csv`; check flagged runs before you trust their rows.
 
@@ -351,7 +351,7 @@ Each run's flags are listed in the report and the run's phone notification. A fl
    ```
 
    The environment variable `ORCH_EVAL_NTFY_URL` overrides the file, but app sessions may not see variables from your shell. The runner hands the URL to `curl` on stdin and never logs or stores it. Without a topic the batch runs without notifications.
-3. Optionally, see the whole flow without the app: `npm run batch -- rehearse` runs a batch of four runs and a self-test in a scratch folder. The app and the driver are replaced by a script, and notifications go to a local stub. It uses the real `new-run --dry-run`, `score` and git, and touches nothing outside the scratch folder. Its deliberately absent scratch app database produces incomplete cost with a warning, not a complete dollar total. `score` times timeout and stalled runs to the real clock, so their minutes are wrong in a rehearsal.
+3. Optionally, see the whole flow without the app: `npm run batch -- rehearse` runs a batch of four runs, two at a time, and a self-test in a scratch folder. The app and the driver are replaced by a script, and notifications go to a local stub. It uses the real `new-run --dry-run`, `score` and git, and touches nothing outside the scratch folder. Its deliberately absent scratch app database produces incomplete cost with a warning, not a complete dollar total. `score` times timeout and stalled runs to the real clock, so their minutes are wrong in a rehearsal.
 
 ### Starting a batch
 
@@ -362,7 +362,7 @@ Each run's flags are listed in the report and the run's phone notification. A fl
    - Leave nothing else heavy running, and don't use this account's Copilot for other work.
 2. In the Copilot app, start a new session in your `ai_tools` project: a worktree on its own branch, not `main`. Select the agent `eval-runner` and autopilot mode, and send something like:
 
-   > Create an overnight eval batch: variants orchestrator,session-orchestrator, 3 runs each, deadline 07:00. Copilot Memory is off.
+   > Create an overnight eval batch: variants orchestrator,session-orchestrator,hands-on-orchestrator,hands-on-session-orchestrator, 3 runs each, deadline 07:00. Copilot Memory is off.
 
    The driver runs `npm run batch -- init` with `--memory-off` only because your message says Memory is off. The preflight checks AC power, free disk space, the `gh` account and its `repo` and `workflow` scopes, API rate limits, Node 24, the app version (1.1.30 or later), every `~/.copilot/data.db` column the runner reads, that no other batch is active, that `score` supports the runner, the agents under test, the results branch and git identity, and the notification topic. Any FAIL creates no batch.
 3. The batch starts with the self-test. Wait for the "self-test passed" notification, a few minutes later, before you leave. A failed self-test stops the batch.
@@ -398,12 +398,12 @@ The driver has its own rule for the self-test: the response after the answered q
 
 | Command | What it does |
 |---|---|
-| `npm run batch -- init [--variants a,b \| --variants-file <manifest.json>] [--runs 3] [--deadline 07:00] [--memory-off]` | Runs the preflight and creates a batch. Other options: `--model`, `--effort`, `--context-tier`, `--owner`, `--self-test-model`, `--self-test-effort`, `--self-test-agent`, `--runs-dir`, `--batches-dir`, `--no-push`. |
+| `npm run batch -- init [--variants a,b \| --variants-file <manifest.json>] [--runs 3] [--parallel <n>] [--deadline 07:00] [--memory-off]` | Runs the preflight and creates a batch. `--parallel` defaults to the number of variants; `--parallel 1` runs one at a time. Other options: `--model`, `--effort`, `--context-tier`, `--owner`, `--self-test-model`, `--self-test-effort`, `--self-test-agent`, `--runs-dir`, `--batches-dir`, `--no-push`. |
 | `npm run batch -- selftest [--memory-off]` | Creates a batch that only runs the self-test. |
 | `npm run batch -- next --batch <id>` | The driver's loop: does what it can, then prints the next action as JSON. |
 | `npm run batch -- record --batch <id> --action <id> ...` | Records an action's result. |
 | `npm run batch -- status --batch <id>` | Shows the batch, its runs and any pending action. |
-| `npm run batch -- stop --batch <id>` | Starts no new run; the current run finishes. |
+| `npm run batch -- stop --batch <id>` | Starts no new run; the runs in progress finish. |
 | `npm run batch -- take-over --batch <id>` | For you only: releases a batch from a driver that is gone but that the runner can't confirm is gone. |
 | `npm run batch -- report --batch <id>` | Prints the report from the current state. |
 | `npm run batch -- alert --batch <id> --message <text>` | Sends a problem notification; the driver uses it when the runner keeps failing. |
@@ -421,15 +421,17 @@ The driver has its own rule for the self-test: the response after the answered q
 | Tool-permission prompts and MCP elicitations have no answering tool. | New projects auto-approve tools (the self-test checks this). A pending prompt is flagged, and the stall rule ends the run. |
 | A question asked in plain text can only be answered with `send_session_message`, which the orchestrator sees as a message from another session. | The run is flagged. `score --answer-source` still counts the reply as a question and as blocked time. |
 | The driver starts the runs, so the app records them as created by an agent. | Nothing reads that in a way that changes the run. The kickoff is otherwise the same as a typed one, and the self-test checks it. |
-| An app restart or update stops every session, including the driver and the run in progress. | The batch waits until you resume the driver, and nothing sends a notification meanwhile: missing run notifications are the sign. On resume, the runner reads `sessions.was_interrupted` in `~/.copilot/data.db` (read-only), voids that run without scoring it, and starts a replacement. Defer app updates for the night. |
+| An app restart or update stops every session, including the driver and the runs in progress. | The batch waits until you resume the driver, and nothing sends a notification meanwhile: missing run notifications are the sign. On resume, the runner reads `sessions.was_interrupted` in `~/.copilot/data.db` (read-only), voids those runs without scoring them, and later rounds replace them. Defer app updates for the night. |
 | Behaviour with the screen locked is unverified. | Keep the lid open and the laptop on AC power. Sessions are background CLI processes, and the runner holds `caffeinate -is` for the whole batch. |
-| The end of a run is the driver's judgment of the final report. | `score --end-at` pins the end to the report's exact timestamp, so the time the driver takes doesn't count. Timeout and stalled runs are scored within one poll (10 seconds) of the rule firing. |
+| The end of a run is the driver's judgment of the final report. | `score --end-at` pins the end to the report's exact timestamp, so the time the driver takes doesn't count. Timeout and stalled runs are scored within one poll (10 seconds) of the rule firing, or later while the runner is busy with another run of the round, for example scoring it. That delay adds to the run's minutes, which no time comparison uses. |
 | The runner sees a session's log, not whether the session is busy. | Activity is a new event in any of the swarm's logs. A command that writes nothing to the log for 15 minutes while every other session is idle counts as a stall, where by hand you might see a busy session. Such a run gets an `open-tool-at-stall` flag. |
 
 ## Known limits
 
 - Runs vary a lot. Three runs per variant may still be noisy.
 - GitHub Actions queue time adds noise to merges that wait for CI.
+- Batch runs side by side compete for the laptop's CPU, the GitHub account's API limits and Actions runners, and Copilot rate limits, so they may be slower than runs made one at a time. Compare runs made the same way; `--parallel 1` gives one-at-a-time runs.
+- The seed app listens on port 3000 when `PORT` isn't set. If agents in two runs side by side start it that way, the second can't bind the port.
 - An agent that searches the disk could find this kit in a local checkout of this repo.
 - Merge conflicts in `src/routes.ts` and the README are deliberate: every feature adds routes and endpoint rows. They may cost more time than expected.
 

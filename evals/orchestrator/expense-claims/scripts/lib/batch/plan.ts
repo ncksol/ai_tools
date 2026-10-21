@@ -1,5 +1,5 @@
-// Which run comes next: the calibration rule from the README ("Calibration") and summarize() in
-// results.ts, applied automatically, then alternating variants.
+// Which runs come next: the calibration rule from the README ("Calibration") and summarize() in
+// results.ts, applied automatically, then rounds of runs across the variants.
 import { existsSync, readdirSync } from "node:fs";
 import { ALL_FEATURES, featureSetName, type Feature } from "../features.ts";
 import { parseRunName } from "../new-run.ts";
@@ -130,21 +130,31 @@ export interface NextRun {
   calibration: boolean;
 }
 
-// A1, B1, A2, B2, ...: the variant with the fewest scored runs goes next, ties in the given order.
-export function planNext(runs: RunState[], rows: ResultRow[], variants: string[], runsPerVariant: number, set?: VariantSet, frozen?: PolicyCalibration): { next: NextRun | null; decision: CalibrationDecision } {
+// The next round: at most `limit` runs, at most one per variant. While calibration is undecided, the
+// round holds only pending calibration runs. After that, the variants with the fewest scored runs go
+// first, ties in the given order, so a limit of 1 gives A1, B1, A2, B2, ...
+export function planRound(runs: RunState[], rows: ResultRow[], variants: string[], runsPerVariant: number, limit: number, set?: VariantSet, frozen?: PolicyCalibration): { round: NextRun[]; decision: CalibrationDecision } {
   const decision = calibrationDecision(rows, variants, set, frozen);
   if (decision.state === "undecided") {
-    return { next: { variant: decision.pending[0], features: ALL_FEATURES, calibration: true }, decision };
+    return { round: decision.pending.slice(0, limit).map((variant) => ({ variant, features: ALL_FEATURES, calibration: true })), decision };
   }
-  if (set && decision.state === "full") return { next: null, decision };
-  let best: { variant: string; count: number } | null = null;
-  for (const variant of variants) {
-    const count = scoredCount(runs, rows, variant, decision.features, set?.variants[variant]);
-    if (count < runsPerVariant && (!best || count < best.count)) best = { variant, count };
-  }
-  if (!best) return { next: null, decision };
-  const calibration = decision.features.length === ALL_FEATURES.length && !rows.some((row) => row.variant === best.variant);
-  return { next: { variant: best.variant, features: decision.features, calibration }, decision };
+  if (set && decision.state === "full") return { round: [], decision };
+  const round = variants
+    .map((variant, order) => ({ variant, order, count: scoredCount(runs, rows, variant, decision.features, set?.variants[variant]) }))
+    .filter((entry) => entry.count < runsPerVariant)
+    .sort((a, b) => a.count - b.count || a.order - b.order)
+    .slice(0, limit)
+    .map(({ variant }) => ({
+      variant,
+      features: decision.features,
+      calibration: decision.features.length === ALL_FEATURES.length && !rows.some((row) => row.variant === variant),
+    }));
+  return { round, decision };
+}
+
+export function planNext(runs: RunState[], rows: ResultRow[], variants: string[], runsPerVariant: number, set?: VariantSet, frozen?: PolicyCalibration): { next: NextRun | null; decision: CalibrationDecision } {
+  const { round, decision } = planRound(runs, rows, variants, runsPerVariant, 1, set, frozen);
+  return { next: round[0] ?? null, decision };
 }
 
 // One more than any run number of this variant in results.csv, the runs folder or this batch.
@@ -161,8 +171,9 @@ export function nextRunNumber(variant: string, rows: ResultRow[], runsDir: strin
   return max + 1;
 }
 
-export function describePlan(variants: string[], runsPerVariant: number, decision: CalibrationDecision): string {
+export function describePlan(variants: string[], runsPerVariant: number, decision: CalibrationDecision, parallel = 1): string {
   const runs = variants.map((variant) => `${variant} x${runsPerVariant}`).join(", ");
-  if (decision.state === "undecided") return `calibration runs first (${decision.pending.join(", ")}), then ${runs}`;
-  return `${runs} on ${featureSetName(decision.features)}`;
+  const rounds = parallel > 1 ? `; up to ${parallel} runs at a time` : "";
+  if (decision.state === "undecided") return `calibration runs first (${decision.pending.join(", ")}), then ${runs}${rounds}`;
+  return `${runs} on ${featureSetName(decision.features)}${rounds}`;
 }

@@ -49,6 +49,7 @@ export async function harness(opts: {
   scenarios: Scenario[];
   variants?: string[];
   runsPerVariant?: number;
+  parallel?: number;
   results?: string;
   selfTest?: boolean;
   minutes?: (runName: string) => number;
@@ -86,6 +87,7 @@ export async function harness(opts: {
     dir: join(dir, "batch"),
     variants,
     runsPerVariant: opts.runsPerVariant ?? 1,
+    ...(opts.parallel ? { parallel: opts.parallel } : {}),
     deadline: new Date(clock.now + (opts.deadlineMin ?? 600) * 60_000).toISOString(),
     model: "claude-opus-5.5",
     effort: "max",
