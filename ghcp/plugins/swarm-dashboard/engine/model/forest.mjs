@@ -2,8 +2,8 @@ function makeNode(fields) {
   return { ...fields, currentCliSessionId: fields.cliSessionIds[fields.cliSessionIds.length - 1] ?? null, parentId: null, childIds: [], depth: 0 };
 }
 
-/** The agents that follow the swarm dashboard data contract (ghcp/agents/orchestrator.agent.md and session-orchestrator.agent.md). */
-export const ORCHESTRATOR_AGENTS = Object.freeze(['orchestrator', 'session-orchestrator']);
+/** The agents that follow the swarm dashboard data contract (ghcp/agents/orchestrator.agent.md, session-orchestrator.agent.md, hands-on-orchestrator.agent.md and hands-on-session-orchestrator.agent.md). */
+export const ORCHESTRATOR_AGENTS = Object.freeze(['orchestrator', 'session-orchestrator', 'hands-on-orchestrator', 'hands-on-session-orchestrator']);
 
 /**
  * Session tree. Project sessions nest through workspace_parent_links; chat children through chat_parent_links; a

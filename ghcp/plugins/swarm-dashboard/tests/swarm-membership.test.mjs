@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { createSwarmEngine } from '../engine/engine.mjs';
-import { buildForest } from '../engine/model/forest.mjs';
+import { ORCHESTRATOR_AGENTS, buildForest } from '../engine/model/forest.mjs';
 import { validateSnapshot, validateSwarmListItem } from '../engine/schema.mjs';
 import { createDashboardServer } from '../server/http.mjs';
 import { renderApp } from '../ui/app.mjs';
@@ -59,19 +59,27 @@ const ids = engine => engine.listSwarms().map(swarm => swarm.id).sort();
 
 test('an orchestrator waiting on its tagged plan question is a swarm before its first child, and its question needs you', async () => {
   const home = planningHome();
+  const extra = [
+    ['ws-session-plan', 'cli-session-plan', 'session-orchestrator'],
+    ['ws-hands-on-plan', 'cli-hands-on-plan', 'hands-on-orchestrator'],
+    ['ws-hands-on-session-plan', 'cli-hands-on-session-plan', 'hands-on-session-orchestrator'],
+  ];
+  for (const [id, cli, agent] of extra) lone(home, { id, cli, agent, ask: PLAN });
   const engine = engineFor(home, () => at(60));
   await engine.refresh();
-  const listed = engine.listSwarms().find(swarm => swarm.id === 'ws-plan');
-  assert.ok(listed, 'ws-plan is listed as a swarm');
-  assert.deepEqual(validateSwarmListItem(listed), []);
-  assert.deepEqual([listed.lifecycle, listed.units, listed.name], ['live', 0, 'Lone ws-plan']);
-  assert.equal(await engine.findSwarm('cli-plan'), 'ws-plan');
-  assert.equal(await engine.findSwarm('ws-plan'), 'ws-plan');
-  const snapshot = await engine.getSnapshot('ws-plan');
-  assert.deepEqual(validateSnapshot(snapshot), []);
-  assert.deepEqual(snapshot.units, []);
-  assert.equal(snapshot.orchestrator.statusDetail, 'waiting_question');
-  assert.deepEqual(snapshot.needs.map(need => [need.kind, need.unitIds, need.tagged, need.text]), [['plan', [], true, 'Approve this split into two units?']]);
+  for (const [id, cli] of [['ws-plan', 'cli-plan'], ...extra]) {
+    const listed = engine.listSwarms().find(swarm => swarm.id === id);
+    assert.ok(listed, `${id} is listed as a swarm`);
+    assert.deepEqual(validateSwarmListItem(listed), []);
+    assert.deepEqual([listed.lifecycle, listed.units, listed.name], ['live', 0, `Lone ${id}`]);
+    assert.equal(await engine.findSwarm(cli), id);
+    assert.equal(await engine.findSwarm(id), id);
+    const snapshot = await engine.getSnapshot(id);
+    assert.deepEqual(validateSnapshot(snapshot), []);
+    assert.deepEqual(snapshot.units, []);
+    assert.equal(snapshot.orchestrator.statusDetail, 'waiting_question');
+    assert.deepEqual(snapshot.needs.map(need => [need.kind, need.unitIds, need.tagged, need.text]), [['plan', [], true, 'Approve this split into two units?']]);
+  }
 });
 
 test('a top-level session with no child is not a swarm without the whole signal', async () => {
@@ -79,12 +87,15 @@ test('a top-level session with no child is not a swarm without the whole signal'
   const falseSwarms = {
     'ws-plain': { agent: null, ask: PLAN },
     'ws-quiet': { agent: 'orchestrator' },
+    'ws-quiet-hands-on': { agent: 'hands-on-orchestrator' },
     'ws-untagged': { agent: 'orchestrator', ask: 'Approve this split into two units?' },
     'ws-badtag': { agent: 'session-orchestrator', ask: '[unit=* need=approve] Approve this split?' },
+    'ws-badtag-hands-on': { agent: 'hands-on-session-orchestrator', ask: '[unit=* need=approve] Approve this split?' },
     'ws-answered': { agent: 'orchestrator', ask: PLAN, answered: true },
     'ws-ended': { agent: 'orchestrator', ask: PLAN, alive: false },
     'ws-archived': { agent: 'orchestrator', ask: PLAN, archivedAt: at(58) },
     'ws-worker': { agent: 'orchestrator-worker', ask: PLAN },
+    'ws-session-worker': { agent: 'session-worker', ask: PLAN },
     'ws-other-agent': { agent: 'andrej', ask: PLAN },
   };
   const cli = {};
@@ -180,20 +191,37 @@ test('a chat that runs an orchestrator and waits on a tagged question is a swarm
 });
 
 test('the forest makes a top session with no child a root only when the engine names it', () => {
+  assert.deepEqual(ORCHESTRATOR_AGENTS, ['orchestrator', 'session-orchestrator', 'hands-on-orchestrator', 'hands-on-session-orchestrator']);
   const session = (id, agent) => [id, { id, title: id, mode: null, model: null, reasoningEffort: null, isRunning: false, wasInterrupted: false, createdAt: 1, archivedAt: null, agent }];
   const workspace = (id, sessionId, archivedAt = null) => [id, { id, projectId: null, worktreeId: null, name: id, branch: null, createdAt: 1, archivedAt, sessionId, creatorSessionId: null, coordinatingCreatorSessionId: null, createdPr: null }];
   const app = {
     projects: new Map(), worktrees: new Map(), automations: [], diagnostics: [], parentLinks: [], chatLinks: [],
-    workspaces: new Map([workspace('ws-orch', 'cli-orch'), workspace('ws-plain', 'cli-plain'), workspace('ws-gone', 'cli-gone', 2)]),
-    aliases: [{ sessionId: 'cli-orch', workspaceId: 'ws-orch', createdAt: 1 }, { sessionId: 'cli-plain', workspaceId: 'ws-plain', createdAt: 1 }],
-    sessions: new Map([session('cli-orch', 'orchestrator'), session('cli-plain', null), session('cli-gone', 'orchestrator'), session('chat-orch', 'session-orchestrator'), session('chat-plain', 'andrej')]),
+    workspaces: new Map([
+      workspace('ws-orch', 'cli-orch'), workspace('ws-hands-on', 'cli-hands-on'),
+      workspace('ws-plain', 'cli-plain'), workspace('ws-gone', 'cli-gone', 2),
+    ]),
+    aliases: [
+      { sessionId: 'cli-orch', workspaceId: 'ws-orch', createdAt: 1 },
+      { sessionId: 'cli-hands-on', workspaceId: 'ws-hands-on', createdAt: 1 },
+      { sessionId: 'cli-plain', workspaceId: 'ws-plain', createdAt: 1 },
+    ],
+    sessions: new Map([
+      session('cli-orch', 'orchestrator'), session('cli-hands-on', 'hands-on-orchestrator'),
+      session('cli-plain', null), session('cli-gone', 'orchestrator'),
+      session('chat-orch', 'session-orchestrator'), session('chat-hands-on', 'hands-on-session-orchestrator'),
+      session('chat-plain', 'andrej'),
+    ]),
   };
   const forest = buildForest(app);
   assert.deepEqual(forest.roots, []);
-  assert.deepEqual(forest.candidates, [{ id: 'ws-orch', cliId: 'cli-orch' }, { id: 'chat-orch', cliId: 'chat-orch' }]);
-  const promoted = buildForest(app, { waitingRoots: new Set(['ws-orch', 'chat-orch', 'ws-plain']) });
-  assert.deepEqual(promoted.roots.map(root => root.id).sort(), ['chat-orch', 'ws-orch']);
+  assert.deepEqual(forest.candidates, [
+    { id: 'ws-orch', cliId: 'cli-orch' }, { id: 'ws-hands-on', cliId: 'cli-hands-on' },
+    { id: 'chat-orch', cliId: 'chat-orch' }, { id: 'chat-hands-on', cliId: 'chat-hands-on' },
+  ]);
+  const promoted = buildForest(app, { waitingRoots: new Set(['ws-orch', 'ws-hands-on', 'chat-orch', 'chat-hands-on', 'ws-plain']) });
+  assert.deepEqual(promoted.roots.map(root => root.id).sort(), ['chat-hands-on', 'chat-orch', 'ws-hands-on', 'ws-orch']);
   assert.equal(promoted.nodes.get('chat-orch').kind, 'chat');
+  assert.equal(promoted.nodes.get('chat-hands-on').kind, 'chat');
 });
 
 test('a page opened for a session in no swarm gets no snapshot, never another swarm', async () => {
