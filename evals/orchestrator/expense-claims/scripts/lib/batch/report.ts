@@ -45,7 +45,7 @@ export function buildReport(config: BatchConfig, state: BatchState, appDb: AppDb
   out.push(`- Ended because: ${state.stopReason ?? "still running"}.`);
   if (state.fatal) out.push(`- No further run could start: ${state.fatal}.`);
   if (state.owner) out.push(`- Driver: ${state.owner.id} (since ${state.owner.since}).`);
-  out.push(`- Variants: ${config.variants.join(", ") || "none (self-test only)"}; ${config.runsPerVariant} scored run(s) each; no new run after ${config.deadline}.`);
+  out.push(`- Variants: ${config.variants.join(", ") || "none (self-test only)"}; ${config.runsPerVariant} scored run(s) each.`);
   out.push(`- Orchestrator session: ${config.model} at ${config.effort}, context ${config.contextTier}, interactive mode.`);
   out.push(`- App ${state.pins.appVersion ?? "unknown"}, CLI ${state.pins.cliVersion ?? "unknown"}. Pinned agents: ${Object.keys(state.pins.agents).join(", ") || "none"}.`);
   if (config.variantSet) {

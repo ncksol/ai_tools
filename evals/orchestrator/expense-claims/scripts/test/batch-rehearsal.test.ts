@@ -53,7 +53,7 @@ test("a rehearsal of a whole batch runs the self-test and four runs, scores each
     notifications.map((n) => n.title),
     ["Eval batch started", "Eval self-test passed", "Eval run 1/4: gate-failed", "Eval run 2/4: gate-failed", "Eval run 3/4: stalled", "Eval run 4/4: timeout", "Eval batch done"],
   );
-  assert.match(notifications[0].body, /^Batch rehearsal started\. Plan: self-test, then calibration runs first \(variant-a, variant-b\), then variant-a x2, variant-b x2; up to 2 runs at a time\. No new run starts after \d\d:\d\d\.$/);
+  assert.match(notifications[0].body, /^Batch rehearsal started\. Plan: self-test, then calibration runs first \(variant-a, variant-b\), then variant-a x2, variant-b x2; up to 2 runs at a time\.$/);
   assert.deepEqual(result.awake, { started: 1, stopped: 1 });
 
   const log = await runProc("git", ["log", "--format=%s"], { cwd: config.resultsPath.replace(/\/results\.csv$/, "") });

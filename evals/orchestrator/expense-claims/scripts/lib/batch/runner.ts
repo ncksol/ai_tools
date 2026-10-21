@@ -353,10 +353,17 @@ function askAction(ctx: Ctx, state: BatchState, target: PendingAction["target"],
 
 // ---------- keep-awake ----------
 
+// A batch has no set end, so a round start renews the hold once less than half of it is left.
+const AWAKE_HOLD_MS = minutes(24 * 60);
+
 function ensureAwake(ctx: Ctx, state: BatchState): void {
   if (!ctx.config.keepAwake) return;
-  if (state.caffeinate && ctx.deps.awake.alive(state.caffeinate.pid)) return;
-  const until = Math.min(ms(ctx.config.deadline) + minutes(180), ctx.deps.now() + minutes(24 * 60));
+  const now = ctx.deps.now();
+  if (state.caffeinate && ctx.deps.awake.alive(state.caffeinate.pid)) {
+    if (ms(state.caffeinate.until) - now > AWAKE_HOLD_MS / 2) return;
+    ctx.deps.awake.stop(state.caffeinate.pid);
+  }
+  const until = now + AWAKE_HOLD_MS;
   const pid = ctx.deps.awake.start(until);
   state.caffeinate = pid ? { pid, until: iso(until) } : null;
   log(ctx, pid ? `caffeinate -is held by pid ${pid} until ${iso(until)}` : "could not start caffeinate");
@@ -451,8 +458,7 @@ function doneAction(ctx: Ctx, state: BatchState): ActionOut {
 }
 
 // The checks before a kickoff: at planning time and again just before create_session is issued.
-// Once a run of a round has started, the deadline no longer holds back the round's other runs.
-function admissionBlock(ctx: Ctx, state: BatchState, opts: { deadline?: boolean } = {}): Stop | null {
+function admissionBlock(ctx: Ctx, state: BatchState): Stop | null {
   if (state.fatal) return { reason: state.fatal, failure: true };
   if (state.stopRequested) return { reason: "you asked the batch to stop", failure: false };
   // A run given up because its create_session was never confirmed must not have started after all.
@@ -472,7 +478,6 @@ function admissionBlock(ctx: Ctx, state: BatchState, opts: { deadline?: boolean 
     const mismatches = verifyVariants(ctx.config.variantSet, ctx.config.agentsDir);
     if (mismatches.length > 0) return { reason: `variant registration differs from manifest: ${mismatches.join("; ")}`, failure: true };
   }
-  if (opts.deadline !== false && ctx.deps.now() >= ms(ctx.config.deadline)) return { reason: `the deadline ${ctx.config.deadline} passed`, failure: false };
   return null;
 }
 
@@ -1011,12 +1016,6 @@ function swarmQuietFor(ctx: Ctx, run: RunState, now: number): number {
 // Runs that haven't asked for their session yet.
 const NOT_STARTED = new Set(["new", "repo", "project"]);
 
-// Whether another run of the round has asked for its session. Then the deadline no longer holds
-// this run back: the round ends with that run anyway.
-function roundStarted(state: BatchState, index: number): boolean {
-  return state.active.some((other) => other !== index && !NOT_STARTED.has(state.runs[other].status) && state.runs[other].status !== "void");
-}
-
 // A stop that is already known without the full admission checks.
 function knownStop(state: BatchState): Stop | null {
   return firstStop(
@@ -1059,8 +1058,8 @@ async function runStep(ctx: Ctx, state: BatchState, index: number): Promise<Step
     case "repo":
       return { action: issue(ctx, state, "create_project", index, { args: { path: run.repoDir } }) };
     case "project": {
-      // The last runner-controlled point before a run starts: check the deadline and pins again.
-      const block = firstStop(state.halt, admissionBlock(ctx, state, { deadline: !roundStarted(state, index) }));
+      // The last runner-controlled point before a run starts: check stops and pins again.
+      const block = firstStop(state.halt, admissionBlock(ctx, state));
       if (block) {
         voidRun(ctx, state, run, `not started: ${block.reason}`, false);
         stopBatch(ctx, state, block.reason, block.failure);
@@ -1271,7 +1270,7 @@ function reconcileCreate(ctx: Ctx, state: BatchState, pending: PendingAction, ta
     return "cleared";
   }
   if (!selfTest) {
-    const block = firstStop(state.halt, admissionBlock(ctx, state, { deadline: !roundStarted(state, pending.target as number) }));
+    const block = firstStop(state.halt, admissionBlock(ctx, state));
     if (block) {
       state.pending = null;
       voidRun(ctx, state, target as RunState, `not started: ${block.reason}`, false);
@@ -1354,8 +1353,7 @@ export async function step(ctx: Ctx, state: BatchState): Promise<StepResult> {
       const plan = config.selfTest.only
         ? "self-test only"
         : `${config.selfTest.enabled ? "self-test, then " : ""}${describePlan(config.variants, config.runsPerVariant, calibrationDecision(readResults(config.resultsPath), config.variants, config.variantSet), config.parallel)}`;
-      const deadline = new Date(config.deadline).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-      await notify(ctx, state, notices.batchStarted(config.id, plan, deadline));
+      await notify(ctx, state, notices.batchStarted(config.id, plan));
     }
   }
   let result: StepResult;
@@ -1587,7 +1585,7 @@ export async function takeOver(ctx: Ctx): Promise<string> {
 export function statusText(ctx: Ctx): string {
   const state = loadState(ctx.config.dir);
   const rows = readResults(ctx.config.resultsPath);
-  const lines = [`Batch ${ctx.config.id}: phase ${state.phase}${state.stopReason ? ` (${state.stopReason})` : ""}; deadline ${ctx.config.deadline}`];
+  const lines = [`Batch ${ctx.config.id}: phase ${state.phase}${state.stopReason ? ` (${state.stopReason})` : ""}`];
   if (state.owner) lines.push(`Driver: ${state.owner.id}, last seen ${state.owner.lastSeenAt}`);
   if (state.fatal) lines.push(`No new run starts: ${state.fatal}`);
   if (state.pending) lines.push(`Pending action: ${state.pending.id} ${state.pending.kind} (issued ${state.pending.issuedAt})`);

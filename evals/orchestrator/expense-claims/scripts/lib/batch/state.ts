@@ -19,8 +19,6 @@ export interface BatchConfig {
   runsPerVariant: number;
   // How many runs a round may hold; they start together and the next round waits for all of them. Missing means 1.
   parallel?: number;
-  // No new run starts at or after this time (ISO).
-  deadline: string;
   model: string;
   effort: string;
   contextTier: string;
@@ -279,16 +277,6 @@ export function defaultPaths() {
 }
 
 export const NTFY_ENV_VAR = "ORCH_EVAL_NTFY_URL";
-
-// The next time it is hh:mm local time, strictly after `from`.
-export function nextLocalTime(hhmm: string, from: Date): Date {
-  const match = /^(\d{1,2}):(\d{2})$/.exec(hhmm.trim());
-  if (!match || Number(match[1]) > 23 || Number(match[2]) > 59) throw new Error(`Deadline "${hhmm}" must be HH:MM`);
-  const at = new Date(from);
-  at.setHours(Number(match[1]), Number(match[2]), 0, 0);
-  if (at.getTime() <= from.getTime()) at.setDate(at.getDate() + 1);
-  return at;
-}
 
 export function batchId(at: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");

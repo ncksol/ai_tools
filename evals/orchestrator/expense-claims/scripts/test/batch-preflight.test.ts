@@ -33,7 +33,6 @@ function config(overrides: Partial<BatchConfig> = {}): BatchConfig {
     dir: join(dir, "batch"),
     variants: ["orchestrator", "session-orchestrator"],
     runsPerVariant: 3,
-    deadline: "",
     model: "claude-opus-5.5",
     effort: "max",
     contextTier: "long_context",

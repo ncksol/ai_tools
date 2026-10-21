@@ -236,7 +236,7 @@ Register only when no batch is active, without replacing the normal `orchestrato
 The user launches the pilot with:
 
 ```bash
-npm run batch -- init --variants-file variants/review-policy.json --runs 3 --deadline 07:00 --memory-off
+npm run batch -- init --variants-file variants/review-policy.json --runs 3 --memory-off
 ```
 
 `--variants-file` cannot be combined with `--variants` or a self-test-only batch. The batch stores the resolved manifest and pins its bytes and snapshots. At launch it verifies the registered files and records the alias hash and bundle digest. It re-hashes them before scoring and flags `agent-drift` on a mismatch, retaining the launch hashes in the result. These prove registered-file provenance, not which prompt bytes the CLI loaded. The scorer accepts the complete set of `--agent-revision`, `--agent-sha256` and `--agent-bundle-sha256` flags with session-log timing; the batch supplies them automatically.
@@ -308,7 +308,7 @@ Only one batch is active on the machine at a time (`~/orch-evals/active-batch/`,
 ### What the runner decides
 
 - **Order:** runs go in rounds. A round has at most one run per variant and at most `--parallel` runs, which defaults to the number of variants. A round's runs start together, and the next round starts only when all of them have ended. The variants with the fewest scored runs go first: in the current batch for legacy `--variants`, or across matching history for `--variants-file`. Ties follow the listed variant order. A run with no row in `results.csv` doesn't count, so a void run is replaced. The defaults are the four orchestrators, `orchestrator`, `session-orchestrator`, `hands-on-orchestrator` and `hands-on-session-orchestrator`, with 3 scored runs each, all four side by side. Runs side by side share the laptop and accounts, which a manual run has to itself (see [Known limits](#known-limits)); `--parallel 1` runs one at a time, as a manual run does.
-- **Deadline:** no round starts at or after the deadline, 07:00 local time by default. The runner checks it, and the pinned inputs, again just before it gives the driver a `create_session`, so a run planned before the deadline doesn't start after it. Once one run of a round has started, the deadline no longer holds back the round's other runs. Runs in progress finish.
+- **End:** there is no deadline. The batch runs until every variant has its scored runs, it stops early (see **Stopping**), or you run `npm run batch -- stop`. The runner checks for a stop and the pinned inputs again just before it gives the driver a `create_session`, so a run planned before a stop doesn't start after it. Runs in progress finish.
 - **Calibration:** the rule in [Calibration](#calibration), applied automatically. For ordinary `--variants` batches, the calibration median uses every full-feature calibration row, plus one run for each batch variant that has no row yet. If the decision is the same whether those missing runs take 0 minutes or never finish, no calibration run is needed. While the decision is open, a round holds only calibration runs, so it is made before any scored run starts. With today's `results.csv` and the four default variants, run 1's 65.7 minutes doesn't decide it, so the first round is the calibration runs of the other three variants. `--variants-file` disables that shortcut and freezes the shared decision after every pinned variant calibrates, as described above.
 - **Pinning:** at the start the runner hashes the agent files under test and their workers, resolved through the `~/.copilot/agents` symlinks. Ordinary variants use named-agent discovery; manifest variants use only their explicitly declared aliases and workers. It also pins `kickoff.md`, `answers.md`, the scorer, acceptance and robustness suites, pricing files, script libraries, the manifest and snapshots if selected, and app/CLI versions. If any pinned input changes, no further run starts and the batch stops.
 - **Stopping:** the batch stops early after two runs in a row that fail to start, two runs in a row that `score` can't score, a failed self-test, a pinning change, a results commit that keeps failing, or a swarm that is still busy after the stop message. It notifies you either way. A stop during a round starts no new run: the round's runs that have started finish, and those that haven't are void, with no notification, and don't count as failed starts.
@@ -362,7 +362,7 @@ Each run's flags are listed in the report and the run's phone notification. A fl
    - Leave nothing else heavy running, and don't use this account's Copilot for other work.
 2. In the Copilot app, start a new session in your `ai_tools` project: a worktree on its own branch, not `main`. Select the agent `eval-runner` and autopilot mode, and send something like:
 
-   > Create an overnight eval batch: variants orchestrator,session-orchestrator,hands-on-orchestrator,hands-on-session-orchestrator, 3 runs each, deadline 07:00. Copilot Memory is off.
+   > Create an overnight eval batch: variants orchestrator,session-orchestrator,hands-on-orchestrator,hands-on-session-orchestrator, 3 runs each. Copilot Memory is off.
 
    The driver runs `npm run batch -- init` with `--memory-off` only because your message says Memory is off. The preflight checks AC power, free disk space, the `gh` account and its `repo` and `workflow` scopes, API rate limits, Node 24, the app version (1.1.30 or later), every `~/.copilot/data.db` column the runner reads, that no other batch is active, that `score` supports the runner, the agents under test, the results branch and git identity, and the notification topic. Any FAIL creates no batch.
 3. The batch starts with the self-test. Wait for the "self-test passed" notification, a few minutes later, before you leave. A failed self-test stops the batch.
@@ -387,7 +387,7 @@ The driver has its own rule for the self-test: the response after the answered q
 
 ### In the morning
 
-1. Your phone has the final notification. The report is `~/orch-evals/batches/<id>/report.md`; the driver prints it too. `npm run batch -- status --batch <id>` shows where a batch stands.
+1. The batch has no deadline, so it may still be running. `npm run batch -- status --batch <id>` shows where it stands, and `npm run batch -- stop --batch <id>` starts no new run and lets the runs in progress finish. When the batch ends, your phone has the final notification. The report is `~/orch-evals/batches/<id>/report.md`; the driver prints it too.
 2. Turn Copilot Memory back on.
 3. Archive the sessions the report lists. The driver can't archive detached sessions.
 4. Review the flagged runs.
@@ -398,7 +398,7 @@ The driver has its own rule for the self-test: the response after the answered q
 
 | Command | What it does |
 |---|---|
-| `npm run batch -- init [--variants a,b \| --variants-file <manifest.json>] [--runs 3] [--parallel <n>] [--deadline 07:00] [--memory-off]` | Runs the preflight and creates a batch. `--parallel` defaults to the number of variants; `--parallel 1` runs one at a time. Other options: `--model`, `--effort`, `--context-tier`, `--owner`, `--self-test-model`, `--self-test-effort`, `--self-test-agent`, `--runs-dir`, `--batches-dir`, `--no-push`. |
+| `npm run batch -- init [--variants a,b \| --variants-file <manifest.json>] [--runs 3] [--parallel <n>] [--memory-off]` | Runs the preflight and creates a batch. `--parallel` defaults to the number of variants; `--parallel 1` runs one at a time. Other options: `--model`, `--effort`, `--context-tier`, `--owner`, `--self-test-model`, `--self-test-effort`, `--self-test-agent`, `--runs-dir`, `--batches-dir`, `--no-push`. |
 | `npm run batch -- selftest [--memory-off]` | Creates a batch that only runs the self-test. |
 | `npm run batch -- next --batch <id>` | The driver's loop: does what it can, then prints the next action as JSON. |
 | `npm run batch -- record --batch <id> --action <id> ...` | Records an action's result. |

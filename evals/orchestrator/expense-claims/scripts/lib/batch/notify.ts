@@ -70,10 +70,10 @@ export interface RunSummaryForNotice {
 const flagText = (flags: string[]): string => (flags.length === 0 ? "none" : flags.join(", "));
 
 export const notices = {
-  batchStarted: (id: string, plan: string, deadline: string): Notice => ({
+  batchStarted: (id: string, plan: string): Notice => ({
     key: "batch-started",
     title: "Eval batch started",
-    body: `Batch ${id} started. Plan: ${plan}. No new run starts after ${deadline}.`,
+    body: `Batch ${id} started. Plan: ${plan}.`,
     priority: "low",
     tags: ["hourglass_flowing_sand"],
   }),

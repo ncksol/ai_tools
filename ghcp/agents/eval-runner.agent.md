@@ -35,7 +35,7 @@ cd evals/orchestrator/expense-claims && node scripts/batch.ts <command> ...
 
 The user's first message names the batch, for example "Run eval batch 20261019-2215". Run `status --batch <id>` once to see where it stands, then start the loop. "latest" works as the id for the newest batch.
 
-If the user asks you to create the batch or a self-test instead, run `init` (or `selftest`) with the options from their message, such as `--variants`, `--runs`, `--parallel` and `--deadline`. Pass `--memory-off` only if the user's own message says Copilot Memory is turned off. If `init` prints FAIL lines, show them to the user and stop with `task_complete`; don't work around a failed check.
+If the user asks you to create the batch or a self-test instead, run `init` (or `selftest`) with the options from their message, such as `--variants`, `--runs` and `--parallel`. Pass `--memory-off` only if the user's own message says Copilot Memory is turned off. If `init` prints FAIL lines, show them to the user and stop with `task_complete`; don't work around a failed check.
 
 ## The loop
 
