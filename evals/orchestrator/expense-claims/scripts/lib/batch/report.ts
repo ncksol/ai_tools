@@ -3,6 +3,7 @@ import { featureSetName } from "../features.ts";
 import { formatSummary, readResults, summarize } from "../results.ts";
 import type { AppDb } from "./appdb.ts";
 import { runRowFor } from "./plan.ts";
+import { variantBundle } from "../variants.ts";
 import type { BatchConfig, BatchState, RunState } from "./state.ts";
 
 export interface ReportExtras {
@@ -47,8 +48,23 @@ export function buildReport(config: BatchConfig, state: BatchState, appDb: AppDb
   out.push(`- Variants: ${config.variants.join(", ") || "none (self-test only)"}; ${config.runsPerVariant} scored run(s) each; no new run after ${config.deadline}.`);
   out.push(`- Orchestrator session: ${config.model} at ${config.effort}, context ${config.contextTier}, interactive mode.`);
   out.push(`- App ${state.pins.appVersion ?? "unknown"}, CLI ${state.pins.cliVersion ?? "unknown"}. Pinned agents: ${Object.keys(state.pins.agents).join(", ") || "none"}.`);
+  if (config.variantSet) {
+    for (const [label, variant] of Object.entries(config.variantSet.variants)) out.push(`- ${label}: ${variant.agent}, source ${variant.revision}, bundle ${variantBundle(variant)}.`);
+  }
   if (state.calibration) out.push(`- Calibration: ${state.calibration}`);
   if (config.dryRun) out.push("- DRY RUN: no GitHub repos; app steps were stubbed.");
+  out.push("");
+
+  out.push("## Robustness and cost", "", "Post-score robustness never changes the gate or minutes; compare counts only within the same suite hash. Cost covers the run's swarm up to the recorded snapshot, not the batch driver. Missing prices or logs leave USD blank.", "");
+  out.push("| Run | Robustness | Suite SHA-256 | Cost status | USD | Sessions | Usage records | Pricing version |");
+  out.push("|---|---|---|---|---|---|---|---|");
+  for (const run of state.runs) {
+    const row = runRowFor(rows, run);
+    if (!row) continue;
+    const robustness = row.robustness_status
+      ? `${row.robustness_status}${row.robustness_total ? ` (${row.robustness_passed}/${row.robustness_total})` : ""}` : "not recorded";
+    out.push(`| ${cell(runLabel(run))} | ${cell(robustness)} | ${cell(row.robustness_sha256)} | ${cell(row.cost_status || "not recorded")} | ${cell(row.cost_usd)} | ${cell(row.cost_sessions)} | ${cell(row.usage_records)} | ${cell(row.pricing_version)} |`);
+  }
   out.push("");
 
   out.push("## Runs", "");

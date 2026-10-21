@@ -146,3 +146,36 @@ test("I9 I10 valid rows are created in file order alongside errors", async () =>
   assert.equal(res.body.errors[0].details[0].field, "amount");
   assert.equal(typeof res.body.errors[0].details[0].message, "string");
 });
+
+test("I2 I9 a malformed row is a row error and later rows are still created", async () => {
+  const body = [
+    `${HEADER},description`,
+    "2026-03-04,A,other,1,GBP,a\rb",
+    '2026-03-04,B"s,other,1,GBP,x',
+    '2026-03-04,"C"x,other,1,GBP,x',
+    "2026-03-05,D,travel,2,USD,ok",
+    '2026-03-05,E,travel,2,USD,"open',
+    "2026-03-05,F,travel,2,USD,inside",
+  ].join("\n");
+  const res = await importCsv(body);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  const merchants = await Promise.all(res.body.created.map(async (id: string) => (await getExpense(id)).merchant));
+  assert.deepEqual(merchants, ["D"]);
+  assert.deepEqual(res.body.errors.map((e: any) => [e.line, e.details.map((d: any) => d.field)]), [
+    [2, ["row"]],
+    [3, ["row"]],
+    [4, ["row"]],
+    [6, ["row"]],
+  ]);
+});
+
+test("I2 I4 a malformed header imports nothing", async () => {
+  const before = (await app.request("GET", "/expenses")).body.expenses.length;
+  for (const header of ['da"te,merchant,category,amount,currency', '"dat"e,merchant,category,amount,currency', `${HEADER},"notes`, `${HEADER},no\rtes`]) {
+    const res = await importCsv(`${header}\n2026-03-04,Shop,other,5,GBP,x\n`);
+    assert.equal(res.status, 400, header);
+    assert.equal(res.body.error.code, "INVALID_CSV", header);
+    assert.ok(res.body.error.details.length > 0, header);
+  }
+  assert.equal((await app.request("GET", "/expenses")).body.expenses.length, before);
+});

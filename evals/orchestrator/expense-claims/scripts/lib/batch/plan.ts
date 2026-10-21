@@ -3,8 +3,9 @@
 import { existsSync, readdirSync } from "node:fs";
 import { ALL_FEATURES, featureSetName, type Feature } from "../features.ts";
 import { parseRunName } from "../new-run.ts";
-import { CALIBRATION_LIMIT_MINUTES, median, type ResultRow } from "../results.ts";
+import { CALIBRATION_LIMIT_MINUTES, matchesPinnedAgent, median, type ResultRow } from "../results.ts";
 import type { RunState } from "./state.ts";
+import { variantBundle, type VariantDefinition, type VariantSet } from "../variants.ts";
 
 export const FULL_SET = featureSetName(ALL_FEATURES);
 export const WITHOUT_SUMMARY: Feature[] = ["policy", "reports", "import"];
@@ -20,13 +21,56 @@ export interface CalibrationDecision {
   reason: string;
 }
 
+export interface PolicyCalibration {
+  dropSummary: boolean;
+  reason: string;
+}
+
+const matchesVariant = (row: ResultRow, variant: VariantDefinition) =>
+  row.agent === variant.agent && row.agent_sha256 === variant.sha256 && row.agent_bundle_sha256 === variantBundle(variant);
 const show = (value: number | null): string => (value === null ? "none" : Number.isFinite(value) ? `${value.toFixed(1)} min` : "unfinished");
 
 // The calibration batch is every full-feature-set calibration row in results.csv plus one run for
 // each batch variant with no row yet (only its first row can be a calibration row). The decision is
 // fixed if it is the same when every missing run takes 0 minutes and when every missing run never
 // finishes; then no calibration run is needed.
-export function calibrationDecision(rows: ResultRow[], variants: string[]): CalibrationDecision {
+export function calibrationDecision(rows: ResultRow[], variants: string[], set?: VariantSet, frozen?: PolicyCalibration): CalibrationDecision {
+  rows = rows.filter(matchesPinnedAgent);
+  if (set) {
+    const pending = variants.filter((variant) => !rows.some((row) =>
+      row.variant === variant && matchesVariant(row, set.variants[variant]) &&
+      row.features === FULL_SET && row.calibration === "yes",
+    ));
+    if (pending.length > 0) return {
+      state: "undecided", features: ALL_FEATURES, pending, best: null, worst: null,
+      reason: `pinned policy variants need full-feature calibration: ${pending.join(", ")}`,
+    };
+    if (frozen) return {
+      state: frozen.dropSummary ? "drop" : "full", features: frozen.dropSummary ? WITHOUT_SUMMARY : ALL_FEATURES,
+      pending: [], best: null, worst: null, reason: frozen.reason,
+    };
+    const priorPilot = rows.filter((row) => variants.includes(row.variant) &&
+      matchesVariant(row, set.variants[row.variant]) && row.calibration === "no");
+    if (priorPilot.length > 0) {
+      const dropped = priorPilot.every((row) => row.features === featureSetName(WITHOUT_SUMMARY));
+      return {
+        state: dropped ? "drop" : "full", features: dropped ? WITHOUT_SUMMARY : ALL_FEATURES,
+        pending: [], best: null, worst: null,
+        reason: dropped ? "continuing the pinned pilot's already-decided no-Summary feature set"
+          : "existing pinned scored rows conflict with the approved no-Summary pilot",
+      };
+    }
+    const times = rows.filter((row) => row.calibration === "yes" && row.features === FULL_SET)
+      .map((row) => row.outcome === "passed" || row.outcome === "gate-failed" ? Number(row.minutes) : Infinity);
+    const value = median(times)!;
+    const drop = value > CALIBRATION_LIMIT_MINUTES;
+    return {
+      state: drop ? "drop" : "full", features: drop ? WITHOUT_SUMMARY : ALL_FEATURES,
+      pending: [], best: value, worst: value,
+      reason: `all pinned variants calibrated; median of all ${times.length} full-feature calibrations is ${show(value)}; ` +
+        (drop ? "drop Summary for every scored run" : "keeping Summary conflicts with the approved no-Summary pilot"),
+    };
+  }
   const existing = rows
     .filter((row) => row.calibration === "yes" && row.features === FULL_SET)
     .map((row) => (row.outcome === "passed" || row.outcome === "gate-failed" ? Number(row.minutes) : Infinity));
@@ -72,10 +116,11 @@ export function calibrationDecision(rows: ResultRow[], variants: string[]): Cali
 export const runRowFor = (rows: ResultRow[], run: Pick<RunState, "repo" | "n">): ResultRow | undefined =>
   rows.find((row) => row.repo === run.repo && row.run === String(run.n));
 
-// Scored runs this batch produced for a variant in the decided feature set. A full-feature
-// calibration run counts only when the calibration rule counts it (the full set was kept).
-export function scoredCount(runs: RunState[], rows: ResultRow[], variant: string, features: Feature[]): number {
+// Manifest targets are cumulative for the exact bundle; legacy targets count this batch's rows.
+export function scoredCount(runs: RunState[], rows: ResultRow[], variant: string, features: Feature[], definition?: VariantDefinition): number {
   const name = featureSetName(features);
+  if (definition) return rows.filter((row) => row.variant === variant && row.features === name &&
+    row.calibration === "no" && matchesVariant(row, definition)).length;
   return runs.filter((run) => run.variant === variant && runRowFor(rows, run)?.features === name).length;
 }
 
@@ -86,14 +131,15 @@ export interface NextRun {
 }
 
 // A1, B1, A2, B2, ...: the variant with the fewest scored runs goes next, ties in the given order.
-export function planNext(runs: RunState[], rows: ResultRow[], variants: string[], runsPerVariant: number): { next: NextRun | null; decision: CalibrationDecision } {
-  const decision = calibrationDecision(rows, variants);
+export function planNext(runs: RunState[], rows: ResultRow[], variants: string[], runsPerVariant: number, set?: VariantSet, frozen?: PolicyCalibration): { next: NextRun | null; decision: CalibrationDecision } {
+  const decision = calibrationDecision(rows, variants, set, frozen);
   if (decision.state === "undecided") {
     return { next: { variant: decision.pending[0], features: ALL_FEATURES, calibration: true }, decision };
   }
+  if (set && decision.state === "full") return { next: null, decision };
   let best: { variant: string; count: number } | null = null;
   for (const variant of variants) {
-    const count = scoredCount(runs, rows, variant, decision.features);
+    const count = scoredCount(runs, rows, variant, decision.features, set?.variants[variant]);
     if (count < runsPerVariant && (!best || count < best.count)) best = { variant, count };
   }
   if (!best) return { next: null, decision };

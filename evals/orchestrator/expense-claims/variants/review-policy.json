@@ -1,0 +1,30 @@
+{
+  "id": "review-policy",
+  "calibration": "all-variants-then-drop-summary",
+  "workers": {
+    "orchestrator-worker": {
+      "file": "orchestrator-worker.agent.md",
+      "sha256": "ddfb9cad946a04d4a75104578ceac2e0066cdb73dbcc71184da29d2f402bba61"
+    }
+  },
+  "variants": {
+    "orchestrator-review-a": {
+      "agent": "orchestrator-review-a",
+      "revision": "a7e3fb04a697745a3cf1cc82137429913bbc0982",
+      "file": "orchestrator-review-a.agent.md",
+      "sha256": "531d7f2c8e9546a552509f8bb877e8914196373f69df09c2023a5608ee7beeee"
+    },
+    "orchestrator-review-b": {
+      "agent": "orchestrator-review-b",
+      "revision": "c7b48ea1f78c702b48646019eb568220d27b74ef",
+      "file": "orchestrator-review-b.agent.md",
+      "sha256": "56c3bc6549da0cdec849c1feb904fc072e1ff609993ea5ad66a4a07821c7cfeb"
+    },
+    "orchestrator-review-c": {
+      "agent": "orchestrator-review-c",
+      "revision": "c7b48ea1f78c702b48646019eb568220d27b74ef",
+      "file": "orchestrator-review-c.agent.md",
+      "sha256": "690a0add16b58a31065df000ae0f21fd1f3bc2870699cc2047a2147760561312"
+    }
+  }
+}

@@ -6,13 +6,14 @@
 // Exclusive access: every read-modify-write of a batch's state (next, record, stop) holds the batch
 // lock; only the batch's owning driver may run next and record; and only one batch is active on the
 // machine (the active-batch guard). See lock.ts.
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describeSession, type LogEvent } from "../events.ts";
 import { featureSetName } from "../features.ts";
 import { runName } from "../new-run.ts";
 import type { ProcResult } from "../proc.ts";
 import { readResults } from "../results.ts";
+import { variantAgents, variantBundle, variantFiles, verifyVariants } from "../variants.ts";
 import { readAnswerSheet, replyFor, rowForQuestion, settleRow, type AnswerRow } from "./answers.ts";
 import type { AppDb } from "./appdb.ts";
 import { scanSession, scanSwarm } from "./hygiene.ts";
@@ -447,6 +448,10 @@ function admissionBlock(ctx: Ctx, state: BatchState): { reason: string; failure:
   if (state.scoreFailures >= 2) return { reason: "score failed for two runs in a row", failure: true };
   const drift = diffPins(state.pins, currentPins(ctx.config));
   if (drift.length > 0) return { reason: `pinned inputs changed: ${drift.join("; ")}`, failure: true };
+  if (ctx.config.variantSet) {
+    const mismatches = verifyVariants(ctx.config.variantSet, ctx.config.agentsDir);
+    if (mismatches.length > 0) return { reason: `variant registration differs from manifest: ${mismatches.join("; ")}`, failure: true };
+  }
   if (ctx.deps.now() >= ms(ctx.config.deadline)) return { reason: `the deadline ${ctx.config.deadline} passed`, failure: false };
   return null;
 }
@@ -575,7 +580,8 @@ export function verifySelfTest(ctx: Ctx, test: SelfTestState): void {
   check("model and effort", orch.model === config.selfTest.model && orch.effort === config.selfTest.effort, `session.start: ${orch.model ?? "none"} at ${orch.effort ?? "none"}`);
   const agentOk = config.selfTest.agent
     ? orch.agent === config.selfTest.agent
-    : orch.agent === null || !(ORCHESTRATOR_AGENTS.includes(orch.agent) || config.variants.includes(orch.agent));
+    : orch.agent === null || !(ORCHESTRATOR_AGENTS.includes(orch.agent) || config.variants.includes(orch.agent) ||
+      (config.variantSet && variantAgents(config.variantSet).includes(orch.agent)));
   check("agent", agentOk, `selected: ${orch.agent ?? "the default agent"}`);
   const reply = replyFor(ctx.sheet, 1);
   const answered = orch.askCalls.find((call) => call.completed && call.resultText.includes(reply));
@@ -607,10 +613,13 @@ export function verifySelfTest(ctx: Ctx, test: SelfTestState): void {
 
 function plannedTotal(ctx: Ctx, state: BatchState): number {
   const rows = readResults(ctx.config.resultsPath);
-  const decision = calibrationDecision(rows, ctx.config.variants);
+  const decision = calibrationDecision(rows, ctx.config.variants, ctx.config.variantSet, state.policyCalibration);
   const done = state.runs.filter((run) => runRowFor(rows, run)).length;
-  const remaining = ctx.config.variants.reduce((sum, variant) => sum + Math.max(0, ctx.config.runsPerVariant - scoredCount(state.runs, rows, variant, decision.features)), 0);
-  return done + remaining;
+  const remaining = ctx.config.variants.reduce((sum, variant) => sum + Math.max(0, ctx.config.runsPerVariant - scoredCount(
+    state.runs, rows, variant, decision.features,
+    ctx.config.variantSet?.variants[variant],
+  )), 0);
+  return done + remaining + (ctx.config.variantSet ? decision.pending.length : 0);
 }
 
 async function startNextRun(ctx: Ctx, state: BatchState): Promise<StepResult> {
@@ -622,8 +631,15 @@ async function startNextRun(ctx: Ctx, state: BatchState): Promise<StepResult> {
     return { progressed: true };
   }
   const rows = readResults(config.resultsPath);
-  const { next, decision } = planNext(state.runs, rows, config.variants, config.runsPerVariant);
+  const { next, decision } = planNext(state.runs, rows, config.variants, config.runsPerVariant, config.variantSet, state.policyCalibration);
   state.calibration = decision.reason;
+  if (config.variantSet && decision.state !== "undecided") {
+    state.policyCalibration ??= { dropSummary: decision.state === "drop", reason: decision.reason };
+    if (decision.state === "full") {
+      stopBatch(ctx, state, `${decision.reason}; stopped before the pilot; user approval is required to change its feature set`, true);
+      return { progressed: true };
+    }
+  }
   if (!next) {
     stopBatch(ctx, state, "every variant has its scored runs", false);
     return { progressed: true };
@@ -655,10 +671,26 @@ async function startNextRun(ctx: Ctx, state: BatchState): Promise<StepResult> {
 }
 
 export function currentPins(config: BatchConfig) {
+  const files: Record<string, string> = {
+    "kickoff.md": join(config.kitDir, "kickoff.md"), "answers.md": join(config.kitDir, "answers.md"),
+    "score.ts": config.scoreScript,
+    ...(config.variantSet ? variantFiles(config.variantSet) : {}),
+  };
+  const addFiles = (relative: string) => {
+    const path = join(config.kitDir, relative);
+    if (!existsSync(path)) return;
+    for (const entry of readdirSync(path, { withFileTypes: true })) {
+      const next = join(relative, entry.name);
+      if (entry.isDirectory()) addFiles(next);
+      else files[next] = join(config.kitDir, next);
+    }
+  };
+  for (const dir of ["acceptance", "robustness", "pricing", "scripts/lib"]) addFiles(dir);
   return computePins({
     agentsDir: config.agentsDir,
-    variants: config.variants,
-    files: { "kickoff.md": join(config.kitDir, "kickoff.md"), "answers.md": join(config.kitDir, "answers.md") },
+    variants: config.variantSet ? variantAgents(config.variantSet) : config.variants,
+    explicitAgents: Boolean(config.variantSet),
+    files,
     appPlist: config.appPlist,
     cliVersionFile: config.cliVersionFile,
   });
@@ -687,7 +719,7 @@ function runCreateArgs(ctx: Ctx, run: RunState): Record<string, unknown> {
     workspace_type: "worktree",
     detached: true,
     coordinate_with_creator: false,
-    kickoff: { prompt: kickoffPrompt(config, run), agent: run.variant, model: config.model, reasoning_effort: config.effort, context_tier: config.contextTier, mode: "interactive" },
+    kickoff: { prompt: kickoffPrompt(config, run), agent: config.variantSet?.variants[run.variant].agent ?? run.variant, model: config.model, reasoning_effort: config.effort, context_tier: config.contextTier, mode: "interactive" },
   };
 }
 
@@ -771,11 +803,14 @@ async function watchRun(ctx: Ctx, state: BatchState, run: RunState, index: numbe
     if (orch.startedBy !== "user") addFlag(run, "kickoff-shape", "the kickoff carries a data.source or a cross-session tag, so score can't treat it as typed by the user", at);
     if (kickoffText(orch) !== kickoffPrompt(config, run)) addFlag(run, "kickoff-text", "the kickoff differs from kickoff.md as a manual paste delivers it", at);
     const wrong: string[] = [];
-    if (orch.agent !== run.variant) wrong.push(`agent ${orch.agent ?? "none"}`);
+    if (orch.agent !== (config.variantSet?.variants[run.variant].agent ?? run.variant)) wrong.push(`agent ${orch.agent ?? "none"}`);
     if (orch.model !== config.model) wrong.push(`model ${orch.model ?? "none"}`);
     if (orch.effort !== config.effort) wrong.push(`effort ${orch.effort ?? "none"}`);
     if (orch.contextTier !== config.contextTier) wrong.push(`context tier ${orch.contextTier ?? "none"}`);
     if (wrong.length > 0) addFlag(run, "session-settings", `session.start differs from the request: ${wrong.join(", ")}`, at);
+    if (config.variantSet && orch.agent !== run.variant) {
+      state.fatal ??= `${run.key} logged agent ${orch.agent ?? "none"}; expected ${run.variant}; no further run may start`;
+    }
     log(ctx, `${run.key} kickoff at ${run.kickoffAt} in session ${run.sessionId}`);
   }
 
@@ -870,11 +905,26 @@ function scanHygiene(ctx: Ctx, run: RunState): void {
 async function scoreRun(ctx: Ctx, state: BatchState, run: RunState): Promise<void> {
   const { config, deps } = ctx;
   findAnswerSource(ctx, run);
+  if (config.variantSet) {
+    const variant = config.variantSet.variants[run.variant];
+    const now = currentPins(config);
+    if (!run.agentSha256 || !run.agentBundleSha256) addFlag(run, "agent-drift", "registered launch hashes were not recorded; provenance is unavailable", iso(deps.now()));
+    else {
+      const changed = [variant.agent, ...Object.keys(variant.workers)].filter((name) =>
+        now.agents[name]?.sha256 !== (name === variant.agent ? run.agentSha256 : state.pins.agents[name]?.sha256));
+      if (changed.length > 0) addFlag(run, "agent-drift", `registered files changed between launch and scoring: ${changed.join(", ")}`, iso(deps.now()));
+    }
+  }
   if (run.plain?.sentAt && !run.answerSource) addFlag(run, "answer-source-unknown", "the plain-text answer wasn't found in the log, so score counted it as neither a question nor blocked time", iso(deps.now()));
   // Flags known before scoring go into the row's note; later ones stay in the report.
   scanHygiene(ctx, run);
   run.note = noteFor(config, run);
   const args = [config.scoreScript, "--repo-dir", run.repoDir, "--session", run.sessionId ?? "", "--state-dir", config.stateDir, "--results", config.resultsPath, "--note", run.note];
+  args.push("--app-db", config.appDb, "--calibration", run.calibration ? "yes" : "no");
+  if (config.variantSet && run.agentSha256 && run.agentBundleSha256) {
+    const variant = config.variantSet.variants[run.variant];
+    args.push("--agent-revision", variant.revision, "--agent-sha256", run.agentSha256, "--agent-bundle-sha256", run.agentBundleSha256);
+  }
   if (config.dryRun) args.push("--no-github");
   if (run.endReason === "final" && run.final) args.push("--end-at", run.final.timestamp);
   else args.push("--outcome", run.endReason ?? "stalled");
@@ -896,6 +946,10 @@ async function scoreRun(ctx: Ctx, state: BatchState, run: RunState): Promise<voi
   if (row) {
     run.row = { ...row };
     state.scoreFailures = 0;
+    if (config.variantSet && row.agent !== run.variant) {
+      state.fatal ??= `${run.key} logged agent ${row.agent || "none"}; expected ${run.variant}; no further run may start`;
+    }
+    if (result.code !== 0) addFlag(run, "score-warning", `score exited ${result.code} after saving its gate row; diagnostics may be incomplete (log: ${run.scoreLog})`, run.scoredAt);
   } else {
     state.scoreFailures++;
     addFlag(run, "score-failed", `score exited ${result.code}: ${(result.stderr || result.stdout).trim().split("\n").slice(-1)[0] ?? ""} (log: ${run.scoreLog})`, run.scoredAt);
@@ -950,6 +1004,11 @@ async function runsStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
         return { progressed: true };
       }
       run.startRequestedAt = iso(now);
+      if (config.variantSet) {
+        const variant = config.variantSet.variants[run.variant];
+        run.agentSha256 = state.pins.agents[variant.agent].sha256;
+        run.agentBundleSha256 = variantBundle(variant);
+      }
       run.status = "starting";
       return { action: issue(ctx, state, "create_session", index, { args: runCreateArgs(ctx, run) }) };
     }
@@ -1227,7 +1286,7 @@ export async function step(ctx: Ctx, state: BatchState): Promise<StepResult> {
       const { config } = ctx;
       const plan = config.selfTest.only
         ? "self-test only"
-        : `${config.selfTest.enabled ? "self-test, then " : ""}${describePlan(config.variants, config.runsPerVariant, calibrationDecision(readResults(config.resultsPath), config.variants))}`;
+        : `${config.selfTest.enabled ? "self-test, then " : ""}${describePlan(config.variants, config.runsPerVariant, calibrationDecision(readResults(config.resultsPath), config.variants, config.variantSet))}`;
       const deadline = new Date(config.deadline).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
       await notify(ctx, state, notices.batchStarted(config.id, plan, deadline));
     }

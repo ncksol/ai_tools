@@ -23,10 +23,13 @@ The design, with the reasons behind each rule, is in [the design doc](../../../d
 | `seed/` | The v1 app, with `docs/spec-v2.md` and CI. This is what a run repo starts from. |
 | `reference/` | A full v2 implementation. It only proves that the suite is correct and can pass. |
 | `acceptance/` | The hidden black-box acceptance suite, one file for v1 and one per feature. |
-| `scripts/` | `new-run`, `score`, the acceptance runner, the kit check, the overnight batch runner (`batch.ts` and `lib/batch/`) and their tests. |
-| `package.json` | The npm scripts: `test`, `check`, `new-run`, `score`, `acceptance` and `batch`. |
+| `robustness/` | Hidden edge-case tests, run after scoring, never as the gate. |
+| `pricing/2026-10-20.json` | Dated USD-per-million token rates, with model tiers and promotion expiry. |
+| `variants/` | Eval-only A/B/C agent snapshots, their shared worker and the hashed `review-policy.json` manifest. Not ordinary agent installation files. |
+| `scripts/` | `new-run`, `score`, the acceptance and robustness runners, the kit check, the overnight batch runner (`batch.ts` and `lib/batch/`) and their tests. |
+| `package.json` | The npm scripts: `test`, `check`, `new-run`, `score`, `acceptance`, `robustness` and `batch`. |
 
-Only `seed/` goes into a run repo. Never copy `acceptance/` or `reference/` into a run repo, never paste them into a session, and never mention them in the kickoff.
+Only `seed/` goes into a run repo. Never copy `acceptance/`, `reference/`, `robustness/`, pricing or variant manifests into a run repo, paste them into a run session, or mention them in the kickoff.
 
 ## Before the first run
 
@@ -91,7 +94,7 @@ The score is the wall-clock minutes from the kickoff to the final report, minus 
 - the duration of every `ask_user` call;
 - for each of your messages after the kickoff, the idle time between the orchestrator's previous turn end and your message. In a hands-off run, every such message answers a question asked in plain text.
 
-`score` reads this from the session's event log. It ignores events written by sub-agents. It counts each `ask_user` call and each of your messages after the kickoff as one question. Messages with a `data.source` or a `<cross_session_message` tag in `transformedContent ?? content` are not human messages, even if the tag arrives without a source.
+`score` reads timing from the session's event log. Timing ignores events written by sub-agents; cost includes them. It counts each `ask_user` call and each of your messages after the kickoff as one question. Messages with a `data.source` or a `<cross_session_message` tag in `transformedContent ?? content` are not human messages, even if the tag arrives without a source.
 
 For answers sent by another session, pass `--answer-source <value>`, usually `agent-<answering-session-id>`. Only messages whose `data.source` matches that value exactly count as human answers, including tagged messages. They add to both the question count and blocked time just like typed replies; ordinary typed replies still count. This does not make a session-sent kickoff human. `score` warns if the source matches no messages in the scored run, or if another session sent the first non-runtime message and timing starts at a later human kickoff. Answers delivered through `answer_session_input` already count in the duration of `ask_user` and need no source override.
 
@@ -110,7 +113,7 @@ Each run gets one outcome:
 | `timeout` | No final report within 90 minutes. `score` also sets this when a final report came more than 90 minutes after the kickoff. |
 | `stalled` | Everything was idle for 15 minutes with the work not done. |
 
-Only passed runs enter the time comparison. For each variant, compare the median minutes of its passed runs, and its pass rate. Compare runs only within one feature set. To print the medians, pass rates and the calibration state:
+Only passed runs enter the time comparison. For each variant, compare the median minutes of its passed runs, and its pass rate. Compare runs only within one feature set and one pinned agent bundle. The summary separates bundles as `variant@<hash-prefix>`; it never pools different revisions under one label. Robustness and cost are separate measurements, not adjustments to the gate or minutes. To print the medians, pass rates and the calibration state:
 
 ```bash
 npm run score -- --summary
@@ -141,8 +144,61 @@ npm run score -- --summary
 | `effort` | The orchestrator session's reasoning effort at the kickoff. Empty with manual timing. |
 | `copilot_version` | The Copilot version that wrote the session log. Empty with manual timing. |
 | `note` | `--note`, if given, followed by any warnings from `score`, for example a model change during the run or multiple completion markers. |
+| `agent_revision` | Full source commit of the pinned agent. Empty for legacy or unpinned runs. |
+| `agent_sha256` | SHA-256 of the registered alias file verified at launch, including its frontmatter. This is file provenance, not proof of loaded prompt bytes, which the event log does not expose. |
+| `agent_bundle_sha256` | SHA-256 over the alias name/hash and sorted worker names/hashes. Separates results when an agent or worker changes. |
+| `main_sha` | Full commit of the fresh `main` clone used for both suites. |
+| `robustness_status` | `passed`, `failed`, `error`, or `not-applicable` when the feature set has no robustness tests. This cannot change `outcome`. |
+| `robustness_passed`, `robustness_total` | Passing and total robustness tests. Empty when no suite ran. |
+| `robustness_sha256` | SHA-256 of the selected robustness tests, their local dependencies, runner settings and total timeout. Compare counts only within the same hash. |
+| `cost_status` | `complete`, `incomplete` (some usable records, but missing data or rates), or `unavailable` (no usable total, including manual timing). |
+| `cost_usd` | Whole-swarm token cost in USD, rounded once to nine decimal places. Empty unless `cost_status=complete`; missing data is never reported as $0. |
+| `pricing_version` | Pricing date and SHA-256 of the exact price file, separated by `:`. |
+| `cost_captured_at` | UTC cutoff captured before cloning or running tests. Usage includes records from kickoff through this instant, inclusive. Empty with manual timing. |
+| `cost_sessions` | Distinct root/descendant CLI session logs discovered, including workspace aliases and missing logs when the total is incomplete. |
+| `usage_records` | Unique successfully priced usage records. Includes sub-agent calls in parent logs. |
+| `input_tokens_all_models` | Inclusive input tokens summed across all models for successfully priced records, including cache reads and writes. |
+| `cache_read_tokens_all_models`, `cache_write_tokens_all_models`, `output_tokens_all_models` | Corresponding all-model totals for the same records. With incomplete cost these are partial. These aggregate counters cannot reproduce `cost_usd`: models and context tiers have different rates. |
 
-Commit `results.csv` after each run, so the history across agent versions is kept.
+Commit `results.csv` after each run, so the history across agent versions is kept. The scorer can read the old 21-column format and upgrades it on append or replacement. Historical fields stay unchanged; new fields remain blank rather than being backfilled with guesses.
+
+### Post-score robustness
+
+After the acceptance outcome and timing are fixed, `score` runs `robustness/` on the same fresh clone. Its 12 CSV tests cover lone `\r` in unquoted fields, invalid quoting in data and header rows, and valid quoted fields, line breaks and empty-field controls. These test spec rules that the unchanged acceptance gate did not cover. Failures are recorded in `results.csv` and the batch report; they never change the score, pass rate, or which runs enter the median.
+
+The gate row is saved **before** robustness starts, with `robustness_status=error` and a pending note until diagnostics finish. Robustness has a two-minute total budget; a timeout stops its process group and records `error` with blank counts. If the outer scoring process is interrupted, the saved gate row survives and the runner keeps it rather than voiding the run. Normal completion updates that same row with the diagnostic result. `robustness_sha256` identifies the selected tests, local harness dependencies, runner arguments and timeout; compare robustness counts only within one identity. An interruption before the final update can leave that hash blank. The test-only `ORCH_EVAL_ROBUSTNESS_TIMEOUT_MS` override changes the hash and must not be set for real runs.
+
+Keep these tests hidden exactly like `acceptance/`. Do not give the run their failures or let it repair them before recording its result. There is no AI-auditor alternative in this kit.
+
+To inspect a completed checkout separately:
+
+```bash
+npm run robustness -- --app <dir> [--features policy,reports,import] [--verbose]
+```
+
+The standalone runner reports counts and exits nonzero on failures or invalid invocation. A feature set without CSV import reports that no robustness tests apply; it does not start an empty test command. This command does not write `results.csv`.
+
+### Whole-swarm cost
+
+The scorer reads `session.usage_record` events from the root and every recursively discovered child's `events.jsonl`. Discovery combines successful session-creation tool results with creator/coordinator links in the read-only app database, including archived children. It also follows `workspace_session_aliases` when a workspace has used several CLI session IDs. It does not count other sessions merely because they use the same repo. `--app-db <path>` and `--state-dir <dir>` override the defaults; the batch passes both explicitly, and tests and rehearsal use scratch paths. If the database is absent, the scorer warns and collects only what the logs reveal: cost is incomplete (or unavailable if no records can be priced), with no dollar total. It cannot prove that aliases or database-only children were included. An unresolved child or broken log also makes the cost incomplete.
+
+Sub-agent calls with `interactionType: conversation-subagent` are already in their parent's log and are included. Accounting usage IDs deduplicate mirrored records; event IDs deduplicate repeated entries within one session. The eval-runner driver and this kit's scripts are outside the run's swarm and are excluded.
+
+For each usage record:
+
+```text
+uncached_input = inputTokens - cacheReadTokens - cacheWriteTokens
+USD = (uncached_input * input_rate
+     + cacheReadTokens * cached_input_rate
+     + cacheWriteTokens * cache_write_rate
+     + outputTokens * output_rate) / 1,000,000
+```
+
+Never use the session log or session store `cost` field: it is a legacy premium-request multiplier, not dollars. Token counters must be present, nonnegative integers, with cache tokens no greater than inclusive input. Missing prices, expired promotions, malformed records and missing logs produce warnings and a blank dollar total. Records with `isAuto: true` are also unpriced: Auto usage had a 10% discount, so this list-price card cannot establish their charge.
+
+Rates live in one dated file, currently `pricing/2026-10-20.json`, with the official pricing source. Astra (and Sol) switch tiers only above 272,000 inclusive input tokens **per record**, not on the swarm's aggregate. Argon's promotional rates are invalid at or after `2026-12-01T00:00:00Z`; do not extend them by assumption. Its cache-write price is unavailable, so a nonzero Argon cache write is unpriceable. To use a later verified rate card, add one dated JSON file and pass `--pricing <file>` when rescoring; update the batch scorer's default before creating a new batch. Existing batch pins stop mid-batch price changes.
+
+The cost cutoff is separate from `--end-at`, which limits timing only. Usage can be written after the final message, so cost captures through the start of scoring. Score promptly, before sending more messages to the run. Timeout and stalled rows include usage up to that snapshot, not later shutdown work. `--replace` takes a new snapshot; retain the recorded cutoff and rate digest when comparing costs.
 
 ## Calibration
 
@@ -160,6 +216,34 @@ The first full-feature-set run of each variant is its calibration run; `score` m
 The calibration median uses every calibration run of the full feature set. Passed and gate-failed runs count with their minutes. Timeout and stalled runs count as longer than any finished run. Only passed runs enter the per-variant time comparison.
 
 Calibration rows stay in `results.csv`. If Summary was dropped, only the full-feature-set calibration rows are left out of the summary; every other row counts. They are in a different feature set from the scored runs, so they are never compared with them.
+
+### Pinned A/B/C review-policy comparison
+
+The comparison for [#49](https://github.com/ncksol/ai_tools/issues/49) uses three immutable variants, not the moving installed `orchestrator` agent:
+
+| Variant / result label | Policy |
+|---|---|
+| A / `orchestrator-review-a` | The original `orchestrator` at `a7e3fb04a697745a3cf1cc82137429913bbc0982`. |
+| B / `orchestrator-review-b` | The new tiered cross-vendor reviews and final panel at main commit `c7b48ea1f78c702b48646019eb568220d27b74ef` (the squash merge of [#50](https://github.com/ncksol/ai_tools/pull/50)). |
+| C / `orchestrator-review-c` | B with Argon at `high` for regular reviews of Opus-written code only. Sonnet routing, critical reviews and final panels remain B. |
+
+All snapshots live in `variants/`, outside `ghcp/agents/`. `variants/review-policy.json` pins their exact bytes. Its three `variants` entries use the alias file ID as both result label and `agent`, and include the full source `revision`, relative `file` path and `sha256`. One root `workers` map pins `orchestrator-worker` for all three; its source is identical in A and B. A and B change only their source frontmatter's `name`. C additionally changes exactly the regular-review tier row and routing sentence. Tests compare normalized source hashes, not moving branch names.
+
+Before a batch, **the user** registers each alias as one file at the top level of `~/.copilot/agents/`: `orchestrator-review-a.agent.md`, `orchestrator-review-b.agent.md` and `orchestrator-review-c.agent.md`. Copy the corresponding files from `variants/`, or link each file individually into a checkout that will not move. Do not link the whole `variants/` folder: folder registration changes agent IDs. Keep each `name` equal to its file ID, its source description unchanged and `disable-model-invocation: true`. Do not add policy or pricing metadata to alias frontmatter or labels. The snapshots omit `user-invocable: false` because its effect on detached top-level `kickoff.agent` has not been verified.
+
+Register only when no batch is active, without replacing the normal `orchestrator` or an existing alias from another batch. The installed `orchestrator-worker` must match the manifest's shared worker hash; a missing or different worker fails preflight. If it is linked into a moving checkout, pulling that checkout during a batch stops the batch. Normal installed `orchestrator` updates alone do not affect manifest batches: they pin only declared aliases and workers, not agent names mentioned in prompt prose. The kit never installs or changes agents. After the pilot and when no batch is active, remove only the three temporary alias files from `~/.copilot/agents/`; retain the normal agents and worker.
+
+The user launches the pilot with:
+
+```bash
+npm run batch -- init --variants-file variants/review-policy.json --runs 3 --deadline 07:00 --memory-off
+```
+
+`--variants-file` cannot be combined with `--variants` or a self-test-only batch. The batch stores the resolved manifest and pins its bytes and snapshots. At launch it verifies the registered files and records the alias hash and bundle digest. It re-hashes them before scoring and flags `agent-drift` on a mismatch, retaining the launch hashes in the result. These prove registered-file provenance, not which prompt bytes the CLI loaded. The scorer accepts the complete set of `--agent-revision`, `--agent-sha256` and `--agent-bundle-sha256` flags with session-log timing; the batch supplies them automatically.
+
+**Every exact A/B/C bundle must first have a full-feature calibration row; the early shortcut is disabled.** A historical row without matching alias and bundle hashes does not replace A's calibration. Once all three exist, the runner computes the Calibration rule once over **all full-feature calibration rows**, including the historical 65.7-minute row, and freezes that shared decision in batch state before any scored run. If the median exceeds 30 minutes, all variants drop Summary. If it is 30 minutes or less, the runner stops through its normal notification and morning-report path: keeping Summary contradicts the approved pilot, so it requires a user decision rather than silently changing scope. Pinned calibration rows never enter the scored comparison.
+
+Start with three scored attempts per variant after calibration: A1/B1/C1, A2/B2/C2, A3/B3/C3. Failures count toward those three attempts and the pass rate; only passes enter median minutes. A manifest batch's `--runs N` means **N cumulative scored attempts per variant**, matching label, logged agent, alias hash, bundle hash and decided feature set in `results.csv`. A pinned row whose logged agent differs from its label, or is missing, stays in the CSV for diagnosis but contributes to no calibration, calibration median, pilot target or scored comparison. The batch lets that run finish and its swarm drain, then stops through the normal failure notification/report path without starting another run. A second night plans only missing attempts, keeps the prior pilot's feature set and stops at three each, rather than adding another nine runs. Legacy `--variants` batches still count attempts within that batch. After the pilot, the user fixes the total sample size before authorizing a larger `--runs N`. Do not change policies, prices or test suites midway through a batch.
 
 ## Manual timing
 
@@ -201,12 +285,12 @@ Two parts do the work:
 - **The runner**, `npm run batch` (`scripts/batch.ts` and `scripts/lib/batch/`), does every step a script can do. It plans the runs, creates each run repo with `new-run --n <k>`, watches the run's session logs, scores, commits `results.csv`, sends notifications and writes the morning report. The plan and all state are files in `~/orch-evals/batches/<id>/`, so any step can be resumed.
 - **The driver** is one app session running the `eval-runner` agent (`ghcp/agents/eval-runner.agent.md`) in autopilot. It makes only the app-tool calls the runner can't make, and a few judgments. It waits inside `node scripts/batch.ts next`, which blocks for up to 7 minutes and returns the next step as JSON, so the driver stays busy and polls nothing through the model.
 
-Only one batch is active on the machine at a time (`~/orch-evals/active-batch/`, whose newest numbered revision names the batch by its folder and id), and only one driver runs a batch: the first driver to call `next` owns it. Another driver is refused while the owner's session is alive, and takes over once it is gone. Every change to a batch's state happens under a kernel lock (`flock`, through `/usr/bin/lockf`) on `runner.lock` in its folder; the kernel releases it when its holder exits, so a crash never leaves a stale lock. Every command the runner starts (git, `gh`, `new-run`, `score`) has a time limit. When it runs out, the command's whole process group gets SIGTERM, then SIGKILL after 5 seconds if anything in it is still alive, and the call returns only once the group is gone or SIGKILL has been sent and waited for (up to 5 more seconds); the command counts as failed.
+Only one batch is active on the machine at a time (`~/orch-evals/active-batch/`, whose newest numbered revision names the batch by its folder and id), and only one driver runs a batch: the first driver to call `next` owns it. Another driver is refused while the owner's session is alive, and takes over once it is gone. Every change to a batch's state happens under a kernel lock (`flock`, through `/usr/bin/lockf`) on `runner.lock` in its folder; the kernel releases it when its holder exits, so a crash never leaves a stale lock. The holder has its own process group so a Ctrl-C to the runner's group cannot drop the lock before command cleanup finishes. It still exits on stdin EOF if the runner dies, including SIGKILL. Every command the runner starts (git, `gh`, `new-run`, `score`) has a time limit. When it runs out, the command's whole process group gets SIGTERM, then SIGKILL after 5 seconds if anything in it is still alive, and the call returns only once the group is gone or SIGKILL has been sent and waited for (up to 5 more seconds); the command counts as failed.
 
 ### How a run goes
 
 1. The runner creates the run repo with `new-run`, choosing `--n` itself.
-2. The driver calls `create_project` with the clone's path, then `create_session` with `detached: true`, `coordinate_with_creator: false`, `workspace_type: "worktree"` and the kickoff: the exact text of `kickoff.md`, the variant as `agent`, `claude-opus-5.5` at `max`, `context_tier: "long_context"`, `mode: "interactive"`. The run is a top-level session whose kickoff has no `data.source` and no cross-session tag, so `score` sees it as started by you.
+2. The driver calls `create_project` with the clone's path, then `create_session` with `detached: true`, `coordinate_with_creator: false`, `workspace_type: "worktree"` and the kickoff: the exact text of `kickoff.md`, the variant as `agent` (or its pinned manifest alias), `claude-opus-5.5` at `max`, `context_tier: "long_context"`, `mode: "interactive"`. The run is a top-level session whose kickoff has no `data.source` and no cross-session tag, so `score` sees it as started by you.
 3. Questions:
    - An `ask_user` question is answered at once with `answer_session_input`, as free text, word for word from `answers.md`. A `[unit=… need=plan]` tag means row 1 and `need=pr` row 2, and the action carries that reply. For any other question the action carries the replies of rows 3 and 4, and the driver picks row 3 (about the spec) or row 4. If a prompt allows no free text, the driver picks the closest choice and the run is flagged.
    - The driver answers only the question the runner saw in the log. If `get_session` shows a different question, or a retry shows a different `request_id` from the one seen before (on an answer or a failed attempt), it answers nothing and the run is flagged.
@@ -223,10 +307,10 @@ Only one batch is active on the machine at a time (`~/orch-evals/active-batch/`,
 
 ### What the runner decides
 
-- **Order:** one run at a time, never in parallel. The variants alternate (A1, B1, A2, B2, …): the variant with the fewest scored runs in this batch goes next. A run with no row in `results.csv` doesn't count, so a void run is replaced. The defaults are `orchestrator` and `session-orchestrator` with 3 scored runs each.
+- **Order:** one run at a time, never in parallel. The variant with the fewest scored runs goes next: in the current batch for legacy `--variants`, or across matching history for `--variants-file`. Ties follow the listed variant order. A run with no row in `results.csv` doesn't count, so a void run is replaced. The defaults are `orchestrator` and `session-orchestrator` with 3 scored runs each.
 - **Deadline:** no run starts at or after the deadline, 07:00 local time by default. The runner checks it, and the pinned inputs, again just before it gives the driver a `create_session`, so a run planned before the deadline doesn't start after it. A run in progress finishes.
-- **Calibration:** the rule in [Calibration](#calibration), applied automatically. The calibration median uses every full-feature-set calibration row in `results.csv`, plus one run for each batch variant that has no row yet. If the decision is the same whether those missing runs take 0 minutes or never finish, no calibration run is needed. With today's `results.csv`, run 1's 65.7 minutes makes the median over 30 minutes for two variants even at 0 minutes, so every scored run uses `--features policy,reports,import`. Otherwise the calibration runs go first and the decision follows from their rows. `npm run score -- --summary` still works on the result.
-- **Pinning:** at the start the runner hashes the agent files under test and every installed agent they name (their workers), resolved through the `~/.copilot/agents` symlinks, plus `kickoff.md`, `answers.md`, and the app and CLI versions. If any of them changes, no further run starts and the batch stops.
+- **Calibration:** the rule in [Calibration](#calibration), applied automatically. For ordinary `--variants` batches, the calibration median uses every full-feature calibration row, plus one run for each batch variant that has no row yet. If the decision is the same whether those missing runs take 0 minutes or never finish, no calibration run is needed. With today's `results.csv`, run 1's 65.7 minutes makes the median over 30 minutes for two variants even at 0 minutes, so every scored run uses `--features policy,reports,import`. `--variants-file` disables that shortcut and freezes the shared decision after every pinned variant calibrates, as described above.
+- **Pinning:** at the start the runner hashes the agent files under test and their workers, resolved through the `~/.copilot/agents` symlinks. Ordinary variants use named-agent discovery; manifest variants use only their explicitly declared aliases and workers. It also pins `kickoff.md`, `answers.md`, the scorer, acceptance and robustness suites, pricing files, script libraries, the manifest and snapshots if selected, and app/CLI versions. If any pinned input changes, no further run starts and the batch stops.
 - **Stopping:** the batch stops early after two runs in a row that fail to start, two runs in a row that `score` can't score, a failed self-test, a pinning change, a results commit that keeps failing, or a swarm that is still busy after the stop message. It notifies you either way.
 - **Unconfirmed starts:** if the driver stops after calling `create_session` but before recording it, the runner looks for the session in the logs and `~/.copilot/data.db`, from the time the action was first issued, before doing anything else. It adopts the session if it finds one; otherwise it waits 5 minutes, then gives the action once more if the run may still start. If a session turns up later for a run it gave up on, no further run starts.
 
@@ -240,6 +324,7 @@ Each run's flags are listed in the report and the run's phone notification. A fl
 | `permission-prompt`, `open-tool-at-stall` | A tool-permission prompt was pending or denied, or a tool call was still open when the run stalled. No app tool can answer either. |
 | `answer-mismatch` | The pending question or its `request_id` differed from the one the runner saw; it wasn't answered. |
 | `kickoff-text`, `kickoff-shape`, `session-settings` | The kickoff text, its sender, or the agent, model, effort or context tier differ from what was asked for. The kickoff is compared with `kickoff.md` without its trailing newline, which is what a manual paste delivered in run 1. |
+| `agent-drift` | A registered alias or worker no longer matches its launch pin, or launch provenance is missing. The result retains any verified launch hashes; check the run before trusting its comparison group. |
 | `swarm-not-quiet` | The swarm was still active when the run was scored, after scoring, or after the stop message. |
 | `clock-jump`, `app-db` | The clock went back, or a query of `~/.copilot/data.db` failed. Durations never go negative. |
 | `driver-gap` | The driver was away for over 10 minutes during the run. If the app stopped the run's session meanwhile, the run is void instead. |
@@ -266,7 +351,7 @@ Each run's flags are listed in the report and the run's phone notification. A fl
    ```
 
    The environment variable `ORCH_EVAL_NTFY_URL` overrides the file, but app sessions may not see variables from your shell. The runner hands the URL to `curl` on stdin and never logs or stores it. Without a topic the batch runs without notifications.
-3. Optionally, see the whole flow without the app: `npm run batch -- rehearse` runs a batch of four runs and a self-test in a scratch folder. The app and the driver are replaced by a script, and notifications go to a local stub. It uses the real `new-run --dry-run`, `score` and git, and touches nothing outside the scratch folder. `score` times timeout and stalled runs to the real clock, so their minutes are wrong in a rehearsal.
+3. Optionally, see the whole flow without the app: `npm run batch -- rehearse` runs a batch of four runs and a self-test in a scratch folder. The app and the driver are replaced by a script, and notifications go to a local stub. It uses the real `new-run --dry-run`, `score` and git, and touches nothing outside the scratch folder. Its deliberately absent scratch app database produces incomplete cost with a warning, not a complete dollar total. `score` times timeout and stalled runs to the real clock, so their minutes are wrong in a rehearsal.
 
 ### Starting a batch
 
@@ -313,7 +398,7 @@ The driver has its own rule for the self-test: the response after the answered q
 
 | Command | What it does |
 |---|---|
-| `npm run batch -- init [--variants a,b] [--runs 3] [--deadline 07:00] [--memory-off]` | Runs the preflight and creates a batch. Other options: `--model`, `--effort`, `--context-tier`, `--owner`, `--self-test-model`, `--self-test-effort`, `--self-test-agent`, `--runs-dir`, `--batches-dir`, `--no-push`. |
+| `npm run batch -- init [--variants a,b \| --variants-file <manifest.json>] [--runs 3] [--deadline 07:00] [--memory-off]` | Runs the preflight and creates a batch. Other options: `--model`, `--effort`, `--context-tier`, `--owner`, `--self-test-model`, `--self-test-effort`, `--self-test-agent`, `--runs-dir`, `--batches-dir`, `--no-push`. |
 | `npm run batch -- selftest [--memory-off]` | Creates a batch that only runs the self-test. |
 | `npm run batch -- next --batch <id>` | The driver's loop: does what it can, then prints the next action as JSON. |
 | `npm run batch -- record --batch <id> --action <id> ...` | Records an action's result. |
@@ -357,7 +442,7 @@ npm test
 npm run check
 ```
 
-`npm run check` runs the kit's local acceptance checks and prints one `PASS` or `FAIL` line per check. The score check needs a real session log, so it prints `SKIP` unless you run `node scripts/check-kit.ts --session <id>`.
+`npm run check` runs the kit's local acceptance checks, including the robustness suite on the reference, and prints one `PASS` or `FAIL` line per check. The real-log score check prints `SKIP` unless you run `node scripts/check-kit.ts --session <id>`; the kit tests still exercise scoring with synthetic whole-swarm logs. They also prove that a permissive parser passes all 65 gate tests but fails nine robustness cases without changing its score, and run a fully stubbed 12-attempt A/B/C calibration-and-pilot sequence without real app sessions or GitHub repos.
 
 To run the acceptance suite on an app folder by hand:
 

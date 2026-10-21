@@ -11,6 +11,7 @@ export const TIMEOUT_EXIT_CODE = 124;
 // After SIGTERM, how long the process group gets before SIGKILL, and how long SIGKILL gets.
 const TERM_GRACE_MS = 5000;
 const KILL_GRACE_MS = 5000;
+const parentStops = new Set<Promise<void>>();
 
 const delay = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
 
@@ -36,10 +37,12 @@ function signalGroup(pgid: number, signal: NodeJS.Signals): void {
 // settles (exit code 124) only once the group is gone or SIGKILL has been sent and waited for. The
 // timers keep the caller alive meanwhile, so a descendant that ignores SIGTERM can't outlive it.
 // A process that leaves the group (setsid) is out of reach.
+// Parent termination also forwards SIGTERM before escalation, then exits 143/130 after all grouped
+// commands stop, running exit cleanup hooks. Nested supervisors need a shorter shutdownGraceMs.
 export function run(
   cmd: string,
   args: string[],
-  opts: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number } = {},
+  opts: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number; shutdownGraceMs?: number } = {},
 ): Promise<ProcResult> {
   return new Promise((resolve, reject) => {
     const grouped = opts.timeoutMs !== undefined;
@@ -51,6 +54,43 @@ export function run(
     let closed: () => void = () => {};
     const closedOnce = new Promise<void>((done) => (closed = done));
     let escalation: Promise<string> | null = null;
+    let parentStopping = false;
+
+    const onTerm = () => stopWithParent("SIGTERM");
+    const onInt = () => stopWithParent("SIGINT");
+    function removeSignalHandlers(): void {
+      process.off("SIGTERM", onTerm);
+      process.off("SIGINT", onInt);
+    }
+    function stopWithParent(signal: "SIGTERM" | "SIGINT"): void {
+      if (parentStopping) return;
+      parentStopping = true;
+      if (timer) clearTimeout(timer);
+      const stopping = (async () => {
+        if (child.pid) {
+          const pgid = child.pid;
+          signalGroup(pgid, "SIGTERM");
+          for (const until = Date.now() + (opts.shutdownGraceMs ?? TERM_GRACE_MS); groupAlive(pgid) && Date.now() < until; ) await delay(25);
+          if (groupAlive(pgid)) {
+            signalGroup(pgid, "SIGKILL");
+            for (const until = Date.now() + 1000; groupAlive(pgid) && Date.now() < until; ) await delay(25);
+            if (groupAlive(pgid)) process.stderr.write(`Process group ${pgid} was still alive after shutdown SIGKILL\n`);
+          }
+          await Promise.race([closedOnce, delay(100)]);
+        }
+        removeSignalHandlers();
+      })();
+      parentStops.add(stopping);
+      void stopping.then(() => {
+        parentStops.delete(stopping);
+        if (parentStops.size === 0) process.exit(signal === "SIGTERM" ? 143 : 130);
+      });
+    }
+    if (grouped) {
+      // An outer supervisor cannot reach this detached group when it terminates our own group.
+      process.on("SIGTERM", onTerm);
+      process.on("SIGINT", onInt);
+    }
 
     const timer = grouped
       ? setTimeout(() => {
@@ -74,6 +114,7 @@ export function run(
       await Promise.race([closedOnce, delay(2000)]);
       if (settled) return;
       settled = true;
+      removeSignalHandlers();
       child.stdout?.destroy();
       child.stderr?.destroy();
       const sep = stderr.endsWith("\n") || stderr === "" ? "" : "\n";
@@ -83,7 +124,9 @@ export function run(
     child.stdout.on("data", (chunk) => (stdout += chunk));
     child.stderr.on("data", (chunk) => (stderr += chunk));
     child.on("error", (error) => {
+      if (parentStopping) return;
       if (timer) clearTimeout(timer);
+      removeSignalHandlers();
       if (settled) return;
       settled = true;
       reject(error);
@@ -91,8 +134,9 @@ export function run(
     child.on("close", (code) => {
       exitCode = code;
       closed();
-      if (escalation) return; // settleAfterTimeout resolves once the group is gone
+      if (escalation || parentStopping) return;
       if (timer) clearTimeout(timer);
+      removeSignalHandlers();
       if (settled) return;
       settled = true;
       resolve({ code: exitCode ?? 1, stdout, stderr });

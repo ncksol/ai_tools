@@ -5,6 +5,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Feature } from "../features.ts";
 import { KIT_DIR } from "../suite.ts";
+import { variantAgents, type VariantSet } from "../variants.ts";
+import type { PolicyCalibration } from "./plan.ts";
 
 export const ORCHESTRATOR_AGENTS = ["orchestrator", "session-orchestrator"];
 
@@ -13,6 +15,7 @@ export interface BatchConfig {
   createdAt: string;
   dir: string;
   variants: string[];
+  variantSet?: VariantSet;
   runsPerVariant: number;
   // No new run starts at or after this time (ISO).
   deadline: string;
@@ -62,6 +65,7 @@ export type FlagCode =
   | "kickoff-text"
   | "kickoff-shape"
   | "session-settings"
+  | "agent-drift"
   | "swarm-not-quiet"
   | "driver-gap"
   | "answer-source-unknown"
@@ -125,6 +129,8 @@ export interface RunState {
   projectId?: string;
   appSessionId?: string;
   sessionId?: string;
+  agentSha256?: string;
+  agentBundleSha256?: string;
   // When create_session was first issued (the window for finding the session) and last issued.
   startRequestedAt?: string;
   lastStartAt?: string;
@@ -241,6 +247,7 @@ export interface BatchState {
   lastHeartbeatAt: string | null;
   stopRequested: boolean;
   calibration: string;
+  policyCalibration?: PolicyCalibration;
   startedAt: string;
   // The ai_tools commit results.csv was at when the batch started; the report lists commits after it.
   resultsBase?: string;
@@ -291,9 +298,16 @@ export function validateConfig(config: BatchConfig): string[] {
     names.add(variant);
   }
   if (!config.selfTest.only && config.variants.length === 0) problems.push("no variants");
+  if (config.variantSet) {
+    const labels = Object.keys(config.variantSet.variants);
+    if (labels.length !== config.variants.length || labels.some((label) => !names.has(label))) problems.push("variants must match every label in the pinned manifest");
+    if (labels.some((label) => label !== config.variantSet!.variants[label].agent)) problems.push("each variant label must equal its agent file ID and name");
+    if (config.selfTest.only) problems.push("a variant manifest cannot be used for a self-test-only batch");
+  }
   if (!Number.isSafeInteger(config.runsPerVariant) || config.runsPerVariant < 1) problems.push("--runs must be a positive integer");
   const agent = config.selfTest.agent;
-  if (agent && (ORCHESTRATOR_AGENTS.includes(agent) || config.variants.includes(agent))) {
+  if (agent && (ORCHESTRATOR_AGENTS.includes(agent) || config.variants.includes(agent) ||
+      (config.variantSet && variantAgents(config.variantSet).includes(agent)))) {
     problems.push(`the self-test must not use the agent "${agent}": never an orchestrator or a variant under test`);
   }
   if (config.selfTest.only && !config.selfTest.enabled) problems.push("--self-test-only needs the self-test");
