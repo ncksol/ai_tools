@@ -106,16 +106,22 @@ export class FakeApp implements AppDb {
       stopped: false,
       createdAt: new Date(this.clock.now).toISOString(),
     });
-    return appId;
+    // As in the app: the result names the Copilot session ID, not the workspace ID.
+    return id;
+  }
+
+  // The app's session tools accept either the workspace ID or the Copilot session ID.
+  private find(anyId: string): FakeSession | undefined {
+    return this.sessions.get(anyId) ?? [...this.sessions.values()].find((session) => session.id === anyId);
   }
 
   getSession(appId: string): { awaiting_input: { request_id: string; question: string } | null } {
-    const session = this.sessions.get(appId);
+    const session = this.find(appId);
     return { awaiting_input: session?.ask ? { request_id: session.ask.requestId, question: session.ask.question } : null };
   }
 
   answer(appId: string, requestId: string, text: string): void {
-    const session = this.sessions.get(appId);
+    const session = this.find(appId);
     if (!session?.ask || session.ask.requestId !== requestId) throw new Error("no such pending question");
     this.write(session.id, "tool.execution_complete", { toolCallId: session.ask.toolCallId, success: true, result: { content: `The user answered: ${text}` } });
     session.answered = text;
@@ -124,7 +130,7 @@ export class FakeApp implements AppDb {
   }
 
   send(appId: string, text: string): void {
-    const session = this.sessions.get(appId);
+    const session = this.find(appId);
     if (!session) throw new Error(`no session ${appId}`);
     this.write(session.id, "user.message", {
       content: text,

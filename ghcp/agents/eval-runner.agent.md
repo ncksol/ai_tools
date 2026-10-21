@@ -56,9 +56,9 @@ Only one driver runs a batch. If `next` or `record` says another driver owns the
 
 **`create_project`**: call `create_project` with `tool.args`. Record `--project-id <id>` with the project id from the result, or `--failed "<error>"`.
 
-**`create_session`**: call `create_session` with `tool.args`, exactly as given: every field, and the kickoff prompt character for character, with its line breaks. Record `--session-id <id>` with the project session id from the result, or `--failed "<error>"`.
+**`create_session`**: call `create_session` with `tool.args`, exactly as given: every field, and the kickoff prompt character for character, with its line breaks. Record `--session-id <id>` with the session id from the result, or `--failed "<error>"`.
 
-**`lookup_session`**: call `get_session` with `tool.args.project_session_id`. Record `--session-id <id>` with the project session id it reports.
+**`lookup_session`**: call `get_session` with `tool.args.project_session_id`. Record `--session-id <id>` with the session id it reports.
 
 **`answer_question`**: a run's orchestrator, or the self-test, is waiting on an `ask_user` question. Answer at once:
 
