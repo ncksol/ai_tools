@@ -27,6 +27,10 @@ export interface AppDb {
   creatorLinks(appSessionId: string): { creator: string | null; coordinator: string | null; createdBy: string | null } | null;
   childSessions(sessionId: string): string[] | null;
   sessionAliases(sessionId: string): string[] | null;
+  // The login of the app's default account, which projects with no account of their own use.
+  defaultAccount(): string | null;
+  // The login a project's sessions run as.
+  projectAccount(projectId: string): string | null;
   // Every table and column the runner reads, checked against the database's schema.
   probe(): string[];
   // Query failures since the last call, for flags.
@@ -36,7 +40,8 @@ export interface AppDb {
 // The columns the runner reads. probe() checks each one exists.
 export const APP_DB_COLUMNS: Record<string, string[]> = {
   workspaces: ["id", "session_id", "project_id", "name", "archived_at", "created_by", "created_at", "creator_session_id", "coordinating_creator_session_id"],
-  projects: ["id", "auto_approve"],
+  projects: ["id", "auto_approve", "copilot_account_id", "github_account_id"],
+  accounts: ["id", "login", "is_default"],
   sessions: ["id", "was_interrupted", "interruption_reason"],
   workspace_session_aliases: ["session_id", "workspace_id"],
 };
@@ -73,6 +78,10 @@ export function openAppDb(path: string): AppDb {
     });
   const workspaceId = (id: string) => text(cell("workspaces", "id", "session_id", id)) ??
     text(cell("workspace_session_aliases", "workspace_id", "session_id", id));
+
+  const login = (accountId: string) => text(cell("accounts", "login", "id", accountId));
+  const defaultAccount = () => text(withDb("accounts.login by is_default", (db) =>
+    (db.prepare("SELECT login AS v FROM accounts WHERE is_default = 1").get() as { v: unknown } | undefined)?.v ?? null));
 
   return {
     sessionForWorkspace: (id) => text(cell("workspaces", "session_id", "id", id)),
@@ -130,6 +139,12 @@ export function openAppDb(path: string): AppDb {
       const current = text(cell("workspaces", "session_id", "id", workspace));
       return [...new Set([...aliases, ...(current ? [current] : [])])].filter((alias) => alias !== id);
     },
+    defaultAccount,
+    // As observed in the app: the project's Copilot account, else its GitHub account, else the default.
+    projectAccount: (id) => {
+      const pinned = text(cell("projects", "copilot_account_id", "id", id)) ?? text(cell("projects", "github_account_id", "id", id));
+      return pinned ? login(pinned) : defaultAccount();
+    },
     probe: () => {
       const problems: string[] = [];
       for (const [table, columns] of Object.entries(APP_DB_COLUMNS)) {
@@ -161,6 +176,8 @@ export const noAppDb: AppDb = {
   creatorLinks: () => null,
   childSessions: () => null,
   sessionAliases: () => null,
+  defaultAccount: () => null,
+  projectAccount: () => null,
   probe: () => ["no app database (dry run)"],
   takeErrors: () => [],
 };

@@ -621,6 +621,8 @@ export function verifySelfTest(ctx: Ctx, test: SelfTestState): void {
   const askDone = answered ? answered.startAt : Infinity;
   check("end detected", Boolean(test.final) && ms(test.final!.timestamp) >= askDone, test.final ? `final message at ${test.final.timestamp}` : "no final message judged");
   const autoApprove = test.projectId ? deps.appDb.projectAutoApprove(test.projectId) : null;
+  const account = test.projectId ? deps.appDb.projectAccount(test.projectId) : null;
+  check("session runs as the batch owner", account?.toLowerCase() === config.owner.toLowerCase(), `project account ${account ?? "unreadable"}, owner ${config.owner}`);
   check("new project auto-approves tools", autoApprove === 1, `projects.auto_approve = ${autoApprove ?? "unreadable"}`);
   // The workspace row may have been written after the session was recorded.
   if (test.appSessionId) test.appSessionId = workspaceIdFor(ctx, test.appSessionId);

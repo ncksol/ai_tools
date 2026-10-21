@@ -48,6 +48,10 @@ export class FakeApp implements AppDb {
     return [...this.sessions.values()].find((session) => session.id === sessionId)?.children ?? [];
   }
   sessionAliases(): string[] { return []; }
+  // Every project uses the app's default account.
+  account = "ncksol";
+  defaultAccount(): string | null { return this.account; }
+  projectAccount(projectId: string): string | null { return this.projects.has(projectId) ? this.account : null; }
 
   constructor(stateDir: string, clock: { now: number }, scenarios: Scenario[]) {
     this.stateDir = stateDir;
