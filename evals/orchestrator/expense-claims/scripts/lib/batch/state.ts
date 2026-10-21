@@ -8,7 +8,7 @@ import { KIT_DIR } from "../suite.ts";
 import { variantAgents, type VariantSet } from "../variants.ts";
 import type { PolicyCalibration } from "./plan.ts";
 
-export const ORCHESTRATOR_AGENTS = ["orchestrator", "session-orchestrator"];
+export const ORCHESTRATOR_AGENTS = ["orchestrator", "session-orchestrator", "hands-on-orchestrator", "hands-on-session-orchestrator"];
 
 export interface BatchConfig {
   id: string;

@@ -426,6 +426,29 @@ test("the self-test never uses an orchestrator or a variant under test", () => {
   assert.match(validateConfig(base as never).join(), /must not use the agent "orchestrator"/);
   assert.match(validateConfig({ ...base, selfTest: { ...base.selfTest, agent: "session-orchestrator" } } as never).join(), /must not use/);
   assert.deepEqual(validateConfig({ ...base, selfTest: { ...base.selfTest, agent: null } } as never), []);
+  for (const agent of ["hands-on-orchestrator", "hands-on-session-orchestrator"]) {
+    const config = { ...base, variants: ["variant-a"], selfTest: { ...base.selfTest, agent } };
+    assert.match(validateConfig(config as never).join(), new RegExp(`must not use the agent "${agent}"`));
+  }
+});
+
+test("a self-test session that ran a hands-on orchestrator fails its agent check", async () => {
+  for (const agent of ["hands-on-orchestrator", "hands-on-session-orchestrator"]) {
+    const h = await make({ scenarios: ["ask-final"], selfTest: true });
+    await h.drive(await h.until((a) => a.action === "create_session"));
+    const session = [...h.app.sessions.values()][0];
+    assert.equal(session.scenario, "selftest");
+    const path = eventsPath(h.config.stateDir, session.id);
+    const events = readFileSync(path, "utf8").trim().split("\n").map((line) => JSON.parse(line) as LogEvent);
+    events.splice(1, 0, { type: "subagent.selected", timestamp: events[0].timestamp, data: { agentName: agent } });
+    writeFileSync(path, events.map((event) => JSON.stringify(event)).join("\n") + "\n");
+    await h.until(() => false);
+    const state = h.state();
+    assert.equal(state.selftests[0].status, "failed");
+    const check = state.selftests[0].checks.find((c) => c.name === "agent")!;
+    assert.deepEqual([check.ok, check.detail], [false, `selected: ${agent}`]);
+    assert.equal(state.runs.length, 0);
+  }
 });
 
 test("an empty results.csv still works", async () => {
