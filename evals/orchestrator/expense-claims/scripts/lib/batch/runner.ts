@@ -191,14 +191,14 @@ export function render(ctx: Ctx, state: BatchState, pending: PendingAction, reis
         ...base,
         what: "Call create_session with exactly these arguments, copied verbatim (the kickoff prompt too). Never start a run any other way.",
         tool: { name: "create_session", args: p.args as Record<string, unknown> },
-        record: [recordCommand(ctx, pending.id, "--session-id <project session id from the result>"), recordCommand(ctx, pending.id, '--failed "<error>"')],
+        record: [recordCommand(ctx, pending.id, "--session-id <session id from the result>"), recordCommand(ctx, pending.id, '--failed "<error>"')],
       };
     case "lookup_session":
       return {
         ...base,
-        what: "Call get_session with this session id and record the project session id it reports.",
+        what: "Call get_session with this session id and record the session id it reports.",
         tool: { name: "get_session", args: { project_session_id: p.sessionId } },
-        record: [recordCommand(ctx, pending.id, "--session-id <project session id>"), recordCommand(ctx, pending.id, '--failed "<error>"')],
+        record: [recordCommand(ctx, pending.id, "--session-id <session id>"), recordCommand(ctx, pending.id, '--failed "<error>"')],
       };
     case "answer_question": {
       // tool.args.answer only ever holds a real reply. Without it, the driver picks a candidate.
@@ -262,6 +262,13 @@ export function render(ctx: Ctx, state: BatchState, pending: PendingAction, reis
 }
 
 // ---------- session lookup ----------
+
+// create_session's result names the Copilot session ID, but data.db keys workspaces by their own ID.
+// Either is accepted from the driver; this gives the workspace ID when data.db knows it.
+function workspaceIdFor(ctx: Ctx, id: string): string {
+  if (ctx.deps.appDb.sessionForWorkspace(id)) return id;
+  return ctx.deps.appDb.workspaceForSession(id) ?? id;
+}
 
 function knownSessionDir(ctx: Ctx, id: string | undefined | null): string | null {
   return id && existsSync(eventsPath(ctx.config.stateDir, id)) ? id : null;
@@ -615,6 +622,8 @@ export function verifySelfTest(ctx: Ctx, test: SelfTestState): void {
   check("end detected", Boolean(test.final) && ms(test.final!.timestamp) >= askDone, test.final ? `final message at ${test.final.timestamp}` : "no final message judged");
   const autoApprove = test.projectId ? deps.appDb.projectAutoApprove(test.projectId) : null;
   check("new project auto-approves tools", autoApprove === 1, `projects.auto_approve = ${autoApprove ?? "unreadable"}`);
+  // The workspace row may have been written after the session was recorded.
+  if (test.appSessionId) test.appSessionId = workspaceIdFor(ctx, test.appSessionId);
   const links = test.appSessionId ? deps.appDb.creatorLinks(test.appSessionId) : null;
   check("session is detached (no creator link)", Boolean(links) && !links!.creator && !links!.coordinator, links ? `creator ${links.creator ?? "none"}, coordinator ${links.coordinator ?? "none"}` : "workspace row unreadable");
   // Every app-database lookup the runner relies on, on this real session and project.
@@ -1461,8 +1470,9 @@ function applyRecord(ctx: Ctx, state: BatchState, input: RecordInput): string {
         else voidRun(ctx, state, run!, why, true);
         message = why;
       } else {
-        if (test) Object.assign(test, { appSessionId: input.sessionId, status: "running" });
-        else Object.assign(run!, { appSessionId: input.sessionId, status: "running" });
+        const appSessionId = workspaceIdFor(ctx, input.sessionId);
+        if (test) Object.assign(test, { appSessionId, status: "running" });
+        else Object.assign(run!, { appSessionId, status: "running" });
         message = `session ${input.sessionId} recorded`;
       }
       break;
