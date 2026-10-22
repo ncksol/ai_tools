@@ -124,6 +124,9 @@ Run these from the plugin folder.
 | `npm run snapshot -- --list` | Print the swarms as JSON; `--swarm <id>`, `--history` and `--run <id>` print the rest |
 | `npm test` | Run the unit tests |
 | `npm run validate` | Check the plugin's manifests, files and marketplace entry, the six agents and their worker IDs, and that the CHANGELOG has an entry for the current version |
+| `npm run release:bump -- <version\|patch\|minor\|major>` | Advance the single package version and prepare its changelog section |
+| `npm run release:publish -- --dry-run` | Check release readiness and preview the tag and notes without publishing |
+| `npm run release:publish` | Tag the current main commit, push only that tag and create its GitHub Release |
 | `npm run check:layout` | Check every view, in the light and the dark theme, for overlap, clipped text, type, spacing and contrast at every width, and that live updates leave the page steady, that History refreshes in place when a run finishes or the page reconnects, and that the theme button switches and remembers the theme, in a local headless Chrome, Chromium or Edge (set `CHROME_PATH` to choose one); `-- --live <url>` checks a running dashboard, and `-- --engine webkit` runs the same checks in WebKit (see below) |
 | `node scripts/check-cockpit.mjs` | Run only the cockpit's checks: the scene, the panels' arrangement, type, spacing and contrast, motion, the links between the windows and the regular view's speed, in a local headless Chrome, Chromium or Edge (set `CHROME_PATH` to choose one) (`--engine webkit`, `--only <check>`, `--screenshots <dir>`); `npm run check:layout` runs them too |
 | `node scripts/cockpit-gpu.mjs` | Measure the cockpit's GPU time per frame on this machine for High and Balanced (`--engine webkit`) |
@@ -139,6 +142,37 @@ PLAYWRIGHT_CORE=<folder>/node_modules/playwright-core npm run check:layout -- --
 ```
 
 Without Playwright or its WebKit build the check says so and skips. `npm test` and `npm run validate` never need it.
+
+## Releases
+
+Agents and dashboard ship as one version. Any change to either requires a version bump in `plugin.json`, `package.json` and the `wintermute` entry in the root marketplace, with notes in [CHANGELOG.md](CHANGELOG.md). The commands require Node.js 18 or later and no npm dependencies. Publishing also requires Git, authenticated `gh`, and permission to push tags and create releases.
+
+Before merging a change, run from `ghcp/plugins/wintermute`:
+
+```bash
+npm run release:bump -- patch
+# Replace the new CHANGELOG.md TODO with release notes.
+npm test && npm run validate
+```
+
+Use `minor` for features and, while the package is 0.x, incompatible changes to agent IDs, invocation behaviour, the canvas ID or report/dashboard contracts. Use `patch` for compatible fixes; `major` advances to the next major version. You can also give an explicit stable SemVer such as `0.3.0`. Leading zeroes, `v` prefixes, prerelease/build suffixes and versions that do not increase are rejected. The bump command preserves an existing changelog section for the chosen version, and does not commit, tag or publish. Review and commit the three version changes and the completed notes with the implementation. Run `npm run check:layout` too when dashboard UI files change.
+
+After merging, publish from a clean, up-to-date `main` checkout, not a feature branch or an installed plugin copy:
+
+```bash
+git switch main
+git fetch origin
+git merge --ff-only origin/main
+cd ghcp/plugins/wintermute
+npm run release:publish -- --dry-run
+npm run release:publish
+```
+
+The publisher runs the plugin validator, requires finished notes for the current version, and requires HEAD to match both local `origin/main` and the live remote main ref. It refuses dirty trees (including untracked files) and tags that already exist locally or on origin. The dry run performs the same read-only checks, including a network query to origin, and prints the planned tag and notes; it creates no refs, pushes nothing and does not call `gh`.
+
+A publish creates the annotated tag `wintermute-vX.Y.Z` on HEAD, pushes only that tag, and creates a GitHub Release using only that version's changelog section. Keep `gh` pointed at the same repository as origin. The root marketplace continues to track main through its relative source path: tags and GitHub Releases are release records, not a separate installation channel or a gate on plugin updates. Updating the plugin does not replace already-running sessions or an old dashboard server; follow the update/restart guidance above.
+
+Publishing is not atomic across Git and GitHub. If a push or GitHub Release creation fails, the command reports the failure and retains the annotated tag; rerunning refuses that existing tag. Inspect the local tag, origin tag and GitHub Release first. After resolving the cause, push only the retained tag if it never reached origin, or create the missing release with `gh release create wintermute-vX.Y.Z --verify-tag --title "Wintermute vX.Y.Z" --notes-file <file-containing-that-changelog-section>`. Never move or overwrite an already-published tag.
 
 ## Troubleshooting
 

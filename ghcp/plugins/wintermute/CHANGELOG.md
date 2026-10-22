@@ -2,6 +2,10 @@
 
 All notable changes to the `wintermute` plugin. Each version here matches `plugin.json`, `package.json` and the plugin's entry in the root `.github/plugin/marketplace.json`.
 
+For every agent or dashboard change, run `npm run release:bump -- <version|patch|minor|major>` from this plugin folder and replace the new section's TODO with release notes. Use stable SemVer; during 0.x, compatible fixes advance the patch, features and incompatible contracts advance the minor. Commit the version files and notes with the change.
+
+After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace still follows main. See [Releases](README.md#releases) for prerequisites, checks and recovery after a partial publish.
+
 ## 0.2.0 — 2026-10-22
 
 The `swarm-dashboard` plugin is now `wintermute`: one plugin that ships the orchestrator agents and the swarm dashboard, released and updated together.
@@ -10,6 +14,7 @@ The `swarm-dashboard` plugin is now `wintermute`: one plugin that ships the orch
 
 - Six agents, in `com.github.copilot/agents/`: `orchestrator`, `session-orchestrator`, `hands-on-orchestrator`, `hands-on-session-orchestrator`, `orchestrator-worker` and `session-worker`. Before, they were loose files in `ghcp/agents/` that you symlinked or copied into `~/.copilot/agents/`.
 - This changelog.
+- Dependency-free release commands to bump the three versions together and publish a guarded `wintermute-vX.Y.Z` tag and GitHub Release, with a read-only dry run and offline tests.
 - `npm run validate` also checks the six agents (each exists, its frontmatter follows a strict flat YAML subset and its decoded `name` matches the file name, and it starts the workers by their `wintermute:` IDs), that `plugin.json` has no `agents` field, that no copy of them stays in `ghcp/agents/`, and that this file has an entry for the current version.
 
 ### Changed
