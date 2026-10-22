@@ -365,3 +365,33 @@ test("regression: new permission requests at every poll after a stall don't hold
   assert.ok(scoredAt! - resumedAt <= 30_000 + h.config.pollSec * 1000, `scored ${Math.round((scoredAt! - resumedAt) / 1000)} s after the end`);
   assert.equal(h.state().runs[0].endAt, new Date(resumedAt).toISOString(), "the end is saved once, at the resume");
 });
+
+// Critical re-check of 6d00ad0: the row decides whether a run is scored, not whether its swarm is
+// watched. A run whose score failed before writing a row ends done without one and is still watched.
+test("regression: a prompt in the swarm of a finished run that score failed to score stops the batch", async () => {
+  const h = await make({ scenarios: ["ask-final", "ask-final", "ask-final"], runsPerVariant: 2 });
+  const exec = h.ctx.deps.exec;
+  let failed = false;
+  h.ctx.deps.exec = async (cmd, args, opts) => {
+    if (args[0] === h.config.scoreScript && !failed) {
+      failed = true;
+      return { code: 1, stdout: "", stderr: "score crashed before writing its row" };
+    }
+    return exec(cmd, args, opts);
+  };
+  let injected = false;
+  await h.until((_, state) => {
+    if (!injected && state.runs[0]?.status === "done" && state.runs[1]?.status === "running") {
+      injected = true;
+      appendEvent(h, state.runs[0].sessionId!, "permission.requested", pendingShell("unscored"), -60_000);
+    }
+    return false;
+  });
+  const state = h.state();
+  assert.ok(injected);
+  assert.ok(state.runs[0].flags.some((f) => f.code === "score-failed"));
+  assert.ok(state.runs[0].flags.some((f) => f.code === "permission-prompt"));
+  assert.equal(state.runs.length, 2, "no further run starts");
+  assert.equal(state.phase, "stopped");
+  assert.match(state.fatal!, /^variant-a#1's swarm hit a tool-permission prompt/);
+});

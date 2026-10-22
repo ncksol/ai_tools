@@ -1152,11 +1152,14 @@ function knownStop(state: BatchState): Stop | null {
 }
 
 // The swarms of runs that have ended are still checked for permission prompts until the batch
-// finishes. Such a prompt keeps the run's result, but no further run starts. Only runs with a row
-// are watched: a run without one is void, and a permission void has already stopped the batch.
+// finishes. Such a prompt keeps the run's result, but no further run starts. Watched: every done
+// run, scored or not (score may have failed), and any run with a row whatever its status. The row
+// decides whether a run is scored, not whether its swarm is watched. Void runs without a row are
+// skipped: a permission void has already stopped the batch.
 async function watchFinishedSwarms(ctx: Ctx, state: BatchState): Promise<void> {
   const rows = readResults(ctx.config.resultsPath);
-  const finished = state.runs.filter((run, index) => !state.active.includes(index) && runRowFor(rows, run) && run.sessionId && run.startRequestedAt);
+  const finished = state.runs.filter((run, index) => !state.active.includes(index) && run.sessionId && run.startRequestedAt &&
+    (run.status === "done" || runRowFor(rows, run)));
   if (finished.length === 0) return;
   const now = ctx.deps.now();
   // One scan of the session folders for every finished run.
