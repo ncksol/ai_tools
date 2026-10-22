@@ -16,6 +16,8 @@ export type Scenario =
   | "busy-child"
   | "runaway"
   | "timeout-runaway"
+  | "permission-prompt"
+  | "permission-denied"
   | "silent";
 
 const MIN = 60_000;
@@ -33,6 +35,7 @@ interface FakeSession {
   createdAt: string;
   stopped: boolean;
   answered?: string;
+  prompt: string;
 }
 
 export class FakeApp implements AppDb {
@@ -52,6 +55,10 @@ export class FakeApp implements AppDb {
   account = "ncksol";
   defaultAccount(): string | null { return this.account; }
   projectAccount(projectId: string): string | null { return this.projects.has(projectId) ? this.account : null; }
+  // Whether sessions start with allow-all tool permissions. Without them, as for a session in a
+  // project the app doesn't trust (app 1.1.30), a shell command that host policy doesn't approve
+  // waits for a user.
+  allowAll = true;
 
   constructor(stateDir: string, clock: { now: number }, scenarios: Scenario[]) {
     this.stateDir = stateDir;
@@ -109,6 +116,7 @@ export class FakeApp implements AppDb {
       children: [],
       stopped: false,
       createdAt: new Date(this.clock.now).toISOString(),
+      prompt: String(kickoff.prompt ?? ""),
     });
     // As in the app: the result names the Copilot session ID, not the workspace ID.
     return id;
@@ -157,6 +165,30 @@ export class FakeApp implements AppDb {
     session.ask = { toolCallId, requestId: this.id("req"), question };
   }
 
+  // A permission request as a session without allow-all logs it; open until something completes it.
+  private requestPermission(id: string, toolCallId: string, command: string, agentId?: string): string {
+    const requestId = this.id("perm");
+    this.write(id, "permission.requested", {
+      requestId,
+      permissionRequest: { kind: "shell", toolCallId, fullCommandText: command, canOfferSessionApproval: false },
+      agentMode: "interactive",
+      permissionMode: "manual",
+    }, agentId);
+    return requestId;
+  }
+
+  // A shell call: it completes at once with allow-all permissions, and otherwise waits on a prompt.
+  private shell(s: FakeSession, command: string, output: string): boolean {
+    const toolCallId = this.id("call");
+    this.write(s.id, "tool.execution_start", { toolName: "bash", toolCallId, arguments: { command } });
+    if (!this.allowAll) {
+      this.requestPermission(s.id, toolCallId, command);
+      return false;
+    }
+    this.write(s.id, "tool.execution_complete", { toolCallId, success: true, result: { content: output } });
+    return true;
+  }
+
   private child(session: FakeSession): string {
     const id = this.id("child");
     const toolCallId = this.id("create-child");
@@ -188,6 +220,8 @@ export class FakeApp implements AppDb {
       case "selftest":
         if (s.stage === 0) {
           s.stage = 1;
+          const command = /exactly as written: (.+)$/m.exec(s.prompt)?.[1] ?? "pwd";
+          if (!this.shell(s, command, `/tmp/selftest\n${command.split("echo ").pop()}`)) return false;
           this.openAsk(s, "[unit=selftest need=plan] Self-test: may I finish?");
           return true;
         }
@@ -269,6 +303,33 @@ export class FakeApp implements AppDb {
         for (const child of s.children) this.write(child, "tool.execution_complete", { toolCallId: this.id("call") });
         later(1);
         return true;
+      case "permission-prompt":
+        // A child's sub-agent runs a command nobody approves; the orchestrator waits on the child.
+        if (s.stage === 0) {
+          s.stage = 1;
+          this.message(s, "Started the units.");
+          const child = this.child(s);
+          const toolCallId = this.id("call");
+          this.write(child, "tool.execution_start", { toolName: "bash", toolCallId, arguments: { command: "npm test" } }, "sub-agent-1");
+          this.requestPermission(child, toolCallId, "npm test", "sub-agent-1");
+        }
+        return false;
+      case "permission-denied":
+        // In autopilot a session without allow-all denies the request at once and carries on.
+        if (s.stage === 0) {
+          s.stage = 1;
+          const toolCallId = this.id("call");
+          this.write(s.id, "tool.execution_start", { toolName: "bash", toolCallId, arguments: { command: "npm test" } });
+          const requestId = this.requestPermission(s.id, toolCallId, "npm test");
+          this.write(s.id, "permission.completed", { requestId, toolCallId, result: { kind: "denied-no-approval-rule-and-could-not-request-from-user" }, decisionSource: "unattended_fallback" });
+          this.write(s.id, "tool.execution_complete", { toolCallId, success: false, result: { content: "Permission denied" } });
+          this.message(s, "Working on it.", false);
+          later(1);
+          return true;
+        }
+        this.write(s.id, "tool.execution_complete", { toolCallId: this.id("call") });
+        later(1);
+        return !s.stopped;
       case "stall":
         if (s.stage === 0) {
           s.stage = 1;
@@ -302,9 +363,6 @@ export class FakeApp implements AppDb {
   workspaceForSession(id: string): string | null {
     for (const session of this.sessions.values()) if (session.id === id) return session.appId;
     return null;
-  }
-  projectAutoApprove(projectId: string): number | null {
-    return this.projects.has(projectId) ? 1 : null;
   }
   interrupted = new Set<string>();
   interruption(id: string): Interruption | null {

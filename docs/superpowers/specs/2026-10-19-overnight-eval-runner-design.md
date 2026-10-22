@@ -39,7 +39,7 @@ This supersedes one non-goal of the eval's design ("Automating the Copilot app i
 ### Anti-goals
 
 - An orchestrator run started as a child session, by `send_session_message`, by the CLI, or in any way other than a detached top-level `create_session` from the runner. **Decided by the user**
-- Any message to a run before it is scored, other than the answer sheet's replies: no nudges, status checks or hints. **Decided by the user**
+- Any message to a run before it is scored, other than the answer sheet's replies: no nudges, status checks or hints. **Decided by the user** One narrow exception, a **Design call** rather than a user decision: a run voided by a tool-permission prompt, which will never be scored, gets the fixed stop message (see "A tool-permission prompt voids the run" under [The end of a run](#the-end-of-a-run)).
 - A run's own orchestrator sending notifications or doing batch housekeeping. **Decided by the user**
 - The self-test using an orchestrator agent. **Decided by the user**
 
@@ -114,8 +114,8 @@ Never as a child session, and never with `send_session_message`.
 - "Final" means the attempt has ended, not that it succeeded. An unambiguous terminal report, an honest failure included, is scored at its timestamp with `--end-at`, and the suite decides between `passed` and `gate-failed`. Only progress and waiting messages are not final. **Decided by the user** (after the fidelity review, replacing an earlier call that a run which gave up ends as `stalled`)
 - A final-report candidate whose own timestamp is within 90 minutes is judged before a timeout, whenever it is seen, and the cutoff is `>`, as in `score`. **Decided by the user**
 - A pending `ask_user` question is not a stall: the swarm is waiting on the user, which is blocked time. The question is answered even after a long driver gap, and the run's notification and report show the `driver-gap` flag. **Decided by the user** (the core review's M1 was rejected as a defect)
-- Score before sending anything else.
-- Tool-permission prompts and MCP elicitations can't be answered: they are flagged, and the stall rule applies.
+- Score before sending anything else. One narrow exception, a **Design call** rather than a user decision: a run voided by a tool-permission prompt, which will never be scored, gets the fixed stop message (see "A tool-permission prompt voids the run" under [The end of a run](#the-end-of-a-run)).
+- Tool-permission prompts and MCP elicitations can't be answered: they are flagged, and the stall rule applies. For tool-permission prompts, the design call "A tool-permission prompt voids the run" below replaces this rule; MCP elicitations keep it.
 
 **Design call:**
 
@@ -128,6 +128,11 @@ Never as a child session, and never with `send_session_message`.
 - After a final report, the runner waits up to 5 minutes for the swarm to go quiet, then scores, flagging the run if it didn't.
 - When the limit is reached, only the latest three messages are offered for judging, so older progress notes are never revisited.
 - Activity is a new event in any of the swarm's logs. At a stall, every open tool call in the swarm is flagged as a possible prompt.
+- A tool-permission prompt voids the run. This replaces the stall rule for tool-permission prompts, after batch 20261021-2217, where all 15 runs waited on prompts nobody could answer until the stall rule ended them, and were scored `stalled`. **Design call**
+  - The trigger: a `permission.requested` anywhere in the swarm, sub-agents included, with no `permission.completed` after 30 seconds, or a `permission.completed` with `decisionSource: "unattended_fallback"` that isn't an approval. Host-policy decisions complete within milliseconds (at most 66 ms in 377 logged ones), so 30 seconds is far above them and well below the 15-minute stall. A pending `ask_user` is a question, not a prompt, and never counts.
+  - The run is void: no `score`, no row in `results.csv`, and it counts toward neither the variant's scored runs nor the calibration. It still gets the stop message and the drain wait, as a scored run does, because a prompt in one child leaves the rest of the swarm working. The stop message's action says the run is void rather than scored. This is the only message a run gets before scoring outside the answer sheet, and only because the run will never be scored; it is an exception to the user's rules "Any message to a run before it is scored…" and "Score before sending anything else", not a user decision.
+  - The batch then stops through the fatal path: no further run starts, a notification names the run, the request and the remedy, and the report gets a "Tool-permission prompts" section. The round's other started runs finish as the fatal path lets them; each is voided too if it hits a prompt.
+  - Before or after the run's end is decided by the request's own timestamp against the run's cutoff, never by the runner's phase: the final report's timestamp, or for a timeout or stall the moment the runner ended the run, saved once with the run (a state saved before that time existed gets it on resume). The swarm is checked again just before scoring, also after a restart, and scoring waits while a request from before the cutoff is still within its 30 seconds, so the wait ends by the cutoff plus 30 seconds. A request from before the cutoff voids the unscored run; one from after it keeps the run's result, flags it, and stops the batch the same way. Before voiding a running run, any unjudged orchestrator messages written before the first blocking request (within the time limit) are offered for judging, so a final report that came first sets the cutoff. The swarms of finished runs are checked until the batch finishes; a prompt there keeps the run's row and stops the batch.
 
 ### After a timeout or a stall
 
@@ -198,7 +203,7 @@ Never as a child session, and never with `send_session_message`.
 - an `ask_user` that the driver answers;
 - end detection;
 - the kickoff shape;
-- that the new project auto-approves tools (`projects.auto_approve`, read read-only).
+- that tools are approved without a prompt. The first version read `projects.auto_approve`, which defaults to 1 and doesn't decide a session's permissions; the check is now the design call below.
 
 A failed self-test stops the batch. It never uses an orchestrator agent.
 
@@ -209,6 +214,10 @@ A failed self-test stops the batch. It never uses an orchestrator agent.
 - It also checks that the session has no creator link and that no memories loaded.
 - It also runs every `data.db` lookup the runner uses against its own session and project, and the column probe below. **Decided by the user** (after the core review)
 - `--self-test-agent` can name another agent, but config validation refuses the orchestrators and the variants under test.
+- The self-test proves that a session in a project the runner created can use tools with nobody present. **Design call**
+  - Before its `ask_user`, it runs `pwd && echo eval-selftest-<nonce>`: a compound command, because host policy approves some single read-only commands (`git status`, `pwd`) even without allow-all permissions.
+  - It fails if no shell tool call (`bash` or `powershell`) with the marker in its command completed successfully and printed the marker on a line of its own, or if the session's log has any permission request in manual mode (`permissionMode: "manual"`), pending or denied. Sessions with allow-all permissions log no permission request at all: none in 382 such sessions checked.
+  - A request still pending after 30 seconds fails it at once, rather than at the 20-minute limit. Like every self-test failure, it stops the batch before any run repo is created; the failure names the cause and points to "Tool permissions" in the README.
 
 ### Notifications, keep-awake and preflight
 
@@ -245,6 +254,7 @@ A failed self-test stops the batch. It never uses an orchestrator agent.
 **Design call:**
 
 - The commit uses `git commit --only -- results.csv`, so nothing else the checkout holds is committed.
+- Whether a run is scored is decided by its row in `results.csv`, never by the runner's state. `score` writes the row before its diagnostics and the runner saves its state only after `score` returns, so a runner that stopped in between resumes behind the row. It adopts the row as it is (flagged `score-warning`), never scores again, never removes it, and never voids a run that has one; the report and final counts read the row first. **Design call**
 - The push is on by default and turned off with `--no-push`.
 - The report lists only the commits made since the batch started.
 - A results commit that fails is retried up to three times, a minute apart, with the run held until it succeeds. If it still fails, no further run starts, the run's cleanup still happens, and the user is notified. **Decided by the user**
@@ -282,7 +292,8 @@ A failed self-test stops the batch. It never uses an orchestrator agent.
   - the command line.
 - `batch-lock.test.ts` races real processes for the lock and the guard: six racers, a holder killed with SIGKILL, empty and garbled lock files, a claim held mid-publication, three batches claiming at once, the guard's folder-and-id identity, and a timed-out command whose descendant ignores SIGTERM while its caller tries to exit.
 - `batch-regressions.test.ts` turns each scenario from the two reviews into a permanent test: a second batch, a second driver, an unconfirmed `create_session` (including a first attempt that shows up after the reissue, and one that shows up after the run was given up), a stop request during `next`, final reports at 89:50, 90:00 and after a driver gap, busy swarms after a final report and after a timeout, a question left open over a driver gap, the deadline and pins just before a kickoff, late plain-text answers, failing results commits, the answer contract, question mismatches, the self-test rule, an honest failure report, the `--note`, the kickoff bytes, app-database errors, a `score` timeout, a clock going back, and timed-out subprocesses. `batch-appdb.test.ts` runs the database adapter against a real SQLite file with columns missing.
-- `FakeApp` (`scripts/lib/batch/fake-app.ts`) stands in for the app. It writes synthetic session logs on a simulated clock, and scripts the scenarios: a question then a final report, a plain-text question, an honest failure report, a busy child after the final report, swarms that ignore the stop message, a stall, a timeout, and the self-test.
+- `FakeApp` (`scripts/lib/batch/fake-app.ts`) stands in for the app. It writes synthetic session logs on a simulated clock, and scripts the scenarios: a question then a final report, a plain-text question, an honest failure report, a busy child after the final report, swarms that ignore the stop message, a stall, a timeout, a sub-agent's pending permission prompt, an unattended permission denial, and the self-test. Its `allowAll` switch starts sessions without allow-all permissions, so the self-test's shell command waits on a prompt. **Design call** (the permission scenarios)
+- `batch-permissions.test.ts` covers both permission checks end to end, and `batch-rehearsal.test.ts` rehearses a batch that stops at the self-test and one that stops after a run's prompt. **Design call**
 - `npm run batch -- rehearse` and its test run a whole batch end to end with the app and driver stubbed:
   - the real `new-run --dry-run`, `score` and acceptance suite;
   - real git commits;
@@ -291,6 +302,8 @@ A failed self-test stops the batch. It never uses an orchestrator agent.
   `score` times timeout and stalled runs to the real clock, so their minutes are wrong in a rehearsal.
 
 ## Limits and residual risks
+
+- **Tool permissions:** in app 1.1.30, projects created by `create_project` are untrusted, and the app holds their sessions at manual tool approval until someone trusts the repository in the app; no agent tool can grant trust. The app log shows "Holding session at manual tool approval until its repository is trusted" and `requested_mode=AllowAll effective_mode=Manual` for every session of batch 20261021-2217, its self-test included, and `~/.copilot/data.db` has no `project_host_trust` row for their projects. Until that changes, an unattended batch stops at the self-test. How runs get trusted is the user's decision and is not settled here.
 
 - **An app restart or update** stops every session, including the driver and the run in progress. The run is void, as above. Nothing notifies the user until the driver is resumed, because nothing is running; missing notifications are the sign. The app has no auto-resume, and resuming a run would need a message to it, which counts as a nudge.
 - **Plain-text questions:**

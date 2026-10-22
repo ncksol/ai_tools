@@ -21,7 +21,6 @@ export interface Interruption {
 export interface AppDb {
   sessionForWorkspace(appSessionId: string): string | null;
   workspaceForSession(sessionId: string): string | null;
-  projectAutoApprove(projectId: string): number | null;
   interruption(sessionId: string): Interruption | null;
   workspaces(projectId: string): WorkspaceRow[] | null;
   creatorLinks(appSessionId: string): { creator: string | null; coordinator: string | null; createdBy: string | null } | null;
@@ -40,7 +39,7 @@ export interface AppDb {
 // The columns the runner reads. probe() checks each one exists.
 export const APP_DB_COLUMNS: Record<string, string[]> = {
   workspaces: ["id", "session_id", "project_id", "name", "archived_at", "created_by", "created_at", "creator_session_id", "coordinating_creator_session_id"],
-  projects: ["id", "auto_approve", "copilot_account_id", "github_account_id"],
+  projects: ["id", "copilot_account_id", "github_account_id"],
   accounts: ["id", "login", "is_default"],
   sessions: ["id", "was_interrupted", "interruption_reason"],
   workspace_session_aliases: ["session_id", "workspace_id"],
@@ -86,11 +85,6 @@ export function openAppDb(path: string): AppDb {
   return {
     sessionForWorkspace: (id) => text(cell("workspaces", "session_id", "id", id)),
     workspaceForSession: workspaceId,
-    projectAutoApprove: (id) => {
-      const value = cell("projects", "auto_approve", "id", id);
-      if (typeof value === "number") return value;
-      return typeof value === "string" && /^\d+$/.test(value) ? Number(value) : null;
-    },
     interruption: (id) => {
       const was = cell("sessions", "was_interrupted", "id", id);
       if (was === undefined || was === null) return null;
@@ -170,7 +164,6 @@ export function openAppDb(path: string): AppDb {
 export const noAppDb: AppDb = {
   sessionForWorkspace: () => null,
   workspaceForSession: () => null,
-  projectAutoApprove: () => null,
   interruption: () => null,
   workspaces: () => null,
   creatorLinks: () => null,

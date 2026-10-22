@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 import type { LogEvent } from "../lib/events.ts";
 import {
+  describePermissionBlock,
   findReplySource,
   idleCandidate,
   kickoffText,
@@ -13,7 +14,11 @@ import {
   looksLikeQuestion,
   messageArrived,
   orchestratorView,
+  PERMISSION_GRACE_MS,
+  permissionBlocks,
+  permissionProblems,
   SessionIndex,
+  shellProbe,
   swarmView,
 } from "../lib/batch/swarm.ts";
 import { BASE, ev, MIN, writeSession } from "./fixtures/events.ts";
@@ -125,24 +130,133 @@ test("idle candidates: offered when the swarm is quiet, or sooner for a question
   assert.equal(idleCandidate(orchestratorView(working), quiet, now, [], settle), null, "an open tool call means busy");
 });
 
-test("swarm activity, open tools and permission prompts across sessions", () => {
+test("swarm activity and open tools across sessions", () => {
   const swarm = swarmView([
     { id: "o", events: [ev("assistant.turn_end", 10)] },
-    {
-      id: "c1",
-      events: [
-        ev("tool.execution_start", 12, { toolName: "bash", toolCallId: "b1" }),
-        ev("permission.requested", 12, { requestId: "p1" }),
-        ev("permission.requested", 12, { requestId: "p2" }),
-        ev("permission.completed", 13, { requestId: "p2", decisionSource: "unattended_fallback", result: { kind: "denied" } }),
-      ],
-    },
+    { id: "c1", events: [ev("tool.execution_start", 12, { toolName: "bash", toolCallId: "b1" }), ev("tool.execution_complete", 13, { toolCallId: "x" })] },
   ]);
   assert.equal(swarm.lastActivityAt, BASE + 13 * MIN);
-  const child = swarm.sessions.find((s) => s.id === "c1")!;
-  assert.deepEqual(child.openTools.map((t) => t.toolName), ["bash"]);
-  assert.equal(child.pendingPermissions, 1);
-  assert.equal(child.unattendedDenials, 1);
+  assert.deepEqual(swarm.sessions.find((s) => s.id === "c1")!.openTools.map((t) => t.toolName), ["bash"]);
+});
+
+// Synthetic logs in the shapes the app writes (CLI 1.0.99-2). A session with allow-all permissions
+// logs session.permissions_changed and no permission request; one without them logs every request
+// with permissionMode "manual", and host policy approves only some of them.
+const SECOND = 1 / 60;
+const shellRequest = (minute: number, requestId: string, command: string, agentMode = "interactive", agentId?: string) =>
+  ev("permission.requested", minute, {
+    requestId,
+    permissionRequest: { kind: "shell", toolCallId: `call-${requestId}`, fullCommandText: command, canOfferSessionApproval: false },
+    agentMode,
+    permissionMode: "manual",
+  }, agentId);
+const decided = (minute: number, requestId: string, kind: string, decisionSource: string) =>
+  ev("permission.completed", minute, { requestId, toolCallId: `call-${requestId}`, result: { kind }, decisionSource });
+
+function allowAllLog(): LogEvent[] {
+  return run([
+    ev("session.permissions_changed", 0, { previousAllowAllPermissions: false, allowAllPermissions: true, previousAllowAllPermissionMode: "off", allowAllPermissionMode: "on" }),
+    ev("tool.execution_start", 2, { toolName: "bash", toolCallId: "b1", arguments: { command: "pwd && echo eval-selftest-st1" } }),
+    ev("tool.execution_complete", 2 + SECOND, { toolCallId: "b1", success: true, result: { content: "/tmp/x\neval-selftest-st1" } }),
+  ]);
+}
+
+function manualPendingLog(): LogEvent[] {
+  return run([
+    ev("tool.execution_start", 2, { toolName: "bash", toolCallId: "call-p1", arguments: { command: "git status && git log -1" } }),
+    shellRequest(2, "p1", "git status && git log -1"),
+  ]);
+}
+
+function unattendedDenialLog(): LogEvent[] {
+  return run([
+    ev("tool.execution_start", 2, { toolName: "bash", toolCallId: "call-p1", arguments: { command: "npm test" } }),
+    shellRequest(2, "p1", "npm test", "autopilot"),
+    decided(2, "p1", "denied-no-approval-rule-and-could-not-request-from-user", "unattended_fallback"),
+    ev("tool.execution_complete", 2, { toolCallId: "call-p1", success: false }),
+  ]);
+}
+
+test("permission blocks: a log like a successful allow-all run has none", () => {
+  assert.deepEqual(permissionBlocks("o", allowAllLog(), BASE + 60 * MIN), []);
+  assert.deepEqual(permissionProblems("o", allowAllLog()), { requests: 0, manual: 0, pending: 0, denied: 0, detail: "no permission requests" });
+  assert.deepEqual(shellProbe(allowAllLog(), "eval-selftest-st1"), { ok: true, detail: "bash completed and printed eval-selftest-st1" });
+});
+
+test("permission blocks: a pending manual-mode shell request blocks after the grace period, not before", () => {
+  const events = manualPendingLog();
+  assert.equal(PERMISSION_GRACE_MS, 30_000);
+  assert.deepEqual(permissionBlocks("o", events, BASE + 2 * MIN + 29_000), [], "host policy answers within milliseconds; give it the grace period");
+  const blocks = permissionBlocks("o", events, BASE + 2 * MIN + 30_000);
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].reason, "pending");
+  assert.match(describePermissionBlock(blocks[0]), /^session o: a shell request for git status && git log -1 has waited for approval since 2026-01-01T10:02:00\.000Z \(permission mode manual\)$/);
+  const problems = permissionProblems("o", events);
+  assert.deepEqual([problems.manual, problems.pending, problems.denied], [1, 1, 0]);
+  assert.equal(shellProbe(events, "eval-selftest-st1").ok, false);
+});
+
+test("permission blocks: an unattended_fallback denial blocks at once", () => {
+  const blocks = permissionBlocks("o", unattendedDenialLog(), BASE + 2 * MIN);
+  assert.deepEqual(blocks.map((b) => b.reason), ["denied"]);
+  assert.match(describePermissionBlock(blocks[0]), /was denied at .* because no one could be asked \(denied-no-approval-rule-and-could-not-request-from-user\)$/);
+  assert.equal(permissionProblems("o", unattendedDenialLog()).denied, 1);
+  // A denial whose request isn't in the log still counts.
+  const orphan = permissionBlocks("o", [decided(3, "p9", "denied-no-approval-rule-and-could-not-request-from-user", "unattended_fallback")], BASE + 3 * MIN);
+  assert.equal(orphan.length, 1);
+});
+
+test("permission blocks: a sub-agent's pending request counts and names the sub-agent", () => {
+  const events = run([shellRequest(2, "p1", "npm test", "interactive", "sub-7")]);
+  const blocks = permissionBlocks("c1", events, BASE + 3 * MIN);
+  assert.match(describePermissionBlock(blocks[0]), /^session c1 \(sub-agent sub-7\): a shell request for npm test/);
+});
+
+test("permission blocks: host-policy approvals and a pending ask_user don't block a run, but manual mode fails the self-test", () => {
+  const events = run([
+    shellRequest(2, "p1", "git status"),
+    decided(2, "p1", "approved", "host_policy"),
+    ev("tool.execution_start", 3, { toolName: "ask_user", toolCallId: "q1", arguments: { question: "Approve?" } }),
+    ev("permission.requested", 3, { requestId: "p2", permissionRequest: { kind: "custom-tool", toolName: "ask_user" }, permissionMode: "manual" }),
+  ]);
+  assert.deepEqual(permissionBlocks("o", events, BASE + 60 * MIN), []);
+  const problems = permissionProblems("o", events);
+  assert.deepEqual([problems.requests, problems.manual, problems.pending, problems.denied], [1, 1, 0, 0]);
+  assert.match(problems.detail, /^1 permission request\(s\): 1 in manual mode, 0 pending, 0 denied; first: a shell request for git status$/);
+});
+
+test("the self-test's shell probe needs the marker in the command and a successful completion that printed it", () => {
+  const started = [ev("tool.execution_start", 2, { toolName: "bash", toolCallId: "b1", arguments: { command: "pwd && echo eval-selftest-st1" } })];
+  assert.match(shellProbe(started, "eval-selftest-st1").detail, /never completed/);
+  const failed = [...started, ev("tool.execution_complete", 2, { toolCallId: "b1", success: false, result: { content: "denied" } })];
+  assert.match(shellProbe(failed, "eval-selftest-st1").detail, /without success/);
+  assert.match(shellProbe([], "eval-selftest-st1").detail, /no shell tool call \(bash or powershell\) ran/);
+  const subAgent = [ev("tool.execution_start", 2, { toolName: "bash", toolCallId: "b1", arguments: { command: "echo eval-selftest-st1" } }, "sub-1")];
+  assert.equal(shellProbe(subAgent, "eval-selftest-st1").ok, false, "only the session's own calls count");
+});
+
+test("regression: the shell probe accepts only a shell tool whose output prints the marker", () => {
+  const marker = "eval-selftest-st1";
+  const viewed = [
+    ev("tool.execution_start", 2, { toolName: "view", toolCallId: "v1", arguments: { path: `/tmp/${marker}` } }),
+    ev("tool.execution_complete", 2, { toolCallId: "v1", success: true, result: { content: `${marker}\n` } }),
+  ];
+  assert.equal(shellProbe(viewed, marker).ok, false, "a non-shell tool carrying the marker proves nothing");
+  const echoedCommandOnly = [
+    ev("tool.execution_start", 2, { toolName: "bash", toolCallId: "b1", arguments: { command: `pwd && echo ${marker}` } }),
+    ev("tool.execution_complete", 2, { toolCallId: "b1", success: true, result: { content: `$ pwd && echo ${marker}\n<exited with exit code 0>` } }),
+  ];
+  assert.equal(shellProbe(echoedCommandOnly, marker).ok, false, "the marker must be printed on its own line");
+  const printed = [
+    ev("tool.execution_start", 2, { toolName: "bash", toolCallId: "b1", arguments: { command: `pwd && echo ${marker}` } }),
+    ev("tool.execution_complete", 2, { toolCallId: "b1", success: true, result: { content: `/tmp/x\n${marker}\n<exited with exit code 0>` } }),
+  ];
+  assert.equal(shellProbe(printed, marker).ok, true);
+  const markerInOtherArgument = [
+    ev("tool.execution_start", 2, { toolName: "bash", toolCallId: "b1", arguments: { command: "pwd", description: marker } }),
+    ev("tool.execution_complete", 2, { toolCallId: "b1", success: true, result: { content: marker } }),
+  ];
+  assert.equal(shellProbe(markerInOtherArgument, marker).ok, false, "the marker must be in the command");
 });
 
 test("the driver's reply source is read from the log, not guessed", () => {

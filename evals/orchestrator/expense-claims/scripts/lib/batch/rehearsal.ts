@@ -58,7 +58,9 @@ export async function startNtfyStub(): Promise<{ url: string; received: { title:
   };
 }
 
-export async function rehearse(opts: { scenarios?: Scenario[]; runsPerVariant?: number; parallel?: number; log?: (line: string) => void } = {}): Promise<RehearsalResult> {
+// allowAll: false starts every fake session without allow-all tool permissions, as app 1.1.30 does
+// for sessions in projects create_project made (untrusted), so the self-test fails at its shell command.
+export async function rehearse(opts: { scenarios?: Scenario[]; runsPerVariant?: number; parallel?: number; allowAll?: boolean; log?: (line: string) => void } = {}): Promise<RehearsalResult> {
   const dir = mkdtempSync(join(tmpdir(), "orch-eval-rehearsal-"));
   const runsDir = join(dir, "runs");
   const stateDir = join(dir, "session-state");
@@ -86,6 +88,7 @@ export async function rehearse(opts: { scenarios?: Scenario[]; runsPerVariant?: 
   // never before a kickoff. Those runs' wall minutes are therefore wrong in a rehearsal.
   const clock = { now: Date.now() - 12 * 60 * 60_000 };
   const app = new FakeApp(stateDir, clock, ["selftest", ...(opts.scenarios ?? ["ask-final", "plain-final", "stall", "timeout"])]);
+  app.allowAll = opts.allowAll ?? true;
   const config: BatchConfig = {
     id: "rehearsal",
     createdAt: new Date(clock.now).toISOString(),

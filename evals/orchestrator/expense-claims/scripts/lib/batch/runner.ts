@@ -34,6 +34,7 @@ import {
   type SelfTestState,
 } from "./state.ts";
 import {
+  describePermissionBlock,
   eventsPath,
   findReplySource,
   idleCandidate,
@@ -41,14 +42,24 @@ import {
   LogCache,
   messageArrived,
   orchestratorView,
+  PERMISSION_REMEDY,
+  PERMISSION_GRACE_MS,
+  PERMISSION_VOID,
+  permissionBlocks,
+  permissionRequests,
+  permissionProblems,
   SessionIndex,
+  shellProbe,
   swarmView,
   type MessageView,
+  type PermissionBlock,
   type OrchView,
   type SessionMeta,
 } from "./swarm.ts";
 
 export const STOP_MESSAGE = "This run is over. Stop all work now: don't start anything new, archive all your child sessions, then end your turn.";
+const SHELL_CHECK = "a shell command ran with nobody present";
+const PERMISSION_CHECK = "no tool-permission prompt (allow-all permissions)";
 const DRIVER_GAP_MS = 10 * 60_000;
 // A driver whose liveness can't be checked counts as gone after this long without a call.
 const OWNER_SILENT_MS = 15 * 60_000;
@@ -253,7 +264,9 @@ export function render(ctx: Ctx, state: BatchState, pending: PendingAction, reis
       return {
         ...base,
         what: p.stop
-          ? "The run has been scored. Send this stop message to the run's orchestrator, word for word."
+          ? run?.voidReason
+            ? "The run is void and won't be scored. Send this stop message to the run's orchestrator, word for word."
+            : "The run has been scored. Send this stop message to the run's orchestrator, word for word."
           : "Answer the orchestrator's plain-text question: send this reply, word for word, with send_session_message. Send nothing else.",
         tool: { name: "send_session_message", args: { session_id: p.session, message: p.message } },
         record: [recordCommand(ctx, pending.id, "--sent"), recordCommand(ctx, pending.id, '--failed "<error>"')],
@@ -435,7 +448,7 @@ async function finish(ctx: Ctx, state: BatchState): Promise<ActionOut> {
   const rows = readResults(ctx.config.resultsPath);
   const outcomes = new Map<string, number>();
   for (const run of state.runs) {
-    const outcome = run.status === "void" ? "void" : (runRowFor(rows, run)?.outcome ?? "not scored");
+    const outcome = runRowFor(rows, run)?.outcome ?? (run.status === "void" ? "void" : "not scored");
     outcomes.set(outcome, (outcomes.get(outcome) ?? 0) + 1);
   }
   const counts = `${state.runs.length} run(s)${outcomes.size > 0 ? ` (${[...outcomes].map(([k, v]) => `${v} ${k}`).join(", ")})` : ""}`;
@@ -490,10 +503,15 @@ function admissionBlock(ctx: Ctx, state: BatchState): Stop | null {
 
 // ---------- self-test ----------
 
+export const selfTestMarker = (nonce: string): string => `eval-selftest-${nonce}`;
+
+// The shell command is compound on purpose: host policy approves some single read-only commands
+// (`git status`, `pwd`) even without allow-all permissions, but not this one.
 function selfTestPrompt(nonce: string): string {
   return [
     `Eval runner self-test ${nonce}.`,
-    `Call the ask_user tool exactly once, with the question "[unit=selftest need=plan] Self-test ${nonce}: may I finish?" and the choices ["yes", "no"].`,
+    `First, run this shell command with your shell tool, exactly as written: pwd && echo ${selfTestMarker(nonce)}`,
+    `Then call the ask_user tool exactly once, with the question "[unit=selftest need=plan] Self-test ${nonce}: may I finish?" and the choices ["yes", "no"].`,
     "When it returns, reply with one short line that quotes the answer you got, and stop. Do nothing else: no other tools, files or commands.",
   ].join("\n");
 }
@@ -573,6 +591,12 @@ async function selfTestStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
         return { progressed: test.status !== "running" };
       }
       const events = ctx.logs.read(eventsPath(config.stateDir, test.sessionId));
+      const blocks = permissionBlocks(test.sessionId, events, now);
+      if (blocks.length > 0) {
+        fail(`${PERMISSION_CHECK}: ${describePermissionBlock(blocks[0])}. ${PERMISSION_REMEDY}`);
+        await notify(ctx, state, notices.selfTest(config.id, state.selftests.length, false, test.failure ?? ""));
+        return { progressed: true };
+      }
       const orch = orchestratorView(events);
       const session = test.appSessionId ?? test.sessionId;
       if (orch.openAsk) {
@@ -589,7 +613,8 @@ async function selfTestStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
     case "verify": {
       verifySelfTest(ctx, test);
       const failed = test.checks.filter((check) => !check.ok);
-      if (failed.length > 0) fail(failed.map((check) => check.name).join("; "));
+      const names = failed.map((check) => check.name).join("; ");
+      if (failed.length > 0) fail(failed.some((check) => check.name === PERMISSION_CHECK) ? `${names}. ${PERMISSION_REMEDY}` : names);
       else test.status = "passed";
       await notify(ctx, state, notices.selfTest(config.id, state.selftests.length, test.status === "passed", test.failure ?? ""));
       return { progressed: true };
@@ -620,10 +645,14 @@ export function verifySelfTest(ctx: Ctx, test: SelfTestState): void {
   check("ask_user answered word for word", Boolean(answered), answered ? `got "${reply}"` : `${orch.askCalls.length} ask_user call(s), none completed with "${reply}"`);
   const askDone = answered ? answered.startAt : Infinity;
   check("end detected", Boolean(test.final) && ms(test.final!.timestamp) >= askDone, test.final ? `final message at ${test.final.timestamp}` : "no final message judged");
-  const autoApprove = test.projectId ? deps.appDb.projectAutoApprove(test.projectId) : null;
+  // Allow-all permissions leave no permission request in the log at all; a session without them
+  // logs each request with permissionMode "manual", and nobody can approve the ones host policy doesn't.
+  const probe = shellProbe(events, selfTestMarker(test.nonce));
+  check(SHELL_CHECK, probe.ok, probe.detail);
+  const permissions = permissionProblems(test.sessionId ?? "missing", events);
+  check(PERMISSION_CHECK, permissions.manual === 0 && permissions.pending === 0 && permissions.denied === 0, permissions.detail);
   const account = test.projectId ? deps.appDb.projectAccount(test.projectId) : null;
   check("session runs as the batch owner", account?.toLowerCase() === config.owner.toLowerCase(), `project account ${account ?? "unreadable"}, owner ${config.owner}`);
-  check("new project auto-approves tools", autoApprove === 1, `projects.auto_approve = ${autoApprove ?? "unreadable"}`);
   // The workspace row may have been written after the session was recorded.
   if (test.appSessionId) test.appSessionId = workspaceIdFor(ctx, test.appSessionId);
   const links = test.appSessionId ? deps.appDb.creatorLinks(test.appSessionId) : null;
@@ -736,14 +765,68 @@ export function currentPins(config: BatchConfig) {
   });
 }
 
-function voidRun(ctx: Ctx, state: BatchState, run: RunState, reason: string, startFailure: boolean): void {
-  run.status = "void";
+// stopFirst: the run's swarm may still be working, so it gets the stop message and the drain wait
+// before it ends as void.
+function voidRun(ctx: Ctx, state: BatchState, run: RunState, reason: string, startFailure: boolean, stopFirst = false): void {
+  run.status = stopFirst ? "stopping" : "void";
   run.voidReason = reason;
   if (startFailure) {
     state.startFailures++;
     addFlag(run, "start-failed", reason, iso(ctx.deps.now()));
   }
-  log(ctx, `${run.key} void: ${reason}`);
+  log(ctx, `${run.key} void: ${reason}${stopFirst ? "; the stop message goes out first" : ""}`);
+}
+
+// Whether a run is scored is decided by its row in results.csv, never by runner state: score
+// writes the row before its diagnostics, and the runner records the result only after score returns,
+// so a runner that stops in between resumes with its state behind the row.
+const rowOf = (ctx: Ctx, run: RunState) => runRowFor(readResults(ctx.config.resultsPath), run);
+
+// The run's end on the log's clock: its final report, or for a timeout or stall the moment the
+// runner ended it. That moment is saved once (a state from before it was saved gets it now), so
+// later requests never count as before the end, and a scoring hold ends by the end plus the grace.
+function runCutoff(run: RunState, now: number): number {
+  if (run.endReason === "final" && run.final) return Date.parse(run.final.timestamp);
+  run.endAt ??= run.scoredAt ?? iso(now);
+  return ms(run.endAt);
+}
+
+// The permission check once watching has ended. Whether a prompt came before or after the run's end
+// is decided by the request's own timestamp against the cutoff, never by the runner's phase, so a
+// child's prompt just before the final report, or one written while the runner was down, still
+// voids an unscored run. A run already scored keeps its result. "hold": a request from before the
+// end is still within its grace period, so score waits for it.
+async function permissionsAfterWatching(ctx: Ctx, state: BatchState, run: RunState, now: number): Promise<"void" | "hold" | "ok"> {
+  const logs = readLogs(ctx, runSessionIds(ctx, run));
+  const cutoff = runCutoff(run, now);
+  const blocks = logs.flatMap((log) => permissionBlocks(log.id, log.events, now));
+  const unscored = (run.status === "ending" || run.status === "scoring") && !rowOf(ctx, run);
+  const before = blocks.filter((block) => block.request.at <= cutoff);
+  if (unscored && before.length > 0) {
+    await permissionBlocked(ctx, state, run, before, true);
+    return "void";
+  }
+  const late = unscored ? blocks.filter((block) => block.request.at > cutoff) : blocks;
+  if (late.length > 0) await permissionBlocked(ctx, state, run, late, false);
+  const waiting = run.status === "scoring" && logs.some((log) => permissionRequests(log.id, log.events).some((request) =>
+    !request.decision && request.what !== "ask_user" && request.at <= cutoff && now - request.at < PERMISSION_GRACE_MS));
+  return waiting ? "hold" : "ok";
+}
+
+// A tool-permission prompt in a run's swarm: nobody can answer it, and every later run would hit
+// the same, so no further run starts. A prompt from before the run's end voids an unscored run;
+// one from after its end, or found once the run is scored, leaves the result standing.
+async function permissionBlocked(ctx: Ctx, state: BatchState, run: RunState, blocks: PermissionBlock[], voidIt: boolean): Promise<void> {
+  const at = iso(ctx.deps.now());
+  // A run with a row in results.csv is scored, whatever its status says: it is never voided.
+  if (voidIt && rowOf(ctx, run)) voidIt = false;
+  for (const block of blocks) addFlag(run, "permission-prompt", describePermissionBlock(block), at);
+  const first = `${describePermissionBlock(blocks[0])}${blocks.length > 1 ? ` (and ${blocks.length - 1} more)` : ""}`;
+  if (voidIt) voidRun(ctx, state, run, `${PERMISSION_VOID}: ${first}`, false, true);
+  const cause = voidIt ? `${run.key} was ${PERMISSION_VOID} (${first})` : `${run.key}'s swarm hit a tool-permission prompt after the run ended (${first})`;
+  state.fatal ??= `${cause}. ${PERMISSION_REMEDY}`;
+  const what = voidIt ? `${run.key} is void and won't be scored: it was ${PERMISSION_VOID} (${first})` : `${cause}; its result stands`;
+  await notify(ctx, state, notices.failure(ctx.config.id, "permission-prompt", `${what}. No further run starts; the batch stops once the runs in progress end. ${PERMISSION_REMEDY}.`));
 }
 
 // The kickoff exactly as a manual paste delivers it: kickoff.md without its trailing newline (run 1's
@@ -854,16 +937,33 @@ async function watchRun(ctx: Ctx, state: BatchState, run: RunState, index: numbe
     log(ctx, `${run.key} kickoff at ${run.kickoffAt} in session ${run.sessionId}`);
   }
 
-  const swarm = swarmView(readLogs(ctx, runSessionIds(ctx, run)));
-  for (const session of swarm.sessions) {
-    if (session.pendingPermissions > 0) addFlag(run, "permission-prompt", `session ${session.id} has a tool-permission prompt no app tool can answer`, at);
-    if (session.unattendedDenials > 0) addFlag(run, "permission-prompt", `session ${session.id}: a permission request was denied because no one was there`, at);
-  }
+  const logs = readLogs(ctx, runSessionIds(ctx, run));
+  const swarm = swarmView(logs);
+  const blocks = logs.flatMap((log) => permissionBlocks(log.id, log.events, now));
   findAnswerSource(ctx, run, events);
 
   const session = run.appSessionId ?? run.sessionId;
   const kickoffMs = ms(run.kickoffAt);
   const limitMs = minutes(config.timeoutMin);
+  if (blocks.length > 0) {
+    // The run's end decides whether a prompt voids it: a final report written before the first
+    // blocking request (and within the time limit) is judged first. If it is the report, the run
+    // ends there and permissionsAfterWatching sorts the prompts by their timestamps.
+    const firstRequestAt = Math.min(...blocks.map((block) => block.request.at));
+    const earlier = orch.messages.filter((message) => message.at < firstRequestAt && message.at - kickoffMs <= limitMs);
+    const unjudged = earlier.slice(-3).filter((message) => !run.judged.includes(message.messageId));
+    if (unjudged.length > 0) {
+      return {
+        action: judgeAction(ctx, state, index, session, {
+          messages: unjudged,
+          swarmQuiet: since(now, swarm.lastActivityAt) >= config.swarmSettleSec * 1000,
+          reason: "a tool-permission prompt appeared after these messages; a final report among them is the run's end, and a prompt after it doesn't void the run",
+        }),
+      };
+    }
+    await permissionBlocked(ctx, state, run, blocks, true);
+    return { progressed: true };
+  }
   // As in score: a run is over time only when more than 90 minutes have passed.
   const timedOut = since(now, kickoffMs) > limitMs;
   const ask = orch.openAsk;
@@ -895,10 +995,11 @@ async function watchRun(ctx: Ctx, state: BatchState, run: RunState, index: numbe
       };
     }
     run.endReason = timedOut ? "timeout" : "stalled";
+    run.endAt = at;
     run.status = "scoring";
     if (stalled) {
       for (const s of swarm.sessions) {
-        for (const tool of s.openTools) addFlag(run, "open-tool-at-stall", `session ${s.id}${tool.agentId ? ` (sub-agent ${tool.agentId})` : ""} had an open ${tool.toolName} call since ${iso(tool.at)}; a permission prompt or elicitation may have been waiting`, at);
+        for (const tool of s.openTools) addFlag(run, "open-tool-at-stall", `session ${s.id}${tool.agentId ? ` (sub-agent ${tool.agentId})` : ""} had an open ${tool.toolName} call since ${iso(tool.at)}; an MCP elicitation or a long silent command may have been waiting`, at);
       }
     }
     log(ctx, `${run.key} ${run.endReason}`);
@@ -998,6 +1099,18 @@ async function scoreRun(ctx: Ctx, state: BatchState, run: RunState): Promise<voi
   log(ctx, `${run.key} scored: exit ${result.code}, ${row ? `${row.outcome} ${row.minutes} min` : "no row"}`);
 }
 
+// The run's row is already in results.csv, saved by a score the runner didn't see finish. It is
+// the result: adopted as it is, never scored again and never removed.
+function adoptRow(ctx: Ctx, state: BatchState, run: RunState, row: Record<string, string>): void {
+  const at = iso(ctx.deps.now());
+  run.row = { ...row };
+  run.scoredAt ??= at;
+  state.scoreFailures = 0;
+  addFlag(run, "score-warning", "score saved this run's row before the runner recorded it (the runner stopped meanwhile); the row was adopted as it is, and its diagnostics may be incomplete", at);
+  run.status = "scored";
+  log(ctx, `${run.key} adopted its results.csv row: ${row.outcome} ${row.minutes} min`);
+}
+
 async function commitResult(ctx: Ctx, state: BatchState, run: RunState): Promise<string | null> {
   const { config } = ctx;
   const branch = (await git(ctx, ["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim();
@@ -1026,6 +1139,8 @@ function swarmQuietFor(ctx: Ctx, run: RunState, now: number): number {
 
 // Runs that haven't asked for their session yet.
 const NOT_STARTED = new Set(["new", "repo", "project"]);
+// Runs whose watching has ended but whose swarm is still checked for permission prompts.
+const AFTER_WATCHING = new Set(["ending", "scoring", "scored", "settling", "stopping", "draining"]);
 
 // A stop that is already known without the full admission checks.
 function knownStop(state: BatchState): Stop | null {
@@ -1036,9 +1151,34 @@ function knownStop(state: BatchState): Stop | null {
   );
 }
 
+// The swarms of runs that have ended are still checked for permission prompts until the batch
+// finishes. Such a prompt keeps the run's result, but no further run starts. Watched: every done
+// run, scored or not (score may have failed), and any run with a row whatever its status. The row
+// decides whether a run is scored, not whether its swarm is watched. Void runs without a row are
+// skipped: a permission void has already stopped the batch.
+async function watchFinishedSwarms(ctx: Ctx, state: BatchState): Promise<void> {
+  const rows = readResults(ctx.config.resultsPath);
+  const finished = state.runs.filter((run, index) => !state.active.includes(index) && run.sessionId && run.startRequestedAt &&
+    (run.status === "done" || runRowFor(rows, run)));
+  if (finished.length === 0) return;
+  const now = ctx.deps.now();
+  // One scan of the session folders for every finished run.
+  const recent = ctx.index.recent(Math.min(...finished.map((run) => ms(run.startRequestedAt) - minutes(2))));
+  for (const run of finished) {
+    const ids = new Set(recent.filter((meta) => meta.repository?.toLowerCase() === run.repo.toLowerCase()).map((meta) => meta.id));
+    ids.add(run.sessionId!);
+    const known = new Set(run.flags.filter((flag) => flag.code === "permission-prompt").map((flag) => flag.detail));
+    const fresh = readLogs(ctx, [...ids])
+      .flatMap((log) => permissionBlocks(log.id, log.events, now))
+      .filter((block) => !known.has(describePermissionBlock(block)));
+    if (fresh.length > 0) await permissionBlocked(ctx, state, run, fresh, false);
+  }
+}
+
 // Steps every run of the round until one needs the driver. Once a stop is known, the round's runs
 // that haven't started are void; the others finish first.
 async function runsStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
+  await watchFinishedSwarms(ctx, state);
   if (state.active.length === 0) return startNextRound(ctx, state);
   // Scored runs go first, so a run's row is committed before another run writes its own.
   const order = [...state.active].sort((a, b) => Number(state.runs[b].status === "scored") - Number(state.runs[a].status === "scored"));
@@ -1054,7 +1194,7 @@ async function runsStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
     }
     if (result.action) return result;
     if (result.progressed) progressed = true;
-    if (before === "scoring") return { progressed: true };
+    if (before === "scoring" && result.progressed) return { progressed: true };
   }
   return { progressed };
 }
@@ -1063,6 +1203,11 @@ async function runStep(ctx: Ctx, state: BatchState, index: number): Promise<Step
   const { config, deps } = ctx;
   const run = state.runs[index];
   const now = deps.now();
+  if (AFTER_WATCHING.has(run.status) && !run.voidReason) {
+    const verdict = await permissionsAfterWatching(ctx, state, run, now);
+    if (verdict === "void") return { progressed: true };
+    if (verdict === "hold") return {};
+  }
   switch (run.status) {
     case "new":
       return newRepo(ctx, state, run);
@@ -1099,11 +1244,16 @@ async function runStep(ctx: Ctx, state: BatchState, index: number): Promise<Step
       }
       return {};
     }
-    case "scoring":
-      await scoreRun(ctx, state, run);
+    case "scoring": {
+      const row = rowOf(ctx, run);
+      if (row) adoptRow(ctx, state, run, row);
+      else await scoreRun(ctx, state, run);
       return { progressed: true };
+    }
     case "scored": {
-      if (run.row && !run.committed) {
+      const saved = rowOf(ctx, run);
+      if (saved) run.row ??= { ...saved };
+      if (saved && !run.committed) {
         if (run.lastCommitAttemptAt && since(now, ms(run.lastCommitAttemptAt)) < COMMIT_RETRY_MS) return {};
         const error = await commitResult(ctx, state, run);
         if (error) {
@@ -1174,7 +1324,7 @@ async function runStep(ctx: Ctx, state: BatchState, index: number): Promise<Step
     }
     case "draining": {
       if (swarmQuietFor(ctx, run, now) >= QUIET_MS) {
-        run.status = "done";
+        run.status = run.voidReason ? "void" : "done";
         return { progressed: true };
       }
       const waited = since(now, ms(run.drainingSince));
@@ -1182,7 +1332,7 @@ async function runStep(ctx: Ctx, state: BatchState, index: number): Promise<Step
         addFlag(run, "swarm-not-quiet", `the swarm was still active ${Math.round(waited / 60_000)} min after the stop message`, iso(now));
         // Never admit another run next to a busy swarm: stop the batch and list the sessions.
         state.fatal ??= `the swarm of ${run.key} was still active ${Math.round(waited / 60_000)} min after the stop message; archive its sessions (listed in the report)`;
-        run.status = "done";
+        run.status = run.voidReason ? "void" : "done";
         return { progressed: true };
       }
       return {};

@@ -18,7 +18,7 @@ A runner script does every deterministic step: it creates run repos, watches the
 - Start an eval run only with `create_session`, only from a `create_session` action, with the action's arguments copied exactly. Never start a run any other way: never with `send_session_message`, never as a child session (the action always has `detached: true` and `coordinate_with_creator: false`; never change them), and never through the `copilot` CLI or any other agent CLI from the shell.
 - Never start the `orchestrator` or `session-orchestrator` agents, or any agent, for any other purpose. The self-test uses whatever agent its action names, which is never an orchestrator.
 - Create projects only from `create_project` actions. The user authorised those projects when they started the batch, so don't ask for confirmation.
-- Send a run's session only what an action tells you to send, word for word: an answer from the answer sheet, or the stop message after the run has been scored. Never nudge a run, check on it, give hints, or reply to it in any other way. Never message, answer or inspect a run's child sessions; its orchestrator handles them.
+- Send a run's session only what an action tells you to send, word for word: an answer from the answer sheet, or the stop message once the run has ended (after it has been scored, or when it is void because a tool-permission prompt blocked it). Never nudge a run, check on it, give hints, or reply to it in any other way. Never message, answer or inspect a run's child sessions; its orchestrator handles them.
 - Don't call `get_session` except as an action's step. The runner watches the runs from their logs; polling them yourself adds nothing.
 - Don't edit files, `results.csv` or git history, and don't commit or push: the runner does that. Never push to `main`.
 - Don't change Copilot app, CLI, OS, power or GitHub settings. Don't send notifications with `curl`; the runner sends them.
@@ -80,7 +80,7 @@ Only one driver runs a batch. If `next` or `record` says another driver owns the
 
 A final report needs no particular wording, but it must say the attempt is over. If a message could be a progress note, choose `--neither`: the stall and timeout rules still end the run. Only judge; never send anything for a `judge_idle` action.
 
-**`send_message`**: call `send_session_message` with `tool.args.session_id` and `tool.args.message`, word for word, and nothing else. Record `--sent`, or `--failed "<error>"`.
+**`send_message`**: call `send_session_message` with `tool.args.session_id` and `tool.args.message`, word for word, and nothing else. Record `--sent`, or `--failed "<error>"`. You can't answer a tool-permission prompt in a run; the runner handles one by voiding the run and stopping the batch, so never try to approve one some other way.
 
 **`done`**: the batch is over. Print the report: `cat` the file in `details.report` and show it as your final message, with a reminder to turn Copilot Memory back on at https://github.com/settings/copilot/features. Then call `task_complete`.
 

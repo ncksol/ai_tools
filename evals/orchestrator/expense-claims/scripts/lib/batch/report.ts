@@ -1,9 +1,10 @@
 // The morning report: outcomes, flags, sessions to archive, repos created and how to land results.
 import { featureSetName } from "../features.ts";
-import { formatSummary, readResults, summarize } from "../results.ts";
+import { formatSummary, readResults, summarize, type ResultRow } from "../results.ts";
 import type { AppDb } from "./appdb.ts";
 import { runRowFor } from "./plan.ts";
 import { variantBundle } from "../variants.ts";
+import { PERMISSION_REMEDY } from "./swarm.ts";
 import type { BatchConfig, BatchState, RunState } from "./state.ts";
 
 export interface ReportExtras {
@@ -37,6 +38,23 @@ export function sessionsToArchive(state: BatchState, appDb: AppDb): string[] {
   return lines;
 }
 
+// What a tool-permission prompt did in this batch: the self-test it failed, the runs it voided or
+// flagged. Empty when there was none.
+export function permissionLines(state: BatchState, rows: ResultRow[]): string[] {
+  const lines: string[] = [];
+  for (const test of state.selftests) {
+    if (test.failure?.includes(PERMISSION_REMEDY)) lines.push(`- The self-test failed: ${test.failure.replace(`. ${PERMISSION_REMEDY}`, "")}.`);
+  }
+  for (const run of state.runs) {
+    const flags = run.flags.filter((flag) => flag.code === "permission-prompt");
+    if (flags.length === 0) continue;
+    // The row in results.csv decides whether the run was scored, not the run's status.
+    lines.push(`- ${runLabel(run)}: ${runRowFor(rows, run) ? "its result stands; the prompt came after its end" : run.status === "void" ? "void, not scored" : "not scored"}.`);
+    for (const flag of flags) lines.push(`  - ${flag.detail}`);
+  }
+  return lines;
+}
+
 export function buildReport(config: BatchConfig, state: BatchState, appDb: AppDb, extras: ReportExtras): string {
   const rows = readResults(config.resultsPath);
   const out: string[] = [];
@@ -54,6 +72,12 @@ export function buildReport(config: BatchConfig, state: BatchState, appDb: AppDb
   if (state.calibration) out.push(`- Calibration: ${state.calibration}`);
   if (config.dryRun) out.push("- DRY RUN: no GitHub repos; app steps were stubbed.");
   out.push("");
+
+  const permissions = permissionLines(state, rows);
+  if (permissions.length > 0) {
+    out.push("## Tool-permission prompts", "", "A tool-permission prompt that nobody could answer stopped this batch.", "", ...permissions, "");
+    out.push(`Cause and remedy: ${PERMISSION_REMEDY}. A void run has no row in results.csv and doesn't count toward its variant's scored runs or the calibration.`, "");
+  }
 
   out.push("## Robustness and cost", "", "Post-score robustness never changes the gate or minutes; compare counts only within the same suite hash. Cost covers the run's swarm up to the recorded snapshot, not the batch driver. Missing prices or logs leave USD blank.", "");
   out.push("| Run | Robustness | Suite SHA-256 | Cost status | USD | Sessions | Usage records | Pricing version |");
@@ -74,7 +98,7 @@ export function buildReport(config: BatchConfig, state: BatchState, appDb: AppDb
     out.push("|---|---|---|---|---|---|---|---|---|---|---|---|---|");
     state.runs.forEach((run, i) => {
       const row = runRowFor(rows, run);
-      const outcome = run.status === "void" ? `void: ${run.voidReason ?? ""}` : (row?.outcome ?? (run.status === "done" ? "not scored" : run.status));
+      const outcome = row?.outcome ?? (run.status === "void" ? `void: ${run.voidReason ?? ""}` : run.status === "done" ? "not scored" : run.status);
       out.push(
         `| ${i + 1} | ${cell(runLabel(run))}${run.calibration ? " (calibration)" : ""} | ${cell(run.repo)} | ${cell(row?.features ?? featureSetName(run.features))} | ${cell(outcome)} | ${cell(row?.minutes)} | ${cell(row?.wall_minutes)} | ${cell(row?.blocked_minutes)} | ${cell(row?.questions)} | ${row ? `${row.suite_passed}/${row.suite_total}` : ""} | ${cell(row?.prs_merged)} | ${cell(row?.main_ci)} | ${cell(run.flags.map((flag) => flag.code).join(", "))} |`,
       );
@@ -128,7 +152,7 @@ export function buildReport(config: BatchConfig, state: BatchState, appDb: AppDb
   out.push("## Morning checklist", "");
   out.push("1. Turn Copilot Memory back on at https://github.com/settings/copilot/features.");
   out.push("2. Archive the sessions listed above.");
-  out.push("3. Review the flagged runs.");
+  out.push(permissions.length > 0 ? "3. Review the flagged runs, and read \"Tool-permission prompts\" above before the next batch." : "3. Review the flagged runs.");
   out.push("4. Land the results.csv commits.");
   out.push("5. Re-enable macOS updates if you deferred them.");
   return out.join("\n") + "\n";
