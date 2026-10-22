@@ -602,8 +602,7 @@ async function provisionStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
   if (state.provisioned.length < state.provisionPlan.length) {
     state.provisioned.push(reservedRun(ctx, state, state.provisionPlan[state.provisioned.length]));
   } else {
-    const now = ctx.deps.now();
-    state.trustWait = { startedAt: iso(now), deadlineAt: iso(now + TRUST_WAIT_MS) };
+    state.trustWait = {};
     state.phase = "trust";
   }
   return { progressed: true };
@@ -671,12 +670,15 @@ async function trustStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
       sessionId: state.trustSessions!.find((session) => session.projectId === project.id)!.appSessionId!,
     }));
     const linked = projects.map((project) => ({ ...project, sessionUrl: `ghapp://sessions/${project.sessionId}` }));
+    wait.startedAt ??= iso(ctx.deps.now());
+    wait.deadlineAt ??= iso(ms(wait.startedAt) + TRUST_WAIT_MS);
+    const action = issue(ctx, state, "trust_projects", "batch", { projects: linked, deadline: wait.deadlineAt, timeoutMinutes: 30 });
     await notify(ctx, state, {
       key: "project-trust", title: "Eval projects need trust", priority: "high", tags: ["warning"],
       body: `Batch ${ctx.config.id}: trust these repositories in the app by ${wait.deadlineAt}. Only you can do this; no self-test or eval session starts until every project is trusted.\n` +
         linked.map((p) => `${p.sessionName}: ${p.sessionUrl}\n${p.path}`).join("\n"),
     });
-    return { action: issue(ctx, state, "trust_projects", "batch", { projects: linked, deadline: wait.deadlineAt, timeoutMinutes: 30 }) };
+    return { action };
   }
   return {};
 }
@@ -1073,6 +1075,22 @@ async function prepareRun(ctx: Ctx, run: RunState): Promise<string | null> {
   return null;
 }
 
+async function pruneSeedHistory(ctx: Ctx, run: RunState): Promise<string | null> {
+  if (run.features.length === ALL_FEATURES.length) return null;
+  const gitInRun = (args: string[]) => ctx.deps.exec("git", args, { cwd: run.repoDir, timeoutMs: TIMEOUTS.git });
+  const worktrees = await gitInRun(["worktree", "list", "--porcelain"]);
+  if (worktrees.code !== 0 || worktrees.stdout.split("\n").filter((line) => line.startsWith("worktree ")).length !== 1) {
+    return "cannot prune the unused seed while linked worktrees exist or cannot be checked";
+  }
+  for (const args of [["reflog", "expire", "--expire=now", "--all"], ["gc", "--prune=now"]]) {
+    const result = await gitInRun(args);
+    if (result.code !== 0) return `removing obsolete seed history failed: git ${args.join(" ")}: ${result.stderr.trim()}`;
+  }
+  const history = await gitInRun(["rev-list", "--all", "--reflog", "--count"]);
+  if (history.code !== 0 || history.stdout.trim() !== "1") return "unused seed still has history beyond its single prepared commit";
+  return null;
+}
+
 function runCreateArgs(ctx: Ctx, run: RunState): Record<string, unknown> {
   const { config } = ctx;
   return {
@@ -1461,9 +1479,13 @@ async function runStep(ctx: Ctx, state: BatchState, index: number): Promise<Step
         return { progressed: true };
       }
       const blocked = trustBlock(ctx, run.projectId);
+      const wasPrepared = run.prepared;
       const preparationError = blocked ?? await prepareRun(ctx, run);
-      // Trust is read again after preparation, immediately before issuing create_session.
-      const failure = preparationError ?? trustBlock(ctx, run.projectId);
+      // Persist preparation before pruning: a restart must not need the removed seed object.
+      if (!preparationError && !wasPrepared) return { progressed: true };
+      const cleanupError = preparationError ?? await pruneSeedHistory(ctx, run);
+      // Trust is read again after preparation and cleanup, immediately before create_session.
+      const failure = cleanupError ?? trustBlock(ctx, run.projectId);
       if (failure) {
         voidRun(ctx, state, run, `not started: ${failure}`, false);
         stopBatch(ctx, state, failure, true);
@@ -1612,7 +1634,8 @@ function revalidate(ctx: Ctx, state: BatchState): Revalidated {
   const now = ctx.deps.now();
   if (state.phase === "provisioning" || state.phase === "trust") {
     const stop = admissionBlock(ctx, state);
-    const expired = state.phase === "trust" && now >= ms(state.trustWait?.deadlineAt);
+    const expired = state.phase === "trust" && now >= ms(state.trustWait?.deadlineAt) &&
+      trustProjects(state).some((project) => ctx.deps.appDb.projectTrusted(project.id) !== true);
     if (stop || expired) {
       state.pending = null;
       stopBatch(ctx, state, stop?.reason ?? "project trust was not complete within 30 minutes; no self-test or eval session started", stop?.failure ?? true);

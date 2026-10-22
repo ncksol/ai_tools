@@ -250,7 +250,7 @@ export interface BatchState {
   // Reserved repos are not attempts until a round consumes them. Never refill after provisioning.
   provisionPlan?: string[];
   provisioned?: RunState[];
-  trustWait?: { startedAt: string; deadlineAt: string; listed?: boolean; completedAt?: string };
+  trustWait?: { startedAt?: string; deadlineAt?: string; listed?: boolean; completedAt?: string };
   trustSessions?: { projectId: string; name: string; appSessionId?: string; sessionId?: string; archived?: boolean }[];
   // Indexes into runs of the current round's runs that are not done or void yet.
   active: number[];

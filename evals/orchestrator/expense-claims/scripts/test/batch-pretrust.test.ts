@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { after, test } from "node:test";
 import { openAppDb } from "../lib/batch/appdb.ts";
 import { FULL_SET } from "../lib/batch/plan.ts";
-import { currentPins, makeCtx, next, requestStop } from "../lib/batch/runner.ts";
+import { currentPins, makeCtx, next, requestStop, step } from "../lib/batch/runner.ts";
 import { initialState, saveState } from "../lib/batch/state.ts";
 import { run as runProc } from "../lib/proc.ts";
 import { RESULT_COLUMNS } from "../lib/results.ts";
@@ -109,6 +109,52 @@ test("trust wait times out before starting a session and reports unused projects
   for (const id of h.app.projects.keys()) assert.ok(report.includes(id));
 });
 
+test("slow trust-session creation leaves the full 30-minute window for the displayed list", async () => {
+  const h = await make({ scenarios: [], variants: ["a", "b"] });
+  let action = await h.until((a) => a.action === "create_trust_session");
+  let sessions = 0;
+  while (action.action === "create_trust_session") {
+    h.clock.now += 10 * 60_000;
+    await h.drive(action);
+    sessions++;
+    action = await h.next(0);
+  }
+  assert.equal(action.action, "trust_projects");
+  assert.equal(sessions, 4);
+  assert.equal(Date.parse(String(action.details!.deadline)) - h.clock.now, 30 * 60_000);
+  assert.equal(h.state().trustWait!.startedAt, new Date(h.clock.now).toISOString());
+  assert.equal(h.app.sessions.size, 0);
+});
+
+test("expired trust deadlines do not cancel archival when every project is already trusted", async () => {
+  const h = await make({ scenarios: [] });
+  const archive = await h.until((a) => a.action === "archive_trust_session");
+  h.clock.now = Date.parse(h.state().trustWait!.deadlineAt!) + 1;
+  const retry = await h.next(0);
+  assert.equal(retry.action, "archive_trust_session");
+  assert.equal(retry.id, archive.id);
+  assert.equal((await h.until((a) => a.action === "create_session")).action, "create_session");
+  assert.equal(h.state().phase, "runs");
+});
+
+test("revoked trust before a run's first launch voids it as not started and stops the batch", async () => {
+  const h = await make({ scenarios: [] });
+  const archive = await h.until((a, state) => a.action === "archive_trust_session" &&
+    state.trustSessions!.filter((session) => !session.archived).length === 1);
+  await h.drive(archive);
+  const state = h.state();
+  await step(h.ctx, state);
+  assert.equal(state.phase, "runs");
+  saveState(h.config.dir, state);
+  h.app.trustedProjects.delete(state.provisioned![0].projectId!);
+  assert.equal((await h.next()).action, "done");
+  assert.equal(h.state().phase, "stopped");
+  assert.equal(h.state().runs[0].status, "void");
+  assert.match(h.state().runs[0].voidReason!, /^not started: project .* is not trusted on local/);
+  assert.equal(h.state().runs[0].startRequestedAt, undefined);
+  assert.equal(h.app.sessions.size, 0);
+});
+
 test("a stop during provisioning creates no additional project and starts no session", async () => {
   const h = await make({ scenarios: [], variants: ["a", "b"] });
   const action = await h.next();
@@ -155,6 +201,8 @@ test("calibration fixes the spec and kickoff at run start, not at provisioning",
   assert.equal(history.stdout.trim(), "Seed v1", "no preparation commit is visible to the orchestrator");
   const parent = await runProc("git", ["rev-list", "--count", "HEAD"], { cwd: run.repoDir });
   assert.equal(parent.stdout.trim(), "1");
+  const reflog = await runProc("git", ["rev-list", "--all", "--reflog", "--count"], { cwd: run.repoDir });
+  assert.equal(reflog.stdout.trim(), "1", "dry-run seed history must not expose the old full-feature commit either");
   const original = await runProc(process.execPath, [h.config.newRunScript, "--variant", "comparison", "--n", "1", "--features", "policy,reports,import", "--runs-dir", join(h.dir, "comparison"), "--dry-run"]);
   assert.equal(original.code, 0, original.stderr);
   const expectedTree = await runProc("git", ["rev-parse", "HEAD^{tree}"], { cwd: join(h.dir, "comparison/orch-eval-comparison-1") });
@@ -195,6 +243,73 @@ test("launch preparation replaces only the unused remote seed and preserves its 
   assert.equal(await git(["rev-list", "--count", "HEAD"], remote), "1");
   assert.equal(await git(["log", "--format=%s"], remote), "Seed v1");
   assert.equal(await git(["log", "-1", "--format=%an <%ae>%n%aI"], remote), author);
+  assert.equal(h.app.sessions.size, 0);
+});
+
+test("launch preparation removes the obsolete seed from refs, reflogs and local objects", async () => {
+  const { h, slot, git } = await remoteSeed();
+  assert.equal((await h.until((a) => a.action === "create_session")).action, "create_session");
+  assert.equal(await git(["rev-list", "--all", "--reflog", "--count"]), "1");
+  const original = await runProc("git", ["cat-file", "-e", slot.seedSha!], { cwd: slot.repoDir });
+  assert.notEqual(original.code, 0, "the original full-feature seed object must no longer exist");
+});
+
+test("a restart after pruning resumes from persisted preparation without the original seed object", async () => {
+  const { h, slot, git } = await remoteSeed();
+  const exec = h.ctx.deps.exec;
+  let interrupted = false;
+  h.ctx.deps.exec = async (cmd, args, opts) => {
+    if (cmd === "git" && args[0] === "gc" && !interrupted) {
+      assert.equal(h.state().runs[0].prepared, true, "preparation is saved before destructive cleanup");
+      const result = await exec(cmd, args, opts);
+      assert.equal(result.code, 0, result.stderr);
+      interrupted = true;
+      throw new Error("simulated interruption after seed pruning");
+    }
+    return exec(cmd, args, opts);
+  };
+  await assert.rejects(h.until((a) => a.action === "create_session"), /simulated interruption after seed pruning/);
+  const original = await runProc("git", ["cat-file", "-e", slot.seedSha!], { cwd: slot.repoDir });
+  assert.notEqual(original.code, 0);
+  const head = await git(["rev-parse", "HEAD"]);
+  const restarted = makeCtx(h.config, h.ctx.deps);
+  assert.equal((await next(restarted, { maxWaitMs: 0 })).action, "create_session");
+  assert.equal(await git(["rev-parse", "HEAD"]), head);
+  assert.equal(await git(["rev-list", "--all", "--reflog", "--count"]), "1");
+});
+
+test("seed pruning refuses linked worktrees and leaves their original commit intact", async () => {
+  const { h, slot, git } = await remoteSeed();
+  const worktree = join(h.dir, "unexpected-worktree");
+  await git(["worktree", "add", "-q", "--detach", worktree]);
+  assert.equal((await h.until((a) => a.action === "create_session")).action, "done");
+  assert.match(h.state().stopReason!, /linked worktrees/);
+  assert.equal(await git(["rev-parse", "HEAD"], worktree), slot.seedSha);
+  assert.equal(h.app.sessions.size, 0);
+});
+
+test("failed seed pruning stops before any run session is issued", async () => {
+  const { h } = await remoteSeed();
+  const exec = h.ctx.deps.exec;
+  h.ctx.deps.exec = (cmd, args, opts) => cmd === "git" && args[0] === "gc"
+    ? Promise.resolve({ code: 1, stdout: "", stderr: "fixture cleanup failure" })
+    : exec(cmd, args, opts);
+  assert.equal((await h.until((a) => a.action === "create_session")).action, "done");
+  assert.match(h.state().stopReason!, /removing obsolete seed history failed.*fixture cleanup failure/);
+  assert.equal(h.state().runs[0].status, "void");
+  assert.equal(h.app.sessions.size, 0);
+});
+
+test("trust revoked during seed cleanup prevents a run's first session from being issued", async () => {
+  const { h } = await remoteSeed();
+  const exec = h.ctx.deps.exec;
+  h.ctx.deps.exec = async (cmd, args, opts) => {
+    const result = await exec(cmd, args, opts);
+    if (cmd === "git" && args[0] === "gc") h.app.trustedProjects.clear();
+    return result;
+  };
+  assert.equal((await h.until((a) => a.action === "create_session")).action, "done");
+  assert.match(h.state().runs[0].voidReason!, /^not started: project .* is not trusted on local/);
   assert.equal(h.app.sessions.size, 0);
 });
 
