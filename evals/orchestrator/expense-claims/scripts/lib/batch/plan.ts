@@ -157,6 +157,24 @@ export function planNext(runs: RunState[], rows: ResultRow[], variants: string[]
   return { next: round[0] ?? null, decision };
 }
 
+// Reserve the maximum successful plan: pending calibrations plus scored targets. If Summary
+// stays, legacy calibration attempts count toward the target and some reservations stay unused.
+export function provisionPlan(rows: ResultRow[], variants: string[], target: number, parallel: number, set?: VariantSet): string[] {
+  const decision = calibrationDecision(rows, variants, set);
+  if (set && decision.state === "full") return [];
+  const plan = [...decision.pending];
+  const counts = variants.map((variant, order) => ({
+    variant, order,
+    count: set ? scoredCount([], rows, variant, WITHOUT_SUMMARY, set.variants[variant]) : 0,
+  }));
+  for (;;) {
+    const round = counts.filter((entry) => entry.count < target)
+      .sort((a, b) => a.count - b.count || a.order - b.order).slice(0, parallel);
+    if (round.length === 0) return plan;
+    for (const entry of round) { plan.push(entry.variant); entry.count++; }
+  }
+}
+
 // One more than any run number of this variant in results.csv, the runs folder or this batch.
 export function nextRunNumber(variant: string, rows: ResultRow[], runsDir: string, runs: RunState[]): number {
   let max = 0;

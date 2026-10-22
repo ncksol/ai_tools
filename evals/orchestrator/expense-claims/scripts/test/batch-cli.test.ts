@@ -102,21 +102,17 @@ test("init, next, record and status work from the command line", async () => {
   const action = JSON.parse(next.stdout);
   assert.equal(action.action, "create_project");
   assert.equal(action.dryRun, true);
-  assert.match(action.tool.args.path, /selftest-1\/eval-runner-selftest-/);
+  assert.equal(action.tool.args.path, join(dir, "runs", "eval-runner-selftest"));
 
   const recorded = await batch(["record", "--batch", join(dir, "batches", "cli"), "--action", action.id, "--project-id", "p-1"]);
   assert.equal(recorded.stdout.trim(), "project p-1 recorded");
-  const session = JSON.parse((await batch(["next", "--batch", "latest", "--max-wait", "0", ...common])).stdout);
-  assert.equal(session.action, "create_session");
-  assert.deepEqual(Object.keys(session.tool.args).sort(), ["coordinate_with_creator", "detached", "kickoff", "project_id", "workspace_type"]);
-  assert.equal(session.tool.args.detached, true);
-  assert.equal(session.tool.args.coordinate_with_creator, false);
-  assert.equal(session.tool.args.kickoff.agent, undefined, "the self-test uses the default agent");
-  assert.equal(session.tool.args.kickoff.mode, "interactive");
+  const project = JSON.parse((await batch(["next", "--batch", "latest", "--max-wait", "0", ...common])).stdout);
+  assert.equal(project.action, "create_project", "all run projects are provisioned before the self-test starts");
+  assert.match(project.tool.args.path, /orch-eval-variant-a-\d+$/);
 
   const status = await batch(["status", "--batch", "cli", ...common]);
-  assert.match(status.stdout, /Batch cli: phase selftest/);
-  assert.match(status.stdout, /Pending action: a2 create_session/);
+  assert.match(status.stdout, /Batch cli: phase provisioning/);
+  assert.match(status.stdout, /Pending action: a2 create_project/);
   const stop = await batch(["stop", "--batch", "cli", ...common]);
   assert.match(stop.stdout, /stops after the runs in progress finish/);
   const released = await batch(["take-over", "--batch", "cli", ...common]);

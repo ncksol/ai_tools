@@ -197,6 +197,18 @@ export async function actAsDriver(ctx: Ctx, app: FakeApp, clock: { now: number }
   const args = action.tool?.args ?? {};
   const details = action.details ?? {};
   switch (action.action) {
+    case "create_trust_session":
+      await act({ sessionId: app.createTrustSession(args) }, "created idle trust session");
+      break;
+    case "archive_trust_session":
+      app.archiveTrustSession(String(args.id));
+      await act({ archived: true }, "archived idle trust session");
+      break;
+    case "trust_projects":
+      // Simulates the user, not an agent capability. The real driver only relays the list.
+      for (const project of action.details!.projects as { id: string }[]) app.trustedProjects.add(project.id);
+      await act({ listed: true }, "user trusted listed projects (rehearsal only)");
+      break;
     case "create_project":
       await act({ projectId: app.createProject(String(args.path)) }, "create_project");
       break;

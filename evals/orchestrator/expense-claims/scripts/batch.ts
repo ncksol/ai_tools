@@ -88,6 +88,8 @@ const { values, positionals } = parseArgs({
     question: { type: "string" },
     neither: { type: "boolean", default: false },
     sent: { type: "boolean", default: false },
+    listed: { type: "boolean", default: false },
+    archived: { type: "boolean", default: false },
     failed: { type: "string" },
     message: { type: "string" },
   },
@@ -259,6 +261,8 @@ function recordInput(): RecordInput {
     question: values.question,
     neither: values.neither,
     sent: values.sent,
+    listed: values.listed,
+    archived: values.archived,
     failed: values.failed,
   };
 }

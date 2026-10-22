@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { ALL_FEATURES, featureSetName } from "../lib/features.ts";
-import { calibrationDecision, describePlan, nextRunNumber, planNext, planRound, scoredCount, WITHOUT_SUMMARY } from "../lib/batch/plan.ts";
+import { calibrationDecision, describePlan, nextRunNumber, planNext, planRound, provisionPlan, scoredCount, WITHOUT_SUMMARY } from "../lib/batch/plan.ts";
 import type { RunState } from "../lib/batch/state.ts";
 import { readResults, RESULT_COLUMNS, type ResultRow } from "../lib/results.ts";
 import { KIT_DIR } from "../lib/suite.ts";
@@ -141,4 +141,12 @@ test("run numbers follow results.csv, the runs folder and the batch", () => {
   assert.equal(nextRunNumber("a", [row("a", 8, THREE, "no", "passed", 1)], runsDir, []), 9);
   assert.equal(nextRunNumber("a", [], runsDir, [run("a", 11)]), 12);
   assert.equal(nextRunNumber("b", [], runsDir, []), 1);
+});
+
+test("provisioning reserves the maximum plan, including pending calibration, not a retry pool", () => {
+  assert.deepEqual(provisionPlan([], ["a", "b"], 3, 2), ["a", "b", "a", "b", "a", "b", "a", "b"]);
+  const drop = [row("old", 1, FULL, "yes", "passed", 90)];
+  assert.deepEqual(provisionPlan(drop, ["a"], 3, 1), ["a", "a", "a"]);
+  const full = [row("a", 1, FULL, "yes", "passed", 20)];
+  assert.deepEqual(provisionPlan(full, ["a"], 2, 1), ["a", "a"]);
 });

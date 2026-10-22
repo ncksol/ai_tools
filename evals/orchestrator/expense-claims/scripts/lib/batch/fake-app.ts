@@ -41,6 +41,7 @@ interface FakeSession {
 export class FakeApp implements AppDb {
   projects = new Map<string, { path: string; repository: string }>();
   sessions = new Map<string, FakeSession>();
+  trustSessions = new Map<string, WorkspaceRow & { projectId: string }>();
   private seq = 0;
   readonly driverSource = "agent-driver-rehearsal";
   readonly stateDir: string;
@@ -59,6 +60,12 @@ export class FakeApp implements AppDb {
   // project the app doesn't trust (app 1.1.30), a shell command that host policy doesn't approve
   // waits for a user.
   allowAll = true;
+  trustedProjects = new Set<string>();
+  projectTrusted(projectId: string): boolean { return this.trustedProjects.has(projectId); }
+  projectForPath(path: string): string | null {
+    for (const [id, project] of this.projects) if (project.path === path) return id;
+    return null;
+  }
 
   constructor(stateDir: string, clock: { now: number }, scenarios: Scenario[]) {
     this.stateDir = stateDir;
@@ -90,9 +97,28 @@ export class FakeApp implements AppDb {
     return id;
   }
 
+  createTrustSession(args: Record<string, unknown>): string {
+    if (args.kickoff || args.detached || args.workspace_type !== "branch" || args.coordinate_with_creator !== true) {
+      throw new Error("trust sessions must be idle, branch-backed children of the driver");
+    }
+    const id = this.id("trust-ws");
+    this.trustSessions.set(id, {
+      id, sessionId: this.id("trust-cli"), projectId: String(args.project_id), name: String(args.name),
+      archivedAt: null, createdBy: "agent", createdAt: new Date(this.clock.now).toISOString(),
+    });
+    return id;
+  }
+
+  archiveTrustSession(id: string): void {
+    const session = this.trustSessions.get(id);
+    if (!session) throw new Error(`not a trust session: ${id}`);
+    session.archivedAt = new Date(this.clock.now).toISOString();
+  }
+
   createSession(args: Record<string, unknown>): string {
     const project = this.projects.get(String(args.project_id));
     if (!project) throw new Error(`no project ${String(args.project_id)}`);
+    if (!this.projectTrusted(String(args.project_id))) throw new Error("cannot start a session in an untrusted fake project");
     if (args.detached !== true || args.coordinate_with_creator !== false) throw new Error("a run must be detached and uncoordinated");
     const kickoff = args.kickoff as Record<string, unknown>;
     const scenario = this.scenarios.shift() ?? "silent";
@@ -358,10 +384,11 @@ export class FakeApp implements AppDb {
 
   // AppDb, answered from the fake's own records.
   sessionForWorkspace(appId: string): string | null {
-    return this.sessions.get(appId)?.id ?? null;
+    return this.sessions.get(appId)?.id ?? this.trustSessions.get(appId)?.sessionId ?? null;
   }
   workspaceForSession(id: string): string | null {
     for (const session of this.sessions.values()) if (session.id === id) return session.appId;
+    for (const session of this.trustSessions.values()) if (session.sessionId === id) return session.id;
     return null;
   }
   interrupted = new Set<string>();
@@ -375,9 +402,10 @@ export class FakeApp implements AppDb {
     return [];
   }
   workspaces(projectId: string): WorkspaceRow[] | null {
-    return [...this.sessions.values()]
+    return [...[...this.sessions.values()]
       .filter((session) => session.projectId === projectId)
-      .map((session) => ({ id: session.appId, sessionId: session.id, name: `${session.repository} (${session.scenario})`, archivedAt: null, createdBy: "agent", createdAt: session.createdAt }));
+      .map((session) => ({ id: session.appId, sessionId: session.id, name: `${session.repository} (${session.scenario})`, archivedAt: null, createdBy: "agent", createdAt: session.createdAt })),
+      ...[...this.trustSessions.values()].filter((session) => session.projectId === projectId)];
   }
   creatorLinks(appId: string): { creator: string | null; coordinator: string | null; createdBy: string | null } | null {
     return this.sessions.has(appId) ? { creator: null, coordinator: null, createdBy: "agent" } : null;

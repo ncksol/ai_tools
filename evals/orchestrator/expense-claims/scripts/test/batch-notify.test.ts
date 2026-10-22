@@ -47,6 +47,22 @@ test("sendNtfy posts title, priority, tags and body to the topic (local stub)", 
   }
 });
 
+test("multiline trust notices arrive with every session link and path unchanged", async () => {
+  const stub = await startNtfyStub();
+  const notice = {
+    ...notices.failure("b1", "trust", ""),
+    body: 'Trust "project one": ghapp://sessions/session-1\n/path/one\nTrust project two: ghapp://sessions/session-2\n/path/with\\backslash\r\n',
+  };
+  try {
+    const result = await sendNtfy(stub.url, notice);
+    assert.deepEqual(result, { ok: true });
+    assert.equal(stub.received.length, 1);
+    assert.equal(stub.received[0].body, notice.body);
+  } finally {
+    await stub.close();
+  }
+});
+
 test("the URL goes to curl on stdin, never in its arguments, and is redacted from errors", async () => {
   const fake = join(dir, "fake-curl.sh");
   const argsFile = join(dir, "args.txt");

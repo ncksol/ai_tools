@@ -124,6 +124,7 @@ export interface RunState {
   name: string;
   repoDir: string;
   repo: string;
+  seedSha?: string;
   status: RunStatus;
   createdAt: string;
   projectId?: string;
@@ -135,6 +136,8 @@ export interface RunState {
   startRequestedAt?: string;
   lastStartAt?: string;
   kickoffAt?: string;
+  prepared?: boolean;
+  prompt?: string;
   kickoffChecked?: boolean;
   judged: string[];
   answers: Answer[];
@@ -197,6 +200,9 @@ export interface SelfTestState {
 }
 
 export type ActionKind =
+  | "trust_projects"
+  | "create_trust_session"
+  | "archive_trust_session"
   | "create_project"
   | "create_session"
   | "lookup_session"
@@ -207,7 +213,7 @@ export type ActionKind =
 export interface PendingAction {
   id: string;
   kind: ActionKind;
-  target: "selftest" | number;
+  target: "selftest" | "batch" | `provision:${number}` | number;
   issuedAt: string;
   payload: Record<string, unknown>;
   // How often an unconfirmed create_session was issued again after reconciling found no session.
@@ -227,7 +233,7 @@ export interface Pins {
 export interface BatchState {
   // The revision this state was loaded at (0 before the first save). See saveState.
   revision?: number;
-  phase: "selftest" | "runs" | "finishing" | "done" | "stopped";
+  phase: "provisioning" | "trust" | "selftest" | "runs" | "finishing" | "done" | "stopped";
   stopReason?: string;
   // The batch stopped because something went wrong, not because it ran out of work or time.
   failed?: boolean;
@@ -241,6 +247,11 @@ export interface BatchState {
   recorded: string[];
   selftests: SelfTestState[];
   runs: RunState[];
+  // Reserved repos are not attempts until a round consumes them. Never refill after provisioning.
+  provisionPlan?: string[];
+  provisioned?: RunState[];
+  trustWait?: { startedAt: string; deadlineAt: string; listed?: boolean; completedAt?: string };
+  trustSessions?: { projectId: string; name: string; appSessionId?: string; sessionId?: string; archived?: boolean }[];
   // Indexes into runs of the current round's runs that are not done or void yet.
   active: number[];
   // Set when the batch must stop but runs are still in progress: no new run starts, and the batch
@@ -404,9 +415,9 @@ export function loadState(dir: string): BatchState {
   return state;
 }
 
-export function initialState(pins: Pins, selfTest: boolean, now: string): BatchState {
+export function initialState(pins: Pins, _selfTest: boolean, now: string): BatchState {
   return {
-    phase: selfTest ? "selftest" : "runs",
+    phase: "provisioning",
     pins,
     pending: null,
     actionSeq: 0,
