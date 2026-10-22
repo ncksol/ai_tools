@@ -38,11 +38,11 @@ This repo is also a **Copilot CLI plugin marketplace** (`ai-tools`). Plugins are
 | Plugin | What it does | Install |
 |---|---|---|
 | [`adr-authoring`](./ghcp/plugins/adr-authoring/README.md) | Writes evidence-led architecture decision records in **Microsoft Learn-inspired style**. Bundles an agent, a skill, a fixed template, four example pairs, structural validation, and fourteen evaluation briefs. Preserves accepted records and checks decision relevance and audience fit. | `copilot plugin install adr-authoring@ai-tools` |
-| [`swarm-dashboard`](./ghcp/plugins/swarm-dashboard/README.md) | A **watch-only dashboard** for agentic swarms: one card per child session or running sub-agent with its state, progress, cost and anything waiting for you, plus a timeline, plan, board and run history. Opens as a canvas in the Copilot app or in a browser, reads Copilot's local data read-only, and its only network requests are read-only `gh` and `az` queries about pull requests. | `copilot plugin install swarm-dashboard@ai-tools` |
+| [`wintermute`](./ghcp/plugins/wintermute/README.md) | The **orchestrator agents** for the GitHub Copilot app and a **watch-only dashboard** for the swarms they run. Six agents (`orchestrator`, `session-orchestrator`, their `hands-on-` variants, and the `orchestrator-worker` and `session-worker` helpers) plan work and hand it to child sessions and sub-agents. The dashboard shows one card per child session or running sub-agent with its state, progress, cost and anything waiting for you, plus a timeline, plan, board and run history; it opens as a canvas in the Copilot app or in a browser, reads Copilot's local data read-only, and its only network requests are read-only `gh` and `az` queries about pull requests. Agents and dashboard share one version and update together. | `copilot plugin install wintermute@ai-tools` |
 
 `adr-authoring` is a documentation workflow, not a PR-review tool. Ask it to draft an ADR in chat, write an authorized Markdown file, or review an existing ADR. It records supplied decisions by default and recommends architecture only when explicitly asked. Its structural checks do not establish factual accuracy or model-output consistency.
 
-`swarm-dashboard` is a viewer, not a workflow: it adds a canvas and a local launcher, and no skills or agents. It reads Copilot's local session data, so it shows the swarms that run on the same machine.
+`wintermute` ships the orchestrator agents with the dashboard that watches them, so one `copilot plugin update` updates both. Its agents run under plugin IDs such as `wintermute:orchestrator`; the dashboard canvas is `swarm-dashboard`. The dashboard reads Copilot's local session data, so it shows the swarms that run on the same machine. Its [CHANGELOG](./ghcp/plugins/wintermute/CHANGELOG.md) lists each release and how to move from the old `swarm-dashboard` plugin and symlinked agents.
 
 ### Skills
 
@@ -65,12 +65,19 @@ Those three are **safe by design**: they only inspect and report. They will not 
 |---|---|---|
 | [`andrej`](./ghcp/agents/andrej.agent.md) | Karpathy-flavoured coding guidelines: think before coding, simplicity first, surface tradeoffs, no speculative abstractions. Useful as a delegate for any non-trivial code change where you want a more careful, less eager collaborator. | Ask Copilot to delegate to the `andrej` agent, or wire it into your own workflows. |
 | [`azure-arch-diagram`](./ghcp/agents/azure-arch-diagram.agent.md) | Expert Azure architecture diagram creator. Produces **editable draw.io (`.drawio`) files** as raw mxGraph XML, following Microsoft Azure Architecture Centre style guidelines — official Azure2 icons, directional arrows, grouping containers, and a consistent colour palette. Ships ready-made templates for system, network, data-flow, context, and deployment diagrams. | Ask Copilot to delegate to the `azure-arch-diagram` agent, e.g. "draw an Azure architecture diagram for…". |
-| [`orchestrator`](./ghcp/agents/orchestrator.agent.md) | Coordinator for multi-PR work in the GitHub Copilot app. Plans, delegates, and tracks, but has **no shell, file-editing, search, web, or MCP tools**. Its one file tool, `view`, is limited to attachments, the file you give it as the brief or spec, and its own session files, so every other lookup and every change goes elsewhere: owned work (a branch, PR, or ongoing workstream) and jobs that need other agents to a nested child session, other one-off jobs to an `orchestrator-worker` sub-agent. Keeps its plan and a registry of child sessions in the session SQL database. Picks a model and reasoning effort for every child session and sub-agent from the tiers in its "Models and effort" section; edit them to match the models you have. Follows version 1 of the swarm dashboard data contract: each child report starts with a status line, a `children` table records each child's branch, PR and outcome, and every question to you is tagged with the units it concerns. | In the GitHub Copilot app (it relies on the app's session tools), select it as the session's agent before your first message: add the `orchestrator` chip from the composer's **+** menu, or run `/agent orchestrator`. Install `orchestrator-worker` with it. |
-| [`orchestrator-worker`](./ghcp/agents/orchestrator-worker.agent.md) | Helper for `orchestrator` and `hands-on-orchestrator`. Does their one-off jobs (research, checks, reviews, documents, commands) with shell, file, search, and web tools, but has no tools to start sub-agents or create sessions. Runs on Opus at high effort unless the orchestrator sets a model and effort for the job, which it normally does. | Not invoked directly, and hidden from the agent picker. `orchestrator` starts it through the `task` tool. |
-| [`session-orchestrator`](./ghcp/agents/session-orchestrator.agent.md) | A variant of `orchestrator` that delegates only to child sessions and never starts sub-agents. One-off jobs (research, checks, reviews, documents, commands) get one-off sessions, which it archives when their results are in. Its children run as `session-worker` and can't start agents of their own, so it plans all fan-out up front, and children ask it when they need a helper. Otherwise the same as `orchestrator`, including the model tiers and version 1 of the swarm dashboard data contract. It can run side by side with `orchestrator`. | Select it as the session's agent in the GitHub Copilot app, as for `orchestrator`: the `session-orchestrator` chip, or `/agent session-orchestrator`. Install `session-worker` with it. |
-| [`session-worker`](./ghcp/agents/session-worker.agent.md) | The agent every child session of `session-orchestrator` and `hands-on-session-orchestrator` runs as. Has shell, file, search, web, GitHub and PR tools, but no tools to start sub-agents or sessions; it asks the orchestrator for a helper instead. Reports in the swarm dashboard format. | Not invoked directly, and hidden from the agent picker. `session-orchestrator` and `hands-on-session-orchestrator` set it as each child session's agent. |
-| [`hands-on-orchestrator`](./ghcp/agents/hands-on-orchestrator.agent.md) | A variant of `orchestrator` that may do a quick job itself: one it can finish in about five tool calls or about two minutes, such as reading a file or log, a grep, a `git` or `gh` status check, one web fetch, a note in its session files, or a small edit committed and pushed on its own session branch. Most work is still delegated, to child sessions and `orchestrator-worker` sub-agents. It has shell, file, search and web tools for those quick jobs, and the app's `create_pull_request` and `update_pull_request` tools for its own PR, but no MCP tools. It never writes to a child's branch or worktree, and never reviews or checks work itself: its own commits get a PR, a claims check and a review from another vendor, like any child's unit. | Select it as the session's agent in the GitHub Copilot app, as for `orchestrator`: the `hands-on-orchestrator` chip, or `/agent hands-on-orchestrator`. Install `orchestrator-worker` with it. |
-| [`hands-on-session-orchestrator`](./ghcp/agents/hands-on-session-orchestrator.agent.md) | The same change made to `session-orchestrator`: it may do the same quick jobs itself, still never starts sub-agents, and delegates everything else to child sessions that run as `session-worker`. | Select it as the session's agent in the GitHub Copilot app: the `hands-on-session-orchestrator` chip, or `/agent hands-on-session-orchestrator`. Install `session-worker` with it. |
+
+#### Orchestrator agents (in the `wintermute` plugin)
+
+These six agents ship in the [`wintermute`](./ghcp/plugins/wintermute/README.md) plugin, not as loose files: install the plugin with `copilot plugin install wintermute@ai-tools`. Their runtime IDs are `wintermute:<name>`, for example `wintermute:orchestrator`; the agent picker shows the plain name.
+
+| Agent | What it does | How to invoke |
+|---|---|---|
+| [`orchestrator`](./ghcp/plugins/wintermute/com.github.copilot/agents/orchestrator.agent.md) | Coordinator for multi-PR work in the GitHub Copilot app. Plans, delegates, and tracks, but has **no shell, file-editing, search, web, or MCP tools**. Its one file tool, `view`, is limited to attachments, the file you give it as the brief or spec, and its own session files, so every other lookup and every change goes elsewhere: owned work (a branch, PR, or ongoing workstream) and jobs that need other agents to a nested child session, other one-off jobs to an `orchestrator-worker` sub-agent. Keeps its plan and a registry of child sessions in the session SQL database. Picks a model and reasoning effort for every child session and sub-agent from the tiers in its "Models and effort" section; edit them to match the models you have. Follows version 1 of the swarm dashboard data contract: each child report starts with a status line, a `children` table records each child's branch, PR and outcome, and every question to you is tagged with the units it concerns. | In the GitHub Copilot app (it relies on the app's session tools), select it as the session's agent before your first message: add the `orchestrator` chip from the composer's **+** menu, or pick it with `/agent`. Where a tool or flag takes an agent ID, use `wintermute:orchestrator`. |
+| [`orchestrator-worker`](./ghcp/plugins/wintermute/com.github.copilot/agents/orchestrator-worker.agent.md) | Helper for `orchestrator` and `hands-on-orchestrator`. Does their one-off jobs (research, checks, reviews, documents, commands) with shell, file, search, and web tools, but has no tools to start sub-agents or create sessions. Runs on Opus at high effort unless the orchestrator sets a model and effort for the job, which it normally does. | Not invoked directly, and hidden from the agent picker. `orchestrator` and `hands-on-orchestrator` start it through the `task` tool as `wintermute:orchestrator-worker`. |
+| [`session-orchestrator`](./ghcp/plugins/wintermute/com.github.copilot/agents/session-orchestrator.agent.md) | A variant of `orchestrator` that delegates only to child sessions and never starts sub-agents. One-off jobs (research, checks, reviews, documents, commands) get one-off sessions, which it archives when their results are in. Its children run as `session-worker` and can't start agents of their own, so it plans all fan-out up front, and children ask it when they need a helper. Otherwise the same as `orchestrator`, including the model tiers and version 1 of the swarm dashboard data contract. It can run side by side with `orchestrator`. | Select it as the session's agent in the GitHub Copilot app, as for `orchestrator`: the `session-orchestrator` chip, or `/agent`. Its ID is `wintermute:session-orchestrator`. |
+| [`session-worker`](./ghcp/plugins/wintermute/com.github.copilot/agents/session-worker.agent.md) | The agent every child session of `session-orchestrator` and `hands-on-session-orchestrator` runs as. Has shell, file, search, web, GitHub and PR tools, but no tools to start sub-agents or sessions; it asks the orchestrator for a helper instead. Reports in the swarm dashboard format. | Not invoked directly, and hidden from the agent picker. `session-orchestrator` and `hands-on-session-orchestrator` set it as each child session's agent, as `wintermute:session-worker`. |
+| [`hands-on-orchestrator`](./ghcp/plugins/wintermute/com.github.copilot/agents/hands-on-orchestrator.agent.md) | A variant of `orchestrator` that may do a quick job itself: one it can finish in about five tool calls or about two minutes, such as reading a file or log, a grep, a `git` or `gh` status check, one web fetch, a note in its session files, or a small edit committed and pushed on its own session branch. Most work is still delegated, to child sessions and `orchestrator-worker` sub-agents. It has shell, file, search and web tools for those quick jobs, and the app's `create_pull_request` and `update_pull_request` tools for its own PR, but no MCP tools. It never writes to a child's branch or worktree, and never reviews or checks work itself: its own commits get a PR, a claims check and a review from another vendor, like any child's unit. | Select it as the session's agent in the GitHub Copilot app, as for `orchestrator`: the `hands-on-orchestrator` chip, or `/agent`. Its ID is `wintermute:hands-on-orchestrator`. |
+| [`hands-on-session-orchestrator`](./ghcp/plugins/wintermute/com.github.copilot/agents/hands-on-session-orchestrator.agent.md) | The same change made to `session-orchestrator`: it may do the same quick jobs itself, still never starts sub-agents, and delegates everything else to child sessions that run as `session-worker`. | Select it as the session's agent in the GitHub Copilot app: the `hands-on-session-orchestrator` chip, or `/agent`. Its ID is `wintermute:hands-on-session-orchestrator`. |
 
 ---
 
@@ -143,7 +150,13 @@ copilot plugin install adr-authoring@ai-tools
 
 Direct installs from a repo, URL or local path (`copilot plugin install ./ghcp/plugins/adr-authoring`) still work, but the CLI marks them deprecated in favour of `plugin@marketplace`.
 
-The `swarm-dashboard` canvas loads with each session's extensions, so restart your Copilot sessions, or ask Copilot to reload extensions, after installing it.
+For the orchestrator agents and the swarm dashboard, install `wintermute`. If you used the `swarm-dashboard` plugin or symlinked the orchestrator agents into `~/.copilot/agents/`, follow the migration steps in the [`wintermute` CHANGELOG](./ghcp/plugins/wintermute/CHANGELOG.md) instead of the command below: old copies in `~/.copilot/agents/` stay separate agents with the same names in the picker and run the old prompts, and two plugins with the `swarm-dashboard` canvas clash.
+
+```bash
+copilot plugin install wintermute@ai-tools
+```
+
+To update it, run `copilot plugin update wintermute@ai-tools`. After you install or update it, start new sessions, or restart the Copilot app, to get the new agents: a running session keeps the agents it started with. Reloading extensions in a session, or restarting the app, refreshes the dashboard canvas. Changes to the agents reach you through a plugin update after they merge, not through `git pull`.
 
 ### Option 1: Symlink (recommended — you get updates with `git pull`)
 
@@ -163,7 +176,9 @@ for agent in ~/src/ai_tools/ghcp/agents/*.agent.md; do
 done
 ```
 
-To update, run `git -C ~/src/ai_tools pull`, then run both loops again. `git pull` updates the skills and agents you have already linked, but a new one, such as `orchestrator-worker` or `session-worker`, needs a link of its own. The `-n` flag makes a rerun replace each existing link instead of creating a new link inside the folder it points to.
+To update, run `git -C ~/src/ai_tools pull`, then run both loops again. `git pull` updates the skills and agents you have already linked, but a new one needs a link of its own. The `-n` flag makes a rerun replace each existing link instead of creating a new link inside the folder it points to.
+
+The loops cover the loose skills and agents only. The orchestrator agents come with the `wintermute` plugin; don't link them into `~/.copilot/agents/`, where they would show up as separate bare-named agents beside the plugin's `wintermute:` ones.
 
 ### Option 2: Copy
 
@@ -192,7 +207,7 @@ curl -fsSL https://raw.githubusercontent.com/ncksol/ai_tools/main/ghcp/agents/an
   -o ~/.copilot/agents/andrej.agent.md
 ```
 
-`orchestrator` needs `orchestrator-worker`, so fetch both `orchestrator.agent.md` and `orchestrator-worker.agent.md`. Likewise, `session-orchestrator` needs `session-worker`, so fetch both `session-orchestrator.agent.md` and `session-worker.agent.md`. The `hands-on-` variants need the same workers: `hands-on-orchestrator` needs `orchestrator-worker.agent.md`, and `hands-on-session-orchestrator` needs `session-worker.agent.md`.
+Don't fetch the orchestrator agents this way: they start their workers by `wintermute:` IDs, which only the `wintermute` plugin provides. Install the plugin instead.
 
 Restart your Copilot CLI session and you're done.
 
@@ -253,12 +268,7 @@ ai_tools/
     ├── agents/
     │   ├── andrej.agent.md
     │   ├── azure-arch-diagram.agent.md
-    │   ├── hands-on-orchestrator.agent.md
-    │   ├── hands-on-session-orchestrator.agent.md
-    │   ├── orchestrator.agent.md
-    │   ├── orchestrator-worker.agent.md
-    │   ├── session-orchestrator.agent.md
-    │   └── session-worker.agent.md
+    │   └── eval-runner.agent.md
     └── plugins/
         ├── adr-authoring/             ← self-contained plugin (own manifest, tests, LICENSE)
         │   ├── plugin.json
@@ -269,13 +279,14 @@ ai_tools/
         │   ├── evaluations/           ← ten briefs and a repeatability procedure
         │   ├── scripts/               ← structural and packaging validators
         │   └── tests/
-        └── swarm-dashboard/
+        └── wintermute/                ← the orchestrator agents and the swarm dashboard
             ├── plugin.json
             ├── package.json
+            ├── CHANGELOG.md
             ├── engine/                ← reads Copilot's local data into swarm snapshots
             ├── server/                ← local server, shared port and canvas host
             ├── ui/                    ← the dashboard page, no build step
-            ├── com.github.copilot/    ← the canvas extension
+            ├── com.github.copilot/    ← agents/ (the six orchestrator agents) and the canvas extension
             ├── scripts/               ← launcher, snapshot command, layout check, validator
             └── tests/
 ```

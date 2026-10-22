@@ -7,7 +7,7 @@ import { otherActiveBatch } from "./lock.ts";
 import { readNtfyUrl } from "./notify.ts";
 import { agentsToPin, readAppVersion, readCliVersion } from "./pins.ts";
 import type { BatchConfig } from "./state.ts";
-import { variantAgents, verifyVariants } from "../variants.ts";
+import { liveAgent, variantAgents, verifyVariants } from "../variants.ts";
 
 export interface Check {
   name: string;
@@ -123,7 +123,7 @@ export async function runPreflight(config: BatchConfig, host: Host): Promise<Che
   );
 
   if (!config.selfTest.only) {
-    const { names, missing } = agentsToPin(config.agentsDir, config.variantSet ? variantAgents(config.variantSet) : config.variants, Boolean(config.variantSet));
+    const { names, missing } = agentsToPin(config.agentsDir, config.variantSet ? variantAgents(config.variantSet) : config.variants.map(liveAgent), Boolean(config.variantSet));
     add("agents under test installed", missing.length === 0 ? "PASS" : "FAIL", missing.length === 0 ? `pinned: ${names.join(", ")}` : `not in ${config.agentsDir}: ${missing.join(", ")}`);
     if (config.variantSet) {
       const problems = verifyVariants(config.variantSet, config.agentsDir);

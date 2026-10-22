@@ -4,7 +4,7 @@
 
 **Goal:** Add the swarm cockpit to the swarm-dashboard plugin: a second, dark look at the same live swarm, opened in its own browser window, with a live black hole seen through a curved window and the swarm's facts on curved glass panels.
 
-**Architecture:** New files in `ghcp/plugins/swarm-dashboard/ui/` (a page shell, a stylesheet and ES modules), served by the existing local server from the existing live snapshot feed. Pure modules hold the data, the panel HTML, the 3D placement maths, the panel arrangement and the frame pacing, and are tested in Node. A WebGL2 renderer draws the black hole, bloom and room in three passes; the panels are ordinary page elements placed with CSS 3D transforms that share the shader's camera and 60-degree field of view. Small, separate hooks in PR 2's code add the `/cockpit` route, the Cockpit control in the regular view's header, the regular view's answer to the cockpit's clicks, and the cockpit section of the layout check.
+**Architecture:** New files in `ghcp/plugins/wintermute/ui/` (a page shell, a stylesheet and ES modules), served by the existing local server from the existing live snapshot feed. Pure modules hold the data, the panel HTML, the 3D placement maths, the panel arrangement and the frame pacing, and are tested in Node. A WebGL2 renderer draws the black hole, bloom and room in three passes; the panels are ordinary page elements placed with CSS 3D transforms that share the shader's camera and 60-degree field of view. Small, separate hooks in PR 2's code add the `/cockpit` route, the Cockpit control in the regular view's header, the regular view's answer to the cockpit's clicks, and the cockpit section of the layout check.
 
 **Tech Stack:** Browser ES modules, WebGL2 and GLSL ES 3.00, CSS 3D transforms, Server-Sent Events, `node:test`. No npm dependencies and no build step. Headless Chrome through the DevTools protocol (`scripts/lib/cdp.mjs`) and, optionally, Playwright's WebKit installed outside the repository.
 
@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- All paths below are relative to `ghcp/plugins/swarm-dashboard/` unless they start with `docs/` or `.github/`. A code block's first line `// <path>` names the file it belongs to and is not part of the file.
+- All paths below are relative to `ghcp/plugins/wintermute/` unless they start with `docs/` or `.github/`. A code block's first line `// <path>` names the file it belongs to and is not part of the file.
 - The cockpit is a second page of the same plugin, server and data (design call 1). It reads only `/api/events`; it adds no endpoint, no data source and no write. It is watch-only: no action or command input (design section 3).
 - The server's rules stay as they are: loopback only, Host check, GET and HEAD only, `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'`. No inline scripts, no `<style>` blocks, no inline event handlers. The server serves only `.html`, `.css` and `.mjs` files from the top of `ui/`, so every cockpit file lives directly in `ui/` with a `cockpit` prefix, and GLSL lives in `.mjs` modules as strings.
 - No runtime npm dependencies, no 3D library, no build step. UI modules import only relative modules (`tests/packaging.test.mjs`). Scripts import only `node:` built-ins and relative modules (`tests/guards.test.mjs`); Playwright is loaded only through `findPlaywright()`.
@@ -26,7 +26,7 @@
 - The cockpit never runs in the app's side panel (design section 3). In the side panel the Cockpit control shows the cockpit's address with a Copy button instead of opening a window.
 - The repository is public: fixtures, screenshots and all committed text are synthetic. Real-data checks stay local and report only counts.
 - Nothing from the spike is committed as it is (design call 8). The spike (outside the repository) is a reference that tasks adapt; it is never copied into the repository.
-- After any change under the plugin folder run `npm test && npm run validate` from `ghcp/plugins/swarm-dashboard`. After any change under `ui/` also run `npm run check:layout`; every view and every cockpit state must report 0 issues.
+- After any change under the plugin folder run `npm test && npm run validate` from `ghcp/plugins/wintermute`. After any change under `ui/` also run `npm run check:layout`; every view and every cockpit state must report 0 issues.
 - Conventional commit messages, scope `swarm-dashboard`; no `Co-authored-by` trailer or other AI attribution.
 
 ## Decisions settled before implementation
@@ -216,7 +216,7 @@ Expected: PASS (2 tests).
 - [ ] **Step 5: Commit the shell**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui/cockpit.html ghcp/plugins/swarm-dashboard/tests/cockpit-shell.test.mjs ghcp/plugins/swarm-dashboard/tests/helpers/cockpit.mjs
+git add ghcp/plugins/wintermute/ui/cockpit.html ghcp/plugins/wintermute/tests/cockpit-shell.test.mjs ghcp/plugins/wintermute/tests/helpers/cockpit.mjs
 git commit -m "feat(swarm-dashboard): add the cockpit page shell"
 ```
 
@@ -279,7 +279,7 @@ Expected: PASS.
 - [ ] **Step 10: Commit the hook**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/server/http.mjs ghcp/plugins/swarm-dashboard/tests/cockpit-server.test.mjs
+git add ghcp/plugins/wintermute/server/http.mjs ghcp/plugins/wintermute/tests/cockpit-server.test.mjs
 git commit -m "feat(swarm-dashboard): serve the cockpit page at /cockpit"
 ```
 
@@ -589,7 +589,7 @@ Expected: PASS (10 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui/cockpit-model.mjs ghcp/plugins/swarm-dashboard/tests/cockpit-model.test.mjs
+git add ghcp/plugins/wintermute/ui/cockpit-model.mjs ghcp/plugins/wintermute/tests/cockpit-model.test.mjs
 git commit -m "feat(swarm-dashboard): derive the cockpit's panel data from the snapshot"
 ```
 
@@ -804,7 +804,7 @@ Expected: PASS (7 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui/cockpit-space.mjs ghcp/plugins/swarm-dashboard/tests/cockpit-space.test.mjs
+git add ghcp/plugins/wintermute/ui/cockpit-space.mjs ghcp/plugins/wintermute/tests/cockpit-space.test.mjs
 git commit -m "feat(swarm-dashboard): add the cockpit's shared 3D space and camera"
 ```
 
@@ -1041,7 +1041,7 @@ Expected: PASS (5 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui/cockpit-fit.mjs ghcp/plugins/swarm-dashboard/tests/cockpit-fit.test.mjs
+git add ghcp/plugins/wintermute/ui/cockpit-fit.mjs ghcp/plugins/wintermute/tests/cockpit-fit.test.mjs
 git commit -m "feat(swarm-dashboard): arrange the cockpit's panels for each window size"
 ```
 
@@ -1211,7 +1211,7 @@ Expected: PASS (5 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui/cockpit-quality.mjs ghcp/plugins/swarm-dashboard/tests/cockpit-quality.test.mjs
+git add ghcp/plugins/wintermute/ui/cockpit-quality.mjs ghcp/plugins/wintermute/tests/cockpit-quality.test.mjs
 git commit -m "feat(swarm-dashboard): pace the cockpit's frames and remember its quality"
 ```
 
@@ -1473,7 +1473,7 @@ Expected: PASS (11 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui/cockpit-panels.mjs ghcp/plugins/swarm-dashboard/tests/cockpit-panels.test.mjs
+git add ghcp/plugins/wintermute/ui/cockpit-panels.mjs ghcp/plugins/wintermute/tests/cockpit-panels.test.mjs
 git commit -m "feat(swarm-dashboard): render the cockpit's panels"
 ```
 
@@ -1701,7 +1701,7 @@ Expected: PASS (7 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui/cockpit-link.mjs ghcp/plugins/swarm-dashboard/tests/cockpit-link.test.mjs
+git add ghcp/plugins/wintermute/ui/cockpit-link.mjs ghcp/plugins/wintermute/tests/cockpit-link.test.mjs
 git commit -m "feat(swarm-dashboard): link the regular view and the cockpit windows"
 ```
 
@@ -2668,7 +2668,7 @@ Review amendments (16 October 2026), applied in a follow-up commit after this ta
 - The reused frame gets the same structural check as the still frame.
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui/cockpit-shaders.mjs ghcp/plugins/swarm-dashboard/ui/cockpit-gl.mjs ghcp/plugins/swarm-dashboard/scripts/lib/cockpit-scene.mjs ghcp/plugins/swarm-dashboard/scripts/lib/cockpit-check.mjs ghcp/plugins/swarm-dashboard/scripts/check-cockpit.mjs ghcp/plugins/swarm-dashboard/tests/cockpit-scene.test.mjs
+git add ghcp/plugins/wintermute/ui/cockpit-shaders.mjs ghcp/plugins/wintermute/ui/cockpit-gl.mjs ghcp/plugins/wintermute/scripts/lib/cockpit-scene.mjs ghcp/plugins/wintermute/scripts/lib/cockpit-check.mjs ghcp/plugins/wintermute/scripts/check-cockpit.mjs ghcp/plugins/wintermute/tests/cockpit-scene.test.mjs
 git commit -m "feat(swarm-dashboard): draw the cockpit's black hole and room with WebGL2"
 ```
 
@@ -2970,7 +2970,7 @@ Expected: PASS (5 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui/cockpit.css ghcp/plugins/swarm-dashboard/tests/cockpit-styles.test.mjs
+git add ghcp/plugins/wintermute/ui/cockpit.css ghcp/plugins/wintermute/tests/cockpit-styles.test.mjs
 git commit -m "feat(swarm-dashboard): style the cockpit's dark glass panels"
 ```
 
@@ -3330,7 +3330,7 @@ Review amendments (16 October 2026), applied in a follow-up commit after this ta
 - The usage text names `--screenshots` and both synthetic swarms plus the edge values.
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/scripts/lib/cockpit-check.mjs ghcp/plugins/swarm-dashboard/scripts/check-cockpit.mjs ghcp/plugins/swarm-dashboard/tests/cockpit-check.test.mjs ghcp/plugins/swarm-dashboard/tests/cockpit-scene.test.mjs
+git add ghcp/plugins/wintermute/scripts/lib/cockpit-check.mjs ghcp/plugins/wintermute/scripts/check-cockpit.mjs ghcp/plugins/wintermute/tests/cockpit-check.test.mjs ghcp/plugins/wintermute/tests/cockpit-scene.test.mjs
 git commit -m "test(swarm-dashboard): check the cockpit's arrangement, type, spacing and contrast in the browser"
 ```
 
@@ -3668,7 +3668,7 @@ Run: `npm test && npm run validate`
 Expected: PASS.
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui/cockpit.mjs
+git add ghcp/plugins/wintermute/ui/cockpit.mjs
 git commit -m "feat(swarm-dashboard): run the cockpit page on the live swarm"
 ```
 
@@ -3819,7 +3819,7 @@ Expected: the Node tests pass (the `links` check-list test still fails until Ste
 - [ ] **Step 5: Commit the hooks**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui/app.mjs ghcp/plugins/swarm-dashboard/ui/main.mjs ghcp/plugins/swarm-dashboard/ui/styles.css ghcp/plugins/swarm-dashboard/tests/cockpit-control.test.mjs
+git add ghcp/plugins/wintermute/ui/app.mjs ghcp/plugins/wintermute/ui/main.mjs ghcp/plugins/wintermute/ui/styles.css ghcp/plugins/wintermute/tests/cockpit-control.test.mjs
 git commit -m "feat(swarm-dashboard): open the cockpit from the regular view's top bar"
 ```
 
@@ -3828,7 +3828,7 @@ git commit -m "feat(swarm-dashboard): open the cockpit from the regular view's t
 In `scripts/lib/page-audit.mjs`, add `'.ck-open > button': 28` to `AUDIT_DEFAULTS.heights`, after `'.pick select': 28`. Run `npm test && npm run check:layout` (0 issues), then:
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/scripts/lib/page-audit.mjs
+git add ghcp/plugins/wintermute/scripts/lib/page-audit.mjs
 git commit -m "test(swarm-dashboard): pin the Cockpit control's height in the layout audit"
 ```
 
@@ -3914,7 +3914,7 @@ Headless browsers cannot show whether a window comes to the front. This step ope
 - [ ] **Step 9: Commit the check**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/scripts/lib/cockpit-check.mjs ghcp/plugins/swarm-dashboard/tests/cockpit-check.test.mjs
+git add ghcp/plugins/wintermute/scripts/lib/cockpit-check.mjs ghcp/plugins/wintermute/tests/cockpit-check.test.mjs
 git commit -m "test(swarm-dashboard): check the links between the regular view and the cockpit"
 ```
 
@@ -4054,9 +4054,9 @@ Review amendments (16 October 2026), applied in a follow-up commit after this ta
 - [ ] **Step 6: Commit (the check, then the hook)**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/scripts/lib/cockpit-check.mjs ghcp/plugins/swarm-dashboard/tests/cockpit-check.test.mjs
+git add ghcp/plugins/wintermute/scripts/lib/cockpit-check.mjs ghcp/plugins/wintermute/tests/cockpit-check.test.mjs
 git commit -m "test(swarm-dashboard): check that a cockpit window does not slow the regular view"
-git add ghcp/plugins/swarm-dashboard/scripts/check-layout.mjs
+git add ghcp/plugins/wintermute/scripts/check-layout.mjs
 git commit -m "test(swarm-dashboard): run the cockpit's checks in the layout check"
 ```
 
@@ -4298,7 +4298,7 @@ Run: `npm test && npm run validate`
 Expected: PASS.
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/scripts/cockpit-gpu.mjs ghcp/plugins/swarm-dashboard/tests/cockpit-gpu.test.mjs
+git add ghcp/plugins/wintermute/scripts/cockpit-gpu.mjs ghcp/plugins/wintermute/tests/cockpit-gpu.test.mjs
 git commit -m "feat(swarm-dashboard): measure the cockpit's GPU time per frame"
 ```
 
@@ -4333,7 +4333,7 @@ The rule, for `n` slots (the tiles shown plus the "+N more" tile, if any):
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui/cockpit-model.mjs ghcp/plugins/swarm-dashboard/ui/cockpit-panels.mjs ghcp/plugins/swarm-dashboard/ui/cockpit.css ghcp/plugins/swarm-dashboard/tests/cockpit-model.test.mjs ghcp/plugins/swarm-dashboard/tests/cockpit-panels.test.mjs ghcp/plugins/swarm-dashboard/tests/cockpit-styles.test.mjs
+git add ghcp/plugins/wintermute/ui/cockpit-model.mjs ghcp/plugins/wintermute/ui/cockpit-panels.mjs ghcp/plugins/wintermute/ui/cockpit.css ghcp/plugins/wintermute/tests/cockpit-model.test.mjs ghcp/plugins/wintermute/tests/cockpit-panels.test.mjs ghcp/plugins/wintermute/tests/cockpit-styles.test.mjs
 git commit -m "feat(swarm-dashboard): balance the cockpit's tile rows"
 ```
 
@@ -4386,13 +4386,13 @@ Expected: PASS. Read the changed Markdown once for broken table rows.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/README.md .github/copilot-instructions.md
+git add ghcp/plugins/wintermute/README.md .github/copilot-instructions.md
 git commit -m "docs(swarm-dashboard): describe the cockpit and its checks"
 ```
 
 - [ ] **Step 5: The final checks**
 
-Run, from `ghcp/plugins/swarm-dashboard`:
+Run, from `ghcp/plugins/wintermute`:
 1. `npm test && npm run validate`: PASS.
 2. `npm run check:layout`: 0 issues for every view and cockpit state; the motion, links and slowdown lines.
 3. `PLAYWRIGHT_CORE=<playwright-core folder outside the repository> npm run check:layout -- --engine webkit`: 0 issues.

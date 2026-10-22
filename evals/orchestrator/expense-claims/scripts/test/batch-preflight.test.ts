@@ -14,8 +14,8 @@ let dir: string;
 before(() => {
   dir = mkdtempSync(join(tmpdir(), "orch-eval-preflight-"));
   mkdirSync(join(dir, "agents"));
-  writeFileSync(join(dir, "agents", "orchestrator.agent.md"), "Starts orchestrator-worker sub-agents.");
-  writeFileSync(join(dir, "agents", "session-orchestrator.agent.md"), "Children run as session-worker.");
+  writeFileSync(join(dir, "agents", "orchestrator.agent.md"), "Starts wintermute:orchestrator-worker sub-agents.");
+  writeFileSync(join(dir, "agents", "session-orchestrator.agent.md"), "Children run as wintermute:session-worker.");
   for (const name of ["orchestrator-worker", "session-worker"]) writeFileSync(join(dir, "agents", `${name}.agent.md`), name);
   writeFileSync(join(dir, "Info.plist"), "<key>CFBundleShortVersionString</key><string>1.1.30</string>");
   writeFileSync(join(dir, "old.plist"), "<key>CFBundleShortVersionString</key><string>1.1.29</string>");
@@ -99,6 +99,20 @@ test("a healthy machine passes every check", async () => {
   const checks = await runPreflight(config(), host());
   assert.deepEqual(failing(checks), [], JSON.stringify(checks, null, 1));
   assert.ok(checks.some((c) => c.name === "agents under test installed" && /orchestrator-worker/.test(c.detail)));
+});
+
+test("live preflight resolves installed plugin workers and rejects a missing prefixed dependency", async () => {
+  const plugin = join(dir, "plugin-agents");
+  mkdirSync(plugin);
+  writeFileSync(join(plugin, "orchestrator.agent.md"), 'Use agent_type: "wintermute:orchestrator-worker".\n');
+  const missing = await runPreflight(config({ agentsDir: plugin, variants: ["orchestrator"] }), host());
+  const failed = missing.find((check) => check.name === "agents under test installed")!;
+  assert.equal(failed.status, "FAIL");
+  assert.match(failed.detail, /wintermute:orchestrator-worker/);
+  writeFileSync(join(plugin, "orchestrator-worker.agent.md"), "worker\n");
+  const ready = await runPreflight(config({ agentsDir: plugin, variants: ["orchestrator"] }), host());
+  assert.deepEqual(failing(ready), []);
+  assert.match(ready.find((check) => check.name === "agents under test installed")!.detail, /wintermute:orchestrator-worker/);
 });
 
 test("each problem fails its own check", async () => {

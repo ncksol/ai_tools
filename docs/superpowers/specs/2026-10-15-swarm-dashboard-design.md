@@ -41,7 +41,7 @@ The pain was visibility. About 20 of the 86 user messages asked what was ready o
 - Phone or push alerts, and cloud or remote sessions (orchestrator's calls 5 and 6).
 - The reference dashboard's sprint and iteration views, which read that tool's own records.
 - Other ideas from the reference-run analysis that he has not asked for: a per-PR compliance checklist, a view of work the orchestrator did itself, traceability links and archive hygiene.
-- Changing the orchestrator agent (`ghcp/agents/orchestrator.agent.md`). A GitHub issue will describe the required changes, with section 10 as the spec (decision 11).
+- Changing the orchestrator agent (`ghcp/plugins/wintermute/com.github.copilot/agents/orchestrator.agent.md`). A GitHub issue will describe the required changes, with section 10 as the spec (decision 11).
 
 ## 4. Anti-goals
 
@@ -95,7 +95,7 @@ Repository rules (from `.github/copilot-instructions.md`, modelled on `ghcp/plug
 8. Cost display: AI credits with the estimated dollar figure beside them, as the reference dashboard shows them (1 credit = $0.01 at list price). He chose this over dollars first and over premium requests.
 9. Views: "B is the best as main view. C might be interesting as an aux". B, "Mission control", became the Cards tab. C, "Timeline swimlanes", became the Timeline tab: one lane per session over time, sub-agents as thin bars under their parent, and markers for reports, questions, plan approvals, PR events and monitor checks.
 10. The layout in section 7, approved after the second mockup round: "Looks right, write it up".
-11. Any swarm, best effort, with the orchestrator agent changed separately: "I don't want you to update the orchestrator agent in this session. But I want it to be updated. So I need you instead to create an issue in the repo that describes all the required functionality, that another session can pick up and implement later. Also dashboard should try to work on any swarm to the best of its abilities." So the dashboard works on any swarm, best effort; changing `ghcp/agents/orchestrator.agent.md` is not part of this build; a GitHub issue will track it.
+11. Any swarm, best effort, with the orchestrator agent changed separately: "I don't want you to update the orchestrator agent in this session. But I want it to be updated. So I need you instead to create an issue in the repo that describes all the required functionality, that another session can pick up and implement later. Also dashboard should try to work on any swarm to the best of its abilities." So the dashboard works on any swarm, best effort; changing `ghcp/plugins/wintermute/com.github.copilot/agents/orchestrator.agent.md` is not part of this build; a GitHub issue will track it.
 12. When a run is finished: "Subsessions might not be archived but run is finished. So lets agree on when nothing happened for 2 hours". A run is finished when nothing has happened anywhere in it (orchestrator, children, sub-agents, automations) for 2 hours, whether or not anything is archived.
 13. Progress bar: the share of the child's own task list (its todos) that is done, hidden when the child keeps no task list. He chose this from the options offered to him.
 

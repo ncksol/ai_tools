@@ -29,6 +29,11 @@ export function readCliVersion(path: string): string | null {
 
 const AGENT_SUFFIX = ".agent.md";
 
+function agentPath(agentsDir: string, name: string): string {
+  if (!/^(?:[a-z0-9][a-z0-9-]*:)?[a-z0-9][a-z0-9-]*$/.test(name)) throw new Error(`Invalid agent ID: ${name}`);
+  return join(agentsDir, `${name.slice(name.indexOf(":") + 1)}${AGENT_SUFFIX}`);
+}
+
 export function installedAgents(agentsDir: string): string[] {
   if (!existsSync(agentsDir)) return [];
   return readdirSync(agentsDir)
@@ -36,32 +41,40 @@ export function installedAgents(agentsDir: string): string[] {
     .map((name) => name.slice(0, -AGENT_SUFFIX.length));
 }
 
-// The variants plus every installed agent whose name appears in a variant's file, such as
-// orchestrator-worker for orchestrator and session-worker for session-orchestrator.
+// Plugin IDs keep their namespace in pins, but their files have bare names inside agentsDir.
 export function agentsToPin(agentsDir: string, variants: string[], explicit = false): { names: string[]; missing: string[] } {
   const installed = installedAgents(agentsDir);
   const names = new Set<string>();
-  const missing: string[] = [];
-  for (const variant of variants) {
-    if (!installed.includes(variant)) {
-      missing.push(variant);
-      continue;
+  const missing = new Set<string>();
+  const visit = (agent: string): void => {
+    if (names.has(agent) || missing.has(agent)) return;
+    const path = agentPath(agentsDir, agent);
+    if (!existsSync(path)) {
+      missing.add(agent);
+      return;
     }
-    names.add(variant);
-    if (explicit) continue;
-    const text = readFileSync(join(agentsDir, `${variant}${AGENT_SUFFIX}`), "utf8");
+    names.add(agent);
+    if (explicit) return;
+    const text = readFileSync(path, "utf8");
+    const namespace = agent.includes(":") ? agent.slice(0, agent.indexOf(":") + 1) : "";
     for (const other of installed) {
-      if (other !== variant && new RegExp(`(?<![\\w-])${other.replace(/[-]/g, "\\-")}(?![\\w-])`).test(text)) names.add(other);
+      const id = `${namespace}${other}`;
+      if (new RegExp(`(?<![\\w:-])${id}(?![\\w:-])`).test(text)) visit(id);
     }
-  }
-  return { names: [...names].sort(), missing };
+    for (const match of text.matchAll(/(?<![\w:-])(?:[a-z0-9][a-z0-9-]*:)?[a-z0-9][a-z0-9-]*-worker(?![\w:-])/g)) {
+      const worker = match[0];
+      if (namespace ? worker.startsWith(namespace) : !worker.includes(":")) visit(worker);
+    }
+  };
+  variants.forEach(visit);
+  return { names: [...names].sort(), missing: [...missing].sort() };
 }
 
 export function computePins(opts: { agentsDir: string; variants: string[]; explicitAgents?: boolean; files: Record<string, string>; appPlist: string; cliVersionFile: string }): Pins {
   const agents: Pins["agents"] = {};
-  const names = agentsToPin(opts.agentsDir, opts.variants, opts.explicitAgents).names;
+  const { names } = agentsToPin(opts.agentsDir, opts.variants, opts.explicitAgents);
   for (const name of names) {
-    const path = realpathSync(join(opts.agentsDir, `${name}${AGENT_SUFFIX}`));
+    const path = realpathSync(agentPath(opts.agentsDir, name));
     agents[name] = { path, sha256: sha256(path) };
   }
   const files: Pins["files"] = {};
