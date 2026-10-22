@@ -157,7 +157,7 @@ npm test && npm run validate
 
 Use `minor` for features and, while the package is 0.x, incompatible changes to agent IDs, invocation behaviour, the canvas ID or report/dashboard contracts. Use `patch` for compatible fixes; `major` advances to the next major version. You can also give an explicit stable SemVer such as `0.3.0`. Leading zeroes, `v` prefixes, prerelease/build suffixes and versions that do not increase are rejected. The bump command preserves an existing changelog section for the chosen version, and does not commit, tag or publish. Review and commit the three version changes and the completed notes with the implementation. Run `npm run check:layout` too when dashboard UI files change.
 
-After merging, publish from a clean, up-to-date `main` checkout, not a feature branch or an installed plugin copy:
+After merging, publish from a clean, up-to-date `main` checkout, not a feature branch or an installed plugin copy. Start at the repository root:
 
 ```bash
 git switch main
@@ -168,9 +168,9 @@ npm run release:publish -- --dry-run
 npm run release:publish
 ```
 
-The publisher runs the plugin validator, requires finished notes for the current version, and requires HEAD to match both local `origin/main` and the live remote main ref. It refuses dirty trees (including untracked files) and tags that already exist locally or on origin. The dry run performs the same read-only checks, including a network query to origin, and prints the planned tag and notes; it creates no refs, pushes nothing and does not call `gh`.
+The publisher runs the plugin validator, requires finished notes for the current version, and requires HEAD to match both local `origin/main` and the live remote main ref. It refuses dirty trees (including untracked files) and tags that already exist locally or on origin. Before changing any refs, it checks `gh` authentication for origin's host and confirms that `gh` can resolve origin's repository. Origin must be an HTTPS or SSH GitHub URL with an owner/name path and no custom port. The dry run performs the same read-only checks, including network queries to origin and GitHub, and prints the planned tag and notes; it creates no refs, pushes nothing and creates no release.
 
-A publish creates the annotated tag `wintermute-vX.Y.Z` on HEAD, pushes only that tag, and creates a GitHub Release using only that version's changelog section. Keep `gh` pointed at the same repository as origin. The root marketplace continues to track main through its relative source path: tags and GitHub Releases are release records, not a separate installation channel or a gate on plugin updates. Updating the plugin does not replace already-running sessions or an old dashboard server; follow the update/restart guidance above.
+A publish creates the annotated tag `wintermute-vX.Y.Z` on HEAD, pushes only that tag, and creates a GitHub Release using only that version's changelog section. The release explicitly targets origin's host and repository, regardless of `GH_REPO`, `GH_HOST` or `gh`'s default repository. The root marketplace continues to track main through its relative source path: tags and GitHub Releases are release records, not a separate installation channel or a gate on plugin updates. Updating the plugin does not replace already-running sessions or an old dashboard server; follow the update/restart guidance above.
 
 Publishing is not atomic across Git and GitHub. If a push or GitHub Release creation fails, the command reports the failure and retains the annotated tag; rerunning refuses that existing tag. Inspect the local tag, origin tag and GitHub Release first. After resolving the cause, push only the retained tag if it never reached origin, or create the missing release with `gh release create wintermute-vX.Y.Z --verify-tag --title "Wintermute vX.Y.Z" --notes-file <file-containing-that-changelog-section>`. Never move or overwrite an already-published tag.
 

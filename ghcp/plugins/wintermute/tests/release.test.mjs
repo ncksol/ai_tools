@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,9 +10,20 @@ const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.
 const repositoryRoot = path.resolve(pluginRoot, '../../..');
 const realGit = spawnSync('which', ['git'], { encoding: 'utf8' }).stdout.trim();
 const notes = '### Added\n\n- Unified agents and dashboard.\n\n### Compatibility\n\n- Restart active sessions.\n';
+const releaseRepo = 'github.com/release-test/wintermute';
+const preflight = [
+  { command: 'gh', args: ['auth', 'status', '--active', '--hostname', 'github.com'] },
+  { command: 'gh', args: ['repo', 'view', releaseRepo, '--json', 'nameWithOwner', '--jq', '.nameWithOwner'] },
+];
+
+function testEnv(extra = {}) {
+  return Object.fromEntries(Object.entries({ ...process.env, ...extra }).filter(([key]) => !key.startsWith('GIT_')));
+}
 
 function git(repo, ...args) {
-  const result = spawnSync(realGit, repo.endsWith('.git') ? [`--git-dir=${repo}`, ...args] : args, { cwd: repo, encoding: 'utf8' });
+  const result = spawnSync(realGit, repo.endsWith('.git') ? [`--git-dir=${repo}`, ...args] : args, {
+    cwd: repo, encoding: 'utf8', env: testEnv(),
+  });
   assert.equal(result.status, 0, result.stderr);
   return result.stdout.trim();
 }
@@ -58,10 +69,19 @@ function fixture() {
   const bin = path.join(dir, 'bin');
   const calls = path.join(dir, 'calls.jsonl');
   mkdirSync(bin);
+  writeFileSync(path.join(bin, 'git-upload-pack'), `#!${process.execPath}
+const { spawnSync } = require('node:child_process');
+const result = spawnSync(${JSON.stringify(realGit)}, ['upload-pack', ...process.argv.slice(2)], { stdio: 'inherit' });
+process.exit(result.status ?? 1);
+`, { mode: 0o755 });
   writeFileSync(path.join(bin, 'git'), `#!${process.execPath}
 const { spawnSync } = require('node:child_process');
 const { appendFileSync } = require('node:fs');
 const args = process.argv.slice(2);
+if (args.join(' ') === 'remote get-url origin') {
+  console.log(process.env.RELEASE_TEST_ORIGIN || 'https://github.com/release-test/wintermute.git');
+  process.exit(0);
+}
 if (args[0] === 'push') {
   appendFileSync(process.env.RELEASE_TEST_CALLS, JSON.stringify({ command: 'git', args }) + '\\n');
   process.exit(process.env.RELEASE_TEST_PUSH_FAIL ? 1 : 0);
@@ -71,17 +91,24 @@ process.exit(result.status ?? 1);
 `, { mode: 0o755 });
   writeFileSync(path.join(bin, 'gh'), `#!${process.execPath}
 const { appendFileSync, readFileSync } = require('node:fs');
+const args = process.argv.slice(2);
+if (args[0] === 'auth' || args[0] === 'repo') {
+  appendFileSync(process.env.RELEASE_TEST_CALLS, JSON.stringify({ command: 'gh', args }) + '\\n');
+  if (args[0] === 'auth') process.exit(process.env.RELEASE_TEST_SIGNED_OUT ? 1 : 0);
+  console.log(process.env.RELEASE_TEST_REPO_RESULT || 'release-test/wintermute');
+  process.exit(0);
+}
 appendFileSync(process.env.RELEASE_TEST_CALLS, JSON.stringify({
-  command: 'gh', args: process.argv.slice(2), notes: readFileSync(0, 'utf8')
+  command: 'gh', args, notes: readFileSync(0, 'utf8')
 }) + '\\n');
 process.exit(process.env.RELEASE_TEST_GH_FAIL ? 1 : 0);
 `, { mode: 0o755 });
   return {
-    repo, root, remote, files,
+    repo, root, remote, files, bin,
     run(script, args = [], extraEnv = {}) {
       return spawnSync(process.execPath, [path.join(root, 'scripts', `release-${script}.mjs`), ...args], {
         cwd: root, encoding: 'utf8',
-        env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, RELEASE_TEST_CALLS: calls, ...extraEnv },
+        env: testEnv({ PATH: bin, RELEASE_TEST_CALLS: calls, ...extraEnv }),
       });
     },
     calls() {
@@ -152,7 +179,7 @@ test('publish dry-run checks readiness without creating a tag, pushing or releas
   assert.match(result.stdout, /wintermute-v0\.2\.0/);
   assert.match(result.stdout, /Unified agents and dashboard/);
   assert.equal(git(f.repo, 'show-ref'), before);
-  assert.deepEqual(f.calls(), []);
+  assert.deepEqual(f.calls(), preflight);
   assert.equal(git(f.repo, 'status', '--porcelain'), '');
 });
 
@@ -163,8 +190,9 @@ test('publish creates an annotated HEAD tag, pushes only that tag and uses only 
   assert.equal(git(f.repo, 'cat-file', '-t', 'wintermute-v0.2.0'), 'tag');
   assert.equal(git(f.repo, 'rev-parse', 'wintermute-v0.2.0^{}'), git(f.repo, 'rev-parse', 'HEAD'));
   assert.deepEqual(f.calls(), [
+    ...preflight,
     { command: 'git', args: ['push', 'origin', 'refs/tags/wintermute-v0.2.0:refs/tags/wintermute-v0.2.0'] },
-    { command: 'gh', args: ['release', 'create', 'wintermute-v0.2.0', '--verify-tag', '--title', 'Wintermute v0.2.0', '--notes-file', '-'], notes },
+    { command: 'gh', args: ['release', 'create', 'wintermute-v0.2.0', '--repo', releaseRepo, '--verify-tag', '--title', 'Wintermute v0.2.0', '--notes-file', '-'], notes },
   ]);
 });
 
@@ -221,7 +249,7 @@ test('publish rejects unknown arguments before side effects', () => {
   assert.deepEqual(f.calls(), []);
 });
 
-for (const [env, calls] of [['RELEASE_TEST_PUSH_FAIL', 1], ['RELEASE_TEST_GH_FAIL', 2]]) {
+for (const [env, calls] of [['RELEASE_TEST_PUSH_FAIL', 3], ['RELEASE_TEST_GH_FAIL', 4]]) {
   test(`publish reports ${env} without hiding the partial release or retrying`, () => {
     const f = fixture();
     const result = f.run('publish', [], { [env]: '1' });
@@ -232,3 +260,60 @@ for (const [env, calls] of [['RELEASE_TEST_PUSH_FAIL', 1], ['RELEASE_TEST_GH_FAI
     assert.equal(git(f.repo, 'cat-file', '-t', 'wintermute-v0.2.0'), 'tag');
   });
 }
+
+for (const scenario of ['missing-gh', 'signed-out', 'wrong-repository']) {
+  for (const args of [[], ['--dry-run']]) {
+    test(`publish ${args.length ? 'dry-run' : 'real run'} refuses ${scenario} before any tag mutation`, () => {
+      const f = fixture();
+      const env = {};
+      if (scenario === 'missing-gh') unlinkSync(path.join(f.bin, 'gh'));
+      if (scenario === 'signed-out') env.RELEASE_TEST_SIGNED_OUT = '1';
+      if (scenario === 'wrong-repository') env.RELEASE_TEST_REPO_RESULT = 'different/repository';
+      const result = f.run('publish', args, env);
+      assert.notEqual(result.status, 0);
+      const reason = {
+        'missing-gh': /spawnSync gh ENOENT/,
+        'signed-out': /gh auth status.*failed/,
+        'wrong-repository': /GitHub repository.*origin/,
+      }[scenario];
+      assert.match(result.stderr, reason);
+      assert.equal(git(f.repo, 'tag', '--list'), '');
+      assert.ok(f.calls().every(call => call.command === 'gh' && ['auth', 'repo'].includes(call.args[0])));
+    });
+  }
+}
+
+for (const origin of [
+  'https://github.com/release-test/wintermute.git',
+  'git@github.com:release-test/wintermute.git',
+  'ssh://git@github.com/release-test/wintermute.git',
+]) {
+  test(`publish targets origin despite GH_REPO and GH_HOST overrides (${origin})`, () => {
+    const f = fixture();
+    const result = f.run('publish', [], {
+      RELEASE_TEST_ORIGIN: origin, GH_REPO: 'wrong/repository', GH_HOST: 'wrong.example.test',
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(f.calls().slice(0, 2), preflight);
+    const release = f.calls().find(call => call.command === 'gh' && call.args[0] === 'release');
+    assert.equal(release.args[release.args.indexOf('--repo') + 1], 'github.com/release-test/wintermute');
+  });
+}
+
+test('publish uses the origin hostname for enterprise authentication and release targeting', () => {
+  const f = fixture();
+  const result = f.run('publish', [], { RELEASE_TEST_ORIGIN: 'https://github.example.test/release-test/wintermute.git' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(f.calls()[0].args, ['auth', 'status', '--active', '--hostname', 'github.example.test']);
+  const release = f.calls().find(call => call.command === 'gh' && call.args[0] === 'release');
+  assert.equal(release.args[release.args.indexOf('--repo') + 1], 'github.example.test/release-test/wintermute');
+});
+
+test('publish rejects an origin that cannot name a GitHub repository', () => {
+  const f = fixture();
+  const result = f.run('publish', ['--dry-run'], { RELEASE_TEST_ORIGIN: '/local/repo.git' });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /origin/i);
+  assert.equal(git(f.repo, 'tag', '--list'), '');
+  assert.deepEqual(f.calls(), []);
+});

@@ -12,6 +12,22 @@ function run(command, args, input) {
   return result.stdout.trim();
 }
 
+function originRepository() {
+  const origin = run('git', ['remote', 'get-url', 'origin']);
+  const scp = origin.match(/^(?:[^/@:]+@)?([^/:]+):([^/].*)$/);
+  let url;
+  try {
+    url = new URL(scp ? `ssh://${scp[1]}/${scp[2]}` : origin);
+  } catch {
+    throw new Error('Origin must be a GitHub HTTPS or SSH repository URL.');
+  }
+  const name = url.pathname.replace(/^\/|\/$/g, '').replace(/\.git$/, '');
+  if (!['https:', 'ssh:'].includes(url.protocol) || url.port || !/^[\w.-]+\/[\w.-]+$/.test(name)) {
+    throw new Error('Origin must be a GitHub HTTPS or SSH repository URL with an owner/name path and no custom port.');
+  }
+  return { host: url.hostname, name, repo: `${url.hostname}/${name}` };
+}
+
 async function main() {
   const args = process.argv.slice(2);
   if (args.length && (args.length !== 1 || args[0] !== '--dry-run')) {
@@ -39,10 +55,14 @@ async function main() {
   if (!refs.some(([sha, ref]) => ref === 'refs/heads/main' && sha === head)) {
     throw new Error('HEAD must equal live origin/main; fetch and fast-forward main before publishing.');
   }
+  const { host, name, repo } = originRepository();
+  run('gh', ['auth', 'status', '--active', '--hostname', host]);
+  const resolved = run('gh', ['repo', 'view', repo, '--json', 'nameWithOwner', '--jq', '.nameWithOwner']);
+  if (resolved.toLowerCase() !== name.toLowerCase()) throw new Error('GitHub repository resolved by gh does not match origin.');
   const pushArgs = ['push', 'origin', `${tagRef}:${tagRef}`];
-  const releaseArgs = ['release', 'create', tag, '--verify-tag', '--title', `Wintermute v${version}`, '--notes-file', '-'];
+  const releaseArgs = ['release', 'create', tag, '--repo', repo, '--verify-tag', '--title', `Wintermute v${version}`, '--notes-file', '-'];
   if (args[0] === '--dry-run') {
-    console.log(`Dry run: annotate ${tag} at ${head}, push only that tag to origin, then create its GitHub Release.\n\n${notes}`);
+    console.log(`Dry run: annotate ${tag} at ${head}, push only that tag to origin, then create its GitHub Release in ${repo}.\n\n${notes}`);
     return;
   }
   run('git', ['tag', '-a', tag, head, '-m', `Wintermute v${version}`]);
