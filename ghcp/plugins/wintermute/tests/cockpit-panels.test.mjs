@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { activityHtml, clockHtml, costHtml, hudHtml, needsHtml, noteHtml, prsHtml, qualityHtml, statusHtml, unitsHtml } from '../ui/cockpit-panels.mjs';
+import { activityHtml, clockHtml, costHtml, hudHtml, needsHtml, noteHtml, outHtml, prsHtml, qualityHtml, statusHtml, unitsHtml } from '../ui/cockpit-panels.mjs';
 import { timeText } from '../ui/cockpit-model.mjs';
 import { NOW, deepFreeze, exampleSnapshot } from './helpers/ui.mjs';
 
@@ -10,7 +10,7 @@ const countOf = (html, pattern) => [...html.matchAll(pattern)].length;
 const tileWidths = html => [...html.matchAll(/class="ck-tile (ck-w[346])\b/g)].map(([, width]) => width);
 
 test('no panel uses bold, italic or inline type styles', () => {
-  for (const html of [all(example()), all(null), hudHtml({ demo: true, connection: 'retrying', snapshot: example() }), noteHtml()]) {
+  for (const html of [all(example()), all(null), hudHtml({ demo: true, connection: 'retrying', snapshot: example() }), outHtml({ serverVersion: '0.1.7', installedVersion: '0.2.0' }), noteHtml()]) {
     assert.doesNotMatch(html, /<(b|strong|em|i)\b|font-weight|font-style|text-transform/);
   }
 });
@@ -148,15 +148,17 @@ test('without a swarm every panel says so', () => {
   for (const text of ['None yet', 'No swarm yet', 'Nothing waiting', 'No activity yet', 'No pull requests yet']) assert.ok(html.includes(text), text);
 });
 
-test('the top line, the quality switch and the note', () => {
+test('the top line, the out-of-date notice, the quality switch and the note', () => {
   assert.equal(hudHtml({ demo: false, connection: 'open', snapshot: example() }), '<span>Swarm cockpit</span>');
   const finished = exampleSnapshot();
   finished.run.lifecycle = 'finished';
   assert.equal(hudHtml({ demo: true, connection: 'retrying', snapshot: finished }), '<span>Swarm cockpit · Sample data · Swarm finished</span><span class="ck-warn"> · Disconnected · retrying</span>');
-  const outOfDate = hudHtml({ demo: false, connection: 'open', snapshot: example(), serverVersion: '0.1.7', installedVersion: '0.2.0' });
-  assert.match(outOfDate, /^<span>Swarm cockpit<\/span><span class="ck-warn" data-version-notice title="[^"]*v0\.1\.7[^"]*v0\.2\.0[^"]*"> · Dashboard server v0\.1\.7 is older than installed plugin v0\.2\.0: to update the dashboard, reload extensions in every session or restart the app; a dashboard started separately in a browser has to be restarted by whoever started it\.<\/span>$/);
-  assert.doesNotMatch(hudHtml({ demo: false, connection: 'open', snapshot: example(), serverVersion: '0.2.0', installedVersion: '0.2.0' }), /data-version-notice/);
-  assert.doesNotMatch(hudHtml({ demo: false, connection: 'open', snapshot: example(), serverVersion: '0.1.7', installedVersion: null }), /data-version-notice/);
+  assert.equal(
+    outHtml({ serverVersion: '0.1.7', installedVersion: '0.2.0' }),
+    '<p data-version-notice>Dashboard server v0.1.7 is older than installed plugin v0.2.0: to update the dashboard, reload extensions in every session or restart the app; a dashboard started separately in a browser has to be restarted by whoever started it.</p>',
+  );
+  assert.equal(outHtml({ serverVersion: '0.2.0', installedVersion: '0.2.0' }), '');
+  assert.equal(outHtml({ serverVersion: '0.1.7', installedVersion: null }), '');
   assert.equal(qualityHtml('balanced'), '<button type="button" data-quality="high" aria-pressed="false">High</button><button type="button" data-quality="balanced" aria-pressed="true">Balanced</button>');
   assert.match(noteHtml(), /Make this window larger to see the cockpit\.[\s\S]*data-tab="cards">Open the regular view<\/button>/);
 });

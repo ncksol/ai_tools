@@ -9,7 +9,7 @@ import { createRenderer } from './cockpit-gl.mjs';
 import { fitPanels } from './cockpit-fit.mjs';
 import { showInRegular } from './cockpit-link.mjs';
 import { clockText, dateText } from './cockpit-model.mjs';
-import { activityHtml, clockHtml, costHtml, hudHtml, needsHtml, noteHtml, prsHtml, qualityHtml, statusHtml, unitsHtml } from './cockpit-panels.mjs';
+import { activityHtml, clockHtml, costHtml, hudHtml, needsHtml, noteHtml, outHtml, prsHtml, qualityHtml, statusHtml, unitsHtml } from './cockpit-panels.mjs';
 import { createAdaptive, drawsHole, frameDue, loopRuns, readQuality, saveQuality } from './cockpit-quality.mjs';
 import { SCENE } from './cockpit-shaders.mjs';
 import { DESIGN_HEIGHT, FOCAL, REST, STILL_TIME, cameraTarget, easeCamera, panelCss, viewMatrix, worldCss } from './cockpit-space.mjs';
@@ -76,7 +76,13 @@ function renderPanels() {
   const t = now();
   const s = state.snapshot;
   const fresh = performance.now() < state.freshUntil ? state.fresh : new Set();
-  morph($('ck-hud'), hudHtml({ demo: state.demo, connection: state.connection, snapshot: s, serverVersion: state.serverVersion, installedVersion: state.installedVersion }));
+  morph($('ck-hud'), hudHtml({ demo: state.demo, connection: state.connection, snapshot: s }));
+  const out = $('ck-out');
+  const notice = outHtml({ serverVersion: state.serverVersion, installedVersion: state.installedVersion });
+  if (out) {
+    out.hidden = !notice;
+    morph(out, notice);
+  }
   morph($('ck-qual'), qualityHtml(state.quality));
   morph($('ck-clock'), clockHtml(s, t));
   morph($('ck-cost'), costHtml(s, t));

@@ -17,6 +17,8 @@ test('the audit uses the approved type scale plus the clock, and even padding fo
   assert.deepEqual(COCKPIT_AUDIT.sizes, [12, 14, 18, 36]);
   assert.deepEqual(COCKPIT_AUDIT.weights, [400, 500]);
   assert.deepEqual(COCKPIT_AUDIT.padding, { '.ck-panel': 16, '.d-full > .ck-tile': 12, '.d-two > .ck-tile': 8, '.d-one > .ck-tile': 8, '.ck-need': 8, '.ck-note': 16 });
+  assert.ok(COCKPIT_AUDIT.atoms.includes('.ck-out'));
+  assert.ok(COCKPIT_AUDIT.containers.includes('.ck-out'));
 });
 
 test('monospace is not a font-family issue; everything else is kept', () => {

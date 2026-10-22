@@ -18,7 +18,7 @@ test('the shell has the canvas, the top line, the quality switch, the note, the 
   assert.match(html, /<meta name="swarm-ui" content="">/);
   assert.match(html, /<canvas id="ck-gl" aria-hidden="true"><\/canvas>/);
   assert.match(html, /<main class="ck" id="ck">/);
-  for (const id of ['ck-hud', 'ck-qual', 'ck-stage', 'ck-world', 'ck-note']) assert.match(html, new RegExp(`id="${id}"`));
+  for (const id of ['ck-hud', 'ck-qual', 'ck-out', 'ck-stage', 'ck-world', 'ck-note']) assert.match(html, new RegExp(`id="${id}"`));
   for (const [id, tab] of Object.entries(PANEL_TABS)) assert.match(html, new RegExp(`<section class="ck-panel [a-z-]+" id="${id}" data-tab="${tab}" aria-label="[A-Z][^"]+"></section>`));
 });
 

@@ -104,12 +104,16 @@ export function prsHtml(snapshot) {
   return head('Pull requests', 'board', side) + `<ul class="ck-prs">${rows}</ul>`;
 }
 
-export function hudHtml({ demo, connection, snapshot, serverVersion = null, installedVersion = null }) {
+export function hudHtml({ demo, connection, snapshot }) {
   const parts = ['Swarm cockpit'];
   if (demo) parts.push('Sample data');
   if (snapshot?.run.lifecycle === 'finished') parts.push('Swarm finished');
+  return `<span>${parts.join(' · ')}</span>${connection === 'retrying' ? '<span class="ck-warn"> · Disconnected · retrying</span>' : ''}`;
+}
+
+export function outHtml({ serverVersion = null, installedVersion = null } = {}) {
   const notice = versionNotice({ serverVersion, installedVersion });
-  return `<span>${parts.join(' · ')}</span>${connection === 'retrying' ? '<span class="ck-warn"> · Disconnected · retrying</span>' : ''}${notice ? `<span class="ck-warn" data-version-notice title="${esc(notice.text)}"> · ${esc(notice.text)}</span>` : ''}`;
+  return notice ? `<p data-version-notice>${esc(notice.text)}</p>` : '';
 }
 
 export const qualityHtml = quality => QUALITIES.map(name => `<button type="button" data-quality="${name}" aria-pressed="${name === quality}">${QUALITY_WORDS[name]}</button>`).join('');
