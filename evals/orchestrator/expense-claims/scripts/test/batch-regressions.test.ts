@@ -78,8 +78,7 @@ test("H1: only the owning driver may run next or record; another takes over only
 
 test("H1: an unrecorded create_session is reconciled, adopted if it landed, and reissued at most once", async () => {
   const h = await make({ scenarios: ["ask-final"] });
-  await h.drive(await h.next()); // create_project
-  const create = await h.next();
+  const create = await h.until((a) => a.action === "create_session");
   assert.equal(create.action, "create_session");
   // The driver dies mid-call; a new driver takes over.
   h.ctx.deps.driverId = "session:driver-2";
@@ -93,8 +92,7 @@ test("H1: an unrecorded create_session is reconciled, adopted if it landed, and 
   assert.equal(h.app.sessions.size, 1);
 
   const k = await make({ scenarios: ["ask-final"] });
-  await k.drive(await k.next());
-  const first = await k.next();
+  const first = await k.until((a) => a.action === "create_session");
   assert.equal((await k.next(4 * MIN)).action, "wait");
   k.clock.now += 2 * MIN;
   const reissue = await k.next(0);
@@ -111,8 +109,7 @@ test("H1: an unrecorded create_session is reconciled, adopted if it landed, and 
 
 test("core R2: a session from the first create_session that shows up after the reissue is adopted, not given up", async () => {
   const h = await make({ scenarios: ["ask-final"] });
-  await h.drive(await h.next()); // create_project
-  assert.equal((await h.next()).action, "create_session");
+  assert.equal((await h.until((a) => a.action === "create_session")).action, "create_session");
   const firstIssued = h.clock.now;
   h.clock.now += 6 * MIN;
   const reissue = await h.next(0);
@@ -133,22 +130,21 @@ test("core R2: a session from the first create_session that shows up after the r
 
 test("core R2: a session that turns up for a run given up as never started stops the batch", async () => {
   const h = await make({ scenarios: ["ask-final", "ask-final"], runsPerVariant: 2 });
-  await h.drive(await h.next());
-  await h.next(); // create_session, never executed or recorded
+  await h.until((a) => a.action === "create_session"); // never executed or recorded
   const firstIssued = h.clock.now;
   h.clock.now += 6 * MIN;
   assert.equal((await h.next(0)).reissued, true);
   h.clock.now += 6 * MIN;
-  const projectAction = await h.next(0); // run 1 is void; run 2 is planned
+  const createAction = await h.next(0); // run 1 is void; run 2 is planned
   assert.equal(h.state().runs[0].status, "void");
-  assert.equal(projectAction.action, "create_project");
+  assert.equal(createAction.action, "create_session");
   const workspaces = h.app.workspaces.bind(h.app);
   const runOneProject = h.state().runs[0].projectId!;
   h.app.workspaces = (projectId) => [
     ...(workspaces(projectId) ?? []),
     ...(projectId === runOneProject ? [{ id: "ws-late", sessionId: null, name: "late", archivedAt: null, createdBy: "agent", createdAt: new Date(firstIssued + 2000).toISOString() }] : []),
   ];
-  await h.drive(projectAction);
+  h.clock.now += 6 * MIN; // don't execute run 2's uncertain create; revalidation checks the late session
   const done = await h.next(0);
   assert.equal(done.action, "done");
   assert.equal(h.state().phase, "stopped");
@@ -228,7 +224,7 @@ test("H3: a final report with a busy child is scored at the report; the stop mes
   assert.deepEqual(order, ["stop after scoring"]);
   assert.ok(first.flags.some((f) => f.code === "swarm-not-quiet" && /after scoring the final report/.test(f.detail)));
   assert.equal(first.status, "done");
-  assert.ok(Date.parse(second.createdAt) > Date.parse(first.stopSentAt!), "the next run started after the swarm went quiet");
+  assert.ok(Date.parse(second.startRequestedAt!) > Date.parse(first.stopSentAt!), "the next run started after the swarm went quiet");
   assert.equal(state.phase, "done");
 });
 
@@ -268,8 +264,7 @@ test("M1: a question still open after 30 minutes away is answered, and driver-ga
 
 test("M2: an unconfirmed create_session is not reissued after a stop request", async () => {
   const h = await make({ scenarios: ["ask-final"] });
-  await h.drive(await h.next());
-  assert.equal((await h.next()).action, "create_session");
+  assert.equal((await h.until((a) => a.action === "create_session")).action, "create_session");
   await requestStop(h.ctx);
   h.clock.now += 6 * MIN;
   const done = await h.next();
@@ -325,7 +320,7 @@ function failCommits(h: Harness, times: number): { attempts: number } {
   const counter = { attempts: 0 };
   const exec = h.ctx.deps.exec;
   h.ctx.deps.exec = async (cmd, args, opts) => {
-    if (cmd === "git" && args.includes("commit") && args.includes("--only")) {
+    if (cmd === "git" && args.includes("commit") && args.includes(h.config.resultsPath)) {
       counter.attempts++;
       if (counter.attempts <= times) return { code: 1, stdout: "", stderr: "fatal: Unable to create '.git/index.lock': File exists." };
     }

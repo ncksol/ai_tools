@@ -42,7 +42,7 @@ test("the self-test prompt asks for a compound shell command with the nonce mark
   assert.equal((action.tool!.args.kickoff as Record<string, unknown>).agent, undefined, "still the default agent, never an orchestrator");
 });
 
-test("a self-test session without allow-all permissions fails fast and stops the batch before any run repo", async () => {
+test("a self-test session without allow-all permissions fails fast before any eval session", async () => {
   const h = await make({ scenarios: ["ask-final"], selfTest: true });
   h.app.allowAll = false;
   const started = h.clock.now;
@@ -54,12 +54,12 @@ test("a self-test session without allow-all permissions fails fast and stops the
   assert.ok(test.failure!.endsWith(PERMISSION_REMEDY));
   assert.ok(h.clock.now - started < 5 * 60_000, `it failed after ${Math.round((h.clock.now - started) / 1000)} s, not at the 20-minute limit`);
   assert.equal(state.runs.length, 0);
-  assert.deepEqual(readdirSync(h.config.runsDir), [], "no run repo was created");
+  assert.equal(readdirSync(h.config.runsDir).filter((name) => /^orch-eval-.*-\d+$/.test(name)).length, 2, "the provisioned repos stay unused");
   assert.equal(state.phase, "stopped");
   assert.match(state.stopReason!, /^the self-test failed: no tool-permission prompt/);
   assert.match(state.stopReason!, /"Tool permissions" under "Overnight batches" in the kit's README/);
-  assert.deepEqual(h.notices.map((n) => n.key), ["batch-started", "selftest-1", "batch-stopped"]);
-  assert.match(h.notices[1].body, /Tool permissions/);
+  assert.deepEqual(h.notices.map((n) => n.key), ["batch-started", "project-trust", "selftest-1", "batch-stopped"]);
+  assert.match(h.notices.find((n) => n.key === "selftest-1")!.body, /Tool permissions/);
   const report = readFileSync(state.reportPath!, "utf8");
   assert.match(report, /## Tool-permission prompts\n\nA tool-permission prompt that nobody could answer stopped this batch\.\n\n- The self-test failed: no tool-permission prompt/);
 });
@@ -127,8 +127,8 @@ for (const scenario of ["permission-prompt", "permission-denied"] as const) {
     assert.equal(state.failed, true);
     assert.match(state.stopReason!, /^variant-a#1 was blocked by a tool-permission prompt \(/);
     assert.ok(state.stopReason!.endsWith(PERMISSION_REMEDY));
-    assert.deepEqual(h.notices.map((n) => n.key), ["batch-started", "failure-permission-prompt", "batch-stopped"]);
-    assert.match(h.notices[1].body, /variant-a#1 is void and won't be scored.*No further run starts; the batch stops once the runs in progress end\./);
+    assert.deepEqual(h.notices.map((n) => n.key), ["batch-started", "project-trust", "failure-permission-prompt", "batch-stopped"]);
+    assert.match(h.notices.find((n) => n.key === "failure-permission-prompt")!.body, /variant-a#1 is void and won't be scored.*No further run starts; the batch stops once the runs in progress end\./);
     const report = readFileSync(state.reportPath!, "utf8");
     assert.match(report, /## Tool-permission prompts/);
     assert.match(report, /- variant-a #1: void, not scored\./);

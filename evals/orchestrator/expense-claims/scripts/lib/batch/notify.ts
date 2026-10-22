@@ -25,7 +25,8 @@ export function readNtfyUrl(opts: { envVar: string; urlFile: string; env?: NodeJ
 
 export const redact = (text: string, url: string): string => (url ? text.split(url).join("<ntfy-url>") : text);
 
-const configQuote = (value: string): string => `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+const configQuote = (value: string): string =>
+  `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t")}"`;
 
 // Sends one notice. Never throws: a failed notification is reported, and the batch carries on.
 export function sendNtfy(url: string, notice: Notice, opts: { curl?: string } = {}): Promise<{ ok: boolean; error?: string }> {

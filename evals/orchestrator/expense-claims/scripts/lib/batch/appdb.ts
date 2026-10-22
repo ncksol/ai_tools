@@ -30,6 +30,10 @@ export interface AppDb {
   defaultAccount(): string | null;
   // The login a project's sessions run as.
   projectAccount(projectId: string): string | null;
+  // Only the user's local-host acceptance counts. Null means the lookup failed.
+  projectTrusted(projectId: string): boolean | null;
+  // Null: no project at this exact clone path. Undefined: failed/ambiguous lookup; do not create.
+  projectForPath(path: string): string | null | undefined;
   // Every table and column the runner reads, checked against the database's schema.
   probe(): string[];
   // Query failures since the last call, for flags.
@@ -39,10 +43,11 @@ export interface AppDb {
 // The columns the runner reads. probe() checks each one exists.
 export const APP_DB_COLUMNS: Record<string, string[]> = {
   workspaces: ["id", "session_id", "project_id", "name", "archived_at", "created_by", "created_at", "creator_session_id", "coordinating_creator_session_id"],
-  projects: ["id", "copilot_account_id", "github_account_id"],
+  projects: ["id", "main_repo_path", "copilot_account_id", "github_account_id"],
   accounts: ["id", "login", "is_default"],
   sessions: ["id", "was_interrupted", "interruption_reason"],
   workspace_session_aliases: ["session_id", "workspace_id"],
+  project_host_trust: ["project_id", "host_id", "trusted_config_sha256", "trusted_config_accepted_at"],
 };
 
 const text = (value: unknown): string | null => (typeof value === "string" && value !== "" ? value : null);
@@ -139,6 +144,20 @@ export function openAppDb(path: string): AppDb {
       const pinned = text(cell("projects", "copilot_account_id", "id", id)) ?? text(cell("projects", "github_account_id", "id", id));
       return pinned ? login(pinned) : defaultAccount();
     },
+    projectTrusted: (id) => {
+      const trustCell = (column: string) => withDb(`project_host_trust.${column}`, (db) =>
+        (db.prepare(`SELECT ${column} AS v FROM project_host_trust WHERE project_id = ? AND host_id = 'local'`)
+          .get(id) as { v: unknown } | undefined)?.v ?? null);
+      const hash = trustCell("trusted_config_sha256");
+      const accepted = trustCell("trusted_config_accepted_at");
+      if (hash === undefined || accepted === undefined) return null;
+      return Boolean(text(hash) && text(accepted));
+    },
+    projectForPath: (path) => withDb("projects.id by main_repo_path", (db) => {
+      const rows = db.prepare("SELECT id FROM projects WHERE main_repo_path = ?").all(path) as { id: unknown }[];
+      if (rows.length > 1) throw new Error(`multiple projects have clone path ${path}`);
+      return rows.length === 0 ? null : text(rows[0].id) ?? undefined;
+    }),
     probe: () => {
       const problems: string[] = [];
       for (const [table, columns] of Object.entries(APP_DB_COLUMNS)) {
@@ -171,6 +190,8 @@ export const noAppDb: AppDb = {
   sessionAliases: () => null,
   defaultAccount: () => null,
   projectAccount: () => null,
+  projectTrusted: () => null,
+  projectForPath: () => null,
   probe: () => ["no app database (dry run)"],
   takeErrors: () => [],
 };

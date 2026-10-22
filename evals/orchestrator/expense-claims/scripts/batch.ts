@@ -88,6 +88,8 @@ const { values, positionals } = parseArgs({
     question: { type: "string" },
     neither: { type: "boolean", default: false },
     sent: { type: "boolean", default: false },
+    listed: { type: "boolean", default: false },
+    archived: { type: "boolean", default: false },
     failed: { type: "string" },
     message: { type: "string" },
   },
@@ -112,7 +114,7 @@ function realDeps(config: BatchConfig): Deps {
   return {
     now: () => Date.now(),
     sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
-    exec: (cmd, args, opts) => run(cmd, args, { cwd: opts?.cwd, timeoutMs: opts?.timeoutMs }),
+    exec: (cmd, args, opts) => run(cmd, args, { cwd: opts?.cwd, env: opts?.env, timeoutMs: opts?.timeoutMs }),
     driverId: process.env.COPILOT_AGENT_SESSION_ID ? `session:${process.env.COPILOT_AGENT_SESSION_ID}` : "local",
     // An app session's CLI holds inuse.<pid>.lock in its session folder while it runs.
     driverAlive: (id) => {
@@ -259,6 +261,8 @@ function recordInput(): RecordInput {
     question: values.question,
     neither: values.neither,
     sent: values.sent,
+    listed: values.listed,
+    archived: values.archived,
     failed: values.failed,
   };
 }

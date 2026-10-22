@@ -114,3 +114,35 @@ test("workspace aliases retain old CLI logs and children linked to those logs", 
   assert.deepEqual(db.takeErrors(), []);
   assert.equal(sha(path), before);
 });
+
+test("project lookup uses the clone path and rejects duplicate projects rather than choosing one", () => {
+  const path = makeDb("paths.db");
+  const fixture = new DatabaseSync(path);
+  fixture.exec("UPDATE projects SET main_repo_path = '/runs/selftest' WHERE id = 'p1'");
+  const db = openAppDb(path);
+  assert.equal(db.projectForPath("/runs/selftest"), "p1");
+  assert.equal(db.projectForPath("/runs/missing"), null);
+  fixture.exec("UPDATE projects SET main_repo_path = '/runs/selftest' WHERE id = 'p2'");
+  fixture.close();
+  const before = sha(path);
+  assert.equal(db.projectForPath("/runs/selftest"), undefined);
+  assert.match(db.takeErrors().join(), /multiple projects/);
+  assert.equal(sha(path), before);
+});
+
+test("trust requires a hash and acceptance on local; a missing schema is an error, never trust", () => {
+  const path = makeDb("trust.db");
+  const fixture = new DatabaseSync(path);
+  fixture.exec("INSERT INTO project_host_trust VALUES ('p1','remote','hash','accepted'),('p2','local','hash',''),('p3','local','hash','accepted')");
+  fixture.close();
+  const before = sha(path);
+  const db = openAppDb(path);
+  assert.equal(db.projectTrusted("p1"), false);
+  assert.equal(db.projectTrusted("p2"), false);
+  assert.equal(db.projectTrusted("p3"), true);
+  assert.equal(db.projectTrusted("missing"), false);
+  assert.equal(sha(path), before);
+  const drift = openAppDb(makeDb("trust-drift.db", ["project_host_trust.trusted_config_sha256"]));
+  assert.equal(drift.projectTrusted("p3"), null);
+  assert.match(drift.takeErrors().join(), /trusted_config_sha256/);
+});

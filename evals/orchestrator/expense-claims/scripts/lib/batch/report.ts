@@ -21,6 +21,9 @@ function runLabel(run: RunState): string {
 
 export function sessionsToArchive(state: BatchState, appDb: AppDb): string[] {
   const lines: string[] = [];
+  for (const session of state.trustSessions ?? []) {
+    if (session.appSessionId && !session.archived) lines.push(`- Idle trust session ${session.name} [${session.appSessionId}]`);
+  }
   for (const test of state.selftests) {
     if (test.appSessionId || test.sessionId) lines.push(`- Self-test session ${test.appSessionId ?? test.sessionId} (project at ${test.repoDir})`);
   }
@@ -28,7 +31,7 @@ export function sessionsToArchive(state: BatchState, appDb: AppDb): string[] {
     if (!run.projectId && !run.appSessionId) continue;
     const rows = run.projectId ? appDb.workspaces(run.projectId) : null;
     if (rows) {
-      const open = rows.filter((row) => !row.archivedAt);
+      const open = rows.filter((row) => !row.archivedAt && !state.trustSessions?.some((session) => session.appSessionId === row.id));
       if (open.length === 0) continue;
       lines.push(`- ${runLabel(run)} (${run.name}): ${open.map((row) => `${row.name ?? row.id} [${row.id}${row.id === run.appSessionId ? ", the orchestrator" : ""}]`).join(", ")}`);
     } else {
@@ -132,13 +135,19 @@ export function buildReport(config: BatchConfig, state: BatchState, appDb: AppDb
   out.push("");
 
   out.push("## Repos and folders created", "");
-  const made = state.runs.filter((run) => run.status !== "new");
+  const made = [...(state.provisioned ?? []), ...state.runs.filter((run) => !state.provisioned?.some((slot) => slot.repo === run.repo))]
+    .filter((run) => run.status !== "new");
   if (made.length === 0) out.push("None.");
   for (const run of made) {
     out.push(`- ${config.dryRun ? run.repo : `https://github.com/${run.repo}`} (local clone ${run.repoDir})`);
   }
-  for (const test of state.selftests) out.push(`- Self-test scratch repo ${test.repoDir} (local only)`);
+  for (const test of state.selftests) out.push(`- Permanent self-test project ${test.projectId ?? "not registered"} at ${test.repoDir} (local only; keep for later batches)`);
   out.push("", "Deleting run repos needs a token with the delete_repo scope, or the GitHub web UI (README \"Cleaning up\").", "");
+  out.push("## Unused provisioned projects", "");
+  const unused = (state.provisioned ?? []).filter((slot) => !state.runs.some((run) => run.repo === slot.repo && run.startRequestedAt));
+  if (unused.length === 0) out.push("None.");
+  for (const slot of unused) out.push(`- ${slot.name}: project ${slot.projectId ?? "not registered"}; repo ${slot.repo}; clone ${slot.repoDir}; provisioning status ${slot.status}.`);
+  out.push("", "Remove or keep these yourself. Later batches do not reuse them or build a trusted-project pool.", "");
 
   out.push("## Land the results", "");
   if (extras.branch) {

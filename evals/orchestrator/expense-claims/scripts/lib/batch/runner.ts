@@ -6,10 +6,10 @@
 // Exclusive access: every read-modify-write of a batch's state (next, record, stop) holds the batch
 // lock; only the batch's owning driver may run next and record; and only one batch is active on the
 // machine (the active-batch guard). See lock.ts.
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { describeSession, type LogEvent } from "../events.ts";
-import { featureSetName } from "../features.ts";
+import { ALL_FEATURES, featureSetName, stripFeatures } from "../features.ts";
 import { runName } from "../new-run.ts";
 import type { ProcResult } from "../proc.ts";
 import { readResults } from "../results.ts";
@@ -20,7 +20,7 @@ import { scanSession, scanSwarm } from "./hygiene.ts";
 import { claimActive, releaseActive } from "./lock.ts";
 import { notices, type Notice } from "./notify.ts";
 import { computePins, diffPins } from "./pins.ts";
-import { calibrationDecision, describePlan, nextRunNumber, planRound, runRowFor, scoredCount } from "./plan.ts";
+import { calibrationDecision, describePlan, nextRunNumber, planRound, provisionPlan, runRowFor, scoredCount } from "./plan.ts";
 import { buildReport } from "./report.ts";
 import {
   addFlag,
@@ -71,6 +71,7 @@ const QUIET_MS = 2 * 60_000;
 // After a final report is scored, the swarm gets this long to go quiet before the stop message.
 const POST_SCORE_SETTLE_MS = 10 * 60_000;
 const SELFTEST_MAX_MS = 20 * 60_000;
+const TRUST_WAIT_MS = 30 * 60_000;
 const MAX_NUMBER_BUMPS = 5;
 // An unconfirmed create_session is reconciled against the logs and data.db for this long before
 // it may be issued again, and it is issued again at most once.
@@ -84,7 +85,7 @@ export const TIMEOUTS = { git: 2 * 60_000, newRun: 10 * 60_000, score: 30 * 60_0
 export interface Deps {
   now(): number;
   sleep(ms: number): Promise<void>;
-  exec(cmd: string, args: string[], opts?: { cwd?: string; timeoutMs?: number }): Promise<ProcResult>;
+  exec(cmd: string, args: string[], opts?: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number }): Promise<ProcResult>;
   notify(notice: Notice): Promise<{ ok: boolean; error?: string }>;
   appDb: AppDb;
   awake: { start(untilMs: number): number | null; alive(pid: number): boolean; stop(pid: number): void };
@@ -104,10 +105,11 @@ export interface Ctx {
   logs: LogCache;
   index: SessionIndex;
   sheet: AnswerRow[];
+  excludedSessions: Set<string>;
 }
 
 export function makeCtx(config: BatchConfig, deps: Deps): Ctx {
-  return { config, deps, logs: new LogCache(), index: new SessionIndex(config.stateDir), sheet: readAnswerSheet(join(config.kitDir, "answers.md")) };
+  return { config, deps, logs: new LogCache(), index: new SessionIndex(config.stateDir), sheet: readAnswerSheet(join(config.kitDir, "answers.md")), excludedSessions: new Set() };
 }
 
 export interface ActionOut {
@@ -115,7 +117,7 @@ export interface ActionOut {
   action: PendingAction["kind"] | "wait" | "done";
   id?: string;
   // "self-test" or "run": the self-test has its own completion rule.
-  target?: "self-test" | "run";
+  target?: "self-test" | "run" | "batch" | "provision";
   run?: string;
   reissued?: boolean;
   dryRun?: boolean;
@@ -166,7 +168,7 @@ function issue(ctx: Ctx, state: BatchState, kind: PendingAction["kind"], target:
   state.actionSeq++;
   const pending: PendingAction = { id: `a${state.actionSeq}`, kind, target, issuedAt: iso(ctx.deps.now()), payload };
   state.pending = pending;
-  log(ctx, `issue ${pending.id} ${kind} for ${target === "selftest" ? "the self-test" : state.runs[target]?.key}`);
+  log(ctx, `issue ${pending.id} ${kind} for ${target}`);
   return render(ctx, state, pending, false);
 }
 
@@ -179,17 +181,39 @@ const ROW_RULE =
 
 export function render(ctx: Ctx, state: BatchState, pending: PendingAction, reissued: boolean): ActionOut {
   const p = pending.payload;
-  const run = pending.target === "selftest" ? null : state.runs[pending.target];
+  const run = typeof pending.target === "number" ? state.runs[pending.target] : null;
   const base = {
     batch: ctx.config.id,
     action: pending.kind,
     id: pending.id,
-    target: pending.target === "selftest" ? ("self-test" as const) : ("run" as const),
+    target: pending.target === "selftest" ? ("self-test" as const) : typeof pending.target === "number" ? ("run" as const) :
+      pending.target === "batch" ? ("batch" as const) : ("provision" as const),
     run: run?.key,
     reissued: reissued || undefined,
     dryRun: ctx.config.dryRun || undefined,
   };
   switch (pending.kind) {
+    case "create_trust_session":
+      return {
+        ...base,
+        what: "Create this idle child session with exactly these arguments: no kickoff, no agent, no prompt. It exists only so the user can open its view and trust the repository. Never start work or grant trust in it.",
+        tool: { name: "create_session", args: p.args as Record<string, unknown> },
+        record: [recordCommand(ctx, pending.id, "--session-id <id from the result>"), recordCommand(ctx, pending.id, '--failed "<error>"')],
+      };
+    case "archive_trust_session":
+      return {
+        ...base,
+        what: "Archive this idle trust session owned by the driver. The runner has read the user's local trust record. Never archive a run's session or start work here.",
+        tool: { name: "archive_session", args: p.args as Record<string, unknown> },
+        record: [recordCommand(ctx, pending.id, "--archived"), recordCommand(ctx, pending.id, '--failed "<error>"')],
+      };
+    case "trust_projects":
+      return {
+        ...base,
+        what: "Show the user every project name and path in details.projects and the deadline. Only the user can trust these repositories in the app. Never grant trust, approve prompts, automate the UI or write app state. Record --listed after displaying the list, then keep calling next; that acknowledges display, NOT trust.",
+        details: p,
+        record: [recordCommand(ctx, pending.id, "--listed")],
+      };
     case "create_project":
       return {
         ...base,
@@ -284,7 +308,7 @@ function workspaceIdFor(ctx: Ctx, id: string): string {
 }
 
 function knownSessionDir(ctx: Ctx, id: string | undefined | null): string | null {
-  return id && existsSync(eventsPath(ctx.config.stateDir, id)) ? id : null;
+  return id && !ctx.excludedSessions.has(id) && existsSync(eventsPath(ctx.config.stateDir, id)) ? id : null;
 }
 
 function resolveSession(ctx: Ctx, appSessionId: string | undefined, candidates: () => SessionMeta[], match: (events: LogEvent[]) => boolean): string | null {
@@ -293,6 +317,7 @@ function resolveSession(ctx: Ctx, appSessionId: string | undefined, candidates: 
   const direct = knownSessionDir(ctx, appSessionId);
   if (direct) return direct;
   for (const meta of candidates()) {
+    if (ctx.excludedSessions.has(meta.id)) continue;
     const events = ctx.logs.read(eventsPath(ctx.config.stateDir, meta.id));
     if (events.length > 0 && match(events)) return meta.id;
   }
@@ -303,10 +328,11 @@ function runSessionIds(ctx: Ctx, run: RunState): string[] {
   const since = ms(run.startRequestedAt) - minutes(2);
   const ids = new Set(ctx.index.forRepository(run.repo, since).map((meta) => meta.id));
   if (run.sessionId) ids.add(run.sessionId);
-  return [...ids];
+  return [...ids].filter((id) => !ctx.excludedSessions.has(id));
 }
 
-const readLogs = (ctx: Ctx, ids: string[]) => ids.map((id) => ({ id, events: ctx.logs.read(eventsPath(ctx.config.stateDir, id)) }));
+const readLogs = (ctx: Ctx, ids: string[]) => ids.filter((id) => !ctx.excludedSessions.has(id))
+  .map((id) => ({ id, events: ctx.logs.read(eventsPath(ctx.config.stateDir, id)) }));
 
 function resolveRunSession(ctx: Ctx, run: RunState): string | null {
   const since = ms(run.startRequestedAt) - minutes(2);
@@ -334,6 +360,7 @@ function createdSinceInDb(ctx: Ctx, projectId: string | undefined, issuedAt: str
   if (!projectId) return null;
   const rows = ctx.deps.appDb.workspaces(projectId) ?? [];
   const fresh = rows
+    .filter((row) => !ctx.excludedSessions.has(row.id) && !ctx.excludedSessions.has(row.sessionId ?? ""))
     .filter((row) => row.createdBy === "agent" && row.createdAt && Date.parse(row.createdAt) >= ms(issuedAt) - 60_000)
     .sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? ""));
   const row = fresh.at(-1);
@@ -503,6 +530,159 @@ function admissionBlock(ctx: Ctx, state: BatchState): Stop | null {
 
 // ---------- self-test ----------
 
+function actionTarget(state: BatchState, target: PendingAction["target"]): RunState | SelfTestState | undefined {
+  if (target === "selftest") return state.selftests.at(-1);
+  if (typeof target === "number") return state.runs[target];
+  if (target.startsWith("provision:")) return state.provisioned?.[Number(target.slice("provision:".length))];
+  return undefined;
+}
+
+function reservedRun(ctx: Ctx, state: BatchState, variant: string): RunState {
+  const { config } = ctx;
+  const n = nextRunNumber(variant, readResults(config.resultsPath), config.runsDir, [...state.runs, ...(state.provisioned ?? [])]);
+  const name = runName(variant, n);
+  return {
+    key: `${variant}#${n}`, variant, n, features: ALL_FEATURES, calibration: false, name,
+    repoDir: join(config.runsDir, name), repo: config.dryRun ? name : `${config.owner}/${name}`,
+    status: "new", createdAt: iso(ctx.deps.now()), judged: [], answers: [], askAttempts: {}, requestIds: {}, flags: [],
+  };
+}
+
+function projectAtPath(ctx: Ctx, repoDir: string): string | null | undefined {
+  const paths = [...new Set([repoDir, realpathSync(repoDir)])];
+  const found = paths.map((path) => ctx.deps.appDb.projectForPath(path));
+  const ids = [...new Set(found.filter((id): id is string => typeof id === "string"))];
+  return found.includes(undefined) || ids.length > 1 ? undefined : ids[0] ?? null;
+}
+
+function registerProject(ctx: Ctx, state: BatchState, target: PendingAction["target"], project: RunState | SelfTestState): StepResult {
+  const id = projectAtPath(ctx, project.repoDir);
+  if (id === undefined) {
+    stopBatch(ctx, state, `cannot uniquely look up project at ${project.repoDir}; refusing to create a duplicate`, true);
+    return { progressed: true };
+  }
+  if (id) {
+    project.projectId = id;
+    project.status = "project";
+    return { progressed: true };
+  }
+  return { action: issue(ctx, state, "create_project", target, { args: { path: project.repoDir } }) };
+}
+
+async function provisionStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
+  const { config } = ctx;
+  const block = admissionBlock(ctx, state);
+  if (block) {
+    stopBatch(ctx, state, block.reason, block.failure);
+    return { progressed: true };
+  }
+  state.provisionPlan ??= config.selfTest.only ? [] : provisionPlan(
+    readResults(config.resultsPath), config.variants, config.runsPerVariant, config.parallel ?? 1, config.variantSet,
+  );
+  state.provisioned ??= [];
+  if (config.selfTest.enabled && state.selftests.at(-1)?.status !== "project") return selfTestStep(ctx, state);
+  const unfinished = state.provisioned.findIndex((run) => run.status !== "project");
+  if (unfinished >= 0) {
+    const run = state.provisioned[unfinished];
+    if (run.status === "new") return newRepo(ctx, state, run);
+    if (run.status === "repo") {
+      if (!run.seedSha) {
+        const head = await ctx.deps.exec("git", ["rev-parse", "HEAD"], { cwd: run.repoDir, timeoutMs: TIMEOUTS.git });
+        if (head.code !== 0) {
+          stopBatch(ctx, state, `cannot read provisioned seed for ${run.key}: ${head.stderr.trim()}`, true);
+          return { progressed: true };
+        }
+        run.seedSha = head.stdout.trim();
+      }
+      return registerProject(ctx, state, `provision:${unfinished}`, run);
+    }
+    stopBatch(ctx, state, `provisioning ${run.key} failed: ${run.voidReason ?? run.status}`, true);
+    return { progressed: true };
+  }
+  if (state.provisioned.length < state.provisionPlan.length) {
+    state.provisioned.push(reservedRun(ctx, state, state.provisionPlan[state.provisioned.length]));
+  } else {
+    state.trustWait = {};
+    state.phase = "trust";
+  }
+  return { progressed: true };
+}
+
+function trustProjects(state: BatchState): { id: string; name: string; path: string }[] {
+  return [...state.selftests, ...(state.provisioned ?? [])].filter((p) => p.projectId)
+    .map((p) => ({ id: p.projectId!, name: basename(p.repoDir), path: p.repoDir }));
+}
+
+function trustBlock(ctx: Ctx, projectId: string | undefined): string | null {
+  const trusted = projectId ? ctx.deps.appDb.projectTrusted(projectId) : null;
+  if (trusted === true) return null;
+  return trusted === false ? `project ${projectId} is not trusted on local; only the user can trust it in the app`
+    : `cannot read local project trust for ${projectId ?? "missing project id"}`;
+}
+
+async function trustStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
+  const block = admissionBlock(ctx, state);
+  if (block) {
+    stopBatch(ctx, state, block.reason, block.failure);
+    return { progressed: true };
+  }
+  const wait = state.trustWait!;
+  const missing = [];
+  for (const project of trustProjects(state)) {
+    const trusted = ctx.deps.appDb.projectTrusted(project.id);
+    if (trusted === null) {
+      stopBatch(ctx, state, `cannot read local project trust for ${project.name}; no self-test or eval session starts`, true);
+      return { progressed: true };
+    }
+    if (!trusted) missing.push(project);
+  }
+  if (missing.length === 0) {
+    const toArchive = state.trustSessions?.findIndex((session) => !session.archived) ?? -1;
+    if (toArchive >= 0) {
+      return { action: issue(ctx, state, "archive_trust_session", "batch", {
+        index: toArchive, args: { id: state.trustSessions![toArchive].appSessionId },
+      }) };
+    }
+    wait.completedAt = iso(ctx.deps.now());
+    state.phase = ctx.config.selfTest.enabled ? "selftest" : "runs";
+    return { progressed: true };
+  }
+  if (ctx.deps.now() >= ms(wait.deadlineAt)) {
+    stopBatch(ctx, state, `project trust was not complete within 30 minutes; no self-test or eval session started (${missing.map((p) => p.name).join(", ")})`, true);
+    return { progressed: true };
+  }
+  state.trustSessions ??= [];
+  for (const project of missing) {
+    let index = state.trustSessions.findIndex((session) => session.projectId === project.id);
+    if (index < 0) {
+      index = state.trustSessions.length;
+      state.trustSessions.push({ projectId: project.id, name: `Trust ${project.name}` });
+    }
+    const session = state.trustSessions[index];
+    if (!session.appSessionId) return { action: issue(ctx, state, "create_trust_session", "batch", {
+      index, args: { project_id: project.id, name: session.name, workspace_type: "branch", coordinate_with_creator: true },
+    }) };
+  }
+  if (!wait.listed) {
+    const projects = missing.map((project) => ({
+      ...project,
+      sessionName: state.trustSessions!.find((session) => session.projectId === project.id)!.name,
+      sessionId: state.trustSessions!.find((session) => session.projectId === project.id)!.appSessionId!,
+    }));
+    const linked = projects.map((project) => ({ ...project, sessionUrl: `ghapp://sessions/${project.sessionId}` }));
+    wait.startedAt ??= iso(ctx.deps.now());
+    wait.deadlineAt ??= iso(ms(wait.startedAt) + TRUST_WAIT_MS);
+    const action = issue(ctx, state, "trust_projects", "batch", { projects: linked, deadline: wait.deadlineAt, timeoutMinutes: 30 });
+    await notify(ctx, state, {
+      key: "project-trust", title: "Eval projects need trust", priority: "high", tags: ["warning"],
+      body: `Batch ${ctx.config.id}: trust these repositories in the app by ${wait.deadlineAt}. Only you can do this; no self-test or eval session starts until every project is trusted.\n` +
+        linked.map((p) => `${p.sessionName}: ${p.sessionUrl}\n${p.path}`).join("\n"),
+    });
+    return { action };
+  }
+  return {};
+}
+
 export const selfTestMarker = (nonce: string): string => `eval-selftest-${nonce}`;
 
 // The shell command is compound on purpose: host policy approves some single read-only commands
@@ -540,7 +720,7 @@ async function selfTestStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
     const nonce = `st${now.toString(36)}`;
     test = {
       nonce,
-      repoDir: join(config.dir, `selftest-${state.selftests.length + 1}`, `eval-runner-selftest-${nonce}`),
+      repoDir: join(config.runsDir, "eval-runner-selftest"),
       prompt: selfTestPrompt(nonce),
       status: "new",
       createdAt: iso(now),
@@ -558,14 +738,34 @@ async function selfTestStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
   };
   switch (test.status) {
     case "new": {
-      rmSync(test.repoDir, { recursive: true, force: true });
-      mkdirSync(test.repoDir, { recursive: true });
-      writeFileSync(join(test.repoDir, "README.md"), "# Eval runner self-test\n\nA scratch repo with no remote. Safe to delete.\n");
-      const ident = ["-c", "user.name=Eval Runner", "-c", "user.email=eval-runner@example.invalid"];
-      for (const args of [["init", "-q", "-b", "main"], ["add", "-A"], [...ident, "commit", "-q", "-m", "Self-test scratch repo"]]) {
-        const result = await deps.exec("git", args, { cwd: test.repoDir, timeoutMs: TIMEOUTS.git });
+      const gitInTest = (args: string[]) => deps.exec("git", args, { cwd: test.repoDir, timeoutMs: TIMEOUTS.git });
+      if (!existsSync(test.repoDir)) {
+        mkdirSync(test.repoDir, { recursive: true });
+        writeFileSync(join(test.repoDir, "README.md"), "# Eval runner self-test\n\nPermanent local-only project for shell and question checks. Trust it once in the Copilot app. No GitHub remote.\n");
+        const ident = ["-c", "user.name=Eval Runner", "-c", "user.email=eval-runner@example.invalid"];
+        for (const args of [["init", "-q", "-b", "main"], ["add", "README.md"], [...ident, "commit", "-q", "-m", "Initialize permanent eval self-test project"]]) {
+          const result = await gitInTest(args);
+          if (result.code !== 0) {
+            fail(`git ${args.join(" ")} failed: ${result.stderr.trim()}`);
+            return { progressed: true };
+          }
+        }
+      }
+      for (const [args, expected] of [
+        [["rev-parse", "--show-toplevel"], realpathSync(test.repoDir)],
+        [["remote"], ""],
+        [["status", "--porcelain"], ""],
+      ] as [string[], string][]) {
+        const result = await gitInTest(args);
+        if (result.code !== 0 || result.stdout.trim() !== expected) {
+          fail(`permanent self-test repo must be a clean local-only git root: git ${args.join(" ")}: ${result.stderr.trim() || result.stdout.trim()}`);
+          return { progressed: true };
+        }
+      }
+      {
+        const result = await gitInTest(["rev-parse", "--verify", "HEAD"]);
         if (result.code !== 0) {
-          fail(`git ${args.join(" ")} failed: ${result.stderr.trim()}`);
+          fail(`permanent self-test repo has no commit: ${result.stderr.trim()}`);
           return { progressed: true };
         }
       }
@@ -573,11 +773,15 @@ async function selfTestStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
       return { progressed: true };
     }
     case "repo":
-      return { action: issue(ctx, state, "create_project", "selftest", { args: { path: test.repoDir } }) };
-    case "project":
+      return registerProject(ctx, state, "selftest", test);
+    case "project": {
+      const admission = admissionBlock(ctx, state);
+      const blocked = admission?.reason ?? trustBlock(ctx, test.projectId);
+      if (blocked) { fail(blocked); return { progressed: true }; }
       test.startRequestedAt = iso(now);
       test.status = "starting";
       return { action: issue(ctx, state, "create_session", "selftest", { args: selfTestCreateArgs(ctx, test) }) };
+    }
     case "starting":
       return {};
     case "running": {
@@ -652,6 +856,7 @@ export function verifySelfTest(ctx: Ctx, test: SelfTestState): void {
   const permissions = permissionProblems(test.sessionId ?? "missing", events);
   check(PERMISSION_CHECK, permissions.manual === 0 && permissions.pending === 0 && permissions.denied === 0, permissions.detail);
   const account = test.projectId ? deps.appDb.projectAccount(test.projectId) : null;
+  check("project is trusted on local", Boolean(test.projectId && deps.appDb.projectTrusted(test.projectId) === true), `project ${test.projectId ?? "missing"}`);
   check("session runs as the batch owner", account?.toLowerCase() === config.owner.toLowerCase(), `project account ${account ?? "unreadable"}, owner ${config.owner}`);
   // The workspace row may have been written after the session was recorded.
   if (test.appSessionId) test.appSessionId = workspaceIdFor(ctx, test.appSessionId);
@@ -659,6 +864,7 @@ export function verifySelfTest(ctx: Ctx, test: SelfTestState): void {
   check("session is detached (no creator link)", Boolean(links) && !links!.creator && !links!.coordinator, links ? `creator ${links.creator ?? "none"}, coordinator ${links.coordinator ?? "none"}` : "workspace row unreadable");
   // Every app-database lookup the runner relies on, on this real session and project.
   const problems = deps.appDb.probe();
+  if (projectAtPath(ctx, test.repoDir) !== test.projectId) problems.push("project path lookup differs from the self-test project id");
   const forward = test.appSessionId ? deps.appDb.sessionForWorkspace(test.appSessionId) : null;
   const backward = test.sessionId ? deps.appDb.workspaceForSession(test.sessionId) : null;
   const interruption = test.sessionId ? deps.appDb.interruption(test.sessionId) : null;
@@ -689,8 +895,7 @@ function plannedTotal(ctx: Ctx, state: BatchState): number {
 
 // Plans the next round and starts all of its runs together; called only when no run is active.
 async function startNextRound(ctx: Ctx, state: BatchState): Promise<StepResult> {
-  const { config, deps } = ctx;
-  const now = deps.now();
+  const { config } = ctx;
   const stop = firstStop(state.halt, admissionBlock(ctx, state));
   if (stop) {
     stopBatch(ctx, state, stop.reason, stop.failure);
@@ -711,26 +916,15 @@ async function startNextRound(ctx: Ctx, state: BatchState): Promise<StepResult> 
     return { progressed: true };
   }
   ensureAwake(ctx, state);
-  for (const next of round) {
-    const n = nextRunNumber(next.variant, rows, config.runsDir, state.runs);
-    const name = runName(next.variant, n);
-    const run: RunState = {
-      key: `${next.variant}#${n}`,
-      variant: next.variant,
-      n,
-      features: next.features,
-      calibration: next.calibration,
-      name,
-      repoDir: join(config.runsDir, name),
-      repo: config.dryRun ? name : `${config.owner}/${name}`,
-      status: "new",
-      createdAt: iso(now),
-      judged: [],
-      answers: [],
-      askAttempts: {},
-      requestIds: {},
-      flags: [],
-    };
+  const reservations = round.map((next) => state.provisioned?.find((slot) =>
+    slot.variant === next.variant && slot.status === "project" && !state.runs.some((run) => run.repo === slot.repo)));
+  const missing = reservations.findIndex((slot) => !slot);
+  if (missing >= 0) {
+    stopBatch(ctx, state, `out of trusted projects for ${round[missing].variant}; no project is created during runs`, true);
+    return { progressed: true };
+  }
+  for (const [index, next] of round.entries()) {
+    const run: RunState = { ...reservations[index]!, features: next.features, calibration: next.calibration };
     state.runs.push(run);
     state.active.push(state.runs.length - 1);
     log(ctx, `planned ${run.key} on ${featureSetName(run.features)}${run.calibration ? " (calibration)" : ""}`);
@@ -832,7 +1026,104 @@ async function permissionBlocked(ctx: Ctx, state: BatchState, run: RunState, blo
 // The kickoff exactly as a manual paste delivers it: kickoff.md without its trailing newline (run 1's
 // typed kickoff in its event log equals that form).
 export function kickoffPrompt(config: BatchConfig, run: RunState): string {
-  return readFileSync(join(config.runsDir, `${run.name}.kickoff.md`), "utf8").trimEnd();
+  return run.prompt ?? readFileSync(join(config.runsDir, `${run.name}.kickoff.md`), "utf8").trimEnd();
+}
+
+// Before the first session, replace only the fresh seed's spec and root commit to match new-run
+// for these features. The exact original SHA guards the run-repo push; never rewrite a run's work.
+async function prepareRun(ctx: Ctx, run: RunState): Promise<string | null> {
+  if (run.prepared) return null;
+  const { config, deps } = ctx;
+  const gitInRun = (args: string[]) => deps.exec("git", args, { cwd: run.repoDir, timeoutMs: TIMEOUTS.git });
+  const full = readFileSync(join(config.kitDir, "seed/docs/spec-v2.md"), "utf8");
+  const expected = run.features.length === ALL_FEATURES.length ? full : stripFeatures(full, run.features);
+  const path = join(run.repoDir, "docs/spec-v2.md");
+  const current = readFileSync(path, "utf8");
+  const history = await gitInRun(["log", "--format=%s"]);
+  const branch = await gitInRun(["branch", "--show-current"]);
+  if (!run.seedSha || history.code !== 0 || history.stdout.trim() !== "Seed v1" ||
+      branch.code !== 0 || branch.stdout.trim() !== "main") return "provisioned repo no longer has its single Seed v1 commit on main";
+  const diff = await gitInRun(["diff", "--name-only", run.seedSha, "HEAD"]);
+  if (diff.code !== 0 || (diff.stdout.trim() !== "" && diff.stdout.trim() !== "docs/spec-v2.md")) {
+    return "provisioned repo has changes beyond the selected feature spec";
+  }
+  const status = await gitInRun(["status", "--porcelain"]);
+  if (status.code !== 0) return `cannot inspect provisioned repo: ${status.stderr.trim()}`;
+  const changed = status.stdout.trimEnd();
+  if ((changed !== "" && (changed !== " M docs/spec-v2.md" || current !== expected)) ||
+      (current !== full && current !== expected)) return "provisioned repo changed outside the runner; refusing to overwrite it";
+  const head = await gitInRun(["show", "HEAD:docs/spec-v2.md"]);
+  if (head.code !== 0 || (head.stdout !== full && head.stdout !== expected)) return "provisioned spec differs from the seed";
+  if (current !== expected) writeFileSync(path, expected);
+  if (head.stdout !== expected) {
+    const commit = await gitInRun(["commit", "--amend", "--only", "-m", "Seed v1", "--", "docs/spec-v2.md"]);
+    if (commit.code !== 0) return `setting run features failed: ${commit.stderr.trim()}`;
+  }
+  if (!config.dryRun && expected !== full) {
+    const headSha = await gitInRun(["rev-parse", "HEAD"]);
+    const remote = await gitInRun(["ls-remote", "--heads", "origin", "main"]);
+    if (headSha.code !== 0 || remote.code !== 0) return `cannot verify run seed before push: ${headSha.stderr || remote.stderr}`;
+    const remoteSha = remote.stdout.trim().split(/\s+/)[0];
+    if (remoteSha !== headSha.stdout.trim()) {
+      if (remoteSha !== run.seedSha) return "run repo main changed since provisioning; refusing to overwrite it";
+      const push = await gitInRun(["push", `--force-with-lease=refs/heads/main:${run.seedSha}`, "origin", "HEAD:refs/heads/main"]);
+      if (push.code !== 0) return `pushing run features failed: ${push.stderr.trim()}`;
+    }
+  }
+  const prepared = await gitInRun(["rev-parse", "HEAD"]);
+  if (prepared.code !== 0) return `cannot record prepared seed: ${prepared.stderr.trim()}`;
+  run.preparedSha = prepared.stdout.trim();
+  run.prompt = readFileSync(join(config.kitDir, "kickoff.md"), "utf8").trimEnd();
+  run.prepared = true;
+  return null;
+}
+
+async function pruneSeedHistory(ctx: Ctx, run: RunState): Promise<string | null> {
+  if (run.features.length === ALL_FEATURES.length) return null;
+  if (!existsSync(run.repoDir)) return "run clone is missing; refusing seed cleanup";
+  const root = realpathSync(run.repoDir);
+  const gitDir = join(root, ".git");
+  if (!existsSync(gitDir) || !lstatSync(gitDir).isDirectory()) return "run clone has no private .git directory; refusing seed cleanup";
+  const env = { ...process.env };
+  for (const key of ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_SHALLOW_FILE"]) delete env[key];
+  const gitInRun = (args: string[]) => ctx.deps.exec("git", ["--git-dir", gitDir, "--work-tree", root, ...args], {
+    cwd: root, env, timeoutMs: TIMEOUTS.git,
+  });
+  const top = await gitInRun(["rev-parse", "--show-toplevel"]);
+  const common = await gitInRun(["rev-parse", "--git-common-dir"]);
+  if (top.code !== 0 || top.stdout.trim() !== root || common.code !== 0 || common.stdout.trim() !== gitDir) {
+    return "seed cleanup repository differs from the run clone";
+  }
+  const head = await gitInRun(["rev-parse", "HEAD"]);
+  if (!run.preparedSha || head.code !== 0 || head.stdout.trim() !== run.preparedSha) return "seed HEAD differs from the saved prepared commit; refusing cleanup";
+  const worktrees = await gitInRun(["worktree", "list", "--porcelain"]);
+  if (worktrees.code !== 0 || worktrees.stdout.split("\n").filter((line) => line.startsWith("worktree ")).length !== 1) {
+    return "cannot prune the unused seed while linked worktrees exist or cannot be checked";
+  }
+  const status = await gitInRun(["status", "--porcelain"]);
+  if (status.code !== 0 || status.stdout.trim() !== "") return "the prepared seed must be clean before history cleanup";
+  if (!ctx.config.dryRun) {
+    const remote = await gitInRun(["ls-remote", "--heads", "origin", "main"]);
+    if (remote.code !== 0) return `cannot verify prepared seed before cleanup: ${remote.stderr}`;
+    const preparedSha = run.preparedSha;
+    if (remote.stdout.trim().split(/\s+/)[0] !== preparedSha) return "remote main no longer matches the prepared seed; refusing cleanup";
+    const ref = "refs/remotes/origin/main";
+    const tracking = await gitInRun(["rev-parse", "--verify", ref]);
+    if (tracking.code !== 0) return `cannot read seed tracking ref: ${tracking.stderr.trim()}`;
+    const previousSha = tracking.stdout.trim();
+    if (previousSha !== preparedSha) {
+      if (previousSha !== run.seedSha) return "local origin/main differs from both the provisioned and prepared seed; refusing cleanup";
+      const updated = await gitInRun(["update-ref", ref, preparedSha, previousSha]);
+      if (updated.code !== 0) return `reconciling seed tracking ref failed: ${updated.stderr.trim()}`;
+    }
+  }
+  for (const args of [["reflog", "expire", "--expire=now", "--all"], ["gc", "--prune=now"]]) {
+    const result = await gitInRun(args);
+    if (result.code !== 0) return `removing obsolete seed history failed: git ${args.join(" ")}: ${result.stderr.trim()}`;
+  }
+  const history = await gitInRun(["rev-list", "--all", "--reflog", "--count"]);
+  if (history.code !== 0 || history.stdout.trim() !== "1") return "unused seed still has history beyond its single prepared commit";
+  return null;
 }
 
 function runCreateArgs(ctx: Ctx, run: RunState): Record<string, unknown> {
@@ -1210,15 +1501,29 @@ async function runStep(ctx: Ctx, state: BatchState, index: number): Promise<Step
   }
   switch (run.status) {
     case "new":
-      return newRepo(ctx, state, run);
     case "repo":
-      return { action: issue(ctx, state, "create_project", index, { args: { path: run.repoDir } }) };
+      voidRun(ctx, state, run, "out of trusted projects: this run was not provisioned before the batch started", false);
+      stopBatch(ctx, state, run.voidReason!, true);
+      return { progressed: true };
     case "project": {
       // The last runner-controlled point before a run starts: check stops and pins again.
       const block = firstStop(state.halt, admissionBlock(ctx, state));
       if (block) {
         voidRun(ctx, state, run, `not started: ${block.reason}`, false);
         stopBatch(ctx, state, block.reason, block.failure);
+        return { progressed: true };
+      }
+      const blocked = trustBlock(ctx, run.projectId);
+      const wasPrepared = run.prepared;
+      const preparationError = blocked ?? await prepareRun(ctx, run);
+      // Persist preparation before pruning: a restart must not need the removed seed object.
+      if (!preparationError && !wasPrepared) return { progressed: true };
+      const cleanupError = preparationError ?? await pruneSeedHistory(ctx, run);
+      // Trust is read again after preparation and cleanup, immediately before create_session.
+      const failure = cleanupError ?? trustBlock(ctx, run.projectId);
+      if (failure) {
+        voidRun(ctx, state, run, `not started: ${failure}`, false);
+        stopBatch(ctx, state, failure, true);
         return { progressed: true };
       }
       run.startRequestedAt = iso(now);
@@ -1362,13 +1667,64 @@ type Revalidated = "emit" | "cleared" | "hold";
 function revalidate(ctx: Ctx, state: BatchState): Revalidated {
   const pending = state.pending!;
   const now = ctx.deps.now();
-  const target = pending.target === "selftest" ? state.selftests.at(-1) : state.runs[pending.target];
+  if (state.phase === "provisioning" || state.phase === "trust") {
+    const stop = admissionBlock(ctx, state);
+    const expired = state.phase === "trust" && now >= ms(state.trustWait?.deadlineAt) &&
+      trustProjects(state).some((project) => ctx.deps.appDb.projectTrusted(project.id) !== true);
+    if (stop || expired) {
+      state.pending = null;
+      stopBatch(ctx, state, stop?.reason ?? "project trust was not complete within 30 minutes; no self-test or eval session started", stop?.failure ?? true);
+      return "cleared";
+    }
+  }
+  if (pending.kind === "trust_projects") return "emit";
+  if (pending.kind === "create_trust_session") {
+    const session = state.trustSessions![Number(pending.payload.index)];
+    const rows = ctx.deps.appDb.workspaces(session.projectId);
+    const found = rows?.find((row) => row.name === session.name && row.createdBy === "agent" &&
+      row.createdAt && ms(row.createdAt) >= ms(pending.issuedAt) && !row.archivedAt);
+    if (found) {
+      session.appSessionId = found.id;
+      session.sessionId = found.sessionId ?? undefined;
+      state.pending = null;
+      return "cleared";
+    }
+    if (since(now, ms(pending.issuedAt)) < CREATE_RECONCILE_MS) return "hold";
+    state.pending = null;
+    stopBatch(ctx, state, `idle trust session ${session.name} was not confirmed within 5 minutes; inspect the project before retrying`, true);
+    return "cleared";
+  }
+  if (pending.kind === "archive_trust_session") {
+    const session = state.trustSessions![Number(pending.payload.index)];
+    const found = ctx.deps.appDb.workspaces(session.projectId)?.find((row) => row.id === session.appSessionId);
+    if (found?.archivedAt) {
+      session.archived = true;
+      state.pending = null;
+      return "cleared";
+    }
+    return "emit";
+  }
+  const target = actionTarget(state, pending.target);
   if (!target) {
     state.pending = null;
     return "cleared";
   }
   switch (pending.kind) {
-    case "create_project":
+    case "create_project": {
+      const existing = projectAtPath(ctx, target.repoDir);
+      if (existing === undefined) {
+        state.pending = null;
+        stopBatch(ctx, state, `cannot uniquely look up project at ${target.repoDir}; refusing to repeat create_project`, true);
+        return "cleared";
+      }
+      if (existing) {
+        target.projectId = existing;
+        target.status = "project";
+        state.pending = null;
+        return "cleared";
+      }
+      return "emit";
+    }
     case "lookup_session":
       return "emit";
     case "answer_question":
@@ -1439,6 +1795,14 @@ function reconcileCreate(ctx: Ctx, state: BatchState, pending: PendingAction, ta
       return "cleared";
     }
   }
+  const trust = trustBlock(ctx, target.projectId);
+  if (trust) {
+    state.pending = null;
+    if (selfTest) Object.assign(target, { status: "failed", failure: trust });
+    else voidRun(ctx, state, target as RunState, trust, false);
+    stopBatch(ctx, state, trust, true);
+    return "cleared";
+  }
   pending.reissues = (pending.reissues ?? 0) + 1;
   pending.firstIssuedAt = firstIssuedAt;
   pending.issuedAt = iso(now);
@@ -1491,6 +1855,17 @@ function checkOwner(ctx: Ctx, state: BatchState): void {
 const IN_FLIGHT = new Set(["project", "starting", "running", "ending", "scoring", "scored", "settling", "stopping", "draining"]);
 
 export async function step(ctx: Ctx, state: BatchState): Promise<StepResult> {
+  ctx.excludedSessions.clear();
+  for (const session of state.trustSessions ?? []) {
+    if (session.appSessionId) {
+      ctx.excludedSessions.add(session.appSessionId);
+      session.sessionId ??= ctx.deps.appDb.sessionForWorkspace(session.appSessionId) ?? undefined;
+    }
+    if (session.sessionId) {
+      ctx.excludedSessions.add(session.sessionId);
+      for (const alias of ctx.deps.appDb.sessionAliases(session.sessionId) ?? []) ctx.excludedSessions.add(alias);
+    }
+  }
   const now = ctx.deps.now();
   const active = state.active.map((index) => state.runs[index]);
   if (state.lastHeartbeatAt) {
@@ -1506,14 +1881,14 @@ export async function step(ctx: Ctx, state: BatchState): Promise<StepResult> {
     }
   }
   state.lastHeartbeatAt = iso(now);
-  if (state.phase === "selftest" || state.phase === "runs") {
+  if (["provisioning", "trust", "selftest", "runs"].includes(state.phase)) {
     await claimActive(ctx.config.activeGuard, ctx.config.id, ctx.config.dir, iso(now));
     if (!state.caffeinate) ensureAwake(ctx, state);
     if (!state.notified.includes("batch-started")) {
       const { config } = ctx;
       const plan = config.selfTest.only
         ? "self-test only"
-        : `${config.selfTest.enabled ? "self-test, then " : ""}${describePlan(config.variants, config.runsPerVariant, calibrationDecision(readResults(config.resultsPath), config.variants, config.variantSet), config.parallel)}`;
+        : `provision projects, user trust, ${config.selfTest.enabled ? "self-test, then " : ""}${describePlan(config.variants, config.runsPerVariant, calibrationDecision(readResults(config.resultsPath), config.variants, config.variantSet), config.parallel)}`;
       await notify(ctx, state, notices.batchStarted(config.id, plan));
     }
   }
@@ -1523,6 +1898,12 @@ export async function step(ctx: Ctx, state: BatchState): Promise<StepResult> {
   else if (revalidated === "hold") result = {};
   else {
     switch (state.phase) {
+      case "provisioning":
+        result = await provisionStep(ctx, state);
+        break;
+      case "trust":
+        result = await trustStep(ctx, state);
+        break;
       case "selftest":
         result = await selfTestStep(ctx, state);
         break;
@@ -1585,6 +1966,8 @@ export interface RecordInput {
   question?: string;
   neither?: boolean;
   sent?: boolean;
+  listed?: boolean;
+  archived?: boolean;
   failed?: string;
 }
 
@@ -1597,11 +1980,33 @@ function applyRecord(ctx: Ctx, state: BatchState, input: RecordInput): string {
   const now = ctx.deps.now();
   const at = iso(now);
   const test = pending.target === "selftest" ? state.selftests.at(-1)! : null;
-  const run = pending.target === "selftest" ? null : state.runs[pending.target];
+  const run = pending.target === "selftest" || pending.target === "batch" ? null : actionTarget(state, pending.target) as RunState;
   let message = "";
   const p = pending.payload;
 
   switch (pending.kind) {
+    case "create_trust_session":
+    case "archive_trust_session": {
+      const session = state.trustSessions![Number(p.index)];
+      if (input.failed || (pending.kind === "create_trust_session" ? !input.sessionId : !input.archived)) {
+        const why = `${pending.kind} failed: ${input.failed ?? "missing result"}`;
+        stopBatch(ctx, state, why, true);
+        message = why;
+      } else if (pending.kind === "create_trust_session") {
+        session.appSessionId = workspaceIdFor(ctx, input.sessionId!);
+        session.sessionId = ctx.deps.appDb.sessionForWorkspace(session.appSessionId) ?? undefined;
+        message = `idle trust session ${session.appSessionId} recorded`;
+      } else {
+        session.archived = true;
+        message = `idle trust session ${session.appSessionId} archived`;
+      }
+      break;
+    }
+    case "trust_projects":
+      if (!input.listed) throw new Error("record --listed only after displaying the trust list; this does not grant trust");
+      state.trustWait!.listed = true;
+      message = "trust list displayed; waiting for the user's app trust records";
+      break;
     case "create_project":
       if (input.failed || !input.projectId) {
         const why = `create_project failed: ${input.failed ?? "no project id"}`;

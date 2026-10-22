@@ -68,7 +68,7 @@ test("a run with a question and a final report: answered from the sheet, scored 
   assert.match(log.stdout, /^chore\(evals\): record variant-a run 1 \(passed\)$/m);
   const body = await runProc("git", ["log", "-1", "--format=%B"], { cwd: h.resultsRepo });
   assert.doesNotMatch(body.stdout, /Co-authored-by/i);
-  assert.deepEqual(h.notices.map((n) => n.key), ["batch-started", "run-variant-a-1", "batch-done"]);
+  assert.deepEqual(h.notices.map((n) => n.key), ["batch-started", "project-trust", "run-variant-a-1", "batch-done"]);
   assert.deepEqual(h.awake, { started: 1, stopped: 1 });
   assert.equal(state.phase, "done");
   assert.match(readFileSync(state.reportPath!, "utf8"), /Turn Copilot Memory back on/);
@@ -243,9 +243,7 @@ test("a stall is scored after 15 quiet minutes, and open tool calls are flagged 
 
 test("a create_session the driver made but never recorded is adopted, not repeated", async () => {
   const h = await make({ scenarios: ["ask-final"] });
-  let action = await h.next();
-  await h.drive(action); // create_project
-  action = await h.next();
+  const action = await h.until((a) => a.action === "create_session");
   assert.equal(action.action, "create_session");
   h.app.createSession(action.tool!.args); // the driver called the tool, then died before recording it
   const again = await h.next();
@@ -269,8 +267,7 @@ test("a pending action is re-issued until it is recorded; unknown and repeated i
 
 test("the batch resumes from its files: a fresh process picks up where the last one stopped", async () => {
   const h = await make({ scenarios: ["ask-final"] });
-  await h.drive(await h.next()); // create_project
-  await h.drive(await h.next()); // create_session
+  await h.drive(await h.until((a) => a.action === "create_session"));
   // A new runner context (new process, empty caches) on the same batch folder.
   const { makeCtx, next } = await import("../lib/batch/runner.ts");
   const ctx2 = makeCtx(h.config, h.ctx.deps);
@@ -364,8 +361,8 @@ test("a round start renews the keep-awake hold only when less than half of it is
 test("two runs in a row that fail to start stop the batch", async () => {
   const h = await make({ scenarios: [], runsPerVariant: 3 });
   for (let i = 0; i < 2; i++) {
-    const action = await h.next();
-    assert.equal(action.action, "create_project");
+    const action = await h.until((a) => a.action === "create_session");
+    assert.equal(action.action, "create_session");
     await h.record({ action: action.id!, failed: "tool not available" });
   }
   const done = await h.next();
@@ -410,7 +407,7 @@ test("a failed self-test (memories loaded) stops the batch before any run", asyn
   assert.match(state.selftests[0].failure!, /no memories loaded/);
   assert.equal(state.runs.length, 0);
   assert.equal(state.phase, "stopped");
-  assert.deepEqual(h.notices.map((n) => n.key), ["batch-started", "selftest-1", "batch-stopped"]);
+  assert.deepEqual(h.notices.map((n) => n.key), ["batch-started", "project-trust", "selftest-1", "batch-stopped"]);
 });
 
 test("score warnings become flags; the cross-session kickoff warning flags the kickoff", async () => {
@@ -529,7 +526,7 @@ test("changed pinned files mid-round let the round finish, then stop the batch",
 
 test("a stop before the round's runs start voids them, with no notice and no start failure", async () => {
   const h = await make({ scenarios: ["ask-final", "ask-final"], variants: PAIR, parallel: 2 });
-  await h.until((action) => action.action === "create_project");
+  await h.until((action) => action.action === "create_session");
   await requestStop(h.ctx);
   const done = await h.until(() => false);
   const state = h.state();

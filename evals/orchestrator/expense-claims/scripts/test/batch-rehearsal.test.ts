@@ -52,9 +52,11 @@ test("a rehearsal of a whole batch runs the self-test and four runs, scores each
 
   assert.deepEqual(
     notifications.map((n) => n.title),
-    ["Eval batch started", "Eval self-test passed", "Eval run 1/4: gate-failed", "Eval run 2/4: gate-failed", "Eval run 3/4: stalled", "Eval run 4/4: timeout", "Eval batch done"],
+    ["Eval batch started", "Eval projects need trust", "Eval self-test passed", "Eval run 1/4: gate-failed", "Eval run 2/4: gate-failed", "Eval run 3/4: stalled", "Eval run 4/4: timeout", "Eval batch done"],
   );
-  assert.match(notifications[0].body, /^Batch rehearsal started\. Plan: self-test, then calibration runs first \(variant-a, variant-b\), then variant-a x2, variant-b x2; up to 2 runs at a time\.$/);
+  assert.match(notifications[0].body, /^Batch rehearsal started\. Plan: provision projects, user trust, self-test, then calibration runs first \(variant-a, variant-b\), then variant-a x2, variant-b x2; up to 2 runs at a time\.$/);
+  assert.ok(transcript.findIndex((line) => line.includes("user trusted listed projects")) < transcript.findIndex((line) => line.includes("-> create_session (agent default)")));
+  assert.ok([...app.trustSessions.values()].every((session) => session.archivedAt));
   assert.deepEqual(result.awake, { started: 1, stopped: 1 });
 
   const log = await runProc("git", ["log", "--format=%s"], { cwd: config.resultsPath.replace(/\/results\.csv$/, "") });
@@ -68,14 +70,14 @@ test("a rehearsal of a whole batch runs the self-test and four runs, scores each
   assert.equal(app.sessions.size, 5);
 });
 
-test("a rehearsal without allow-all permissions stops at the self-test, before any run repo", { timeout: 120_000 }, async () => {
+test("a rehearsal without allow-all permissions stops at the self-test, leaving provisioned repos unused", { timeout: 120_000 }, async () => {
   const r = await rehearse({ allowAll: false });
   others.push(r);
   assert.equal(r.final.details?.phase, "stopped");
   assert.match(String(r.final.details?.reason), /^the self-test failed: no tool-permission prompt .*"Tool permissions" under "Overnight batches"/);
   assert.equal(r.app.sessions.size, 1, "only the self-test session");
-  assert.deepEqual(readdirSync(r.config.runsDir), []);
-  assert.deepEqual(r.notifications.map((n) => n.title), ["Eval batch started", "Eval self-test FAILED", "Eval batch STOPPED"]);
+  assert.equal(readdirSync(r.config.runsDir).filter((name) => /^orch-eval-.*-\d+$/.test(name)).length, 6);
+  assert.deepEqual(r.notifications.map((n) => n.title), ["Eval batch started", "Eval projects need trust", "Eval self-test FAILED", "Eval batch STOPPED"]);
 });
 
 // Both runs hit prompts, so nothing is scored: the case stays cheap beside the suite's timing tests.
@@ -87,7 +89,7 @@ test("a rehearsal whose runs hit permission prompts voids them, sends each the s
   assert.match(String(r.final.details?.reason), /^variant-[ab]#1 was blocked by a tool-permission prompt/);
   assert.deepEqual(readResults(r.config.resultsPath).filter((row) => REHEARSAL_VARIANTS.includes(row.variant)), [], "no run is scored");
   assert.equal(r.app.sessions.size, 3, "the self-test and round 1; no run started after the prompt");
-  assert.deepEqual(r.notifications.map((n) => n.title), ["Eval batch started", "Eval self-test passed", "Eval batch problem", "Eval batch STOPPED"]);
+  assert.deepEqual(r.notifications.map((n) => n.title), ["Eval batch started", "Eval projects need trust", "Eval self-test passed", "Eval batch problem", "Eval batch STOPPED"]);
   assert.equal(r.transcript.filter((line) => /send_session_message "This run is over/.test(line)).length, 2, "each void run gets the stop message");
   assert.match(readFileSync(String(r.final.details?.report), "utf8"), /## Tool-permission prompts/);
 });
