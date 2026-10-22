@@ -214,7 +214,7 @@ A failed self-test stops the batch. It never uses an orchestrator agent.
 - It also checks that the session has no creator link and that no memories loaded.
 - It also runs every `data.db` lookup the runner uses against its own session and project, and the column probe below. **Decided by the user** (after the core review)
 - `--self-test-agent` can name another agent, but config validation refuses the orchestrators and the variants under test.
-- The self-test proves that a detached session can use tools with nobody present. **Design call**
+- The self-test proves that a session in a project the runner created can use tools with nobody present. **Design call**
   - Before its `ask_user`, it runs `pwd && echo eval-selftest-<nonce>`: a compound command, because host policy approves some single read-only commands (`git status`, `pwd`) even without allow-all permissions.
   - It fails if the command doesn't complete successfully with its marker in the output, or if the session's log has any permission request in manual mode (`permissionMode: "manual"`), pending or denied. Sessions with allow-all permissions log no permission request at all: none in 382 such sessions checked.
   - A request still pending after 30 seconds fails it at once, rather than at the 20-minute limit. Like every self-test failure, it stops the batch before any run repo is created; the failure names the cause and points to "Tool permissions" in the README.
@@ -302,7 +302,7 @@ A failed self-test stops the batch. It never uses an orchestrator agent.
 
 ## Limits and residual risks
 
-- **Tool permissions:** in app 1.1.30 with CLI 1.0.99-2, sessions that `create_session` starts detached begin without allow-all permissions, and the tool has no parameter for it. A session gets allow-all only when the user turns it on or by inheriting its creator's setting, and a detached session has no creator. Until that changes, an unattended batch stops at the self-test. How runs should get their permissions is the user's decision and is not settled here.
+- **Tool permissions:** in app 1.1.30, projects created by `create_project` are untrusted, and the app holds their sessions at manual tool approval until someone trusts the repository in the app; no agent tool can grant trust. The app log shows "Holding session at manual tool approval until its repository is trusted" and `requested_mode=AllowAll effective_mode=Manual` for every session of batch 20261021-2217, its self-test included, and `~/.copilot/data.db` has no `project_host_trust` row for their projects. Until that changes, an unattended batch stops at the self-test. How runs get trusted is the user's decision and is not settled here.
 
 - **An app restart or update** stops every session, including the driver and the run in progress. The run is void, as above. Nothing notifies the user until the driver is resumed, because nothing is running; missing notifications are the sign. The app has no auto-resume, and resuming a run would need a message to it, which counts as a nudge.
 - **Plain-text questions:**

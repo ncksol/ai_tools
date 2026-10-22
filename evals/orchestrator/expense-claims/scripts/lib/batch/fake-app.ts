@@ -55,8 +55,9 @@ export class FakeApp implements AppDb {
   account = "ncksol";
   defaultAccount(): string | null { return this.account; }
   projectAccount(projectId: string): string | null { return this.projects.has(projectId) ? this.account : null; }
-  // Whether sessions start with allow-all tool permissions. Without them, as for a detached session
-  // in app 1.1.30, a shell command that host policy doesn't approve waits for a user.
+  // Whether sessions start with allow-all tool permissions. Without them, as for a session in a
+  // project the app doesn't trust (app 1.1.30), a shell command that host policy doesn't approve
+  // waits for a user.
   allowAll = true;
 
   constructor(stateDir: string, clock: { now: number }, scenarios: Scenario[]) {

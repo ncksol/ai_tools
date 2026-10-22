@@ -59,7 +59,7 @@ export async function startNtfyStub(): Promise<{ url: string; received: { title:
 }
 
 // allowAll: false starts every fake session without allow-all tool permissions, as app 1.1.30 does
-// for detached sessions, so the self-test fails at its shell command.
+// for sessions in projects create_project made (untrusted), so the self-test fails at its shell command.
 export async function rehearse(opts: { scenarios?: Scenario[]; runsPerVariant?: number; parallel?: number; allowAll?: boolean; log?: (line: string) => void } = {}): Promise<RehearsalResult> {
   const dir = mkdtempSync(join(tmpdir(), "orch-eval-rehearsal-"));
   const runsDir = join(dir, "runs");

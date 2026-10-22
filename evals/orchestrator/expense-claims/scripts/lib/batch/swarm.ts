@@ -306,7 +306,7 @@ export function sessionActivity(id: string, events: LogEvent[]): SessionActivity
 
 // Why a tool-permission prompt stops a batch, and where the user reads what to do about it.
 export const PERMISSION_REMEDY =
-  "Sessions that create_session starts detached don't get allow-all tool permissions (app 1.1.30, CLI 1.0.99-2), so their tool prompts wait for a user who isn't there. No batch can run unattended until run sessions start with them: see \"Tool permissions\" under \"Overnight batches\" in the kit's README";
+  "In app 1.1.30, projects that create_project makes are untrusted, and the app holds their sessions at manual tool approval until someone trusts the repository in the app; no agent tool can grant trust, so their tool prompts wait for a user who isn't there. No batch can run unattended until its projects are trusted: see \"Tool permissions\" under \"Overnight batches\" in the kit's README";
 export const PERMISSION_VOID = "blocked by a tool-permission prompt";
 
 // A permission request still open after this long is a prompt waiting for a user. Host-policy

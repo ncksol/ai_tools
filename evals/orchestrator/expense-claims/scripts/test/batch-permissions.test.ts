@@ -1,4 +1,4 @@
-// Tool-permission prompts: the self-test proves a detached session can use tools with nobody
+// Tool-permission prompts: the self-test proves a session the batch creates can use tools with nobody
 // present, and a prompt during a batch voids the run and stops the batch.
 import assert from "node:assert/strict";
 import { appendFileSync, readdirSync, readFileSync, rmSync } from "node:fs";
