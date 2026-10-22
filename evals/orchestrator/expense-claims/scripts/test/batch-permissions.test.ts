@@ -285,3 +285,41 @@ test("regression: a self-test that proved the marker with a non-shell tool fails
   const check = test.checks.find((c) => c.name === "a shell command ran with nobody present")!;
   assert.deepEqual([check.ok, check.detail], [false, `no shell tool call (bash or powershell) ran a command with eval-selftest-${test.nonce}`]);
 });
+
+// Re-check MF: the results.csv row is the truth about scoring. score writes its row before its
+// diagnostics, so the runner can stop with the row saved but its own state still "scoring".
+test("regression: a run whose row score saved before the runner stopped is adopted, not voided, by a later prompt", async () => {
+  const h = await make({ scenarios: ["stall", "ask-final"], runsPerVariant: 2 });
+  const judge = await h.until((action) => action.action === "judge_idle" && action.target === "run");
+  await h.drive(judge);
+  const state = h.state();
+  Object.assign(state.runs[0], { status: "scoring", endReason: "stalled" });
+  saveState(h.config.dir, state);
+  const run = state.runs[0];
+  // score ran and saved its row; the runner died before it recorded the result.
+  await h.ctx.deps.exec(process.execPath, [h.config.scoreScript, "--repo-dir", run.repoDir, "--session", run.sessionId!, "--outcome", "stalled", "--calibration", "yes"]);
+  assert.equal(readResults(h.config.resultsPath).length, 1);
+  h.clock.now += 60_000;
+  appendEvent(h, run.sessionId!, "permission.requested", pendingShell("post-score"));
+  h.clock.now += 31_000;
+  const ctx = makeCtx(h.config, h.ctx.deps);
+  for (let i = 0; i < 200; i++) {
+    const action = await next(ctx, { maxWaitMs: 540_000 });
+    if (action.action === "done") break;
+    await actAsDriver(ctx, h.app, h.clock, action);
+  }
+  const after = h.state();
+  assert.equal(h.scoreCalls.length, 1, "score is not run again");
+  const rows = readResults(h.config.resultsPath);
+  assert.deepEqual(rows.map((row) => row.outcome), ["stalled"], "the row is kept");
+  assert.notEqual(after.runs[0].status, "void");
+  assert.equal(after.runs[0].row?.outcome, "stalled");
+  assert.ok(after.runs[0].committed, "the adopted row is committed");
+  assert.ok(after.runs[0].flags.some((f) => f.code === "score-warning" && /adopted/.test(f.detail)));
+  assert.ok(after.runs[0].flags.some((f) => f.code === "permission-prompt"));
+  assert.equal(after.runs.length, 1, "no further run starts");
+  assert.match(after.stopReason!, /^variant-a#1's swarm hit a tool-permission prompt after the run ended/);
+  const report = readFileSync(after.reportPath!, "utf8");
+  assert.match(report, /- variant-a #1: its result stands/);
+  assert.match(report, /\| stalled \|/);
+});

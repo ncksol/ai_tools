@@ -254,6 +254,7 @@ A failed self-test stops the batch. It never uses an orchestrator agent.
 **Design call:**
 
 - The commit uses `git commit --only -- results.csv`, so nothing else the checkout holds is committed.
+- Whether a run is scored is decided by its row in `results.csv`, never by the runner's state. `score` writes the row before its diagnostics and the runner saves its state only after `score` returns, so a runner that stopped in between resumes behind the row. It adopts the row as it is (flagged `score-warning`), never scores again, never removes it, and never voids a run that has one; the report and final counts read the row first. **Design call**
 - The push is on by default and turned off with `--no-push`.
 - The report lists only the commits made since the batch started.
 - A results commit that fails is retried up to three times, a minute apart, with the run held until it succeeds. If it still fails, no further run starts, the run's cleanup still happens, and the user is notified. **Decided by the user**

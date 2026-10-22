@@ -448,7 +448,7 @@ async function finish(ctx: Ctx, state: BatchState): Promise<ActionOut> {
   const rows = readResults(ctx.config.resultsPath);
   const outcomes = new Map<string, number>();
   for (const run of state.runs) {
-    const outcome = run.status === "void" ? "void" : (runRowFor(rows, run)?.outcome ?? "not scored");
+    const outcome = runRowFor(rows, run)?.outcome ?? (run.status === "void" ? "void" : "not scored");
     outcomes.set(outcome, (outcomes.get(outcome) ?? 0) + 1);
   }
   const counts = `${state.runs.length} run(s)${outcomes.size > 0 ? ` (${[...outcomes].map(([k, v]) => `${v} ${k}`).join(", ")})` : ""}`;
@@ -777,6 +777,11 @@ function voidRun(ctx: Ctx, state: BatchState, run: RunState, reason: string, sta
   log(ctx, `${run.key} void: ${reason}${stopFirst ? "; the stop message goes out first" : ""}`);
 }
 
+// Whether a run is scored is decided by its row in results.csv, never by runner state: score
+// writes the row before its diagnostics, and the runner records the result only after score returns,
+// so a runner that stops in between resumes with its state behind the row.
+const rowOf = (ctx: Ctx, run: RunState) => runRowFor(readResults(ctx.config.resultsPath), run);
+
 // The run's end on the log's clock: its final report, or for a timeout or stall the time score
 // runs (score ends those runs at its own time), or once scored, when it was scored.
 function runCutoff(run: RunState, now: number): number {
@@ -793,7 +798,7 @@ async function permissionsAfterWatching(ctx: Ctx, state: BatchState, run: RunSta
   const logs = readLogs(ctx, runSessionIds(ctx, run));
   const cutoff = runCutoff(run, now);
   const blocks = logs.flatMap((log) => permissionBlocks(log.id, log.events, now));
-  const unscored = run.status === "ending" || run.status === "scoring";
+  const unscored = (run.status === "ending" || run.status === "scoring") && !rowOf(ctx, run);
   const before = blocks.filter((block) => block.request.at <= cutoff);
   if (unscored && before.length > 0) {
     await permissionBlocked(ctx, state, run, before, true);
@@ -811,6 +816,8 @@ async function permissionsAfterWatching(ctx: Ctx, state: BatchState, run: RunSta
 // one from after its end, or found once the run is scored, leaves the result standing.
 async function permissionBlocked(ctx: Ctx, state: BatchState, run: RunState, blocks: PermissionBlock[], voidIt: boolean): Promise<void> {
   const at = iso(ctx.deps.now());
+  // A run with a row in results.csv is scored, whatever its status says: it is never voided.
+  if (voidIt && rowOf(ctx, run)) voidIt = false;
   for (const block of blocks) addFlag(run, "permission-prompt", describePermissionBlock(block), at);
   const first = `${describePermissionBlock(blocks[0])}${blocks.length > 1 ? ` (and ${blocks.length - 1} more)` : ""}`;
   if (voidIt) voidRun(ctx, state, run, `${PERMISSION_VOID}: ${first}`, false, true);
@@ -1089,6 +1096,18 @@ async function scoreRun(ctx: Ctx, state: BatchState, run: RunState): Promise<voi
   log(ctx, `${run.key} scored: exit ${result.code}, ${row ? `${row.outcome} ${row.minutes} min` : "no row"}`);
 }
 
+// The run's row is already in results.csv, saved by a score the runner didn't see finish. It is
+// the result: adopted as it is, never scored again and never removed.
+function adoptRow(ctx: Ctx, state: BatchState, run: RunState, row: Record<string, string>): void {
+  const at = iso(ctx.deps.now());
+  run.row = { ...row };
+  run.scoredAt ??= at;
+  state.scoreFailures = 0;
+  addFlag(run, "score-warning", "score saved this run's row before the runner recorded it (the runner stopped meanwhile); the row was adopted as it is, and its diagnostics may be incomplete", at);
+  run.status = "scored";
+  log(ctx, `${run.key} adopted its results.csv row: ${row.outcome} ${row.minutes} min`);
+}
+
 async function commitResult(ctx: Ctx, state: BatchState, run: RunState): Promise<string | null> {
   const { config } = ctx;
   const branch = (await git(ctx, ["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim();
@@ -1130,10 +1149,11 @@ function knownStop(state: BatchState): Stop | null {
 }
 
 // The swarms of runs that have ended are still checked for permission prompts until the batch
-// finishes. Such a prompt keeps the run's result, but no further run starts. Void runs are skipped:
-// they are never scored, and a permission void has already stopped the batch.
+// finishes. Such a prompt keeps the run's result, but no further run starts. Only runs with a row
+// are watched: a run without one is void, and a permission void has already stopped the batch.
 async function watchFinishedSwarms(ctx: Ctx, state: BatchState): Promise<void> {
-  const finished = state.runs.filter((run, index) => run.status === "done" && !state.active.includes(index) && run.sessionId && run.startRequestedAt);
+  const rows = readResults(ctx.config.resultsPath);
+  const finished = state.runs.filter((run, index) => !state.active.includes(index) && runRowFor(rows, run) && run.sessionId && run.startRequestedAt);
   if (finished.length === 0) return;
   const now = ctx.deps.now();
   // One scan of the session folders for every finished run.
@@ -1218,11 +1238,16 @@ async function runStep(ctx: Ctx, state: BatchState, index: number): Promise<Step
       }
       return {};
     }
-    case "scoring":
-      await scoreRun(ctx, state, run);
+    case "scoring": {
+      const row = rowOf(ctx, run);
+      if (row) adoptRow(ctx, state, run, row);
+      else await scoreRun(ctx, state, run);
       return { progressed: true };
+    }
     case "scored": {
-      if (run.row && !run.committed) {
+      const saved = rowOf(ctx, run);
+      if (saved) run.row ??= { ...saved };
+      if (saved && !run.committed) {
         if (run.lastCommitAttemptAt && since(now, ms(run.lastCommitAttemptAt)) < COMMIT_RETRY_MS) return {};
         const error = await commitResult(ctx, state, run);
         if (error) {

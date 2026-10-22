@@ -1,6 +1,6 @@
 // The morning report: outcomes, flags, sessions to archive, repos created and how to land results.
 import { featureSetName } from "../features.ts";
-import { formatSummary, readResults, summarize } from "../results.ts";
+import { formatSummary, readResults, summarize, type ResultRow } from "../results.ts";
 import type { AppDb } from "./appdb.ts";
 import { runRowFor } from "./plan.ts";
 import { variantBundle } from "../variants.ts";
@@ -40,7 +40,7 @@ export function sessionsToArchive(state: BatchState, appDb: AppDb): string[] {
 
 // What a tool-permission prompt did in this batch: the self-test it failed, the runs it voided or
 // flagged. Empty when there was none.
-export function permissionLines(state: BatchState): string[] {
+export function permissionLines(state: BatchState, rows: ResultRow[]): string[] {
   const lines: string[] = [];
   for (const test of state.selftests) {
     if (test.failure?.includes(PERMISSION_REMEDY)) lines.push(`- The self-test failed: ${test.failure.replace(`. ${PERMISSION_REMEDY}`, "")}.`);
@@ -48,7 +48,8 @@ export function permissionLines(state: BatchState): string[] {
   for (const run of state.runs) {
     const flags = run.flags.filter((flag) => flag.code === "permission-prompt");
     if (flags.length === 0) continue;
-    lines.push(`- ${runLabel(run)}: ${run.status === "void" ? "void, not scored" : "its result stands; the prompt came after its end"}.`);
+    // The row in results.csv decides whether the run was scored, not the run's status.
+    lines.push(`- ${runLabel(run)}: ${runRowFor(rows, run) ? "its result stands; the prompt came after its end" : run.status === "void" ? "void, not scored" : "not scored"}.`);
     for (const flag of flags) lines.push(`  - ${flag.detail}`);
   }
   return lines;
@@ -72,7 +73,7 @@ export function buildReport(config: BatchConfig, state: BatchState, appDb: AppDb
   if (config.dryRun) out.push("- DRY RUN: no GitHub repos; app steps were stubbed.");
   out.push("");
 
-  const permissions = permissionLines(state);
+  const permissions = permissionLines(state, rows);
   if (permissions.length > 0) {
     out.push("## Tool-permission prompts", "", "A tool-permission prompt that nobody could answer stopped this batch.", "", ...permissions, "");
     out.push(`Cause and remedy: ${PERMISSION_REMEDY}. A void run has no row in results.csv and doesn't count toward its variant's scored runs or the calibration.`, "");
@@ -97,7 +98,7 @@ export function buildReport(config: BatchConfig, state: BatchState, appDb: AppDb
     out.push("|---|---|---|---|---|---|---|---|---|---|---|---|---|");
     state.runs.forEach((run, i) => {
       const row = runRowFor(rows, run);
-      const outcome = run.status === "void" ? `void: ${run.voidReason ?? ""}` : (row?.outcome ?? (run.status === "done" ? "not scored" : run.status));
+      const outcome = row?.outcome ?? (run.status === "void" ? `void: ${run.voidReason ?? ""}` : run.status === "done" ? "not scored" : run.status);
       out.push(
         `| ${i + 1} | ${cell(runLabel(run))}${run.calibration ? " (calibration)" : ""} | ${cell(run.repo)} | ${cell(row?.features ?? featureSetName(run.features))} | ${cell(outcome)} | ${cell(row?.minutes)} | ${cell(row?.wall_minutes)} | ${cell(row?.blocked_minutes)} | ${cell(row?.questions)} | ${row ? `${row.suite_passed}/${row.suite_total}` : ""} | ${cell(row?.prs_merged)} | ${cell(row?.main_ci)} | ${cell(run.flags.map((flag) => flag.code).join(", "))} |`,
       );
