@@ -324,3 +324,15 @@ test("revoked trust prevents a run create_session from being reissued", async ()
   assert.match(h.state().stopReason!, /not trusted on local/);
   assert.equal(h.app.sessions.size, 0);
 });
+
+test("revoked trust prevents a self-test create_session from being reissued", async () => {
+  const h = await make({ scenarios: [], selfTest: true });
+  const start = await h.until((a) => a.action === "create_session");
+  assert.equal(start.target, "self-test");
+  h.app.trustedProjects.clear();
+  h.clock.now += 6 * 60_000;
+  assert.equal((await h.next()).action, "done");
+  assert.match(h.state().stopReason!, /not trusted on local/);
+  assert.equal(h.state().selftests[0].status, "failed");
+  assert.equal(h.app.sessions.size, 0);
+});

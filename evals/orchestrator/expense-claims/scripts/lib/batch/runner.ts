@@ -1736,14 +1736,14 @@ function reconcileCreate(ctx: Ctx, state: BatchState, pending: PendingAction, ta
       stopBatch(ctx, state, block.reason, block.failure);
       return "cleared";
     }
-    const trust = trustBlock(ctx, target.projectId);
-    if (trust) {
-      state.pending = null;
-      if (selfTest) Object.assign(target, { status: "failed", failure: trust });
-      else voidRun(ctx, state, target as RunState, trust, false);
-      stopBatch(ctx, state, trust, true);
-      return "cleared";
-    }
+  }
+  const trust = trustBlock(ctx, target.projectId);
+  if (trust) {
+    state.pending = null;
+    if (selfTest) Object.assign(target, { status: "failed", failure: trust });
+    else voidRun(ctx, state, target as RunState, trust, false);
+    stopBatch(ctx, state, trust, true);
+    return "cleared";
   }
   pending.reissues = (pending.reissues ?? 0) + 1;
   pending.firstIssuedAt = firstIssuedAt;
