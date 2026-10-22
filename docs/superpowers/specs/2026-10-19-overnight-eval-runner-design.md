@@ -1,6 +1,6 @@
 # Overnight runner for the orchestrator eval — design
 
-Date: 19 October 2026. Status: built, then revised after two independent reviews (core logic and manual-run fidelity); the self-test has not run on the real app.
+Date: 19 October 2026. Status: built, with pre-provisioning and user trust at batch start. A trusted local project's shell probe has run on the real app; the complete batch and trust on a `create_project`-origin project still need a real start.
 
 ## How to read this
 
@@ -62,16 +62,39 @@ Two parts: a runner script that holds the plan, the state and every deterministi
   - A `create_session` that was issued but never recorded is uncertain: the runner looks for the session in the logs and `data.db` and adopts it. Otherwise it waits 5 minutes, then issues it once more, if the run may still start. The search always starts at the first issue, across every reissue; a separate last-issued time drives the 5-minute wait. If a session turns up later for a run given up as never started, no further run starts. **Decided by the user** (the first-issue window), **Design call** (the 5 minutes, the single reissue, the late-session stop).
 - Every subprocess (git, `gh`, `new-run`, `score`) has a time limit and runs in its own process group: 2 minutes for git, 10 for `new-run`, 30 for `score`. When the time runs out, the group gets SIGTERM, then SIGKILL after 5 seconds if anything in it is still alive, and the call returns only once the group is gone or SIGKILL has been sent and waited for; its timers keep the caller alive meanwhile. A process that leaves the group (`setsid`) is out of reach. A timeout is a failure under the stop rules. **Decided by the user** (the limits and the escalation), **Design call** (the values).
 - Clock: the runner uses wall-clock time, as the event logs do. A clock that goes back over a minute is flagged, and no duration goes negative. **Decided by the user**
-- The driver's `tools` allowlist is the shell tools, `view`, `grep`, `glob`, `create_project`, `create_session`, `get_session`, `answer_session_input`, `send_session_message`, `report_intent` and `task_complete`: nothing that starts sub-agents and nothing that edits files. **Decided by the user** (the list), **Design call** (the last two).
+- The driver's `tools` allowlist is the shell tools, `view`, `grep`, `glob`, `create_project`, `create_session`, `archive_session`, `get_session`, `answer_session_input`, `send_session_message`, `report_intent` and `task_complete`: nothing that starts sub-agents and nothing that edits files. **Decided by the user** (the list), **Design call** (the last two). `archive_session` is limited to the driver's own idle trust sessions, never an eval run or its children.
 
 ## Decisions
+
+### Provisioning and user trust
+
+**Decided by the user:**
+
+- Trust a batch's projects at the start. After preflight, provision the batch's fresh repos, clones and projects up front; the user trusts them, then the batch runs unattended. Every eval attempt still has a fresh GitHub repo. A pool of trusted projects is out of scope.
+- Do not bypass the security check. Only the user grants trust in the app; neither the runner nor the driver writes app state to grant trust or automates the app UI.
+- The self-test uses one permanent local-only git project that the user trusts once.
+- The project itself has no Trust option. The user directed: "just make the project create small session that does nothing and I will trust it that way". Each untrusted project therefore gets an idle session, without a kickoff. These are children of the driver, not eval runs. The user opens the session's view to trust its repository.
+
+**Design call:**
+
+- Reserve pending calibrations plus the remaining scored targets, in planner order. For pinned variants, matching historical scored rows reduce those targets. When legacy calibration keeps Summary, calibration attempts count toward the targets and some reservations stay unused. No retry pool is added.
+- Provision each slot with `new-run` and the full seed spec. Before `create_project`, look up `projects.id` by `main_repo_path`, read-only. A failed or ambiguous lookup stops the batch rather than risking a duplicate. Reconcile a lost creation result through the same lookup.
+- Reuse `<runs-dir>/eval-runner-selftest` (normally `~/orch-evals/eval-runner-selftest`). Create a local git repo and one commit only if missing; an existing repo must be a clean git root, have a commit, and have no remote. Never delete or reset it.
+- The trust phase lasts at most 30 minutes after repo/project provisioning. Read `project_host_trust.trusted_config_sha256` and `trusted_config_accepted_at` for `(project_id, host_id='local')` in separate read-only queries. Both must be present. A failed lookup or an expired wait stops before any self-test or eval session starts.
+- Create one `Trust <project>` idle session per untrusted project, using `workspace_type: "branch"`, `coordinate_with_creator: true`, and no kickoff. Sessions are nested under the driver in the sidebar, not under their projects. The driver and notification list names, `ghapp://sessions/<id>` links and clone paths. `record --listed` acknowledges display only; it never substitutes for a trust row.
+- After trust, archive these idle sessions before starting the self-test. If cleanup fails, stop and list leftovers. Persist their app and CLI ids and exclude them, including known aliases, from run discovery, activity, permission and memory scans. They are not descendants of eval runs; `score`'s root-and-descendant cost walk does not include them.
+- Use only the provisioned slots. If void or unscored attempts consume a variant's capacity, stop with "out of trusted projects". Never create a project mid-batch. The report lists unused projects and repos for the user to remove or keep.
+- Calibration chooses a run's features at launch. If necessary, replace only `docs/spec-v2.md` in the unused seed's root commit, preserving its author and its `Seed v1` subject. The resulting tree and single-commit history match `new-run` for the same features. Push only with a lease on the exact provisioned seed SHA; an unexpected remote change stops the run. No repository configuration changes. Snapshot the feature-neutral kickoff at launch. No seed rewrite happens after a run starts.
+- Recheck local trust immediately before issuing or reissuing a self-test or eval `create_session`. The app still decides whether its current configuration is trusted; the shell proof and permission fail-fast checks stay in place.
+
+Observed on app 1.1.30 on 22 October 2026: after the user re-added the permanent project through the app and trusted it from an idle session's view, a new interactive probe logged `allowAllPermissions: true`, ran a compound shell command and logged no permission requests. Trust through a session view on a project made by `create_project` is not yet proven; the first real batch start confirms it, and missing trust stops safely.
 
 ### Starting a run
 
 **Decided by the user:**
 
-1. The runner runs `new-run` with an explicit `--n`.
-2. The driver calls `create_project` with the clone's path.
+1. The runner runs `new-run` with an explicit `--n` during up-front provisioning.
+2. The driver calls `create_project` with the clone's path only when the read-only lookup finds no project, then follows the user-trust phase above.
 3. The driver calls `create_session` with `detached: true`, `coordinate_with_creator: false`, `workspace_type: "worktree"` and a kickoff of: the exact text of `kickoff.md`, the variant as agent, `claude-opus-5.5` at `max`, `context_tier: "long_context"`, `mode: "interactive"`.
 
 Never as a child session, and never with `send_session_message`.
@@ -196,9 +219,9 @@ Never as a child session, and never with `send_session_message`.
 
 ### Self-test
 
-**Decided by the user:** at the start of each batch, and on demand as a self-test-only batch, the runner and driver check the whole path with a harmless agent or the default agent on a cheap model, in a local scratch git repo with no GitHub remote. It covers:
+**Decided by the user:** after provisioning and trust, and on demand as a self-test-only batch, the runner and driver check the whole path with a harmless agent or the default agent on a cheap model, in the permanent local git repo with no GitHub remote. It covers:
 
-- `create_project`;
+- project lookup by path, with `create_project` only when absent;
 - a detached `create_session`;
 - an `ask_user` that the driver answers;
 - end detection;
@@ -214,10 +237,10 @@ A failed self-test stops the batch. It never uses an orchestrator agent.
 - It also checks that the session has no creator link and that no memories loaded.
 - It also runs every `data.db` lookup the runner uses against its own session and project, and the column probe below. **Decided by the user** (after the core review)
 - `--self-test-agent` can name another agent, but config validation refuses the orchestrators and the variants under test.
-- The self-test proves that a session in a project the runner created can use tools with nobody present. **Design call**
+- The self-test proves that a session in the permanent project can use tools with nobody present. **Design call**
   - Before its `ask_user`, it runs `pwd && echo eval-selftest-<nonce>`: a compound command, because host policy approves some single read-only commands (`git status`, `pwd`) even without allow-all permissions.
   - It fails if no shell tool call (`bash` or `powershell`) with the marker in its command completed successfully and printed the marker on a line of its own, or if the session's log has any permission request in manual mode (`permissionMode: "manual"`), pending or denied. Sessions with allow-all permissions log no permission request at all: none in 382 such sessions checked.
-  - A request still pending after 30 seconds fails it at once, rather than at the 20-minute limit. Like every self-test failure, it stops the batch before any run repo is created; the failure names the cause and points to "Tool permissions" in the README.
+  - A request still pending after 30 seconds fails it at once, rather than at the 20-minute limit. Like every self-test failure, it stops the batch before any eval session starts; the provisioned repos remain unused. The failure names the cause and points to "Tool permissions" in the README.
 
 ### Notifications, keep-awake and preflight
 
@@ -294,6 +317,7 @@ A failed self-test stops the batch. It never uses an orchestrator agent.
 - `batch-regressions.test.ts` turns each scenario from the two reviews into a permanent test: a second batch, a second driver, an unconfirmed `create_session` (including a first attempt that shows up after the reissue, and one that shows up after the run was given up), a stop request during `next`, final reports at 89:50, 90:00 and after a driver gap, busy swarms after a final report and after a timeout, a question left open over a driver gap, the deadline and pins just before a kickoff, late plain-text answers, failing results commits, the answer contract, question mismatches, the self-test rule, an honest failure report, the `--note`, the kickoff bytes, app-database errors, a `score` timeout, a clock going back, and timed-out subprocesses. `batch-appdb.test.ts` runs the database adapter against a real SQLite file with columns missing.
 - `FakeApp` (`scripts/lib/batch/fake-app.ts`) stands in for the app. It writes synthetic session logs on a simulated clock, and scripts the scenarios: a question then a final report, a plain-text question, an honest failure report, a busy child after the final report, swarms that ignore the stop message, a stall, a timeout, a sub-agent's pending permission prompt, an unattended permission denial, and the self-test. Its `allowAll` switch starts sessions without allow-all permissions, so the self-test's shell command waits on a prompt. **Design call** (the permission scenarios)
 - `batch-permissions.test.ts` covers both permission checks end to end, and `batch-rehearsal.test.ts` rehearses a batch that stops at the self-test and one that stops after a run's prompt. **Design call**
+- `batch-pretrust.test.ts` covers full provisioning before launch, read-only trust polling against a synthetic SQLite fixture, timeout, finite capacity, permanent-project reuse and lost-result adoption, idle trust sessions and cleanup, scan exclusions, and launch-time feature setup with the same tree and single-commit history as `new-run`. The rehearsal includes the user-trust step with a fake user; no test touches real app state. **Design call**
 - `npm run batch -- rehearse` and its test run a whole batch end to end with the app and driver stubbed:
   - the real `new-run --dry-run`, `score` and acceptance suite;
   - real git commits;
@@ -303,7 +327,7 @@ A failed self-test stops the batch. It never uses an orchestrator agent.
 
 ## Limits and residual risks
 
-- **Tool permissions:** in app 1.1.30, projects created by `create_project` are untrusted, and the app holds their sessions at manual tool approval until someone trusts the repository in the app; no agent tool can grant trust. The app log shows "Holding session at manual tool approval until its repository is trusted" and `requested_mode=AllowAll effective_mode=Manual` for every session of batch 20261021-2217, its self-test included, and `~/.copilot/data.db` has no `project_host_trust` row for their projects. Until that changes, an unattended batch stops at the self-test. How runs get trusted is the user's decision and is not settled here.
+- **Tool permissions:** projects made by `create_project` start untrusted. The user must trust them through their idle sessions at batch start. The runner can read acceptance but cannot grant it or guarantee that the app still accepts the current configuration. Missing trust, a failed shell proof or a tool-permission prompt stops the batch. Session-view trust was verified only on the permanent project the user re-added through the app, not yet on a `create_project`-origin project.
 
 - **An app restart or update** stops every session, including the driver and the run in progress. The run is void, as above. Nothing notifies the user until the driver is resumed, because nothing is running; missing notifications are the sign. The app has no auto-resume, and resuming a run would need a message to it, which counts as a nudge.
 - **Plain-text questions:**
@@ -319,4 +343,4 @@ A failed self-test stops the batch. It never uses an orchestrator agent.
 - **The app records runs as created by an agent** (`workspaces.created_by`). Nothing found reads it in a way that changes the run.
 - **The app's internals:** the event log and `data.db` are internal and may change in an app update. Pinning stops the batch when the app version changes mid-batch. The self-test and the preflight check the path and every `data.db` column the runner reads at the start of each batch.
 - **Driver identity:** ownership relies on the app setting `COPILOT_AGENT_SESSION_ID` for a session's shell and keeping `inuse.<pid>.lock` in the session folder while its CLI runs, as observed on app 1.1.30. If either changes, the owner counts as gone after 15 silent minutes.
-- **Not yet run on the real app:** the self-test is the first real check. The user runs it after the merge.
+- **Real-app coverage:** the trusted-project shell probe passed. The first full batch after merge must still confirm trust-session navigation, trust on tool-created projects, cleanup and the complete self-test.
