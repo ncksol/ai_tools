@@ -27,7 +27,7 @@ import {
 import { run } from "./lib/proc.ts";
 import { readResults } from "./lib/results.ts";
 import { KIT_DIR } from "./lib/suite.ts";
-import { readVariants } from "./lib/variants.ts";
+import { LIVE_VARIANTS, readVariants, variantLabel } from "./lib/variants.ts";
 
 const USAGE = `Usage (from evals/orchestrator/expense-claims):
   npm run batch -- init [--variants a,b | --variants-file <json>] [--runs 3] [--parallel <n>] [--memory-off] [--self-test-only] [options]
@@ -42,6 +42,7 @@ const USAGE = `Usage (from evals/orchestrator/expense-claims):
 init options: --model claude-opus-5.5 --effort max --context-tier long_context --owner ncksol
   --parallel <n> (runs at once, at most one per variant; default: every variant)
   --self-test-model claude-sonnet-5.5 --self-test-effort low --self-test-agent <name>
+  --agents-dir <dir> (default: installed Wintermute agents; --variants-file uses ~/.copilot/agents)
   --runs-dir <dir> --batches-dir <dir> --no-push --dry-run (tests only; never drive it with app tools)
 record flags: --project-id <id> | --session-id <id> | --answered | --row <n> [--request-id <id>] [--choice <text>] | --not-pending
   | --final <messageId> | --question <messageId> [--row <n>] | --neither | --sent | --failed <error>`;
@@ -53,7 +54,7 @@ const { values, positionals } = parseArgs({
     "batches-dir": { type: "string", default: defaultPaths().batchesDir },
     "max-wait": { type: "string", default: "420" },
     // init
-    variants: { type: "string", default: "orchestrator,session-orchestrator,hands-on-orchestrator,hands-on-session-orchestrator" },
+    variants: { type: "string", default: LIVE_VARIANTS.join(",") },
     "variants-file": { type: "string" },
     runs: { type: "string", default: "3" },
     parallel: { type: "string" },
@@ -63,7 +64,7 @@ const { values, positionals } = parseArgs({
     owner: { type: "string", default: "ncksol" },
     "runs-dir": { type: "string", default: defaultPaths().runsDir },
     "state-dir": { type: "string", default: defaultPaths().stateDir },
-    "agents-dir": { type: "string", default: defaultPaths().agentsDir },
+    "agents-dir": { type: "string" },
     "app-db": { type: "string", default: defaultPaths().appDb },
     results: { type: "string", default: defaultPaths().resultsPath },
     "ntfy-url-file": { type: "string", default: defaultPaths().ntfyUrlFile },
@@ -170,7 +171,7 @@ async function init(): Promise<number> {
     throw new UsageError("--variants-file cannot be combined with --variants or --self-test-only");
   }
   const variantSet = values["variants-file"] ? readVariants(values["variants-file"]) : undefined;
-  const variants = values["self-test-only"] ? [] : variantSet ? Object.keys(variantSet.variants) : values.variants.split(",").map((name) => name.trim()).filter(Boolean);
+  const variants = values["self-test-only"] ? [] : variantSet ? Object.keys(variantSet.variants) : values.variants.split(",").map((name) => variantLabel(name.trim())).filter(Boolean);
   const id = values.id ?? batchId(now);
   const dir = join(values["batches-dir"], id);
   if (existsSync(join(dir, "config.json"))) throw new Error(`Batch ${id} already exists at ${dir}`);
@@ -188,7 +189,7 @@ async function init(): Promise<number> {
     owner: values.owner,
     runsDir: resolve(values["runs-dir"]),
     stateDir: resolve(values["state-dir"]),
-    agentsDir: resolve(values["agents-dir"]),
+    agentsDir: resolve(values["agents-dir"] ?? (variantSet ? paths.userAgentsDir : paths.agentsDir)),
     appDb: resolve(values["app-db"]),
     appPlist: paths.appPlist,
     cliVersionFile: paths.cliVersionFile,

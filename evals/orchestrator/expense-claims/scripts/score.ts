@@ -20,6 +20,7 @@ import {
 } from "./lib/results.ts";
 import { KIT_DIR, ROBUSTNESS_TIMEOUT_MS, robustnessFiles, robustnessSha256, runSuite, suiteFiles } from "./lib/suite.ts";
 import { collectUsage, readPricing, type UsageSummary } from "./lib/usage.ts";
+import { variantLabel } from "./lib/variants.ts";
 
 const USAGE = `Usage:
   npm run score -- --repo-dir <run clone> [--session <id>] [--state-dir <dir>] [--variant <name>] [--n <k>]
@@ -226,7 +227,7 @@ async function main(): Promise<number> {
 
   const repoDir = resolve(values["repo-dir"]);
   const parsed = parseRunName(basename(repoDir));
-  const variant = values.variant ?? parsed?.variant;
+  const variant = values.variant === undefined ? parsed?.variant : variantLabel(values.variant);
   const n = values.n === undefined ? parsed?.n : parseCount(values.n, "--n", true);
   if (!variant || n === undefined) {
     throw new UsageError(`Cannot read the variant and run number from "${basename(repoDir)}"; pass --variant and --n`);

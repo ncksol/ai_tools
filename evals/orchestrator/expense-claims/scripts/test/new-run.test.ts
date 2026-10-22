@@ -60,6 +60,15 @@ test("dry run builds a seed-only repo and never calls gh", async () => {
   assert.equal(calls.length, 0);
 });
 
+test("a prefixed live agent continues the historical run numbering without a colon in repo names", async () => {
+  const dir = mkdtempSync(join(runsDir, "plugin-"));
+  mkdirSync(join(dir, "orch-eval-orchestrator-3"));
+  const { gh, calls } = fakeGh({});
+  const result = await newRun({ variant: "wintermute:orchestrator", features: ALL_FEATURES, owner: "ncksol", runsDir: dir, dryRun: true }, { gh, log });
+  assert.equal(result.name, "orch-eval-orchestrator-4");
+  assert.equal(calls.length, 0);
+});
+
 test("dry run without Summary strips the spec and keeps the kickoff", async () => {
   const { gh } = fakeGh({});
   const result = await newRun({ variant: "ns", features: ["policy", "reports", "import"], owner: "ncksol", runsDir, dryRun: true }, { gh, log });

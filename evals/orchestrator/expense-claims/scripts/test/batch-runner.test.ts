@@ -8,7 +8,8 @@ import { saveState, validateConfig } from "../lib/batch/state.ts";
 import { currentPins, requestStop, STOP_MESSAGE } from "../lib/batch/runner.ts";
 import { eventsPath } from "../lib/batch/swarm.ts";
 import { run as runProc } from "../lib/proc.ts";
-import { readResults, replaceResult } from "../lib/results.ts";
+import { readResults, replaceResult, summarize } from "../lib/results.ts";
+import { calibrationDecision } from "../lib/batch/plan.ts";
 import { FIXTURE_HEADER, harness, type Harness } from "./fixtures/batch.ts";
 
 const made: Harness[] = [];
@@ -72,6 +73,31 @@ test("a run with a question and a final report: answered from the sheet, scored 
   assert.deepEqual(h.awake, { started: 1, stopped: 1 });
   assert.equal(state.phase, "done");
   assert.match(readFileSync(state.reportPath!, "utf8"), /Turn Copilot Memory back on/);
+});
+
+test("live runs launch namespaced agents as top-level sessions and keep historical result groups", async () => {
+  for (const [variant, agent] of [
+    ["orchestrator", "wintermute:orchestrator"],
+    ["session-orchestrator", "wintermute:session-orchestrator"],
+    ["hands-on-orchestrator", "wintermute:hands-on-orchestrator"],
+    ["hands-on-session-orchestrator", "wintermute:hands-on-session-orchestrator"],
+  ]) {
+    const h = await make({ scenarios: ["ask-final"], variants: [variant] });
+    const action = await h.until((a) => a.action === "create_session");
+    assert.equal((action.tool!.args.kickoff as Record<string, unknown>).agent, agent);
+    assert.equal(action.tool!.args.detached, true);
+    assert.equal(action.tool!.args.coordinate_with_creator, false);
+    await h.drive(action);
+    await h.until(() => false);
+    const row = readResults(h.config.resultsPath)[0];
+    assert.equal(row.variant, variant);
+    assert.equal(row.agent, agent);
+    assert.ok(!h.state().runs[0].flags.some((flag) => flag.code === "session-settings"));
+    const history = [{ ...row, agent: variant, repo: "old/run", run: "0" }, row];
+    assert.deepEqual(calibrationDecision(history, [variant]).pending, []);
+    assert.equal(summarize(history).groups.length, 1);
+    assert.equal(summarize(history).groups[0].runs, 2);
+  }
 });
 
 test("an interrupted diagnostic step preserves and commits the already-saved gate result", async () => {
@@ -433,7 +459,7 @@ test("today's results.csv puts every scored run on the three-feature set", async
     ["session-orchestrator", "1", "policy+reports+import", "no"],
   ]);
   assert.match(h.state().calibration, /over 30 minutes even if every missing calibration run took 0 minutes/);
-  for (const session of h.app.sessions.values()) assert.ok(["orchestrator", "session-orchestrator"].includes(readFileSync(eventsPath(h.config.stateDir, session.id), "utf8").match(/"agentName":"([^"]+)"/)![1]));
+  for (const session of h.app.sessions.values()) assert.ok(["wintermute:orchestrator", "wintermute:session-orchestrator"].includes(readFileSync(eventsPath(h.config.stateDir, session.id), "utf8").match(/"agentName":"([^"]+)"/)![1]));
 });
 
 test("the self-test never uses an orchestrator or a variant under test", () => {

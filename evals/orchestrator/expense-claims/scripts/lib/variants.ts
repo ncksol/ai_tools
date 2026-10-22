@@ -2,6 +2,17 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
+export const LIVE_VARIANTS = ["orchestrator", "session-orchestrator", "hands-on-orchestrator", "hands-on-session-orchestrator"];
+
+export function variantLabel(agent: string): string {
+  const bare = agent.replace(/^wintermute:/, "");
+  return LIVE_VARIANTS.includes(bare) ? bare : agent;
+}
+
+export function liveAgent(variant: string): string {
+  return LIVE_VARIANTS.includes(variant) ? `wintermute:${variant}` : variant;
+}
+
 export interface AgentFile {
   file: string;
   sha256: string;

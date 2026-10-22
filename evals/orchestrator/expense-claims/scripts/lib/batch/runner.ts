@@ -13,7 +13,7 @@ import { ALL_FEATURES, featureSetName, stripFeatures } from "../features.ts";
 import { runName } from "../new-run.ts";
 import type { ProcResult } from "../proc.ts";
 import { readResults } from "../results.ts";
-import { variantAgents, variantBundle, variantFiles, verifyVariants } from "../variants.ts";
+import { liveAgent, variantAgents, variantBundle, variantFiles, verifyVariants } from "../variants.ts";
 import { readAnswerSheet, replyFor, rowForQuestion, settleRow, type AnswerRow } from "./answers.ts";
 import type { AppDb } from "./appdb.ts";
 import { scanSession, scanSwarm } from "./hygiene.ts";
@@ -951,7 +951,7 @@ export function currentPins(config: BatchConfig) {
   for (const dir of ["acceptance", "robustness", "pricing", "scripts/lib"]) addFiles(dir);
   return computePins({
     agentsDir: config.agentsDir,
-    variants: config.variantSet ? variantAgents(config.variantSet) : config.variants,
+    variants: config.variantSet ? variantAgents(config.variantSet) : config.variants.map(liveAgent),
     explicitAgents: Boolean(config.variantSet),
     files,
     appPlist: config.appPlist,
@@ -1133,7 +1133,7 @@ function runCreateArgs(ctx: Ctx, run: RunState): Record<string, unknown> {
     workspace_type: "worktree",
     detached: true,
     coordinate_with_creator: false,
-    kickoff: { prompt: kickoffPrompt(config, run), agent: config.variantSet?.variants[run.variant].agent ?? run.variant, model: config.model, reasoning_effort: config.effort, context_tier: config.contextTier, mode: "interactive" },
+    kickoff: { prompt: kickoffPrompt(config, run), agent: config.variantSet?.variants[run.variant].agent ?? liveAgent(run.variant), model: config.model, reasoning_effort: config.effort, context_tier: config.contextTier, mode: "interactive" },
   };
 }
 
@@ -1217,7 +1217,7 @@ async function watchRun(ctx: Ctx, state: BatchState, run: RunState, index: numbe
     if (orch.startedBy !== "user") addFlag(run, "kickoff-shape", "the kickoff carries a data.source or a cross-session tag, so score can't treat it as typed by the user", at);
     if (kickoffText(orch) !== kickoffPrompt(config, run)) addFlag(run, "kickoff-text", "the kickoff differs from kickoff.md as a manual paste delivers it", at);
     const wrong: string[] = [];
-    if (orch.agent !== (config.variantSet?.variants[run.variant].agent ?? run.variant)) wrong.push(`agent ${orch.agent ?? "none"}`);
+    if (orch.agent !== (config.variantSet?.variants[run.variant].agent ?? liveAgent(run.variant))) wrong.push(`agent ${orch.agent ?? "none"}`);
     if (orch.model !== config.model) wrong.push(`model ${orch.model ?? "none"}`);
     if (orch.effort !== config.effort) wrong.push(`effort ${orch.effort ?? "none"}`);
     if (orch.contextTier !== config.contextTier) wrong.push(`context tier ${orch.contextTier ?? "none"}`);

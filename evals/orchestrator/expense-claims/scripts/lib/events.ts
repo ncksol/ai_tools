@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { variantLabel } from "./variants.ts";
 
 export interface LogEvent {
   type: string;
@@ -260,7 +261,7 @@ export function chooseRunSession(stateDir: string, repository: string, variant: 
   const sessions: RunSession[] = findRunSessions(stateDir, repository).map((info) => ({ ...info, ...describeSession(info.dir) }));
   const byUser = sessions.filter((session) => session.startedBy === "user");
   if (byUser.length === 1) return { session: byUser[0], rule: `the only session for ${repository} that you started` };
-  const byAgent = byUser.filter((session) => session.agent === variant);
+  const byAgent = byUser.filter((session) => session.agent !== null && variantLabel(session.agent) === variantLabel(variant));
   if (byAgent.length === 1) {
     return { session: byAgent[0], rule: `the only session for ${repository} that you started with agent ${variant}` };
   }

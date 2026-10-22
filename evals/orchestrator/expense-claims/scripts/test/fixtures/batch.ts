@@ -16,6 +16,7 @@ import { appendResult, defaultCalibration, readResults, RESULT_COLUMNS, type Res
 import { KIT_DIR } from "../../lib/suite.ts";
 import { readEventLog } from "../../lib/events.ts";
 import { orchestratorView } from "../../lib/batch/swarm.ts";
+import { liveAgent } from "../../lib/variants.ts";
 
 export interface Harness {
   dir: string;
@@ -65,7 +66,7 @@ export async function harness(opts: {
   const resultsRepo = join(dir, "checkout");
   for (const path of [runsDir, stateDir, agentsDir, resultsRepo]) mkdirSync(path, { recursive: true });
   for (const variant of variants) {
-    writeFileSync(join(agentsDir, `${variant}.agent.md`), `Uses ${variant}-worker.\n`);
+    writeFileSync(join(agentsDir, `${variant}.agent.md`), `Uses ${liveAgent(variant)}-worker.\n`);
     writeFileSync(join(agentsDir, `${variant}-worker.agent.md`), "worker\n");
   }
   writeFileSync(join(resultsRepo, "results.csv"), opts.results ?? HEADER);

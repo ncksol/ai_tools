@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { after, before, test } from "node:test";
 import { ALL_FEATURES, stripFeatures } from "../lib/features.ts";
 import { run } from "../lib/proc.ts";
-import { readResults } from "../lib/results.ts";
+import { readResults, summarize } from "../lib/results.ts";
 import { KIT_DIR, robustnessFiles, robustnessSha256 } from "../lib/suite.ts";
 import { basic, childLog, ev, withEvents, writeSession } from "./fixtures/events.ts";
 import { PERMISSIVE_CSV } from "./fixtures/permissive-csv.ts";
@@ -286,6 +286,33 @@ test("a new variant's first run with fewer features is not a calibration run", {
   assert.equal(only.features, "policy+reports+import");
   assert.equal(only.calibration, "no");
   assert.equal(only.outcome, "passed");
+});
+
+test("explicit live runtime IDs keep manual scoring in the historical calibration and summary group", { timeout: 180_000 }, async () => {
+  const repoDir = join(dir, "orch-eval-orchestrator-1");
+  cpSync(join(KIT_DIR, "reference"), repoDir, { recursive: true, filter: (src) => !/[\\/](node_modules|\.DS_Store)$/.test(src) });
+  await git(repoDir, ["init", "-q", "-b", "main"]);
+  await git(repoDir, ["add", "-A"]);
+  await git(repoDir, ["commit", "-q", "-m", "Reference"]);
+  const stateDir = join(dir, "live-state");
+  const events = basic().map((event) => event.type === "subagent.selected"
+    ? { ...event, data: { agentName: "wintermute:orchestrator" } } : event);
+  writeSession(stateDir, "live", "local/orch-eval-orchestrator-1", "2026-01-01T10:00:00Z", events);
+  const results = join(dir, "live-results.csv");
+  for (const [n, variant] of [["1", "orchestrator"], ["2", "wintermute:orchestrator"]]) {
+    const result = await score([
+      "--repo-dir", repoDir, "--no-github", "--results", results, "--state-dir", stateDir, "--session", "live",
+      "--n", n, "--variant", variant,
+    ]);
+    assert.equal(result.code, 0, result.stdout + result.stderr);
+  }
+  const rows = readResults(results);
+  assert.deepEqual(rows.map((row) => [row.variant, row.agent, row.calibration]), [
+    ["orchestrator", "wintermute:orchestrator", "yes"],
+    ["orchestrator", "wintermute:orchestrator", "no"],
+  ]);
+  assert.equal(summarize(rows).groups.length, 1);
+  assert.equal(summarize(rows).groups[0].runs, 2);
 });
 
 test("robustness failures do not change a passing gate outcome or the timed score", { timeout: 180_000 }, async () => {

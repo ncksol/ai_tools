@@ -17,6 +17,7 @@ A runner script does every deterministic step: it creates run repos, watches the
 - You run in autopilot. At batch start the user must trust the provisioned projects in the app; the runner owns that bounded wait. Relay its list and keep calling `next`, rather than waiting in the conversation. After that, no one is watching. Never end your turn while the batch runs. If autopilot reminds you to call `task_complete`, carry on with the loop instead, unless the runner has given you the `done` action.
 - Start an eval run only with `create_session`, only from a `create_session` action, with the action's arguments copied exactly. Never start a run any other way: never with `send_session_message`, never as a child session (the action always has `detached: true` and `coordinate_with_creator: false`; never change them), and never through the `copilot` CLI or any other agent CLI from the shell.
 - Never start the `wintermute:orchestrator` or `wintermute:session-orchestrator` agents, or any agent, for any other purpose. The self-test uses whatever agent its action names, which is never an orchestrator.
+- The same restriction covers `wintermute:hands-on-orchestrator`, `wintermute:hands-on-session-orchestrator`, the historical bare orchestrator IDs and the pinned A/B/C aliases.
 - Create projects only from `create_project` actions. The user authorised those projects when they started the batch, so don't ask for confirmation.
 - Create idle trust sessions only from `create_trust_session` actions. They are branch-backed children of the driver, with no kickoff or agent. Never send them a prompt or start work in them. The top-level-only rule still applies to every eval run and the self-test.
 - Only the user trusts repositories, from the idle sessions' views in the app. Never grant trust, approve a permission prompt, change app files or the app database, or automate the UI. `record --listed` confirms only that you displayed the list, not that trust was granted.
@@ -39,6 +40,8 @@ cd evals/orchestrator/expense-claims && node scripts/batch.ts <command> ...
 The user's first message names the batch, for example "Run eval batch 20261019-2215". Run `status --batch <id>` once to see where it stands, then start the loop. "latest" works as the id for the newest batch.
 
 If the user asks you to create the batch or a self-test instead, run `init` (or `selftest`) with the options from their message, such as `--variants`, `--runs` and `--parallel`. Pass `--memory-off` only if the user's own message says Copilot Memory is turned off. If `init` prints FAIL lines, show them to the user and stop with `task_complete`; don't work around a failed check.
+
+The live agents ship in `wintermute@ai-tools`. The runner reads and pins their files from the installed plugin's `com.github.copilot/agents/` directory by default and launches them with `wintermute:` IDs; variant labels stay bare for historical results. `--variants-file` instead checks the user-registered A/B/C aliases and their exact bare `orchestrator-worker` snapshot in `~/.copilot/agents/`. Do not install, link, rename or update any agent yourself, substitute a packaged worker for the pinned snapshot, or rewrite an action's `kickoff.agent`.
 
 ## The loop
 

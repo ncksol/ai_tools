@@ -3,6 +3,7 @@ import { join, relative } from "node:path";
 import { ALL_FEATURES, stripFeatures, type Feature } from "./features.ts";
 import { run, type ProcResult } from "./proc.ts";
 import { KIT_DIR } from "./suite.ts";
+import { variantLabel } from "./variants.ts";
 
 export const RUN_NAME_PATTERN = /^orch-eval-(.+)-(\d+)$/;
 const SKIP = new Set(["node_modules", ".DS_Store"]);
@@ -68,6 +69,7 @@ async function git(repoDir: string, args: string[]): Promise<string> {
 }
 
 export async function newRun(opts: NewRunOptions, deps: NewRunDeps): Promise<NewRunResult> {
+  opts = { ...opts, variant: variantLabel(opts.variant) };
   if (!/^[a-z0-9][a-z0-9-]*$/.test(opts.variant)) throw new Error(`Variant "${opts.variant}" must be lowercase letters, digits and hyphens`);
   if (opts.n !== undefined && !(Number.isSafeInteger(opts.n) && opts.n > 0)) {
     throw new Error(`Run number "${opts.n}" must be a positive integer`);

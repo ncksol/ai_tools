@@ -5,10 +5,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Feature } from "../features.ts";
 import { KIT_DIR } from "../suite.ts";
-import { variantAgents, type VariantSet } from "../variants.ts";
+import { LIVE_VARIANTS, liveAgent, variantAgents, type VariantSet } from "../variants.ts";
 import type { PolicyCalibration } from "./plan.ts";
 
-export const ORCHESTRATOR_AGENTS = ["orchestrator", "session-orchestrator", "hands-on-orchestrator", "hands-on-session-orchestrator"];
+export const ORCHESTRATOR_AGENTS = [...LIVE_VARIANTS, ...LIVE_VARIANTS.map(liveAgent)];
 
 export interface BatchConfig {
   id: string;
@@ -280,7 +280,8 @@ export function defaultPaths() {
     batchesDir: join(home, "orch-evals", "batches"),
     runsDir: join(home, "orch-evals"),
     stateDir: join(home, ".copilot", "session-state"),
-    agentsDir: join(home, ".copilot", "agents"),
+    agentsDir: join(home, ".copilot", "installed-plugins", "ai-tools", "wintermute", "com.github.copilot", "agents"),
+    userAgentsDir: join(home, ".copilot", "agents"),
     appDb: join(home, ".copilot", "data.db"),
     appPlist: "/Applications/GitHub.app/Contents/Info.plist",
     cliVersionFile: "/Applications/GitHub.app/Contents/Resources/copilot-sdk/cliVersion.d.ts",
