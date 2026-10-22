@@ -8,11 +8,11 @@
 
 **Tech Stack:** Node.js >= 18 built-ins only (`node:http`, `node:test`, `node:child_process`, `node:fs`); browser ES modules, CSS container queries and OKLCH colours; the Copilot SDK canvas API (`@github/copilot-sdk/extension`, provided by the host) in the canvas wrapper only; a local Chrome, Chromium or Edge for the layout check only.
 
-**Spec:** `docs/superpowers/specs/2026-10-15-swarm-dashboard-design.md`, with the visual reference `docs/superpowers/specs/assets/2026-10-15-swarm-dashboard-mockup.html`. Executors read the spec's sections 7, 8, 9 and 12 and open the mockup in a browser before any UI task. The data contract is `ghcp/plugins/swarm-dashboard/engine/schema.mjs` (PR 1); the fake engine and example fixtures are `engine/fake-engine.mjs` and `tests/fixtures/example-*.json`.
+**Spec:** `docs/superpowers/specs/2026-10-15-swarm-dashboard-design.md`, with the visual reference `docs/superpowers/specs/assets/2026-10-15-swarm-dashboard-mockup.html`. Executors read the spec's sections 7, 8, 9 and 12 and open the mockup in a browser before any UI task. The data contract is `ghcp/plugins/wintermute/engine/schema.mjs` (PR 1); the fake engine and example fixtures are `engine/fake-engine.mjs` and `tests/fixtures/example-*.json`.
 
 ## Global Constraints
 
-- Work only under `ghcp/plugins/swarm-dashboard/` plus the root `README.md` and `.github/copilot-instructions.md`. PR 1 owns `engine/`, `tests/fixtures/example-*.json`, `tests/helpers/*`, `tests/schema.test.mjs`, `tests/validate-plugin.test.mjs` and its other tests: never edit them. Edits to the shared files `package.json`, `plugin.json` and `scripts/validate-plugin.mjs` stay small and separate from PR 1's lines, because this branch is rebased onto PR 1's later commits.
+- Work only under `ghcp/plugins/wintermute/` plus the root `README.md` and `.github/copilot-instructions.md`. PR 1 owns `engine/`, `tests/fixtures/example-*.json`, `tests/helpers/*`, `tests/schema.test.mjs`, `tests/validate-plugin.test.mjs` and its other tests: never edit them. Edits to the shared files `package.json`, `plugin.json` and `scripts/validate-plugin.mjs` stay small and separate from PR 1's lines, because this branch is rebased onto PR 1's later commits.
 - Plugin name `swarm-dashboard`, version `0.1.0` in `plugin.json`, `package.json` and the root `.github/plugin/marketplace.json` entry; this PR does not change the version.
 - `package.json` keeps `"private": true`, `"type": "module"`, `"engines": {"node": ">=18"}`, `npm test` = `node --test tests/*.test.mjs`, `npm run validate` = `node scripts/validate-plugin.mjs`, and no `dependencies` or `devDependencies` (the validator rejects both). This PR adds only the `start` and `check:layout` scripts.
 - No build step and no third-party code. Shipped modules import only `node:` built-ins and relative paths; the one exception is the canvas wrapper's `@github/copilot-sdk/extension`, which the host provides. The page loads nothing from outside its own server.
@@ -23,7 +23,7 @@
 - Visual language exactly as spec section 8, with these approved choices: the light palette whatever the host theme; the font family from the host's `--font-sans` with the fallback `system-ui, -apple-system, "Segoe UI", sans-serif` and tabular numbers; sizes and line heights 12/16, 14/20 and 18/24 px; weights 400 and 500; no italic, uppercase or letter-spacing; a 4 px grid; padding 16 px on the dashboard, cards, rail and panels and 12 px on Needs you items, plan nodes and board cards; radius 8/4/2 px; chips 24 px, badges 20 px and buttons 28 px high; bars 4 px (12 px in history charts); rings 40 px with a 4 px stroke; rail 320 px (440 px with the detail panel); card columns at least 296 px, Needs you items 240 px, board columns 160 px; at most 1,920 px wide. Narrow mode below 900 px of dashboard inner width; 3×2 counts and single-column Needs you at 720 px or less. Motion as section 8, all of it stopped under `prefers-reduced-motion`.
 - Every view passes `npm run check:layout`: the browser layout at 480, 560, 640, 800, 1024, 1280, 1440, 1600 and 1920 px and the canvas layout at 480, 560 and 640 px, with no overlap, no clipped or spilled text, no horizontal scroll, only approved type and spacing, text contrast of at least 4.5:1 and no console errors.
 - The repository is public: every fixture, scenario and screenshot is synthetic. Never commit real session data, logs, database extracts, internal names, people's names, session ids or local user paths.
-- After any change under the plugin folder, run `npm test && npm run validate` in `ghcp/plugins/swarm-dashboard`.
+- After any change under the plugin folder, run `npm test && npm run validate` in `ghcp/plugins/wintermute`.
 - Conventional commit messages; no `Co-authored-by` trailer or other AI attribution.
 
 ## Decisions settled before implementation
@@ -99,7 +99,7 @@ Run the tasks in this order: 1–11, 20, 12–19, 21. Task 20 switches the serve
 
 ## File Structure
 
-All paths are under `ghcp/plugins/swarm-dashboard/` unless they start with `docs/`, `.github/` or `README.md`.
+All paths are under `ghcp/plugins/wintermute/` unless they start with `docs/`, `.github/` or `README.md`.
 
 | File | Responsibility |
 | --- | --- |
@@ -143,8 +143,8 @@ The early preview comes at the end of Task 20, right after Task 11 (see Executio
 ### Task 1: Formatting helpers
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/ui/format.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/ui-format.test.mjs`
+- Create: `ghcp/plugins/wintermute/ui/format.mjs`
+- Test: `ghcp/plugins/wintermute/tests/ui-format.test.mjs`
 
 **Interfaces:**
 - Consumes: `CREDIT_USD` from `engine/schema.mjs` (test only).
@@ -222,7 +222,7 @@ test('dates use local time in the mockup format', () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-format.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/ui-format.test.mjs`
 Expected: FAIL with `Cannot find module '.../ui/format.mjs'`.
 
 - [ ] **Step 3: Write `ui/format.mjs`**
@@ -295,22 +295,22 @@ export const plural = (n, one, many = `${one}s`) => `${count(n)} ${n === 1 ? one
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-format.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/ui-format.test.mjs`
 Expected: PASS, 5 tests.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui/format.mjs ghcp/plugins/swarm-dashboard/tests/ui-format.test.mjs
+git add ghcp/plugins/wintermute/ui/format.mjs ghcp/plugins/wintermute/tests/ui-format.test.mjs
 git commit -m "feat(swarm-dashboard): add UI formatting helpers"
 ```
 
 ### Task 2: Snapshot view model
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/ui/model.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/tests/helpers/ui.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/ui-model.test.mjs`
+- Create: `ghcp/plugins/wintermute/ui/model.mjs`
+- Create: `ghcp/plugins/wintermute/tests/helpers/ui.mjs`
+- Test: `ghcp/plugins/wintermute/tests/ui-model.test.mjs`
 
 **Interfaces:**
 - Consumes: nothing at runtime (pure data); tests read `tests/fixtures/example-snapshot.json`.
@@ -470,7 +470,7 @@ test('the board has one column per stage, attention first', () => {
 
 - [ ] **Step 3: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-model.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/ui-model.test.mjs`
 Expected: FAIL with `Cannot find module '.../ui/model.mjs'`.
 
 - [ ] **Step 4: Write `ui/model.mjs`**
@@ -645,21 +645,21 @@ export function boardColumns(snapshot) {
 
 - [ ] **Step 5: Run the test to verify it passes**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-model.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/ui-model.test.mjs`
 Expected: PASS, 10 tests.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui/model.mjs ghcp/plugins/swarm-dashboard/tests/helpers/ui.mjs ghcp/plugins/swarm-dashboard/tests/ui-model.test.mjs
+git add ghcp/plugins/wintermute/ui/model.mjs ghcp/plugins/wintermute/tests/helpers/ui.mjs ghcp/plugins/wintermute/tests/ui-model.test.mjs
 git commit -m "feat(swarm-dashboard): derive card order, needs, plan and board from snapshots"
 ```
 
 ### Task 3: Shared HTML parts
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/ui/parts.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/ui-parts.test.mjs`
+- Create: `ghcp/plugins/wintermute/ui/parts.mjs`
+- Test: `ghcp/plugins/wintermute/tests/ui-parts.test.mjs`
 
 **Interfaces:**
 - Consumes: `esc`, `elapsed`, `ago`, `countdown` (Task 1); `STAGE_NAMES`, `UNIT_STAGES`, `REPORT_CLASS`, `REPORT_LABELS`, `stateLine` (Task 2).
@@ -758,7 +758,7 @@ test('feed lists escape text, cap their length and mark new items', () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-parts.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/ui-parts.test.mjs`
 Expected: FAIL with `Cannot find module '.../ui/parts.mjs'`.
 
 - [ ] **Step 3: Write `ui/parts.mjs`**
@@ -852,21 +852,21 @@ export function feedList(items, limit, now, freshFeed = new Set(), empty = 'No a
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-parts.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/ui-parts.test.mjs`
 Expected: PASS, 8 tests. (F2a's `since` is 36 hours before `NOW`, which formats as `1d 12h ago`.)
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui/parts.mjs ghcp/plugins/swarm-dashboard/tests/ui-parts.test.mjs
+git add ghcp/plugins/wintermute/ui/parts.mjs ghcp/plugins/wintermute/tests/ui-parts.test.mjs
 git commit -m "feat(swarm-dashboard): add shared rings, chips, monitor text and feed parts"
 ```
 
 ### Task 4: Header, Needs you and Cards
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/ui/live.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/ui-live.test.mjs`
+- Create: `ghcp/plugins/wintermute/ui/live.mjs`
+- Test: `ghcp/plugins/wintermute/tests/ui-live.test.mjs`
 
 **Interfaces:**
 - Consumes: Task 1 (`esc`, `dur`, `elapsed`, `ago`, `liveTime`, `costHtml`, `costText`), Task 2 (`COUNT_TILES`, `NEED_CLASS`, `NEED_LABELS`, `STAGE_NAMES`, `archivedUnits`, `cardUnits`, `needItems`, `progressPercent`, `sharePercent`, `unitEnd`), Task 3 (`badge`, `bar`, `chipsHtml`, `meter`, `monitorHtml`, `reportClass`, `ring`, `stageTrack`, `stateLineHtml`).
@@ -983,7 +983,7 @@ test('a swarm with no active units says so', () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-live.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/ui-live.test.mjs`
 Expected: FAIL with `Cannot find module '.../ui/live.mjs'`.
 
 - [ ] **Step 3: Write `ui/live.mjs`**
@@ -1059,21 +1059,21 @@ The `costText`, `feedList` and `elapsed` imports are used by Task 5's additions 
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-live.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/ui-live.test.mjs`
 Expected: PASS, 10 tests.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui/live.mjs ghcp/plugins/swarm-dashboard/tests/ui-live.test.mjs
+git add ghcp/plugins/wintermute/ui/live.mjs ghcp/plugins/wintermute/tests/ui-live.test.mjs
 git commit -m "feat(swarm-dashboard): render the header, Needs you and unit cards"
 ```
 
 ### Task 5: Activity rail and detail panel
 
 **Files:**
-- Modify: `ghcp/plugins/swarm-dashboard/ui/live.mjs` (append)
-- Test: `ghcp/plugins/swarm-dashboard/tests/ui-detail.test.mjs`
+- Modify: `ghcp/plugins/wintermute/ui/live.mjs` (append)
+- Test: `ghcp/plugins/wintermute/tests/ui-detail.test.mjs`
 
 **Interfaces:**
 - Consumes: Tasks 1–4.
@@ -1168,7 +1168,7 @@ test('long sub-agent lists are capped with a count of the rest', () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-detail.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/ui-detail.test.mjs`
 Expected: FAIL with `does not provide an export named 'activityHtml'`.
 
 - [ ] **Step 3: Append to `ui/live.mjs`**
@@ -1264,21 +1264,21 @@ export function detailHtml(unitId, inMain, ctx) {
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-live.test.mjs tests/ui-detail.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/ui-live.test.mjs tests/ui-detail.test.mjs`
 Expected: PASS, 17 tests.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui/live.mjs ghcp/plugins/swarm-dashboard/tests/ui-detail.test.mjs
+git add ghcp/plugins/wintermute/ui/live.mjs ghcp/plugins/wintermute/tests/ui-detail.test.mjs
 git commit -m "feat(swarm-dashboard): render the activity rail and the unit detail panel"
 ```
 
 ### Task 6: Stylesheet and token lint
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/ui/styles.css`
-- Test: `ghcp/plugins/swarm-dashboard/tests/ui-styles.test.mjs`
+- Create: `ghcp/plugins/wintermute/ui/styles.css`
+- Test: `ghcp/plugins/wintermute/tests/ui-styles.test.mjs`
 
 **Interfaces:**
 - Consumes: the class names produced by Tasks 3–5 and, later, Tasks 7 and 12–14 (all rules for them are in this file from the start).
@@ -1356,7 +1356,7 @@ test('the font comes from the host with the approved fallback, motion stops on r
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-styles.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/ui-styles.test.mjs`
 Expected: FAIL with `ENOENT: no such file or directory, open '.../ui/styles.css'`.
 
 - [ ] **Step 3: Write `ui/styles.css`**
@@ -1730,23 +1730,23 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-styles.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/ui-styles.test.mjs`
 Expected: PASS, 5 tests.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui/styles.css ghcp/plugins/swarm-dashboard/tests/ui-styles.test.mjs
+git add ghcp/plugins/wintermute/ui/styles.css ghcp/plugins/wintermute/tests/ui-styles.test.mjs
 git commit -m "feat(swarm-dashboard): add the dashboard stylesheet from the approved mockup"
 ```
 
 ### Task 7: Page composition and shell
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/ui/app.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/ui/index.html`
-- Create (temporary stubs, replaced by Tasks 12, 13 and 14): `ghcp/plugins/swarm-dashboard/ui/timeline.mjs`, `ghcp/plugins/swarm-dashboard/ui/plan.mjs`, `ghcp/plugins/swarm-dashboard/ui/history.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/ui-app.test.mjs`
+- Create: `ghcp/plugins/wintermute/ui/app.mjs`
+- Create: `ghcp/plugins/wintermute/ui/index.html`
+- Create (temporary stubs, replaced by Tasks 12, 13 and 14): `ghcp/plugins/wintermute/ui/timeline.mjs`, `ghcp/plugins/wintermute/ui/plan.mjs`, `ghcp/plugins/wintermute/ui/history.mjs`
+- Test: `ghcp/plugins/wintermute/tests/ui-app.test.mjs`
 
 **Interfaces:**
 - Consumes: Tasks 1–5; from the stubs: `timelineHtml(ctx, span)`, `boardHtml(ctx)`, `historyHtml(runs)`, `runHtml(run)`.
@@ -1858,7 +1858,7 @@ test('the page shell loads only its own stylesheet and module', () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-app.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/ui-app.test.mjs`
 Expected: FAIL with `Cannot find module '.../ui/app.mjs'`.
 
 - [ ] **Step 3: Write the stubs that Tasks 12–14 replace**
@@ -1991,23 +1991,23 @@ function tabBody(tab, view, ctx) {
 
 - [ ] **Step 6: Run the test to verify it passes**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-app.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/ui-app.test.mjs`
 Expected: PASS, 10 tests.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui ghcp/plugins/swarm-dashboard/tests/ui-app.test.mjs
+git add ghcp/plugins/wintermute/ui ghcp/plugins/wintermute/tests/ui-app.test.mjs
 git commit -m "feat(swarm-dashboard): compose the Live and History pages"
 ```
 
 ### Task 8: Demo engine and scenarios
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/server/demo-engine.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/server/demo-scenarios.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/server/engines.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/demo-engine.test.mjs`
+- Create: `ghcp/plugins/wintermute/server/demo-engine.mjs`
+- Create: `ghcp/plugins/wintermute/server/demo-scenarios.mjs`
+- Create: `ghcp/plugins/wintermute/server/engines.mjs`
+- Test: `ghcp/plugins/wintermute/tests/demo-engine.test.mjs`
 
 **Interfaces:**
 - Consumes: `createFakeEngine` (`engine/fake-engine.mjs`), `validate*` (`engine/schema.mjs`, tests), PR 1's fixtures in `tests/fixtures/example-*.json`.
@@ -2149,7 +2149,7 @@ test('the default engine is the demo engine until PR 1\'s engine is in', () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/demo-engine.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/demo-engine.test.mjs`
 Expected: FAIL with `Cannot find module '.../server/demo-engine.mjs'`.
 
 - [ ] **Step 3: Write `server/demo-engine.mjs`**
@@ -2436,24 +2436,24 @@ export function stressScenario(fixtures) {
 
 - [ ] **Step 6: Run the test to verify it passes**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/demo-engine.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/demo-engine.test.mjs`
 Expected: PASS, 8 tests. If the stress snapshot fails validation, the validator's message names the field path; fix the scenario, not the schema.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/server ghcp/plugins/swarm-dashboard/tests/demo-engine.test.mjs
+git add ghcp/plugins/wintermute/server ghcp/plugins/wintermute/tests/demo-engine.test.mjs
 git commit -m "feat(swarm-dashboard): add a demo engine with example and stress scenarios"
 ```
 
 ### Task 9: HTTP server, assets and live hub
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/server/assets.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/server/hub.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/server/http.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/tests/helpers/http.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/server.test.mjs`
+- Create: `ghcp/plugins/wintermute/server/assets.mjs`
+- Create: `ghcp/plugins/wintermute/server/hub.mjs`
+- Create: `ghcp/plugins/wintermute/server/http.mjs`
+- Create: `ghcp/plugins/wintermute/tests/helpers/http.mjs`
+- Test: `ghcp/plugins/wintermute/tests/server.test.mjs`
 
 **Interfaces:**
 - Consumes: a `createEngine(): SwarmEngine` factory (the schema's engine API, including `findSwarm`).
@@ -2710,7 +2710,7 @@ test('close ends live connections and frees the port', async () => {
 
 - [ ] **Step 3: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/server.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/server.test.mjs`
 Expected: FAIL with `Cannot find module '.../server/assets.mjs'`.
 
 - [ ] **Step 4: Write `server/assets.mjs`**
@@ -3004,25 +3004,25 @@ export function createDashboardServer({ createEngine, host = '127.0.0.1', port =
 
 - [ ] **Step 7: Run the test to verify it passes**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/server.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/server.test.mjs`
 Expected: PASS, 9 tests.
 
 - [ ] **Step 8: Run the whole suite and commit**
 
-Run: `cd ghcp/plugins/swarm-dashboard && npm test && npm run validate`
+Run: `cd ghcp/plugins/wintermute && npm test && npm run validate`
 Expected: all tests pass; validation passes.
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/server ghcp/plugins/swarm-dashboard/tests/helpers/http.mjs ghcp/plugins/swarm-dashboard/tests/server.test.mjs
+git add ghcp/plugins/wintermute/server ghcp/plugins/wintermute/tests/helpers/http.mjs ghcp/plugins/wintermute/tests/server.test.mjs
 git commit -m "feat(swarm-dashboard): serve the dashboard with live snapshot updates"
 ```
 
 ### Task 10: Browser glue
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/ui/morph.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/ui/main.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/ui-main.test.mjs`
+- Create: `ghcp/plugins/wintermute/ui/morph.mjs`
+- Create: `ghcp/plugins/wintermute/ui/main.mjs`
+- Test: `ghcp/plugins/wintermute/tests/ui-main.test.mjs`
 
 **Interfaces:**
 - Consumes: `isNarrow`, `renderApp` (Task 7); `tickText` (Task 1); `shortLabel` (Task 3); `timelineWindow`, `laneSvg`, `axisSvg`, `costSvg` (`ui/timeline.mjs`); `planFits`, `planGraphHtml`, `planListHtml` (`ui/plan.mjs`); the server's `/api/events`, `/api/history` and `/api/runs/<id>`.
@@ -3073,7 +3073,7 @@ test('updates patch the page in place instead of replacing it', () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-main.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/ui-main.test.mjs`
 Expected: FAIL; `node --check` reports that `ui/main.mjs` does not exist.
 
 - [ ] **Step 3: Write `ui/morph.mjs`**
@@ -3517,23 +3517,23 @@ render();
 
 - [ ] **Step 5: Run the test to verify it passes**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-main.test.mjs && npm test`
+Run: `cd ghcp/plugins/wintermute && node --test tests/ui-main.test.mjs && npm test`
 Expected: PASS, 3 tests; the whole suite passes. `morph()` needs a DOM, so its behaviour is tested in a real browser by the layout check (Task 16).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui/morph.mjs ghcp/plugins/swarm-dashboard/ui/main.mjs ghcp/plugins/swarm-dashboard/tests/ui-main.test.mjs
+git add ghcp/plugins/wintermute/ui/morph.mjs ghcp/plugins/wintermute/ui/main.mjs ghcp/plugins/wintermute/tests/ui-main.test.mjs
 git commit -m "feat(swarm-dashboard): wire the page to live updates, clocks and controls"
 ```
 
 ### Task 11: Fixed port and the standalone launcher
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/server/shared.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/scripts/swarm-dashboard.mjs`
-- Modify: `ghcp/plugins/swarm-dashboard/package.json` (add the `start` script only)
-- Test: `ghcp/plugins/swarm-dashboard/tests/shared.test.mjs`, `ghcp/plugins/swarm-dashboard/tests/launcher.test.mjs`
+- Create: `ghcp/plugins/wintermute/server/shared.mjs`
+- Create: `ghcp/plugins/wintermute/scripts/swarm-dashboard.mjs`
+- Modify: `ghcp/plugins/wintermute/package.json` (add the `start` script only)
+- Test: `ghcp/plugins/wintermute/tests/shared.test.mjs`, `ghcp/plugins/wintermute/tests/launcher.test.mjs`
 
 **Interfaces:**
 - Consumes: `APP_ID`, `createDashboardServer` (Task 9), `createDemoEngine` (Task 8), `createDefaultEngine` (Task 8), `freePort` (Task 9 helper).
@@ -3706,7 +3706,7 @@ test('bad arguments print the usage and exit 2', async () => {
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/shared.test.mjs tests/launcher.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/shared.test.mjs tests/launcher.test.mjs`
 Expected: FAIL with `Cannot find module '.../server/shared.mjs'` and `.../scripts/swarm-dashboard.mjs`.
 
 - [ ] **Step 3: Write `server/shared.mjs`**
@@ -3871,13 +3871,13 @@ In `package.json`, add one line after the `validate` script (keep every other li
 
 - [ ] **Step 6: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/shared.test.mjs tests/launcher.test.mjs && npm test && npm run validate`
+Run: `cd ghcp/plugins/wintermute && node --test tests/shared.test.mjs tests/launcher.test.mjs && npm test && npm run validate`
 Expected: PASS (4 + 4 new tests); the whole suite and validation pass.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/server/shared.mjs ghcp/plugins/swarm-dashboard/scripts/swarm-dashboard.mjs ghcp/plugins/swarm-dashboard/package.json ghcp/plugins/swarm-dashboard/tests/shared.test.mjs ghcp/plugins/swarm-dashboard/tests/launcher.test.mjs
+git add ghcp/plugins/wintermute/server/shared.mjs ghcp/plugins/wintermute/scripts/swarm-dashboard.mjs ghcp/plugins/wintermute/package.json ghcp/plugins/wintermute/tests/shared.test.mjs ghcp/plugins/wintermute/tests/launcher.test.mjs
 git commit -m "feat(swarm-dashboard): add the standalone launcher on the fixed port"
 ```
 
@@ -3888,8 +3888,8 @@ Run Task 20 next (see Execution order): it switches the server to PR 1's engine 
 ### Task 12: Timeline
 
 **Files:**
-- Replace: `ghcp/plugins/swarm-dashboard/ui/timeline.mjs` (the Task 7 stub)
-- Test: `ghcp/plugins/swarm-dashboard/tests/ui-timeline.test.mjs`
+- Replace: `ghcp/plugins/wintermute/ui/timeline.mjs` (the Task 7 stub)
+- Test: `ghcp/plugins/wintermute/tests/ui-timeline.test.mjs`
 
 **Interfaces:**
 - Consumes: Task 1 (`HOUR`, `MIN`, `ago`, `costHtml`, `costText`, `dur`, `elapsed`, `esc`), Task 2 (`REPORT_CLASS`, `TIMELINE_WORDS`, `unitEnd`), Task 3 (`fill`, `phase`).
@@ -4003,7 +4003,7 @@ test('the axis labels "now" and spaced ticks; the cost line runs up to the swarm
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-timeline.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/ui-timeline.test.mjs`
 Expected: FAIL (`does not provide an export named 'markSvg'`).
 
 - [ ] **Step 3: Replace `ui/timeline.mjs`**
@@ -4178,7 +4178,7 @@ export function timelineHtml(ctx, span) {
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-timeline.test.mjs tests/ui-app.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/ui-timeline.test.mjs tests/ui-app.test.mjs`
 Expected: PASS (9 + 10 tests).
 
 - [ ] **Step 5: Look at it in a browser and commit**
@@ -4186,15 +4186,15 @@ Expected: PASS (9 + 10 tests).
 Run `npm start -- --demo`, open `http://127.0.0.1:7927/?tab=timeline` at full width and at 560 px, and compare with the mockup's Timeline (all three windows). Then:
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui/timeline.mjs ghcp/plugins/swarm-dashboard/tests/ui-timeline.test.mjs
+git add ghcp/plugins/wintermute/ui/timeline.mjs ghcp/plugins/wintermute/tests/ui-timeline.test.mjs
 git commit -m "feat(swarm-dashboard): add the timeline view"
 ```
 
 ### Task 13: Plan and Board
 
 **Files:**
-- Replace: `ghcp/plugins/swarm-dashboard/ui/plan.mjs` (the Task 7 stub)
-- Test: `ghcp/plugins/swarm-dashboard/tests/ui-plan.test.mjs`
+- Replace: `ghcp/plugins/wintermute/ui/plan.mjs` (the Task 7 stub)
+- Test: `ghcp/plugins/wintermute/tests/ui-plan.test.mjs`
 
 **Interfaces:**
 - Consumes: Task 1 (`costText`, `esc`), Task 2 (`BOARD_WORDS`, `PLAN_WORDS`, `STAGE_CLASS`, `STAGE_NAMES`, `boardColumns`, `findByLabel`, `findPlanned`, `flattenPlan`, `planForest`, `planLayout`), Task 3 (`fill`).
@@ -4293,7 +4293,7 @@ test('the board has one column per stage with counts, attention first', () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-plan.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/ui-plan.test.mjs`
 Expected: FAIL (`does not provide an export named 'planSize'`).
 
 - [ ] **Step 3: Replace `ui/plan.mjs`**
@@ -4395,7 +4395,7 @@ export function boardHtml({ snapshot, now }) {
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-plan.test.mjs tests/ui-app.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/ui-plan.test.mjs tests/ui-app.test.mjs`
 Expected: PASS (7 + 10 tests).
 
 - [ ] **Step 5: Look at it in a browser and commit**
@@ -4403,15 +4403,15 @@ Expected: PASS (7 + 10 tests).
 Run `npm start -- --demo`, open `http://127.0.0.1:7927/?tab=plan` and `?tab=board` at 1920, 1280 and 560 px (the example plan shows the graph from 1280 px and the list below that), then repeat with `--demo stress`, whose eight-level plan is wider than any main column and always shows the list. Compare with the mockup's Plan and Board. Then:
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui/plan.mjs ghcp/plugins/swarm-dashboard/tests/ui-plan.test.mjs
+git add ghcp/plugins/wintermute/ui/plan.mjs ghcp/plugins/wintermute/tests/ui-plan.test.mjs
 git commit -m "feat(swarm-dashboard): add the plan graph and the stage board"
 ```
 
 ### Task 14: History and run summary
 
 **Files:**
-- Replace: `ghcp/plugins/swarm-dashboard/ui/history.mjs` (the Task 7 stub)
-- Test: `ghcp/plugins/swarm-dashboard/tests/ui-history.test.mjs`
+- Replace: `ghcp/plugins/wintermute/ui/history.mjs` (the Task 7 stub)
+- Test: `ghcp/plugins/wintermute/tests/ui-history.test.mjs`
 
 **Interfaces:**
 - Consumes: Task 1 (`HOUR`, `costHtml`, `costText`, `count`, `credits`, `dateRange`, `dur`, `esc`, `plural`); `RunListItem` and `RunSummary` from the schema.
@@ -4497,7 +4497,7 @@ test('loading, missing and empty summaries', () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-history.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/ui-history.test.mjs`
 Expected: FAIL (the stub renders "History is not built yet.").
 
 - [ ] **Step 3: Replace `ui/history.mjs`**
@@ -4580,7 +4580,7 @@ export function runHtml(run) {
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ui-history.test.mjs tests/ui-app.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/ui-history.test.mjs tests/ui-app.test.mjs`
 Expected: PASS (6 + 10 tests).
 
 - [ ] **Step 5: Look at it in a browser and commit**
@@ -4588,15 +4588,15 @@ Expected: PASS (6 + 10 tests).
 Run `npm start -- --demo`, open `http://127.0.0.1:7927/?page=history` and `?page=run&run=ws-1000-root` at full width and 560 px, and compare with the mockup's History and Run summary. Then:
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/ui/history.mjs ghcp/plugins/swarm-dashboard/tests/ui-history.test.mjs
+git add ghcp/plugins/wintermute/ui/history.mjs ghcp/plugins/wintermute/tests/ui-history.test.mjs
 git commit -m "feat(swarm-dashboard): add run history and the run summary"
 ```
 
 ### Task 15: Layout audit rules
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/scripts/lib/page-audit.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/page-audit.test.mjs`
+- Create: `ghcp/plugins/wintermute/scripts/lib/page-audit.mjs`
+- Test: `ghcp/plugins/wintermute/tests/page-audit.test.mjs`
 
 **Interfaces:**
 - Consumes: nothing (every function is self-contained so its source can run in the browser).
@@ -4673,7 +4673,7 @@ test('the audit script is self-contained and carries its options', () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/page-audit.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/page-audit.test.mjs`
 Expected: FAIL with `Cannot find module '.../scripts/lib/page-audit.mjs'`.
 
 - [ ] **Step 3: Write `scripts/lib/page-audit.mjs`**
@@ -4947,24 +4947,24 @@ export function auditScript(options = AUDIT_DEFAULTS) {
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/page-audit.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/page-audit.test.mjs`
 Expected: PASS, 5 tests.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/scripts/lib/page-audit.mjs ghcp/plugins/swarm-dashboard/tests/page-audit.test.mjs
+git add ghcp/plugins/wintermute/scripts/lib/page-audit.mjs ghcp/plugins/wintermute/tests/page-audit.test.mjs
 git commit -m "test(swarm-dashboard): add the layout audit rules and colour contrast maths"
 ```
 
 ### Task 16: Layout check runner
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/scripts/lib/cdp.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/scripts/check-layout.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/tests/fixtures/layout-good.html`, `ghcp/plugins/swarm-dashboard/tests/fixtures/layout-bad.html`
-- Modify: `ghcp/plugins/swarm-dashboard/package.json` (add the `check:layout` script only)
-- Test: `ghcp/plugins/swarm-dashboard/tests/check-layout.test.mjs`
+- Create: `ghcp/plugins/wintermute/scripts/lib/cdp.mjs`
+- Create: `ghcp/plugins/wintermute/scripts/check-layout.mjs`
+- Create: `ghcp/plugins/wintermute/tests/fixtures/layout-good.html`, `ghcp/plugins/wintermute/tests/fixtures/layout-bad.html`
+- Modify: `ghcp/plugins/wintermute/package.json` (add the `check:layout` script only)
+- Test: `ghcp/plugins/wintermute/tests/check-layout.test.mjs`
 
 **Interfaces:**
 - Consumes: `createDashboardServer` (Task 9), `createDemoEngine` (Task 8), `AUDIT_DEFAULTS`, `auditScript` (Task 15).
@@ -5035,7 +5035,7 @@ test('the browser comes from CHROME_PATH when it is set', () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/check-layout.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/check-layout.test.mjs`
 Expected: FAIL with `Cannot find module '.../scripts/check-layout.mjs'`.
 
 - [ ] **Step 3: Write `scripts/lib/cdp.mjs`**
@@ -5653,10 +5653,10 @@ In `package.json`, add one line after the `start` script:
 
 - [ ] **Step 7: Run the unit test, then the check**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/check-layout.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/check-layout.test.mjs`
 Expected: PASS, 5 tests.
 
-Run: `cd ghcp/plugins/swarm-dashboard && npm run check:layout`
+Run: `cd ghcp/plugins/wintermute && npm run check:layout`
 Expected: `Self-test passed …`, `Update self-test passed …`, `Checked 182 views … 0 issues.` (the narrow-only Activity view is skipped where the layout is wide), then `Live updates (example, simulated): 3 updates; … ms median, … ms max; cards kept, no repeated highlights, scroll kept, busy rings in phase.` and exit code 0, in about 25 s. When this plan was written, updates took 2.4 ms median and 7.1 ms max. Reverting `render()` to `dash.innerHTML = …` makes the check fail with `6 of 6 cards were re-created`, and dropping morph's delay rule fails the update self-test.
 
 - [ ] **Step 8: Fix what the check finds**
@@ -5666,17 +5666,17 @@ For each reported issue, fix the stylesheet or the view (never the check's thres
 - [ ] **Step 9: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/scripts ghcp/plugins/swarm-dashboard/tests ghcp/plugins/swarm-dashboard/package.json ghcp/plugins/swarm-dashboard/ui
+git add ghcp/plugins/wintermute/scripts ghcp/plugins/wintermute/tests ghcp/plugins/wintermute/package.json ghcp/plugins/wintermute/ui
 git commit -m "test(swarm-dashboard): check every view's layout headless at every width"
 ```
 
 ### Task 17: Canvas host and extension
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/server/canvas-host.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/com.github.copilot/extensions/swarm-dashboard/extension.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/com.github.copilot/extensions/swarm-dashboard/copilot-extension.json`
-- Test: `ghcp/plugins/swarm-dashboard/tests/canvas.test.mjs`
+- Create: `ghcp/plugins/wintermute/server/canvas-host.mjs`
+- Create: `ghcp/plugins/wintermute/com.github.copilot/extensions/swarm-dashboard/extension.mjs`
+- Create: `ghcp/plugins/wintermute/com.github.copilot/extensions/swarm-dashboard/copilot-extension.json`
+- Test: `ghcp/plugins/wintermute/tests/canvas.test.mjs`
 
 **Interfaces:**
 - Consumes: `createDashboardServer({ createEngine, port, version, log, hub, onIdle })` with `listen()`, `close()` and `clientCount()` (Task 9); `listenShared`, `probePort`, `resolvePort` (Task 11); `createDefaultEngine`, `createDemoEngine` (Task 8); `freePort`, `openEvents` (`tests/helpers/http.mjs`, Task 9); `tempDir` (PR 1's `tests/helpers/temp.mjs`).
@@ -5915,7 +5915,7 @@ test('a bad SWARM_DASHBOARD_PORT is reported when the canvas opens', async () =>
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/canvas.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/canvas.test.mjs`
 Expected: FAIL with `Cannot find module '.../server/canvas-host.mjs'`.
 
 - [ ] **Step 3: Write `server/canvas-host.mjs`**
@@ -6132,7 +6132,7 @@ await joinSession({ canvases: [canvas] });
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/canvas.test.mjs && npm test && npm run validate`
+Run: `cd ghcp/plugins/wintermute && node --test tests/canvas.test.mjs && npm test && npm run validate`
 Expected: PASS, 10 canvas tests; the whole suite and validation pass. The takeover and release tests depend on timers, so run the canvas test five times in a row and expect five passes: `for i in 1 2 3 4 5; do node --test tests/canvas.test.mjs > /dev/null || echo FAILED; done`.
 
 - [ ] **Step 6: Check the canvas host in the real extension runtime (local; installs nothing)**
@@ -6140,7 +6140,7 @@ Expected: PASS, 10 canvas tests; the whole suite and validation pass. The takeov
 Extensions run inside the Copilot CLI's own Node (v24.20.0 on the machine this plan was written on), not the system Node. This check runs the canvas host there through the CLI's extension bootstrap, without `joinSession` (which needs a live CLI session) and without installing anything. The paths below are the macOS locations; compare them with a running extension process (`ps -axo pid,command | grep '[e]xtension_bootstrap.mjs'` and the `COPILOT_SDK_PATH` in that process's environment). The bootstrap exits at once unless `COPILOT_EXTENSION_PARENT_PID` is its parent's PID, hence the `bash -c '…; :'` wrapper.
 
 ```bash
-cd ghcp/plugins/swarm-dashboard
+cd ghcp/plugins/wintermute
 PROBE="$(mktemp -d)/probe.mjs"
 cat > "$PROBE" <<'EOF'
 import { pathToFileURL } from 'node:url';
@@ -6171,7 +6171,7 @@ Expected: `probe: node v24.20.0, CanvasError function, http://127.0.0.1:7999/?ho
 - [ ] **Step 7: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/server/canvas-host.mjs ghcp/plugins/swarm-dashboard/com.github.copilot ghcp/plugins/swarm-dashboard/tests/canvas.test.mjs
+git add ghcp/plugins/wintermute/server/canvas-host.mjs ghcp/plugins/wintermute/com.github.copilot ghcp/plugins/wintermute/tests/canvas.test.mjs
 git commit -m "feat(swarm-dashboard): add the canvas extension on the shared server"
 ```
 
@@ -6191,10 +6191,10 @@ Fix any WebKit-only difference in `ui/styles.css`, rerun `npm run check:layout`,
 ### Task 18: Canvas packaging and validation
 
 **Files:**
-- Modify: `ghcp/plugins/swarm-dashboard/plugin.json` (add `$schema` and `extensions`)
-- Create: `ghcp/plugins/swarm-dashboard/scripts/lib/validate-dashboard.mjs`
-- Modify: `ghcp/plugins/swarm-dashboard/scripts/validate-plugin.mjs` (one import, one call)
-- Test: `ghcp/plugins/swarm-dashboard/tests/packaging.test.mjs`
+- Modify: `ghcp/plugins/wintermute/plugin.json` (add `$schema` and `extensions`)
+- Create: `ghcp/plugins/wintermute/scripts/lib/validate-dashboard.mjs`
+- Modify: `ghcp/plugins/wintermute/scripts/validate-plugin.mjs` (one import, one call)
+- Test: `ghcp/plugins/wintermute/tests/packaging.test.mjs`
 
 **Interfaces:**
 - Consumes: every file from Tasks 1–17; PR 1's `validatePlugin(root, repositoryRoot): Promise<string[]>` and its tests.
@@ -6307,7 +6307,7 @@ test('the page loads nothing from elsewhere and the server only calls itself', (
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/packaging.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/packaging.test.mjs`
 Expected: FAIL with `Cannot find module '.../scripts/lib/validate-dashboard.mjs'`.
 
 - [ ] **Step 3: Write `scripts/lib/validate-dashboard.mjs`**
@@ -6412,25 +6412,25 @@ The version stays `0.1.0`, as in `package.json` and the root marketplace entry.
 
 - [ ] **Step 6: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/packaging.test.mjs && npm test && npm run validate`
+Run: `cd ghcp/plugins/wintermute && node --test tests/packaging.test.mjs && npm test && npm run validate`
 Expected: PASS, 8 packaging tests; PR 1's validator tests still pass; `Plugin validation passed: manifests, root marketplace entry and required files.`
 
 - [ ] **Step 7: Check that the CLI reads the manifest (read-only; installs nothing)**
 
-Run: `cd ghcp/plugins/swarm-dashboard && copilot --plugin-dir "$PWD" plugin list --json`
+Run: `cd ghcp/plugins/wintermute && copilot --plugin-dir "$PWD" plugin list --json`
 Expected: the list includes `{"name": "swarm-dashboard", "version": "0.1.0", "enabled": true, "source": "external", …}`. `--plugin-dir` loads the plugin for this one command only; check that `~/.copilot/config.json` keeps its modification time.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/plugin.json ghcp/plugins/swarm-dashboard/scripts/lib/validate-dashboard.mjs ghcp/plugins/swarm-dashboard/scripts/validate-plugin.mjs ghcp/plugins/swarm-dashboard/tests/packaging.test.mjs
+git add ghcp/plugins/wintermute/plugin.json ghcp/plugins/wintermute/scripts/lib/validate-dashboard.mjs ghcp/plugins/wintermute/scripts/validate-plugin.mjs ghcp/plugins/wintermute/tests/packaging.test.mjs
 git commit -m "feat(swarm-dashboard): package the canvas and validate the dashboard files"
 ```
 
 ### Task 19: Plugin README and repository docs
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/README.md`
+- Create: `ghcp/plugins/wintermute/README.md`
 - Modify: `README.md` (repository root): the Plugins table, one paragraph, the install section and the layout tree
 - Modify: `.github/copilot-instructions.md`: the plugin list and "Working in this repo"
 
@@ -6440,7 +6440,7 @@ git commit -m "feat(swarm-dashboard): package the canvas and validate the dashbo
 
 - [ ] **Step 1: Write the plugin README**
 
-`ghcp/plugins/swarm-dashboard/README.md`:
+`ghcp/plugins/wintermute/README.md`:
 
 ````markdown
 # Swarm dashboard
@@ -6476,7 +6476,7 @@ In the Copilot app, ask the agent to open the Swarm dashboard canvas. An orchest
 In a browser, run the launcher from the plugin folder and open the address it prints:
 
 ```bash
-cd ~/.copilot/installed-plugins/ai-tools/swarm-dashboard   # or ghcp/plugins/swarm-dashboard in a clone
+cd ~/.copilot/installed-plugins/ai-tools/swarm-dashboard   # or ghcp/plugins/wintermute in a clone
 npm start
 ```
 
@@ -6537,7 +6537,7 @@ Run these from the plugin folder.
 In the Plugins table, add this row after the `adr-authoring` row:
 
 ```markdown
-| [`swarm-dashboard`](./ghcp/plugins/swarm-dashboard/README.md) | A **watch-only dashboard** for agentic swarms: one card per child session with its state, progress, cost and anything waiting for you, plus a timeline, plan, board and run history. Opens as a canvas in the Copilot app or in a browser, reads Copilot's local data read-only and sends nothing off the machine. | `copilot plugin install swarm-dashboard@ai-tools` |
+| [`swarm-dashboard`](./ghcp/plugins/wintermute/README.md) | A **watch-only dashboard** for agentic swarms: one card per child session with its state, progress, cost and anything waiting for you, plus a timeline, plan, board and run history. Opens as a canvas in the Copilot app or in a browser, reads Copilot's local data read-only and sends nothing off the machine. | `copilot plugin install swarm-dashboard@ai-tools` |
 ```
 
 After the paragraph that starts with "`adr-authoring` is a documentation workflow", add:
@@ -6582,22 +6582,22 @@ Under "Working in this repo", after the bullet that starts with "Plugins **do** 
 
 - [ ] **Step 4: Check the docs**
 
-Run: `cd ghcp/plugins/swarm-dashboard && ls ../../../docs/superpowers/specs/2026-10-15-swarm-dashboard-design.md engine/config.mjs && npm test && npm run validate`
+Run: `cd ghcp/plugins/wintermute && ls ../../../docs/superpowers/specs/2026-10-15-swarm-dashboard-design.md engine/config.mjs && npm test && npm run validate`
 Expected: both link targets exist (if PR 1's `engine/config.mjs` is not on the branch yet, Task 21 checks it again); tests and validation pass. Read the three documents once more for plain wording, and after staging run `git diff --cached -U0 -- ghcp README.md .github | grep -n -E '/Users/|/home/'`: it prints nothing.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/README.md README.md .github/copilot-instructions.md
+git add ghcp/plugins/wintermute/README.md README.md .github/copilot-instructions.md
 git commit -m "docs(swarm-dashboard): document the dashboard, canvas and launcher"
 ```
 
 ### Task 20: Switch to PR 1's engine and send the early preview
 
 **Files:**
-- Modify: `ghcp/plugins/swarm-dashboard/server/engines.mjs`
-- Modify: `ghcp/plugins/swarm-dashboard/ui/model.mjs` (`unitEnd`)
-- Test: `ghcp/plugins/swarm-dashboard/tests/demo-engine.test.mjs`, `ghcp/plugins/swarm-dashboard/tests/ui-model.test.mjs`
+- Modify: `ghcp/plugins/wintermute/server/engines.mjs`
+- Modify: `ghcp/plugins/wintermute/ui/model.mjs` (`unitEnd`)
+- Test: `ghcp/plugins/wintermute/tests/demo-engine.test.mjs`, `ghcp/plugins/wintermute/tests/ui-model.test.mjs`
 
 **Interfaces:**
 - Consumes: PR 1's `createSwarmEngine(options): SwarmEngine` from `engine/engine.mjs` (`options.log` receives diagnostics; finished runs are summarised into `~/.copilot/swarm-dashboard/history`, the engine's one write).
@@ -6607,7 +6607,7 @@ Runs right after Task 11 (see Execution order); the real-data smoke check with `
 
 - [ ] **Step 1: Check that PR 1's engine is on the branch**
 
-Run: `test -f ghcp/plugins/swarm-dashboard/engine/engine.mjs && git log --oneline -1 -- ghcp/plugins/swarm-dashboard/engine/engine.mjs`
+Run: `test -f ghcp/plugins/wintermute/engine/engine.mjs && git log --oneline -1 -- ghcp/plugins/wintermute/engine/engine.mjs`
 Expected: a commit from PR 1. The branch was rebased onto PR 1's finished branch before Task 1. If PR 1 changes again, the coordinator says when to rebase: `git fetch origin && git rebase origin/nicksologoub-microsoft-swarm-data-engine`, keeping both sides of any conflict in the shared files (PR 1's required files and `snapshot` script; this PR's `start` and `check:layout` scripts and its two validator lines), then `npm test && npm run validate` and `git push --force-with-lease` (approved until the pull request opens).
 
 - [ ] **Step 2: Write the failing tests**
@@ -6634,7 +6634,7 @@ test('a unit ends at endedAt, which the engine sets from its outcome', () => {
 
 - [ ] **Step 3: Run the tests to verify they fail**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/demo-engine.test.mjs tests/ui-model.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/demo-engine.test.mjs tests/ui-model.test.mjs`
 Expected: FAIL in the two replaced tests (the default engine is still the demo engine; `unitEnd` still falls back to the PR's merge time).
 
 - [ ] **Step 4: Switch the engine and drop the fallback**
@@ -6655,13 +6655,13 @@ export const unitEnd = session => session.endedAt ?? null;
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && npm test && npm run validate`
+Run: `cd ghcp/plugins/wintermute && npm test && npm run validate`
 Expected: all tests pass and validation passes. The suite still reads no Copilot data: the launcher tests use `--demo`, and the reuse and taken-port tests never create an engine (nor will the canvas test of Task 17, which asks only for `/api/health` and the page).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard/server/engines.mjs ghcp/plugins/swarm-dashboard/ui/model.mjs ghcp/plugins/swarm-dashboard/tests/demo-engine.test.mjs ghcp/plugins/swarm-dashboard/tests/ui-model.test.mjs
+git add ghcp/plugins/wintermute/server/engines.mjs ghcp/plugins/wintermute/ui/model.mjs ghcp/plugins/wintermute/tests/demo-engine.test.mjs ghcp/plugins/wintermute/tests/ui-model.test.mjs
 git commit -m "feat(swarm-dashboard): serve Copilot data through the swarm engine"
 ```
 
@@ -6687,7 +6687,7 @@ Expected: `{"app":"swarm-dashboard",…}`, then counts only. Open `http://127.0.
 - [ ] **Step 1: Run every check**
 
 ```bash
-cd ghcp/plugins/swarm-dashboard
+cd ghcp/plugins/wintermute
 npm test && npm run validate
 npm run check:layout
 ```
@@ -6699,7 +6699,7 @@ Expected: all tests pass; `Plugin validation passed …`; `Self-test passed …`
 This reads the owner's Copilot data. Nothing from it is committed or sent anywhere: no screenshots, names or ids; only counts go to the coordinator. Use the preview server on 7927 when it is running (restart it first if UI files changed since it started); otherwise start the launcher on a spare port with `npm start -- --port 7932` in a second terminal and use that port below.
 
 ```bash
-cd ghcp/plugins/swarm-dashboard
+cd ghcp/plugins/wintermute
 npm run check:layout -- --live http://127.0.0.1:7927/
 ps -o rss= -p "$(lsof -nP -tiTCP:7927 -sTCP:LISTEN)"
 ```

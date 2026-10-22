@@ -4,7 +4,7 @@
 
 **Goal:** Build the read-only data engine of the swarm dashboard plugin: readers for Copilot's local data, the swarm model (runs, sessions, sub-agents, reports, questions, stages, PR monitors and cost), stuck detection, the run lifecycle and history store, the orchestrator data-contract parser, and a command that prints a run's state as JSON.
 
-**Architecture:** Plain Node ES modules under `ghcp/plugins/swarm-dashboard/engine/`, with no build step and no npm dependencies. Readers pull raw data strictly read-only: SQLite through `node:sqlite`, falling back to the `sqlite3` CLI, and `events.jsonl` tailed by byte offset. A per-session reducer folds events into compact state; pure model functions derive statuses, stages, monitors and the snapshot; `createSwarmEngine()` polls only after `start()` and notifies subscribers. `engine/schema.mjs` is the contract with PR 2 (server and UI).
+**Architecture:** Plain Node ES modules under `ghcp/plugins/wintermute/engine/`, with no build step and no npm dependencies. Readers pull raw data strictly read-only: SQLite through `node:sqlite`, falling back to the `sqlite3` CLI, and `events.jsonl` tailed by byte offset. A per-session reducer folds events into compact state; pure model functions derive statuses, stages, monitors and the snapshot; `createSwarmEngine()` polls only after `start()` and notifies subscribers. `engine/schema.mjs` is the contract with PR 2 (server and UI).
 
 **Tech Stack:** Node.js >= 18 built-ins only (`node:test`, `node:fs`, `node:child_process`, optional `node:sqlite`), the macOS `sqlite3` CLI as fallback, and the `gh` and `az` CLIs for read-only PR state.
 
@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Plugin folder `ghcp/plugins/swarm-dashboard/`, name `swarm-dashboard`, version `0.1.0` in `plugin.json`, `package.json` and its root `.github/plugin/marketplace.json` entry.
+- Plugin folder `ghcp/plugins/wintermute/`, name `swarm-dashboard`, version `0.1.0` in `plugin.json`, `package.json` and its root `.github/plugin/marketplace.json` entry.
 - `package.json`: private, `"type": "module"`, `"engines": {"node": ">=18"}`, `npm test` = `node --test tests/*.test.mjs`, `npm run validate` = `node scripts/validate-plugin.mjs`; no `dependencies` or `devDependencies`.
 - No `marketplace.json` inside the plugin. The validator checks the plugin's entry in the root manifest, modelled on the manifest checks of the now-retired pr-review-graph plugin.
 - Engine and test code run on Node 18.0+: no `Object.groupBy`, `Array.prototype.toSorted`, `Promise.withResolvers`, `fs.glob`, `t.after()` or `mock` from `node:test`. `node:sqlite` is loaded only by `engine/sqlite.mjs`.
@@ -26,7 +26,7 @@
 - Snapshot times are epoch milliseconds (UTC); durations are milliseconds; credits = sum of `total_nano_aiu` / 1e9; dollars = credits × 0.01.
 - Parsers accept missing keys and string-typed tool arguments.
 - Stuck thresholds are configurable; defaults are design call 3 verbatim: model call 5 min warn, 10 min stuck; bash `initial_wait` + 5 min (10 min without one); `read_bash` delay + 2 min; `read_agent` timeout + 2 min; app, file and search tools 2 min; sub-agent 10 min without events (15 for general-purpose on Opus at max effort); silent busy 10 min; stalled child 30 min; spinning within 30 busy minutes: 5+ failed tool calls, the same tool and arguments 3+ times, 2+ compactions, or a permission denial with `decisionSource: "unattended_fallback"` (builder decision 2 narrows the repeat and compaction checks, pending the coordinator's OK); a run is finished after 2 hours without activity.
-- After any change under the plugin folder or to the root manifest, run `npm test && npm run validate` from `ghcp/plugins/swarm-dashboard`. After changing the root manifest, run the same in `ghcp/plugins/adr-authoring`.
+- After any change under the plugin folder or to the root manifest, run `npm test && npm run validate` from `ghcp/plugins/wintermute`. After changing the root manifest, run the same in `ghcp/plugins/adr-authoring`.
 - Conventional commit messages; no `Co-authored-by` trailer or other AI attribution.
 
 ## Decisions settled before implementation
@@ -117,7 +117,7 @@ Recorded so the plan matches what was built; each amendment was reviewed like a 
 
 ## File Structure
 
-All paths are under `ghcp/plugins/swarm-dashboard/` unless they start with `.github/` or `docs/`.
+All paths are under `ghcp/plugins/wintermute/` unless they start with `.github/` or `docs/`.
 
 | File | Responsibility |
 | --- | --- |
@@ -154,12 +154,12 @@ All paths are under `ghcp/plugins/swarm-dashboard/` unless they start with `.git
 ### Task 1: Plugin skeleton, validator and marketplace entry
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/plugin.json`
-- Create: `ghcp/plugins/swarm-dashboard/package.json`
-- Create: `ghcp/plugins/swarm-dashboard/LICENSE`
-- Create: `ghcp/plugins/swarm-dashboard/scripts/validate-plugin.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/tests/helpers/temp.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/validate-plugin.test.mjs`
+- Create: `ghcp/plugins/wintermute/plugin.json`
+- Create: `ghcp/plugins/wintermute/package.json`
+- Create: `ghcp/plugins/wintermute/LICENSE`
+- Create: `ghcp/plugins/wintermute/scripts/validate-plugin.mjs`
+- Create: `ghcp/plugins/wintermute/tests/helpers/temp.mjs`
+- Test: `ghcp/plugins/wintermute/tests/validate-plugin.test.mjs`
 - Modify: `.github/plugin/marketplace.json` (append one entry to `plugins`)
 
 **Interfaces:**
@@ -204,7 +204,7 @@ const repositoryRoot = path.resolve(pluginRoot, '../../..');
 
 function sandbox() {
   const repo = tempDir('swarm-validate-');
-  const root = path.join(repo, 'ghcp/plugins/swarm-dashboard');
+  const root = path.join(repo, 'ghcp/plugins/wintermute');
   mkdirSync(path.dirname(root), { recursive: true });
   cpSync(pluginRoot, root, { recursive: true });
   mkdirSync(path.join(repo, '.github/plugin'), { recursive: true });
@@ -246,7 +246,7 @@ test('package dependencies are rejected', async () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/validate-plugin.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/validate-plugin.test.mjs`
 Expected: FAIL with `Cannot find module '.../scripts/validate-plugin.mjs'`.
 
 - [ ] **Step 3: Write the manifests, licence and validator**
@@ -294,7 +294,7 @@ Expected: FAIL with `Cannot find module '.../scripts/validate-plugin.mjs'`.
 `LICENSE`: copy `ghcp/plugins/adr-authoring/LICENSE` byte for byte (`MIT License`, `Copyright (c) 2026 Nick Sologoub`):
 
 ```bash
-cp ghcp/plugins/adr-authoring/LICENSE ghcp/plugins/swarm-dashboard/LICENSE
+cp ghcp/plugins/adr-authoring/LICENSE ghcp/plugins/wintermute/LICENSE
 ```
 
 `scripts/validate-plugin.mjs`:
@@ -401,7 +401,7 @@ In `.github/plugin/marketplace.json`, append this object after the `adr-authorin
       "name": "swarm-dashboard",
       "description": "Watch-only dashboard for agentic swarms in the GitHub Copilot app: sessions, sub-agents, cost, stuck detection and run history.",
       "version": "0.1.0",
-      "source": "./ghcp/plugins/swarm-dashboard",
+      "source": "./ghcp/plugins/wintermute",
       "author": {
         "name": "Nick Sologoub"
       },
@@ -419,7 +419,7 @@ In `.github/plugin/marketplace.json`, append this object after the `adr-authorin
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && npm test && npm run validate`
+Run: `cd ghcp/plugins/wintermute && npm test && npm run validate`
 Expected: 4 tests pass; `Plugin validation passed: manifests, root marketplace entry and required files.`
 
 Run: `cd ghcp/plugins/adr-authoring && npm test && npm run validate`
@@ -428,20 +428,20 @@ Expected: the plugin passes unchanged.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard .github/plugin/marketplace.json
+git add ghcp/plugins/wintermute .github/plugin/marketplace.json
 git commit -m "feat(swarm-dashboard): add plugin skeleton and marketplace entry"
 ```
 
 ### Task 2: Snapshot schema, engine API contract and example fixtures (PR 2 handoff)
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/engine/schema.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/engine/fake-engine.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/tests/fixtures/example-snapshot.json`
-- Create: `ghcp/plugins/swarm-dashboard/tests/fixtures/example-swarms.json`
-- Create: `ghcp/plugins/swarm-dashboard/tests/fixtures/example-history.json`
-- Create: `ghcp/plugins/swarm-dashboard/tests/fixtures/example-run-summary.json`
-- Test: `ghcp/plugins/swarm-dashboard/tests/schema.test.mjs`
+- Create: `ghcp/plugins/wintermute/engine/schema.mjs`
+- Create: `ghcp/plugins/wintermute/engine/fake-engine.mjs`
+- Create: `ghcp/plugins/wintermute/tests/fixtures/example-snapshot.json`
+- Create: `ghcp/plugins/wintermute/tests/fixtures/example-swarms.json`
+- Create: `ghcp/plugins/wintermute/tests/fixtures/example-history.json`
+- Create: `ghcp/plugins/wintermute/tests/fixtures/example-run-summary.json`
+- Test: `ghcp/plugins/wintermute/tests/schema.test.mjs`
 
 **Interfaces:**
 - Consumes: nothing.
@@ -550,7 +550,7 @@ test('the fake engine serves fixtures through the engine API', async () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/schema.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/schema.test.mjs`
 Expected: FAIL with `Cannot find module '.../engine/schema.mjs'`.
 
 - [ ] **Step 3: Write `engine/schema.mjs`, part 1 (constants and typedefs)**
@@ -1305,13 +1305,13 @@ All ids, names, repositories and times are invented. `generatedAt` is 2026-10-15
 
 - [ ] **Step 8: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && npm test && npm run validate`
+Run: `cd ghcp/plugins/wintermute && npm test && npm run validate`
 Expected: all tests pass (validate-plugin and schema); validation passes.
 
 - [ ] **Step 9: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard
+git add ghcp/plugins/wintermute
 git commit -m "feat(swarm-dashboard): define snapshot schema and engine API contract"
 ```
 
@@ -1327,13 +1327,13 @@ Send the coordinator a `progress` report with the pushed SHA and these paths: `e
 ### Task 3: Time, text and config helpers, and read-only SQLite access
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/engine/time.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/engine/text.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/engine/config.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/engine/sqlite.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/tests/helpers/sqlite-writer.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/util.test.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/sqlite.test.mjs`
+- Create: `ghcp/plugins/wintermute/engine/time.mjs`
+- Create: `ghcp/plugins/wintermute/engine/text.mjs`
+- Create: `ghcp/plugins/wintermute/engine/config.mjs`
+- Create: `ghcp/plugins/wintermute/engine/sqlite.mjs`
+- Create: `ghcp/plugins/wintermute/tests/helpers/sqlite-writer.mjs`
+- Test: `ghcp/plugins/wintermute/tests/util.test.mjs`
+- Test: `ghcp/plugins/wintermute/tests/sqlite.test.mjs`
 
 **Interfaces:**
 - Consumes: `tempDir()` (Task 1).
@@ -1560,7 +1560,7 @@ test('the CLI backend reports a missing sqlite3 binary as SqliteUnavailableError
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/util.test.mjs tests/sqlite.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/util.test.mjs tests/sqlite.test.mjs`
 Expected: FAIL with `Cannot find module '.../engine/time.mjs'` and `.../engine/sqlite.mjs`.
 
 - [ ] **Step 3: Write the helpers**
@@ -1860,24 +1860,24 @@ export async function sqliteBackends({ sqlite3Path = 'sqlite3' } = {}) {
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && npm test && npm run validate`
+Run: `cd ghcp/plugins/wintermute && npm test && npm run validate`
 Expected: all tests pass; on this machine both `node` and `cli` backends run, and the live-writer tests run.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard
+git add ghcp/plugins/wintermute
 git commit -m "feat(swarm-dashboard): add read-only SQLite access with CLI fallback"
 ```
 
 ### Task 4: Synthetic Copilot home, app database reader and session tree
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/tests/helpers/copilot-home.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/tests/helpers/event-log.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/engine/readers/app-db.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/engine/model/forest.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/app-db.test.mjs`
+- Create: `ghcp/plugins/wintermute/tests/helpers/copilot-home.mjs`
+- Create: `ghcp/plugins/wintermute/tests/helpers/event-log.mjs`
+- Create: `ghcp/plugins/wintermute/engine/readers/app-db.mjs`
+- Create: `ghcp/plugins/wintermute/engine/model/forest.mjs`
+- Test: `ghcp/plugins/wintermute/tests/app-db.test.mjs`
 
 **Interfaces:**
 - Consumes: `execSql` (Task 3 helper), `bindLiterals`, `withReadOnly` (Task 3), `parseTime` (Task 3), `tempDir` (Task 1).
@@ -2252,7 +2252,7 @@ test('parent cycles are broken instead of looping', () => {
 
 - [ ] **Step 4: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/app-db.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/app-db.test.mjs`
 Expected: FAIL with `Cannot find module '.../engine/readers/app-db.mjs'`.
 
 - [ ] **Step 5: Write `engine/readers/app-db.mjs`**
@@ -2436,21 +2436,21 @@ export function resolveNodeId(forest, id) {
 
 - [ ] **Step 7: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && npm test && npm run validate`
+Run: `cd ghcp/plugins/wintermute && npm test && npm run validate`
 Expected: all tests pass for every available backend.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard
+git add ghcp/plugins/wintermute
 git commit -m "feat(swarm-dashboard): read the app database and build the session tree"
 ```
 
 ### Task 5: Cost ledger
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/engine/readers/ledger.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/ledger.test.mjs`
+- Create: `ghcp/plugins/wintermute/engine/readers/ledger.mjs`
+- Test: `ghcp/plugins/wintermute/tests/ledger.test.mjs`
 
 **Interfaces:**
 - Consumes: `withReadOnly`, `sqliteBackends` (Task 3), `parseTime` (Task 3), `CopilotHome` (Task 4).
@@ -2524,7 +2524,7 @@ for (const backend of TEST_BACKENDS) {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/ledger.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/ledger.test.mjs`
 Expected: FAIL with `Cannot find module '.../engine/readers/ledger.mjs'`.
 
 - [ ] **Step 3: Write `engine/readers/ledger.mjs`**
@@ -2616,22 +2616,22 @@ export async function pullLedger(db, ledger, { batch = 20_000 } = {}) {
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && npm test && npm run validate`
+Run: `cd ghcp/plugins/wintermute && npm test && npm run validate`
 Expected: all tests pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard
+git add ghcp/plugins/wintermute
 git commit -m "feat(swarm-dashboard): read the cost ledger incrementally"
 ```
 
 ### Task 6: Session files and process liveness
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/engine/readers/session-files.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/engine/readers/process-probe.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/session-files.test.mjs`
+- Create: `ghcp/plugins/wintermute/engine/readers/session-files.mjs`
+- Create: `ghcp/plugins/wintermute/engine/readers/process-probe.mjs`
+- Test: `ghcp/plugins/wintermute/tests/session-files.test.mjs`
 
 **Interfaces:**
 - Consumes: `withReadOnly`, `sqliteBackends` (Task 3); `CopilotHome`, `CHILDREN_SCHEMA` (Task 4).
@@ -2739,7 +2739,7 @@ test('when ps is unavailable, a signal check decides', async () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/session-files.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/session-files.test.mjs`
 Expected: FAIL with `Cannot find module '.../engine/readers/session-files.mjs'`.
 
 - [ ] **Step 3: Write `engine/readers/session-files.mjs`**
@@ -2889,21 +2889,21 @@ export function createProcessProbe({ execFileImpl = execFile, kill = (pid, signa
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && npm test && npm run validate`
+Run: `cd ghcp/plugins/wintermute && npm test && npm run validate`
 Expected: all tests pass.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard
+git add ghcp/plugins/wintermute
 git commit -m "feat(swarm-dashboard): read session files and probe process liveness"
 ```
 
 ### Task 7: Event log tailing
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/engine/readers/events.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/events.test.mjs`
+- Create: `ghcp/plugins/wintermute/engine/readers/events.mjs`
+- Test: `ghcp/plugins/wintermute/tests/events.test.mjs`
 
 **Interfaces:**
 - Consumes: `tempDir` (Task 1); `ownString` (Task 3).
@@ -2986,7 +2986,7 @@ test('a missing file reports missing without throwing', async () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/events.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/events.test.mjs`
 Expected: FAIL with `Cannot find module '.../engine/readers/events.mjs'`.
 
 - [ ] **Step 3: Write `engine/readers/events.mjs`**
@@ -3052,21 +3052,21 @@ export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onRes
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && npm test && npm run validate`
+Run: `cd ghcp/plugins/wintermute && npm test && npm run validate`
 Expected: all tests pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard
+git add ghcp/plugins/wintermute
 git commit -m "feat(swarm-dashboard): tail session event logs by byte offset"
 ```
 
 ### Task 8: Orchestrator data-contract parsers
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/engine/model/contract.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/contract.test.mjs`
+- Create: `ghcp/plugins/wintermute/engine/model/contract.mjs`
+- Test: `ghcp/plugins/wintermute/tests/contract.test.mjs`
 
 **Interfaces:**
 - Consumes: `REPORT_STATUSES`, `PR_PROVIDERS`, `OUTCOMES` (Task 2); `parseTime` (Task 3).
@@ -3174,7 +3174,7 @@ test('the registry keeps valid rows and the latest update per unit across sessio
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/contract.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/contract.test.mjs`
 Expected: FAIL with `Cannot find module '.../engine/model/contract.mjs'`.
 
 - [ ] **Step 3: Write `engine/model/contract.mjs`**
@@ -3314,23 +3314,23 @@ export function normaliseRegistry(rowSets) {
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && npm test && npm run validate`
+Run: `cd ghcp/plugins/wintermute && npm test && npm run validate`
 Expected: all tests pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard
+git add ghcp/plugins/wintermute
 git commit -m "feat(swarm-dashboard): parse the orchestrator data contract"
 ```
 
 ### Task 9: Session reducer — activity
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/engine/model/state-utils.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/engine/model/session-state.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/tests/helpers/fold.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/session-state.test.mjs`
+- Create: `ghcp/plugins/wintermute/engine/model/state-utils.mjs`
+- Create: `ghcp/plugins/wintermute/engine/model/session-state.mjs`
+- Create: `ghcp/plugins/wintermute/tests/helpers/fold.mjs`
+- Test: `ghcp/plugins/wintermute/tests/session-state.test.mjs`
 
 **Interfaces:**
 - Consumes: `parseTime` (Task 3), `oneLine`, `clip` (Task 3), `EventLog` (Task 4).
@@ -3540,7 +3540,7 @@ test('large irrelevant lines only move the clock, and malformed lines are counte
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/session-state.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/session-state.test.mjs`
 Expected: FAIL with `Cannot find module '.../engine/model/session-state.mjs'`.
 
 - [ ] **Step 3: Write `engine/model/state-utils.mjs`**
@@ -3899,22 +3899,22 @@ function touchSubagent(state, owner, at) {
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && npm test && npm run validate`
+Run: `cd ghcp/plugins/wintermute && npm test && npm run validate`
 Expected: all tests pass.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard
+git add ghcp/plugins/wintermute
 git commit -m "feat(swarm-dashboard): fold session events into activity state"
 ```
 
 ### Task 10: Session reducer — messages, reports and monitors
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/engine/model/messages.mjs`
-- Modify: `ghcp/plugins/swarm-dashboard/engine/model/session-state.mjs` (imports, `onToolStart`, `onToolComplete`, the `user.message` and `session.task_complete` cases, new `mergeStates`)
-- Test: `ghcp/plugins/swarm-dashboard/tests/messages.test.mjs`
+- Create: `ghcp/plugins/wintermute/engine/model/messages.mjs`
+- Modify: `ghcp/plugins/wintermute/engine/model/session-state.mjs` (imports, `onToolStart`, `onToolComplete`, the `user.message` and `session.task_complete` cases, new `mergeStates`)
+- Test: `ghcp/plugins/wintermute/tests/messages.test.mjs`
 
 **Interfaces:**
 - Consumes: Task 9's reducer and `state-utils.mjs`; `fold` (Task 9 helper); `EventLog` (Task 4).
@@ -4013,7 +4013,7 @@ test('mergeStates combines the CLI sessions of one project session', () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/messages.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/messages.test.mjs`
 Expected: FAIL with `Cannot find module '.../engine/model/messages.mjs'`.
 
 - [ ] **Step 3: Write `engine/model/messages.mjs`**
@@ -4207,21 +4207,21 @@ export function mergeStates(states) {
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && npm test && npm run validate`
+Run: `cd ghcp/plugins/wintermute && npm test && npm run validate`
 Expected: all tests pass, including Task 9's reducer tests unchanged.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard
+git add ghcp/plugins/wintermute
 git commit -m "feat(swarm-dashboard): record reports, messages and monitors per session"
 ```
 
 ### Task 11: Stuck detection and status mapping
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/engine/model/status.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/status.test.mjs`
+- Create: `ghcp/plugins/wintermute/engine/model/status.mjs`
+- Test: `ghcp/plugins/wintermute/tests/status.test.mjs`
 
 **Interfaces:**
 - Consumes: `DEFAULT_THRESHOLDS` (Task 3), `STATUS_DETAILS` (Task 2), `formatDuration` (Task 3), reducer state (Tasks 9–10), `fold`, `EventLog`.
@@ -4444,7 +4444,7 @@ test('busyWindowStart walks back through busy spans', () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/status.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/status.test.mjs`
 Expected: FAIL with `Cannot find module '.../engine/model/status.mjs'`.
 
 - [ ] **Step 3: Write `engine/model/status.mjs`**
@@ -4648,23 +4648,23 @@ export function swarmStalled({ orchestratorDetail, unitDetails, monitorDue, last
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && npm test && npm run validate`
+Run: `cd ghcp/plugins/wintermute && npm test && npm run validate`
 Expected: all tests pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard
+git add ghcp/plugins/wintermute
 git commit -m "feat(swarm-dashboard): detect stuck, waiting and ended sessions"
 ```
 
 ### Task 12: PR identity, stages, monitors and PR state lookups
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/engine/model/stage.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/engine/model/pr-lookup.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/stage.test.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/pr-lookup.test.mjs`
+- Create: `ghcp/plugins/wintermute/engine/model/stage.mjs`
+- Create: `ghcp/plugins/wintermute/engine/model/pr-lookup.mjs`
+- Test: `ghcp/plugins/wintermute/tests/stage.test.mjs`
+- Test: `ghcp/plugins/wintermute/tests/pr-lookup.test.mjs`
 
 **Interfaces:**
 - Consumes: `MINUTE`, `maxTime`, `parseTime` (Task 3); `DEFAULT_THRESHOLDS` (Task 3); registry rows (Task 8); reducer `prMentions`, `automation` (Task 10); app `automations` and `createdPr` (Task 4).
@@ -4858,7 +4858,7 @@ test('a PR without a repository is looked up only from an existing worktree', as
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/stage.test.mjs tests/pr-lookup.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/stage.test.mjs tests/pr-lookup.test.mjs`
 Expected: FAIL with `Cannot find module` for both modules.
 
 - [ ] **Step 3: Write `engine/model/stage.mjs`**
@@ -5097,21 +5097,21 @@ export function createPrLookup({ run = runCommand, now = Date.now, ttlMs = 5 * M
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && npm test && npm run validate`
+Run: `cd ghcp/plugins/wintermute && npm test && npm run validate`
 Expected: all tests pass. No real `gh` or `az` command runs in tests.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard
+git add ghcp/plugins/wintermute
 git commit -m "feat(swarm-dashboard): derive PR identity, stages and monitors"
 ```
 
 ### Task 13: Snapshot assembly
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/engine/model/swarm.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/swarm.test.mjs`
+- Create: `ghcp/plugins/wintermute/engine/model/swarm.mjs`
+- Test: `ghcp/plugins/wintermute/tests/swarm.test.mjs`
 
 **Interfaces:**
 - Consumes: everything from Tasks 2–12.
@@ -5379,7 +5379,7 @@ test('timeline segments merge short gaps and show waits and a live stuck tail', 
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/swarm.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/swarm.test.mjs`
 Expected: FAIL with `Cannot find module '.../engine/model/swarm.mjs'`.
 
 - [ ] **Step 3: Write `engine/model/swarm.mjs`, part 1 (helpers)**
@@ -5862,21 +5862,21 @@ export function buildSnapshot(input) {
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && npm test && npm run validate`
+Run: `cd ghcp/plugins/wintermute && npm test && npm run validate`
 Expected: all tests pass; both synthetic swarms validate against `SNAPSHOT_SPEC`.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard
+git add ghcp/plugins/wintermute
 git commit -m "feat(swarm-dashboard): assemble swarm snapshots"
 ```
 
 ### Task 14: Run summaries and the history store
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/engine/model/history.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/history.test.mjs`
+- Create: `ghcp/plugins/wintermute/engine/model/history.mjs`
+- Test: `ghcp/plugins/wintermute/tests/history.test.mjs`
 
 **Interfaces:**
 - Consumes: `SCHEMA_VERSION`, `validateRunSummary` (Task 2); a `Snapshot` (Task 13); `tempDir` (Task 1).
@@ -5965,7 +5965,7 @@ test('an empty history folder lists nothing', async () => {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/history.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/history.test.mjs`
 Expected: FAIL with `Cannot find module '.../engine/model/history.mjs'`.
 
 - [ ] **Step 3: Write `engine/model/history.mjs`**
@@ -6109,22 +6109,22 @@ export function createHistoryStore(dir) {
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && npm test && npm run validate`
+Run: `cd ghcp/plugins/wintermute && npm test && npm run validate`
 Expected: all tests pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard
+git add ghcp/plugins/wintermute
 git commit -m "feat(swarm-dashboard): summarise finished runs into a history store"
 ```
 
 ### Task 15: The engine
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/engine/engine.mjs`
-- Create: `ghcp/plugins/swarm-dashboard/tests/helpers/scenario.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/engine.test.mjs`
+- Create: `ghcp/plugins/wintermute/engine/engine.mjs`
+- Create: `ghcp/plugins/wintermute/tests/helpers/scenario.mjs`
+- Test: `ghcp/plugins/wintermute/tests/engine.test.mjs`
 
 **Interfaces:**
 - Consumes: every engine module (Tasks 3–14).
@@ -6338,7 +6338,7 @@ The last lines of the first test check that the engine changed no file in the sy
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/engine.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/engine.test.mjs`
 Expected: FAIL with `Cannot find module '.../engine/engine.mjs'`.
 
 - [ ] **Step 3: Write `engine/engine.mjs`**
@@ -6723,24 +6723,24 @@ export function createSwarmEngine(options = {}) {
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && npm test && npm run validate`
+Run: `cd ghcp/plugins/wintermute && npm test && npm run validate`
 Expected: all tests pass, including the read-only fingerprint check.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard
+git add ghcp/plugins/wintermute
 git commit -m "feat(swarm-dashboard): add the polling swarm engine"
 ```
 
 ### Task 16: Snapshot command, guard tests and validator update
 
 **Files:**
-- Create: `ghcp/plugins/swarm-dashboard/scripts/swarm-snapshot.mjs`
-- Modify: `ghcp/plugins/swarm-dashboard/package.json` (add the `snapshot` script)
-- Modify: `ghcp/plugins/swarm-dashboard/scripts/validate-plugin.mjs` (required files, `snapshot` script)
-- Test: `ghcp/plugins/swarm-dashboard/tests/snapshot-cli.test.mjs`
-- Test: `ghcp/plugins/swarm-dashboard/tests/guards.test.mjs`
+- Create: `ghcp/plugins/wintermute/scripts/swarm-snapshot.mjs`
+- Modify: `ghcp/plugins/wintermute/package.json` (add the `snapshot` script)
+- Modify: `ghcp/plugins/wintermute/scripts/validate-plugin.mjs` (required files, `snapshot` script)
+- Test: `ghcp/plugins/wintermute/tests/snapshot-cli.test.mjs`
+- Test: `ghcp/plugins/wintermute/tests/guards.test.mjs`
 
 **Interfaces:**
 - Consumes: `createSwarmEngine` (Task 15), `createPrLookup` (Task 12), `parseTime` (Task 3), `scenario` helpers (Task 15).
@@ -6862,7 +6862,7 @@ test('shipped code avoids APIs newer than Node 18', () => {
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cd ghcp/plugins/swarm-dashboard && node --test tests/snapshot-cli.test.mjs tests/guards.test.mjs`
+Run: `cd ghcp/plugins/wintermute && node --test tests/snapshot-cli.test.mjs tests/guards.test.mjs`
 Expected: the CLI test fails with `Cannot find module '.../scripts/swarm-snapshot.mjs'`; the guard tests pass already (they check Tasks 2–15).
 
 - [ ] **Step 3: Write `scripts/swarm-snapshot.mjs`**
@@ -7007,13 +7007,13 @@ export const REQUIRED_FILES = [
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `cd ghcp/plugins/swarm-dashboard && npm test && npm run validate`
+Run: `cd ghcp/plugins/wintermute && npm test && npm run validate`
 Expected: all tests pass; validation passes with the longer required-file list.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add ghcp/plugins/swarm-dashboard
+git add ghcp/plugins/wintermute
 git commit -m "feat(swarm-dashboard): add the snapshot command and guard tests"
 ```
 
@@ -7041,7 +7041,7 @@ Expected: both pass; `swarm-dashboard` runs its reader tests against both the `n
 - [ ] **Step 2: Run the suite on Node 18 (sqlite3 CLI backend)**
 
 ```bash
-cd ghcp/plugins/swarm-dashboard
+cd ghcp/plugins/wintermute
 NODE18=$(command -v /usr/local/bin/node || true)
 "$NODE18" --version
 "$NODE18" --test tests/*.test.mjs
@@ -7061,7 +7061,7 @@ ls -1 "$HOME/.copilot" | sort > "$SCRATCH/copilot-before.txt"
 - [ ] **Step 4: List the real swarms (read-only, no PR lookups)**
 
 ```bash
-cd ghcp/plugins/swarm-dashboard
+cd ghcp/plugins/wintermute
 /usr/bin/time -l node scripts/swarm-snapshot.mjs --list > "$SCRATCH/list.json" 2> "$SCRATCH/list.err"
 node -e "const l=require(process.argv[1]); console.log(JSON.stringify({swarms:l.length, live:l.filter(s=>s.lifecycle==='live').length}))" "$SCRATCH/list.json"
 tail -n 20 "$SCRATCH/list.err"
