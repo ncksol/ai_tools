@@ -77,6 +77,26 @@ test('an orchestrator with only task sub-agents is a swarm root, by the ledger o
   assert.equal((await engine.getSnapshot('cli-folder')).orchestrator.kind, 'chat');
 });
 
+test('an orchestrator from the wintermute plugin with only task sub-agents is a swarm root, and its workers are not', async () => {
+  const home = scenario();
+  const roots = {
+    'ws-plugin': withSubagent(home, { id: 'ws-plugin', cli: 'cli-plugin', agent: 'wintermute:orchestrator', alive: true }),
+    'ws-plugin-session': withSubagent(home, { id: 'ws-plugin-session', cli: 'cli-plugin-session', agent: 'wintermute:session-orchestrator', alive: true }),
+    'ws-plugin-hands-on': withSubagent(home, { id: 'ws-plugin-hands-on', cli: 'cli-plugin-hands-on', agent: 'wintermute:hands-on-orchestrator', alive: true }),
+    'cli-plugin-chat': withSubagent(home, { id: 'cli-plugin-chat', kind: 'chat', agent: 'wintermute:hands-on-session-orchestrator', alive: true }),
+  };
+  const others = {
+    worker: withSubagent(home, { id: 'ws-plugin-worker', cli: 'cli-plugin-worker', agent: 'wintermute:orchestrator-worker', alive: true }),
+    sessionWorker: withSubagent(home, { id: 'ws-plugin-session-worker', cli: 'cli-plugin-session-worker', agent: 'wintermute:session-worker', alive: true }),
+    otherPlugin: withSubagent(home, { id: 'ws-other-plugin', cli: 'cli-other-plugin', agent: 'other-plugin:orchestrator', alive: true }),
+  };
+  const engine = engineFor(home, at(60));
+  await engine.refresh();
+  assert.deepEqual(ids(engine), ['cli-plugin-chat', 'ws-old', 'ws-plugin', 'ws-plugin-hands-on', 'ws-plugin-session', 'ws-root']);
+  for (const [root, cliId] of Object.entries(roots)) assert.equal(await engine.findSwarm(cliId), root, cliId);
+  for (const [name, cliId] of Object.entries(others)) assert.equal(await engine.findSwarm(cliId), null, name);
+});
+
 test('a finished or archived orchestrator with only task sub-agents is kept in History', async () => {
   const home = scenario();
   withSubagent(home, { id: 'ws-done', cli: 'cli-done' });
@@ -134,7 +154,7 @@ test('the forest makes a childless top session a root for sub-agent work only wh
   const workspace = id => [id, { id, projectId: null, worktreeId: null, name: id, branch: null, createdAt: 1, archivedAt: null, sessionId: `cli-${id}`, creatorSessionId: null, coordinatingCreatorSessionId: null, createdPr: null }];
   const app = {
     projects: new Map(), worktrees: new Map(), automations: [], diagnostics: [], parentLinks: [], chatLinks: [],
-    workspaces: new Map([workspace('orch'), workspace('hands-on'), workspace('plain'), workspace('mixed')]),
+    workspaces: new Map([workspace('orch'), workspace('hands-on'), workspace('plain'), workspace('mixed'), workspace('plugin'), workspace('plugin-worker')]),
     // ws mixed: its older CLI session ran an orchestrator without sub-agents, its current one started sub-agents with no agent.
     // cli-orphan's alias names a workspace that is gone, so it is no chat and no root.
     aliases: [{ sessionId: 'cli-mixed-old', workspaceId: 'mixed', createdAt: 0 }, { sessionId: 'cli-orphan', workspaceId: 'ws-gone', createdAt: 0 }],
@@ -143,12 +163,14 @@ test('the forest makes a childless top session a root for sub-agent work only wh
       session('cli-mixed-old', 'orchestrator'), session('cli-mixed', null),
       session('chat-orch', 'session-orchestrator'), session('chat-hands-on', 'hands-on-session-orchestrator'),
       session('chat-plain', 'andrej'), session('cli-orphan', 'orchestrator'),
+      session('cli-plugin', 'wintermute:orchestrator'), session('cli-plugin-worker', 'wintermute:orchestrator-worker'),
+      session('chat-plugin', 'wintermute:session-orchestrator'),
     ]),
   };
-  const worked = new Set(['cli-orch', 'cli-hands-on', 'cli-plain', 'cli-mixed', 'chat-orch', 'chat-hands-on', 'chat-plain', 'cli-orphan']);
+  const worked = new Set(['cli-orch', 'cli-hands-on', 'cli-plain', 'cli-mixed', 'chat-orch', 'chat-hands-on', 'chat-plain', 'cli-orphan', 'cli-plugin', 'cli-plugin-worker', 'chat-plugin']);
   assert.deepEqual(buildForest(app).roots, []);
   const forest = buildForest(app, { hasSubagents: cliId => worked.has(cliId) });
-  assert.deepEqual(forest.roots.map(root => root.id).sort(), ['chat-hands-on', 'chat-orch', 'hands-on', 'orch']);
+  assert.deepEqual(forest.roots.map(root => root.id).sort(), ['chat-hands-on', 'chat-orch', 'chat-plugin', 'hands-on', 'orch', 'plugin']);
   assert.equal(forest.nodes.get('chat-orch').kind, 'chat');
   assert.equal(forest.nodes.get('chat-hands-on').kind, 'chat');
 });

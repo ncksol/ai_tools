@@ -2,8 +2,17 @@ function makeNode(fields) {
   return { ...fields, currentCliSessionId: fields.cliSessionIds[fields.cliSessionIds.length - 1] ?? null, parentId: null, childIds: [], depth: 0 };
 }
 
-/** The agents that follow the swarm dashboard data contract (ghcp/agents/orchestrator.agent.md, session-orchestrator.agent.md, hands-on-orchestrator.agent.md and hands-on-session-orchestrator.agent.md). */
-export const ORCHESTRATOR_AGENTS = Object.freeze(['orchestrator', 'session-orchestrator', 'hands-on-orchestrator', 'hands-on-session-orchestrator']);
+/** The plugin that ships the orchestrator agents; the runtime names a plugin agent `<plugin>:<file-stem>`. */
+export const AGENT_PLUGIN = 'wintermute';
+
+/** The orchestrator agents that follow the swarm dashboard data contract (com.github.copilot/agents/orchestrator.agent.md, session-orchestrator.agent.md, hands-on-orchestrator.agent.md and hands-on-session-orchestrator.agent.md). */
+export const ORCHESTRATOR_AGENT_NAMES = Object.freeze(['orchestrator', 'session-orchestrator', 'hands-on-orchestrator', 'hands-on-session-orchestrator']);
+
+/**
+ * The agent IDs that data.db sessions.agent records for those orchestrators: the plugin's `wintermute:<name>`, and the bare
+ * `<name>` of runs from before the agents moved into the plugin, which stay in History.
+ */
+export const ORCHESTRATOR_AGENTS = Object.freeze([...ORCHESTRATOR_AGENT_NAMES, ...ORCHESTRATOR_AGENT_NAMES.map(name => `${AGENT_PLUGIN}:${name}`)]);
 
 /**
  * Session tree. Project sessions nest through workspace_parent_links; chat children through chat_parent_links; a

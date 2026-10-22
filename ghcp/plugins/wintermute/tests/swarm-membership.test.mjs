@@ -63,6 +63,10 @@ test('an orchestrator waiting on its tagged plan question is a swarm before its 
     ['ws-session-plan', 'cli-session-plan', 'session-orchestrator'],
     ['ws-hands-on-plan', 'cli-hands-on-plan', 'hands-on-orchestrator'],
     ['ws-hands-on-session-plan', 'cli-hands-on-session-plan', 'hands-on-session-orchestrator'],
+    ['ws-plugin-plan', 'cli-plugin-plan', 'wintermute:orchestrator'],
+    ['ws-plugin-session-plan', 'cli-plugin-session-plan', 'wintermute:session-orchestrator'],
+    ['ws-plugin-hands-on-plan', 'cli-plugin-hands-on-plan', 'wintermute:hands-on-orchestrator'],
+    ['ws-plugin-hands-on-session-plan', 'cli-plugin-hands-on-session-plan', 'wintermute:hands-on-session-orchestrator'],
   ];
   for (const [id, cli, agent] of extra) lone(home, { id, cli, agent, ask: PLAN });
   const engine = engineFor(home, () => at(60));
@@ -96,6 +100,9 @@ test('a top-level session with no child is not a swarm without the whole signal'
     'ws-archived': { agent: 'orchestrator', ask: PLAN, archivedAt: at(58) },
     'ws-worker': { agent: 'orchestrator-worker', ask: PLAN },
     'ws-session-worker': { agent: 'session-worker', ask: PLAN },
+    'ws-plugin-worker': { agent: 'wintermute:orchestrator-worker', ask: PLAN },
+    'ws-plugin-session-worker': { agent: 'wintermute:session-worker', ask: PLAN },
+    'ws-other-plugin': { agent: 'other-plugin:orchestrator', ask: PLAN },
     'ws-other-agent': { agent: 'andrej', ask: PLAN },
   };
   const cli = {};
@@ -191,7 +198,10 @@ test('a chat that runs an orchestrator and waits on a tagged question is a swarm
 });
 
 test('the forest makes a top session with no child a root only when the engine names it', () => {
-  assert.deepEqual(ORCHESTRATOR_AGENTS, ['orchestrator', 'session-orchestrator', 'hands-on-orchestrator', 'hands-on-session-orchestrator']);
+  assert.deepEqual(ORCHESTRATOR_AGENTS, [
+    'orchestrator', 'session-orchestrator', 'hands-on-orchestrator', 'hands-on-session-orchestrator',
+    'wintermute:orchestrator', 'wintermute:session-orchestrator', 'wintermute:hands-on-orchestrator', 'wintermute:hands-on-session-orchestrator',
+  ]);
   const session = (id, agent) => [id, { id, title: id, mode: null, model: null, reasoningEffort: null, isRunning: false, wasInterrupted: false, createdAt: 1, archivedAt: null, agent }];
   const workspace = (id, sessionId, archivedAt = null) => [id, { id, projectId: null, worktreeId: null, name: id, branch: null, createdAt: 1, archivedAt, sessionId, creatorSessionId: null, coordinatingCreatorSessionId: null, createdPr: null }];
   const app = {
