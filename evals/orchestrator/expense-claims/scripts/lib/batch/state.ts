@@ -137,6 +137,7 @@ export interface RunState {
   lastStartAt?: string;
   kickoffAt?: string;
   prepared?: boolean;
+  preparedSha?: string;
   prompt?: string;
   kickoffChecked?: boolean;
   judged: string[];

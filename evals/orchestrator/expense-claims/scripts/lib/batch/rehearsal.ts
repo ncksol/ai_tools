@@ -30,8 +30,8 @@ async function git(cwd: string, args: string[]): Promise<void> {
   if (result.code !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
 }
 
-function childEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
+function childEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env = { ...source };
   delete env.NODE_TEST_CONTEXT;
   return env;
 }
@@ -145,7 +145,7 @@ export async function rehearse(opts: { scenarios?: Scenario[]; runsPerVariant?: 
       clock.now += ms;
       app.tick();
     },
-    exec: (cmd, args, execOpts) => runProc(cmd, args, { cwd: execOpts?.cwd, env: childEnv(), timeoutMs: execOpts?.timeoutMs }),
+    exec: (cmd, args, execOpts) => runProc(cmd, args, { cwd: execOpts?.cwd, env: childEnv(execOpts?.env), timeoutMs: execOpts?.timeoutMs }),
     driverId: "session:rehearsal-driver",
     driverAlive: () => true,
     // The real OS lock, as in a batch.

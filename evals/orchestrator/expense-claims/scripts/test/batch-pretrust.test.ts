@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, test } from "node:test";
@@ -19,6 +19,8 @@ async function make(opts: Parameters<typeof harness>[0]): Promise<Harness> {
   return h;
 }
 after(() => { for (const h of made) rmSync(h.dir, { recursive: true, force: true }); });
+
+const gitArgs = (args: string[]) => args[0] === "--git-dir" ? args.slice(4) : args;
 
 async function provision(h: Harness) {
   return h.until((action) => !["create_project", "create_trust_session"].includes(action.action), 100);
@@ -259,7 +261,7 @@ test("a restart after pruning resumes from persisted preparation without the ori
   const exec = h.ctx.deps.exec;
   let interrupted = false;
   h.ctx.deps.exec = async (cmd, args, opts) => {
-    if (cmd === "git" && args[0] === "gc" && !interrupted) {
+    if (cmd === "git" && gitArgs(args)[0] === "gc" && !interrupted) {
       assert.equal(h.state().runs[0].prepared, true, "preparation is saved before destructive cleanup");
       const result = await exec(cmd, args, opts);
       assert.equal(result.code, 0, result.stderr);
@@ -291,7 +293,7 @@ test("seed pruning refuses linked worktrees and leaves their original commit int
 test("failed seed pruning stops before any run session is issued", async () => {
   const { h } = await remoteSeed();
   const exec = h.ctx.deps.exec;
-  h.ctx.deps.exec = (cmd, args, opts) => cmd === "git" && args[0] === "gc"
+  h.ctx.deps.exec = (cmd, args, opts) => cmd === "git" && gitArgs(args)[0] === "gc"
     ? Promise.resolve({ code: 1, stdout: "", stderr: "fixture cleanup failure" })
     : exec(cmd, args, opts);
   assert.equal((await h.until((a) => a.action === "create_session")).action, "done");
@@ -305,7 +307,7 @@ test("trust revoked during seed cleanup prevents a run's first session from bein
   const exec = h.ctx.deps.exec;
   h.ctx.deps.exec = async (cmd, args, opts) => {
     const result = await exec(cmd, args, opts);
-    if (cmd === "git" && args[0] === "gc") h.app.trustedProjects.clear();
+    if (cmd === "git" && gitArgs(args)[0] === "gc") h.app.trustedProjects.clear();
     return result;
   };
   assert.equal((await h.until((a) => a.action === "create_session")).action, "done");
@@ -332,6 +334,174 @@ test("a restart after the seed push resumes without another rewrite or push", as
   assert.equal((await h.next()).action, "create_session");
   assert.equal(pushes, 1);
   assert.equal(await git(["rev-parse", "HEAD"]), pushed);
+});
+
+test("a restart after remote acceptance repairs stale origin/main without another push", async () => {
+  const { h, slot, remote, git } = await remoteSeed();
+  await h.drive(await h.until((a) => a.action === "archive_trust_session"));
+  const exec = h.ctx.deps.exec;
+  let pushes = 0;
+  const updates: string[][] = [];
+  h.ctx.deps.exec = async (cmd, args, opts) => {
+    if (cmd === "git" && gitArgs(args)[0] === "update-ref") updates.push(gitArgs(args));
+    const result = await exec(cmd, args, opts);
+    if (cmd === "git" && args[0] === "push" && args.some((arg) => arg.startsWith("--force-with-lease="))) {
+      pushes++;
+      assert.equal(result.code, 0, result.stderr);
+      const accepted = await git(["rev-parse", "HEAD"], remote);
+      await git(["update-ref", "refs/remotes/origin/main", slot.seedSha!, accepted]);
+      throw new Error("interrupted after remote acceptance, before tracking update");
+    }
+    return result;
+  };
+  await assert.rejects(h.next(), /interrupted after remote acceptance/);
+  assert.equal(await git(["rev-parse", "refs/remotes/origin/main"]), slot.seedSha);
+  const accepted = await git(["rev-parse", "HEAD"], remote);
+  assert.equal(await git(["rev-parse", "HEAD"]), accepted);
+  const restarted = makeCtx(h.config, h.ctx.deps);
+  assert.equal((await next(restarted, { maxWaitMs: 0 })).action, "create_session");
+  assert.equal(pushes, 1);
+  assert.deepEqual(updates, [["update-ref", "refs/remotes/origin/main", accepted, slot.seedSha]]);
+  assert.equal(await git(["rev-parse", "refs/remotes/origin/main"]), accepted);
+  assert.equal(await git(["rev-list", "--all", "--reflog", "--count"]), "1");
+});
+
+test("persisted seed preparation repairs a stale tracking ref before pruning", async () => {
+  const { h, slot, git } = await remoteSeed();
+  const exec = h.ctx.deps.exec;
+  let interrupted = false;
+  h.ctx.deps.exec = async (cmd, args, opts) => {
+    if (cmd === "git" && gitArgs(args)[0] === "worktree" && !interrupted) {
+      assert.equal(h.state().runs[0].prepared, true);
+      const prepared = await git(["rev-parse", "HEAD"]);
+      await git(["update-ref", "refs/remotes/origin/main", slot.seedSha!, prepared]);
+      interrupted = true;
+      throw new Error("interrupted before pruning");
+    }
+    return exec(cmd, args, opts);
+  };
+  await assert.rejects(h.until((a) => a.action === "create_session"), /interrupted before pruning/);
+  const restarted = makeCtx(h.config, h.ctx.deps);
+  assert.equal((await next(restarted, { maxWaitMs: 0 })).action, "create_session");
+  assert.equal(await git(["rev-parse", "refs/remotes/origin/main"]), await git(["rev-parse", "HEAD"]));
+  assert.equal(await git(["rev-list", "--all", "--reflog", "--count"]), "1");
+});
+
+for (const scenario of ["dirty tree", "diverged remote", "concurrent tracking update"]) {
+  test(`pre-prune reconciliation refuses a ${scenario}`, async () => {
+    const { h, slot, remote, git } = await remoteSeed();
+    const exec = h.ctx.deps.exec;
+    let arranged = false;
+    let cleanup = false;
+    let raced = false;
+    h.ctx.deps.exec = async (cmd, args, opts) => {
+      const command = gitArgs(args);
+      if (cmd === "git" && command[0] === "worktree" && !arranged) {
+        const prepared = await git(["rev-parse", "HEAD"]);
+        await git(["update-ref", "refs/remotes/origin/main", slot.seedSha!, prepared]);
+        if (scenario === "dirty tree") writeFileSync(join(slot.repoDir, "README.md"), "Keep this local change.\n");
+        if (scenario === "diverged remote") await git(["update-ref", "refs/heads/main", slot.seedSha!, prepared], remote);
+        arranged = true;
+      }
+      if (cmd === "git" && command[0] === "update-ref" && scenario === "concurrent tracking update") {
+        raced = true;
+        await git(["update-ref", "refs/remotes/origin/main", command[2], slot.seedSha!]);
+      }
+      if (cmd === "git" && ["reflog", "gc"].includes(command[0])) cleanup = true;
+      return exec(cmd, args, opts);
+    };
+    assert.equal((await h.until((a) => a.action === "create_session")).action, "done");
+    assert.equal(cleanup, false);
+    assert.equal(h.app.sessions.size, 0);
+    if (scenario === "dirty tree") assert.match(h.state().stopReason!, /must be clean/);
+    if (scenario === "diverged remote") assert.match(h.state().stopReason!, /remote main no longer matches/);
+    if (scenario === "concurrent tracking update") {
+      assert.equal(raced, true);
+      assert.match(h.state().stopReason!, /reconciling seed tracking ref failed/);
+    }
+  });
+}
+
+function gitSnapshot(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => entry.isDirectory()
+    ? gitSnapshot(join(dir, entry.name)).map((value) => `${entry.name}/${value}`)
+    : [`${entry.name}:${createHash("sha256").update(readFileSync(join(dir, entry.name))).digest("hex")}`]).sort();
+}
+
+async function nestedSeed() {
+  const fixture = await remoteSeed();
+  const { h, git } = fixture;
+  const outer = h.config.runsDir;
+  await git(["init", "-q", "-b", "main"], outer);
+  writeFileSync(join(outer, ".gitignore"), "*\n");
+  await git(["add", "-f", ".gitignore"], outer);
+  const identity = ["-c", "user.name=Outer", "-c", "user.email=outer@example.invalid"];
+  await git([...identity, "commit", "-q", "-m", "Outer base"], outer);
+  const kept = await git(["rev-parse", "HEAD"], outer);
+  await git([...identity, "commit", "-q", "--allow-empty", "-m", "Outer reflog-only work"], outer);
+  const original = await git(["rev-parse", "HEAD"], outer);
+  await git(["update-ref", "refs/heads/main", kept, original], outer);
+  return { ...fixture, outer, original, before: gitSnapshot(join(outer, ".git")) };
+}
+
+test("a missing clone .git stops cleanup without touching the surrounding repository", async () => {
+  const { h, slot, outer, original, before } = await nestedSeed();
+  const exec = h.ctx.deps.exec;
+  let removed = false;
+  h.ctx.deps.exec = (cmd, args, opts) => {
+    if (cmd === "git" && gitArgs(args)[0] === "worktree" && !removed) {
+      assert.equal(h.state().runs[0].prepared, true);
+      rmSync(join(slot.repoDir, ".git"), { recursive: true });
+      removed = true;
+    }
+    return exec(cmd, args, opts);
+  };
+  const result = await h.until((a) => a.action === "create_session");
+  const retained = await runProc("git", ["cat-file", "-e", original], { cwd: outer });
+  assert.equal(retained.code, 0, "outer reflog-only commit must be preserved");
+  assert.deepEqual(gitSnapshot(join(outer, ".git")), before);
+  assert.equal(result.action, "done");
+  assert.equal(h.state().phase, "stopped");
+  assert.equal(h.app.sessions.size, 0);
+});
+
+test("cleanup ignores inherited Git repository overrides and preserves the surrounding repository", async () => {
+  const { h, slot, outer, original, before } = await nestedSeed();
+  const exec = h.ctx.deps.exec;
+  h.ctx.deps.exec = (cmd, args, opts) => {
+    if (cmd === "git" && h.state().runs[0]?.prepared && opts?.cwd &&
+        realpathSync(opts.cwd) === realpathSync(slot.repoDir)) {
+      const env = { ...opts.env, GIT_DIR: join(outer, ".git"), GIT_WORK_TREE: outer };
+      return runProc(cmd, args, { ...opts, env });
+    }
+    return exec(cmd, args, opts);
+  };
+  assert.equal((await h.until((a) => a.action === "create_session")).action, "create_session");
+  const retained = await runProc("git", ["cat-file", "-e", original], { cwd: outer });
+  assert.equal(retained.code, 0);
+  assert.deepEqual(gitSnapshot(join(outer, ".git")), before);
+});
+
+test("cleanup refuses a HEAD changed after the prepared commit was saved", async () => {
+  const { h, git } = await remoteSeed();
+  const exec = h.ctx.deps.exec;
+  let changed = false;
+  let cleanup = false;
+  h.ctx.deps.exec = async (cmd, args, opts) => {
+    const command = gitArgs(args);
+    if (cmd === "git" && h.state().runs[0]?.prepared && !changed) {
+      const prepared = await git(["rev-parse", "HEAD"]);
+      await git(["commit", "--amend", "-q", "-m", "Other seed"]);
+      await git(["push", "-q", `--force-with-lease=refs/heads/main:${prepared}`, "origin", "HEAD:refs/heads/main"]);
+      changed = true;
+    }
+    if (cmd === "git" && ["reflog", "gc"].includes(command[0])) cleanup = true;
+    return exec(cmd, args, opts);
+  };
+  assert.equal((await h.until((a) => a.action === "create_session")).action, "done");
+  assert.match(h.state().stopReason!, /HEAD differs from the saved prepared commit/);
+  assert.equal(cleanup, false);
+  assert.equal(h.app.sessions.size, 0);
 });
 
 test("the exact seed lease rejects a concurrent remote main change without overwriting it", async () => {

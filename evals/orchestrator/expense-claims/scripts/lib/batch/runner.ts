@@ -6,7 +6,7 @@
 // Exclusive access: every read-modify-write of a batch's state (next, record, stop) holds the batch
 // lock; only the batch's owning driver may run next and record; and only one batch is active on the
 // machine (the active-batch guard). See lock.ts.
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { describeSession, type LogEvent } from "../events.ts";
 import { ALL_FEATURES, featureSetName, stripFeatures } from "../features.ts";
@@ -85,7 +85,7 @@ export const TIMEOUTS = { git: 2 * 60_000, newRun: 10 * 60_000, score: 30 * 60_0
 export interface Deps {
   now(): number;
   sleep(ms: number): Promise<void>;
-  exec(cmd: string, args: string[], opts?: { cwd?: string; timeoutMs?: number }): Promise<ProcResult>;
+  exec(cmd: string, args: string[], opts?: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number }): Promise<ProcResult>;
   notify(notice: Notice): Promise<{ ok: boolean; error?: string }>;
   appDb: AppDb;
   awake: { start(untilMs: number): number | null; alive(pid: number): boolean; stop(pid: number): void };
@@ -1070,6 +1070,9 @@ async function prepareRun(ctx: Ctx, run: RunState): Promise<string | null> {
       if (push.code !== 0) return `pushing run features failed: ${push.stderr.trim()}`;
     }
   }
+  const prepared = await gitInRun(["rev-parse", "HEAD"]);
+  if (prepared.code !== 0) return `cannot record prepared seed: ${prepared.stderr.trim()}`;
+  run.preparedSha = prepared.stdout.trim();
   run.prompt = readFileSync(join(config.kitDir, "kickoff.md"), "utf8").trimEnd();
   run.prepared = true;
   return null;
@@ -1077,10 +1080,42 @@ async function prepareRun(ctx: Ctx, run: RunState): Promise<string | null> {
 
 async function pruneSeedHistory(ctx: Ctx, run: RunState): Promise<string | null> {
   if (run.features.length === ALL_FEATURES.length) return null;
-  const gitInRun = (args: string[]) => ctx.deps.exec("git", args, { cwd: run.repoDir, timeoutMs: TIMEOUTS.git });
+  if (!existsSync(run.repoDir)) return "run clone is missing; refusing seed cleanup";
+  const root = realpathSync(run.repoDir);
+  const gitDir = join(root, ".git");
+  if (!existsSync(gitDir) || !lstatSync(gitDir).isDirectory()) return "run clone has no private .git directory; refusing seed cleanup";
+  const env = { ...process.env };
+  for (const key of ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_SHALLOW_FILE"]) delete env[key];
+  const gitInRun = (args: string[]) => ctx.deps.exec("git", ["--git-dir", gitDir, "--work-tree", root, ...args], {
+    cwd: root, env, timeoutMs: TIMEOUTS.git,
+  });
+  const top = await gitInRun(["rev-parse", "--show-toplevel"]);
+  const common = await gitInRun(["rev-parse", "--git-common-dir"]);
+  if (top.code !== 0 || top.stdout.trim() !== root || common.code !== 0 || common.stdout.trim() !== gitDir) {
+    return "seed cleanup repository differs from the run clone";
+  }
+  const head = await gitInRun(["rev-parse", "HEAD"]);
+  if (!run.preparedSha || head.code !== 0 || head.stdout.trim() !== run.preparedSha) return "seed HEAD differs from the saved prepared commit; refusing cleanup";
   const worktrees = await gitInRun(["worktree", "list", "--porcelain"]);
   if (worktrees.code !== 0 || worktrees.stdout.split("\n").filter((line) => line.startsWith("worktree ")).length !== 1) {
     return "cannot prune the unused seed while linked worktrees exist or cannot be checked";
+  }
+  const status = await gitInRun(["status", "--porcelain"]);
+  if (status.code !== 0 || status.stdout.trim() !== "") return "the prepared seed must be clean before history cleanup";
+  if (!ctx.config.dryRun) {
+    const remote = await gitInRun(["ls-remote", "--heads", "origin", "main"]);
+    if (remote.code !== 0) return `cannot verify prepared seed before cleanup: ${remote.stderr}`;
+    const preparedSha = run.preparedSha;
+    if (remote.stdout.trim().split(/\s+/)[0] !== preparedSha) return "remote main no longer matches the prepared seed; refusing cleanup";
+    const ref = "refs/remotes/origin/main";
+    const tracking = await gitInRun(["rev-parse", "--verify", ref]);
+    if (tracking.code !== 0) return `cannot read seed tracking ref: ${tracking.stderr.trim()}`;
+    const previousSha = tracking.stdout.trim();
+    if (previousSha !== preparedSha) {
+      if (previousSha !== run.seedSha) return "local origin/main differs from both the provisioned and prepared seed; refusing cleanup";
+      const updated = await gitInRun(["update-ref", ref, preparedSha, previousSha]);
+      if (updated.code !== 0) return `reconciling seed tracking ref failed: ${updated.stderr.trim()}`;
+    }
   }
   for (const args of [["reflog", "expire", "--expire=now", "--all"], ["gc", "--prune=now"]]) {
     const result = await gitInRun(args);

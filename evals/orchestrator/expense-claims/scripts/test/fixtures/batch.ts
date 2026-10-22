@@ -39,8 +39,8 @@ export interface Harness {
 
 const HEADER = RESULT_COLUMNS.join(",") + "\n";
 
-function env(): NodeJS.ProcessEnv {
-  const copy = { ...process.env };
+function env(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const copy = { ...source };
   delete copy.NODE_TEST_CONTEXT;
   return copy;
 }
@@ -163,7 +163,7 @@ export async function harness(opts: {
         });
         return { code: 0, stdout: "scored", stderr: "" };
       }
-      return runProc(cmd, args, { cwd: execOpts?.cwd, env: env(), timeoutMs: execOpts?.timeoutMs });
+      return runProc(cmd, args, { cwd: execOpts?.cwd, env: env(execOpts?.env), timeoutMs: execOpts?.timeoutMs });
     },
     driverId: "session:driver-1",
     driverAlive: (id) => (h.alive.has(id) ? h.alive.get(id)! : true),
