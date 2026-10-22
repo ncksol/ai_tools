@@ -442,8 +442,8 @@ const nothingLiveDemo = () => nothingLive(createDemoEngine({ scenario: 'example'
 function phaseServers(servers, issues) {
   const started = [];
   let port = 0;
-  const serve = async (uiFingerprint, createEngine) => {
-    const server = createDashboardServer({ createEngine, port, version: 'layout-check', uiFingerprint, hub: { engineIdleMs: 600000 } });
+  const serve = async (uiFingerprint, createEngine, version = '0.1.0') => {
+    const server = createDashboardServer({ createEngine, port, version, uiFingerprint, hub: { engineIdleMs: 600000 } });
     started.push(server);
     servers.push(server);
     await server.listen();
@@ -611,6 +611,66 @@ async function watchReload(page, servers) {
     }
     await new Promise(resolve => setTimeout(resolve, 3000));
     if (await page.evaluate('window.swarmMark').catch(() => undefined) !== 'b') issues.push('the page reloaded again for a fingerprint it had already tried');
+
+    // Out-of-date notice in the regular view (light and dark, narrow canvas width) must show the full recovery text without clipping and pass the layout audit.
+    const noticeUrl = `${third.url}?host=canvas&plugin=0.2.0`;
+    const noticeText = 'Dashboard server v0.1.0 is older than installed plugin v0.2.0: to update the dashboard, reload extensions in every session or restart the app; a dashboard started separately in a browser has to be restarted by whoever started it.';
+    for (const theme of THEMES) {
+      await page.setColorScheme(theme);
+      await page.goto(noticeUrl, 480);
+      await page.waitFor(`location.href === ${JSON.stringify(noticeUrl)} && document.documentElement.dataset.ready === '1' && document.querySelector('[data-version-notice]') !== null`, 5000);
+      const noticeState = await page.evaluate(`(() => {
+        const el = document.querySelector('[data-version-notice]');
+        if (!el || el.getClientRects().length === 0) return { text: null, clipped: true };
+        return { text: el.textContent, clipped: el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1 };
+      })()`);
+      if (noticeState.text !== noticeText) issues.push(`version notice (${theme}): text is ${JSON.stringify(noticeState.text)}, not ${JSON.stringify(noticeText)}`);
+      if (noticeState.clipped) issues.push(`version notice (${theme}): recovery text is clipped at 480 px`);
+      const audit = await page.evaluate(auditScript(AUDIT_DEFAULTS));
+      for (const issue of audit.issues) issues.push(`version notice (${theme}): ${issue.rule} on ${issue.target} (${issue.detail})`);
+    }
+    await page.setColorScheme('light');
+
+    // Cockpit self-reload on changed UI fingerprint after reconnect, preserving plugin=0.2.0 and not reloading twice.
+    const ckUrl = `${third.url}cockpit?host=canvas&plugin=0.2.0`;
+    await page.goto(ckUrl, 1280, 800);
+    await page.waitFor(`location.href === ${JSON.stringify(ckUrl)} && document.documentElement.dataset.ready === '1' && document.querySelector('[data-version-notice]') !== null`, 8000);
+    await page.evaluate("sessionStorage.removeItem('swarm-dashboard:reloaded-for'); window.swarmMark = 'ck-a'");
+    if (!await waitForClient(third, 5000)) {
+      issues.push('the cockpit did not open its live connection within 5 s');
+      return { issues };
+    }
+    const fourth = await phase.restart(third, 'layout-check-d', moved);
+    if (!fourth) return { issues };
+    try {
+      await page.waitFor("window.swarmMark === undefined && document.documentElement.dataset.ready === '1'", 15000);
+    } catch {
+      issues.push('the cockpit did not reload for new dashboard files within 15 s');
+      return { issues };
+    }
+    const ckAfter = await page.evaluate(`({
+      own: document.querySelector('meta[name="swarm-ui"]')?.content,
+      search: location.search,
+      attempted: sessionStorage.getItem('swarm-dashboard:reloaded-for'),
+      notice: document.querySelector('[data-version-notice]')?.textContent ?? null,
+    })`);
+    if (ckAfter.own !== 'layout-check-d') issues.push(`the reloaded cockpit has the dashboard files ${ckAfter.own}, not layout-check-d`);
+    if (ckAfter.search !== '?host=canvas&plugin=0.2.0') issues.push(`the reloaded cockpit changed its address: ${ckAfter.search}`);
+    if (ckAfter.attempted !== 'layout-check-d') issues.push(`the cockpit remembered the attempt as ${ckAfter.attempted}, not layout-check-d`);
+    if (ckAfter.notice !== noticeText) issues.push('the reloaded cockpit lost its out-of-date notice');
+    if (!await waitForClient(fourth, 5000)) {
+      issues.push('the reloaded cockpit did not open its live connection within 5 s');
+      return { issues };
+    }
+    await page.evaluate("sessionStorage['swarm-dashboard:reloaded-for'] = 'layout-check-e'; window.swarmMark = 'ck-b'");
+    const fifth = await phase.restart(fourth, 'layout-check-e', moved);
+    if (!fifth) return { issues };
+    if (!await waitForClient(fifth, 15000)) {
+      issues.push('the cockpit did not reconnect to the restarted server within 15 s');
+      return { issues };
+    }
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    if (await page.evaluate('window.swarmMark').catch(() => undefined) !== 'ck-b') issues.push('the cockpit reloaded again for a fingerprint it had already tried');
     return { issues };
   } finally {
     await phase.close();
@@ -1054,7 +1114,10 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
     let reloadIssues = [];
     if (!options.live) {
       reloadIssues = (await watchReload(page, servers)).issues;
-      if (!reloadIssues.length) stdout.write('Self-reload (stress, two live swarms): the page reloaded once for new dashboard files, kept the Board tab, the open detail and the swarm it showed by default when the server\'s default moved to the other swarm, and did not reload again for files it had already tried.\n');
+      if (!reloadIssues.length) {
+        stdout.write('Self-reload (stress, two live swarms): the regular view and the cockpit each reloaded once for new dashboard files, the regular view kept the Board tab, the open detail and the swarm it showed by default when the server\'s default moved to the other swarm, and neither reloaded again for files it had already tried.\n');
+        stdout.write('Out-of-date notice (regular view, light and dark themes at 480 px): the full recovery text is visible without clipping and passes the layout audit.\n');
+      }
       for (const issue of reloadIssues) stderr.write(`reload: ${issue}\n`);
     }
     let reconnectIssues = [];

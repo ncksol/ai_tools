@@ -1,4 +1,5 @@
 /** HTML for the cockpit's panels, its top line, its quality switch and its note. Pure: Node tests import it. */
+import { versionNotice } from './app.mjs';
 import { count, countdown, credits, dur, esc, liveTime, plural, usdRounded } from './format.mjs';
 import { runClockEnd, runEnd } from './model.mjs';
 import { activityRows, clockText, costView, dateText, legend, needRows, nextCheckAt, prRows, runLine, stateWord, tileGrid, timeText, unitCounts } from './cockpit-model.mjs';
@@ -108,6 +109,11 @@ export function hudHtml({ demo, connection, snapshot }) {
   if (demo) parts.push('Sample data');
   if (snapshot?.run.lifecycle === 'finished') parts.push('Swarm finished');
   return `<span>${parts.join(' · ')}</span>${connection === 'retrying' ? '<span class="ck-warn"> · Disconnected · retrying</span>' : ''}`;
+}
+
+export function outHtml({ serverVersion = null, installedVersion = null } = {}) {
+  const notice = versionNotice({ serverVersion, installedVersion });
+  return notice ? `<p data-version-notice>${esc(notice.text)}</p>` : '';
 }
 
 export const qualityHtml = quality => QUALITIES.map(name => `<button type="button" data-quality="${name}" aria-pressed="${name === quality}">${QUALITY_WORDS[name]}</button>`).join('');

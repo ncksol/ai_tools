@@ -13,6 +13,7 @@ The `swarm-dashboard` plugin is now `wintermute`: one plugin that ships the orch
 ### Added
 
 - Six agents, in `com.github.copilot/agents/`: `orchestrator`, `session-orchestrator`, `hands-on-orchestrator`, `hands-on-session-orchestrator`, `orchestrator-worker` and `session-worker`. Before, they were loose files in `ghcp/agents/` that you symlinked or copied into `~/.copilot/agents/`.
+- When a canvas opened by a newer installed plugin is served by an older running dashboard server, both the regular view and the cockpit show an out-of-date notice naming the running and installed versions and how to update the dashboard; the cockpit also reloads once when the UI fingerprint changes after reconnect, matching the regular view. The notice appears from 0.2.0 on; an older running dashboard from before 0.2.0 is replaced by the migration's restart or extension reload.
 - This changelog.
 - Dependency-free release commands to bump the three versions together and publish a guarded `wintermute-vX.Y.Z` tag and GitHub Release, with authentication and origin-repository preflight checks, a read-only dry run and offline tests.
 - `npm run validate` also checks the six agents (each exists, its frontmatter follows a strict flat YAML subset and its decoded `name` matches the file name, and it starts the workers by their `wintermute:` IDs), that `plugin.json` has no `agents` field, that no copy of them stays in `ghcp/agents/`, and that this file has an entry for the current version.

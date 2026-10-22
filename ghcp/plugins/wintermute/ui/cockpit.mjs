@@ -4,11 +4,12 @@
  * the scene with WebGL2 (cockpit-gl.mjs) at most 30 times a second, never while the window is hidden and only once
  * under "reduce motion".
  */
+import { RELOAD_KEY, reloadDecision } from './app.mjs';
 import { createRenderer } from './cockpit-gl.mjs';
 import { fitPanels } from './cockpit-fit.mjs';
 import { showInRegular } from './cockpit-link.mjs';
 import { clockText, dateText } from './cockpit-model.mjs';
-import { activityHtml, clockHtml, costHtml, hudHtml, needsHtml, noteHtml, prsHtml, qualityHtml, statusHtml, unitsHtml } from './cockpit-panels.mjs';
+import { activityHtml, clockHtml, costHtml, hudHtml, needsHtml, noteHtml, outHtml, prsHtml, qualityHtml, statusHtml, unitsHtml } from './cockpit-panels.mjs';
 import { createAdaptive, drawsHole, frameDue, loopRuns, readQuality, saveQuality } from './cockpit-quality.mjs';
 import { SCENE } from './cockpit-shaders.mjs';
 import { DESIGN_HEIGHT, FOCAL, REST, STILL_TIME, cameraTarget, easeCamera, panelCss, viewMatrix, worldCss } from './cockpit-space.mjs';
@@ -28,6 +29,8 @@ const FRESH_MS = 1700;
 const state = {
   swarm: params.get('swarm'),
   session: params.get('session'),
+  installedVersion: params.get('plugin')?.trim() || null,
+  serverVersion: null,
   snapshot: null,
   offset: 0,
   demo: false,
@@ -36,6 +39,8 @@ const state = {
   fresh: new Set(),
   freshUntil: 0,
 };
+const ownUi = document.querySelector('meta[name="swarm-ui"]')?.content || null;
+let servedUi = null;
 const now = () => Date.now() + state.offset;
 
 let renderer = null;
@@ -72,6 +77,12 @@ function renderPanels() {
   const s = state.snapshot;
   const fresh = performance.now() < state.freshUntil ? state.fresh : new Set();
   morph($('ck-hud'), hudHtml({ demo: state.demo, connection: state.connection, snapshot: s }));
+  const out = $('ck-out');
+  const notice = outHtml({ serverVersion: state.serverVersion, installedVersion: state.installedVersion });
+  if (out) {
+    out.hidden = !notice;
+    morph(out, notice);
+  }
   morph($('ck-qual'), qualityHtml(state.quality));
   morph($('ck-clock'), clockHtml(s, t));
   morph($('ck-cost'), costHtml(s, t));
@@ -192,6 +203,38 @@ function start() {
 
 let source = null;
 let retry = null;
+function considerReload() {
+  if (source?.readyState !== EventSource.OPEN) return;
+  let attempted;
+  try {
+    attempted = sessionStorage.getItem(RELOAD_KEY);
+  } catch {
+    return;
+  }
+  if (reloadDecision({ own: ownUi, served: servedUi, attempted, hidden: document.visibilityState === 'hidden' }) !== 'reload') return;
+  try {
+    sessionStorage.setItem(RELOAD_KEY, servedUi);
+  } catch {
+    return;
+  }
+  location.reload();
+}
+
+async function checkServerVersion() {
+  if (!state.installedVersion) return;
+  try {
+    const response = await fetch('/api/health');
+    if (!response.ok) return;
+    const data = await response.json();
+    if (typeof data.version === 'string' && state.serverVersion !== data.version) {
+      state.serverVersion = data.version;
+      renderPanels();
+    }
+  } catch {
+    // The hello event also carries the server version.
+  }
+}
+
 function connect() {
   clearTimeout(retry);
   source?.close();
@@ -203,9 +246,11 @@ function connect() {
   source.addEventListener('open', () => {
     state.connection = 'open';
     renderPanels();
+    checkServerVersion();
   });
   source.addEventListener('error', () => {
     state.connection = 'retrying';
+    servedUi = null;
     renderPanels();
     if (source.readyState === EventSource.CLOSED) retry = setTimeout(connect, 2000);
   });
@@ -213,6 +258,10 @@ function connect() {
     const data = JSON.parse(event.data);
     state.offset = data.serverNow - Date.now();
     state.demo = Boolean(data.demo);
+    if (typeof data.version === 'string') state.serverVersion = data.version;
+    servedUi = data.ui ?? null;
+    considerReload();
+    renderPanels();
   });
   source.addEventListener('snapshot', event => {
     const data = JSON.parse(event.data);
@@ -232,7 +281,7 @@ $('ck').addEventListener('click', event => {
   if (!event.target.closest('.ck-panel, .ck-note')) return;
   const el = event.target.closest('[data-detail], [data-tab]');
   const detail = el?.dataset.detail ?? null;
-  showInRegular(window, { swarm: state.snapshot?.run.id ?? state.swarm, detail, tab: el?.dataset.tab ?? (detail ? null : 'cards') });
+  showInRegular(window, { swarm: state.snapshot?.run.id ?? state.swarm, detail, tab: el?.dataset.tab ?? (detail ? null : 'cards'), plugin: state.installedVersion });
 });
 addEventListener('pointermove', event => {
   if (reduced.matches) return;
@@ -252,7 +301,10 @@ addEventListener('resize', () => {
     if (!running()) drawStill();
   }, 120);
 });
-document.addEventListener('visibilitychange', start);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') considerReload();
+  start();
+});
 reduced.addEventListener('change', () => {
   pointer.x = 0;
   pointer.y = 0;

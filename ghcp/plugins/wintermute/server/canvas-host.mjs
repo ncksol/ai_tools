@@ -4,11 +4,13 @@ import { listenShared, probePort } from './shared.mjs';
 export const CANVAS_TITLE = 'Swarm dashboard';
 
 /** The page address for one canvas: the swarm named in its input, else the swarm of the session it opened in. */
-export function pageUrl(port, { sessionId, input } = {}) {
+export function pageUrl(port, { sessionId, input, version } = {}) {
   const query = new URLSearchParams({ host: 'canvas' });
   const swarm = input && typeof input === 'object' && typeof input.swarm === 'string' ? input.swarm.trim() : '';
   if (swarm) query.set('swarm', swarm);
   else if (sessionId) query.set('session', sessionId);
+  const plugin = typeof version === 'string' ? version.trim() : '';
+  if (plugin) query.set('plugin', plugin);
   return `http://127.0.0.1:${port}/?${query}`;
 }
 
@@ -138,7 +140,7 @@ export function createCanvasHost({
       // A canvas that closed meanwhile, if it was the last one here, lets this process's server go once nothing uses it.
       if (!instances.has(id) && !instances.size && server) scheduleRelease();
       else watch();
-      return { url: pageUrl(port, ctx), title: CANVAS_TITLE };
+      return { url: pageUrl(port, { ...ctx, version }), title: CANVAS_TITLE };
     },
     onClose(ctx = {}) {
       instances.delete(ctx.instanceId ?? '');

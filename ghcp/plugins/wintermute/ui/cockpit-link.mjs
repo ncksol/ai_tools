@@ -11,13 +11,18 @@ export const COCKPIT_WINDOW = 'swarm-cockpit';
 export const SHOW = 'swarm-dashboard:show';
 export const TABS = Object.freeze(['cards', 'timeline', 'plan', 'board']);
 
-export const cockpitPath = swarm => `/cockpit?${new URLSearchParams({ swarm })}`;
+export function cockpitPath(swarm, plugin = null) {
+  const query = new URLSearchParams({ swarm });
+  if (plugin) query.set('plugin', plugin);
+  return `/cockpit?${query}`;
+}
 
-export function regularPath({ swarm, detail = null, tab = null }) {
+export function regularPath({ swarm, detail = null, tab = null, plugin = null }) {
   const query = new URLSearchParams();
   if (swarm) query.set('swarm', swarm);
   if (TABS.includes(tab)) query.set('tab', tab);
   if (detail) query.set('detail', detail);
+  if (plugin) query.set('plugin', plugin);
   return `/?${query}`;
 }
 
@@ -46,8 +51,8 @@ const hrefOf = win => {
 };
 
 /** Open or focus the cockpit for a swarm. Returns the address to show when no window can open, else null. */
-export function openCockpit(win, { swarm, host }) {
-  const url = new URL(cockpitPath(swarm), win.location.href).href;
+export function openCockpit(win, { swarm, host, plugin = null }) {
+  const url = new URL(cockpitPath(swarm, plugin), win.location.href).href;
   if (host === 'canvas') return { url, reason: 'canvas', copied: null };
   win.name = REGULAR_WINDOW;
   const { availWidth, availHeight } = win.screen;
@@ -88,16 +93,17 @@ export function showRequest(view, data) {
   if (!data || data.kind !== SHOW || typeof data.swarm !== 'string') return null;
   const detail = typeof data.detail === 'string' ? data.detail : null;
   const tab = TABS.includes(data.tab) ? data.tab : null;
-  if (view.snapshot?.run.id !== data.swarm) return { reload: regularPath({ swarm: data.swarm, detail, tab }) };
-  if (view.snapshot.run.lifecycle === 'finished' && !view.swarm) return { reload: regularPath({ swarm: data.swarm, detail, tab }) };
+  const plugin = view.installedVersion ?? null;
+  if (view.snapshot?.run.id !== data.swarm) return { reload: regularPath({ swarm: data.swarm, detail, tab, plugin }) };
+  if (view.snapshot.run.lifecycle === 'finished' && !view.swarm) return { reload: regularPath({ swarm: data.swarm, detail, tab, plugin }) };
   return { detail, tab };
 }
 
 /** From the cockpit: show a unit's details or a tab in the regular window, opening one when it is gone. */
-export function showInRegular(win, { swarm, detail = null, tab = null }) {
+export function showInRegular(win, { swarm, detail = null, tab = null, plugin = null }) {
   const regular = win.open('', REGULAR_WINDOW);
   if (!regular) return false;
-  if (hrefOf(regular) === 'about:blank') regular.location.replace(new URL(regularPath({ swarm, detail, tab }), win.location.href).href);
+  if (hrefOf(regular) === 'about:blank') regular.location.replace(new URL(regularPath({ swarm, detail, tab, plugin }), win.location.href).href);
   else regular.postMessage({ kind: SHOW, swarm, detail, tab }, win.location.origin);
   regular.focus();
   return true;

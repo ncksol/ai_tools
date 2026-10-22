@@ -128,8 +128,8 @@ export const COCKPIT_AUDIT = Object.freeze({
   lineHeights: [16, 20, 24, 40],
   weights: [400, 500],
   fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
-  atoms: '.ck-panel,.ck-tile,.ck-need,.ck-pr,.ck-log-row,.ck-model,.ck-leg li,.ck-row,.ck-dot,.ck-light,.ck-bar,.ck-hud,.ck-qual button,.ck-note button',
-  containers: '.ck-panel,.ck-tile,.ck-need,.ck-pr,.ck-log-row,.ck-note,.ck',
+  atoms: '.ck-panel,.ck-tile,.ck-need,.ck-pr,.ck-log-row,.ck-model,.ck-leg li,.ck-row,.ck-dot,.ck-light,.ck-bar,.ck-hud,.ck-qual button,.ck-note button,.ck-out',
+  containers: '.ck-panel,.ck-tile,.ck-need,.ck-pr,.ck-log-row,.ck-note,.ck-out,.ck',
   follows: [],
   padding: { '.ck-panel': 16, '.d-full > .ck-tile': 12, '.d-two > .ck-tile': 8, '.d-one > .ck-tile': 8, '.ck-need': 8, '.ck-note': 16 },
   heights: { '.ck-ph': 20, '.ck-hud': 24, '.ck-qual button': 24, '.ck-pr': 40, '.ck-log-row': 20, '.ck-leg li': 20, '.ck-dot': 8, '.ck-light': 12, '.ck-bar': 4, '.d-full > .ck-tile': 80, '.d-two > .ck-tile': 48, '.d-one > .ck-tile': 32 },
@@ -144,14 +144,32 @@ export const cockpitIssues = issues => issues.filter(issue => !(issue.rule === '
 export const consoleProblems = errors => errors.map(error => `console: ${typeof error === 'string' ? error : error.message}`);
 export const expandAll = (rects, px) => Object.fromEntries(Object.entries(rects).map(([id, r]) => [id, { left: r.left - px, top: r.top - px, right: r.right + px, bottom: r.bottom + px }]));
 
-/** Runs in the page: the visible panels, top line, quality switch and note, in window px. */
+/** Runs in the page: the visible panels, top line, quality switch, out-of-date notice and note, in window px. */
 function readRects() {
   const out = {};
-  for (const el of document.querySelectorAll('.ck-panel, .ck-hud, .ck-qual, .ck-note')) {
+  for (const el of document.querySelectorAll('.ck-panel, .ck-hud, .ck-qual, .ck-note, .ck-out')) {
     const r = el.getBoundingClientRect();
     if (r.width > 0 && r.height > 0) out[el.id] = { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
   }
   return out;
+}
+
+/** Runs in the page: each expected edge text must be in a visible leaf element and fit without clipping or truncation. */
+function missingTexts(texts) {
+  const problems = [];
+  const leaves = [...document.querySelectorAll('.ck *')].filter(el => [...el.childNodes].some(node => node.nodeType === 3 && node.nodeValue.trim()));
+  for (const text of texts) {
+    const el = leaves.find(node => node.textContent.includes(text));
+    if (!el || el.getClientRects().length === 0) {
+      problems.push(`the edge value ${text} did not reach the page`);
+      continue;
+    }
+    const box = getComputedStyle(el).display === 'inline' ? el.parentElement : el;
+    if (box.scrollWidth > box.clientWidth + 1 || box.scrollHeight > box.clientHeight + 1) {
+      problems.push(`the edge value ${text} is clipped in ${box.scrollWidth}×${box.scrollHeight} px (box ${box.clientWidth}×${box.clientHeight} px)`);
+    }
+  }
+  return problems;
 }
 
 /** Runs in the page: the brightest scene pixel behind each rectangle, from a still frame at the current camera. */
@@ -219,8 +237,8 @@ async function checkState({ page, options }, { url, width, height, expect, label
   await page.waitFor(`location.href === ${JSON.stringify(url)} && document.documentElement.dataset.ready === '1'`);
   const problems = [];
   if (texts.length) {
-    const content = await page.evaluate("document.querySelector('.ck').textContent");
-    for (const text of texts) if (!content.includes(text)) problems.push(`the edge value ${text} did not reach the page`);
+    const missing = await page.evaluate(`(${missingTexts})(${JSON.stringify(texts)})`);
+    problems.push(...missing);
   }
   const shown = await page.evaluate("({ gl: document.documentElement.dataset.gl, fit: document.documentElement.dataset.fit, note: !document.getElementById('ck-note').hidden })");
   if (shown.fit !== expect.fit) problems.push(`the arrangement is ${shown.fit}, not ${expect.fit}`);
@@ -281,12 +299,13 @@ async function checkLayout(context) {
     states.push({ label: `${scenario} small`, url: `${base}cockpit?debug=1&quality=high`, width: SMALL_SIZE[0], height: SMALL_SIZE[1], expect: { fit: 'small', gl: 'on' } });
     states.push({ label: `${scenario} no-webgl`, url: `${base}cockpit?debug=1&quality=high&gl=0`, width: 1440, height: 900, expect: { fit: 'ok', gl: 'off' } });
   }
-  // On the synthetic swarms, also the longest values, at the smallest and a common window size.
-  const edge = urls.example ? createDashboardServer({ createEngine: edgeEngine, port: 0, version: 'cockpit-check', hub: { engineIdleMs: 600000 } }) : null;
+  // On the synthetic swarms, also the longest values and the out-of-date notice, at the smallest and a common window size.
+  const edge = urls.example ? createDashboardServer({ createEngine: edgeEngine, port: 0, version: '0.1.0', hub: { engineIdleMs: 600000 } }) : null;
+  const noticeText = 'Dashboard server v0.1.0 is older than installed plugin v0.2.0: to update the dashboard, reload extensions in every session or restart the app; a dashboard started separately in a browser has to be restarted by whoever started it.';
   try {
     if (edge) {
       await edge.listen();
-      for (const [width, height] of [[1100, 800], [1440, 900]]) states.push({ label: `edge ${width}x${height}`, url: `${edge.url}cockpit?debug=1&quality=high`, width, height, expect: { fit: 'ok', gl: 'on' }, texts: ['1234567', 'B0 F2a B1 D5 I1'] });
+      for (const [width, height] of [[1100, 800], [1440, 900]]) states.push({ label: `edge ${width}x${height}`, url: `${edge.url}cockpit?debug=1&quality=high&plugin=0.2.0`, width, height, expect: { fit: 'ok', gl: 'on' }, texts: ['1234567', 'B0 F2a B1 D5 I1', noticeText] });
     }
     for (const state of states) {
       const result = await checkState(context, state);
@@ -301,8 +320,9 @@ async function checkLayout(context) {
   } finally {
     await edge?.close();
   }
-  const sources = [...Object.keys(urls), ...(edge ? ['edge values'] : [])].join(', ');
+  const sources = [...Object.keys(urls), ...(edge ? ['edge values and out-of-date notice'] : [])].join(', ');
   stdout.write(`Cockpit: checked ${states.length} states (${sources}; ${COCKPIT_SIZES.map(size => size.join(' × ')).join(', ')}; a ${SMALL_SIZE.join(' × ')} window; no WebGL): ${checks} checks, ${issues} issues.\n`);
+  if (edge && !issues) stdout.write('Out-of-date notice (cockpit, 1100 × 800 and 1440 × 900): the full recovery text is visible without clipping, clears every panel across the camera\'s range, and passes the layout audit.\n');
   return issues;
 }
 

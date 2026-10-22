@@ -37,12 +37,14 @@ html[data-gl="off"] body { background: radial-gradient(ellipse at 50% 38%, rgb(2
 .ck-dim { color: var(--ink-3); }
 .ck-ellipsis { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* The flat line at the top left, and the quality switch at the top right. */
+/* The flat line at the top left, the quality switch at the top right, and the wrapping out-of-date notice below them. */
 .ck-hud { position: fixed; left: 24px; top: 16px; height: 24px; padding: 4px 8px; border-radius: 4px; background-color: var(--glass-top); font-size: 12px; line-height: 16px; color: var(--ink-2); white-space: nowrap; pointer-events: none; }
 .ck-warn { color: var(--blocked); }
 .ck-qual { position: fixed; z-index: 1; right: 24px; top: 16px; display: flex; gap: 4px; height: 24px; }
 .ck-qual button { height: 24px; padding: 4px 8px; border-radius: 4px; background-color: var(--glass-top); font-size: 12px; line-height: 16px; color: var(--ink-2); }
 .ck-qual button[aria-pressed="true"] { color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-2); }
+.ck-out { position: fixed; z-index: 1; left: 24px; top: 56px; max-width: calc(100vw - 48px); padding: 8px 12px; border-radius: 4px; background-color: var(--glass); box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--blocked) 40%, transparent); font-size: 12px; line-height: 16px; color: var(--blocked); }
+.ck-out[hidden] { display: none; }
 
 /* The 3D stage: a design space 900 px tall, scaled to the window's height; cockpit.mjs sets its size, perspective and scale. */
 .ck-stage { position: fixed; left: 0; top: 0; transform-origin: 0 0; perspective-origin: 50% 50%; }
@@ -184,7 +186,7 @@ html[data-fit="small"] .ck-stage, html[data-fit="crowded"] .ck-stage { display: 
 /* The flat arrangement the layout check audits: the same panels side by side, without 3D. */
 html[data-flat] body { overflow: auto; }
 html[data-flat] .ck { position: static; display: flex; flex-direction: column; gap: 16px; padding: 16px; }
-html[data-flat] .ck-hud, html[data-flat] .ck-qual { position: static; align-self: flex-start; }
+html[data-flat] .ck-hud, html[data-flat] .ck-qual, html[data-flat] .ck-out { position: static; align-self: flex-start; }
 html[data-flat] .ck-note { position: static; transform: none; }
 html[data-flat] #ck-gl { display: none; }
 html[data-flat] .ck-stage { position: static; width: auto !important; height: auto !important; transform: none !important; perspective: none !important; }
