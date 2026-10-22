@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tempDir } from './helpers/temp.mjs';
+import { validatePlugin } from '../scripts/validate-plugin.mjs';
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = path.resolve(pluginRoot, '../../..');
@@ -133,10 +134,11 @@ for (const [input, expected] of [['patch', '0.2.1'], ['minor', '0.3.0'], ['major
     assert.deepEqual(versions(f), [expected, expected, expected]);
     assert.equal(JSON.parse(readFileSync(f.files.marketplace, 'utf8')).plugins[0].version, '9.8.7');
     const changelog = readFileSync(f.files.changelog, 'utf8');
-    assert.ok(changelog.includes(`## ${expected}\n`));
+    const heading = new RegExp(`^## ${expected.replace(/\./g, '\\.')} — \\d{4}-\\d{2}-\\d{2}\\n\\n- TODO: Describe this release\\.\\n`, 'm');
+    assert.match(changelog, heading);
     assert.ok(changelog.includes('Release policy stays here.'));
     assert.ok(changelog.includes(notes));
-    assert.ok(changelog.indexOf(`## ${expected}\n`) < changelog.indexOf('## 0.2.0\n'));
+    assert.ok(changelog.search(heading) < changelog.indexOf('## 0.2.0\n'));
     assert.deepEqual(f.calls(), []);
   });
 }
@@ -316,4 +318,15 @@ test('publish rejects an origin that cannot name a GitHub repository', () => {
   assert.match(result.stderr, /origin/i);
   assert.equal(git(f.repo, 'tag', '--list'), '');
   assert.deepEqual(f.calls(), []);
+});
+
+test('validate refuses the TODO section that bump writes, and accepts it once the notes are written', async () => {
+  const f = fixture();
+  assert.equal(f.run('bump', ['patch']).status, 0);
+  assert.deepEqual(await validatePlugin(f.root, f.repo), ['CHANGELOG.md entry for 0.2.1 is empty or unfinished']);
+  const changelog = readFileSync(f.files.changelog, 'utf8');
+  writeFileSync(f.files.changelog, changelog.replace('- TODO: Describe this release.\n\n', ''));
+  assert.deepEqual(await validatePlugin(f.root, f.repo), ['CHANGELOG.md entry for 0.2.1 is empty or unfinished']);
+  writeFileSync(f.files.changelog, changelog.replace('- TODO: Describe this release.', '- A fix.'));
+  assert.deepEqual(await validatePlugin(f.root, f.repo), []);
 });

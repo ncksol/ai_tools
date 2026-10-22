@@ -2,7 +2,7 @@
 
 All notable changes to the `wintermute` plugin. Each version here matches `plugin.json`, `package.json` and the plugin's entry in the root `.github/plugin/marketplace.json`.
 
-For every agent or dashboard change, run `npm run release:bump -- <version|patch|minor|major>` from this plugin folder and replace the new section's TODO with release notes. Use stable SemVer; during 0.x, compatible fixes advance the patch, features and incompatible contracts advance the minor. Commit the version files and notes with the change.
+For every agent or dashboard change, run `npm run release:bump -- <version|patch|minor|major>` from this plugin folder and replace the new section's TODO with release notes. Each section starts with a heading `## X.Y.Z — YYYY-MM-DD`, the release's version and date, which `release:bump` writes. `npm run validate` and `release:publish` refuse a section that is empty or still has the TODO. Use stable SemVer; during 0.x, compatible fixes advance the patch, features and incompatible contracts advance the minor. Commit the version files and notes with the change.
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace still follows main. See [Releases](README.md#releases) for prerequisites, checks and recovery after a partial publish.
 
@@ -13,7 +13,7 @@ The `swarm-dashboard` plugin is now `wintermute`: one plugin that ships the orch
 ### Added
 
 - Six agents, in `com.github.copilot/agents/`: `orchestrator`, `session-orchestrator`, `hands-on-orchestrator`, `hands-on-session-orchestrator`, `orchestrator-worker` and `session-worker`. Before, they were loose files in `ghcp/agents/` that you symlinked or copied into `~/.copilot/agents/`.
-- When a canvas opened by a newer installed plugin is served by an older running dashboard server, both the regular view and the cockpit show an out-of-date notice naming the running and installed versions and how to update the dashboard; the cockpit also reloads once when the UI fingerprint changes after reconnect, matching the regular view. The notice appears from 0.2.0 on; an older running dashboard from before 0.2.0 is replaced by the migration's restart or extension reload.
+- When a canvas opened by a newer installed plugin is served by an older running dashboard server, both the regular view and the cockpit show an out-of-date notice naming the running and installed versions and how to update the dashboard; the cockpit also reloads once when the UI fingerprint changes after reconnect, matching the regular view. The notice appears from 0.2.0 on; an older running dashboard from before 0.2.0 is replaced by the migration's app restart or extension reload in every open session (steps 4 and 5).
 - This changelog.
 - Dependency-free release commands to bump the three versions together and publish a guarded `wintermute-vX.Y.Z` tag and GitHub Release, with authentication and origin-repository preflight checks, a read-only dry run and offline tests.
 - `npm run validate` also checks the six agents (each exists, its frontmatter follows a strict flat YAML subset and its decoded `name` matches the file name, and it starts the workers by their `wintermute:` IDs), that `plugin.json` has no `agents` field, that no copy of them stays in `ghcp/agents/`, and that this file has an entry for the current version.
@@ -51,4 +51,12 @@ Do these steps in order:
    copilot plugin install wintermute@ai-tools
    ```
 
-4. Restart the Copilot app, or start new sessions, so that sessions use the plugin's agents; a running session keeps the agents it started with. Reloading extensions in a session, or restarting the app, refreshes the dashboard canvas. A dashboard server that already runs on port 7927 keeps serving the old version until no session hosts it any more.
+4. Restart the Copilot app, or reload extensions in every open session. Any session that still runs the old extension can keep hosting the 0.1.x dashboard server on port 7927, and versions before 0.2.0 show no out-of-date notice. A session keeps the agents it started with until the app restarts, so if you only reload extensions, start a new session for orchestrator work.
+
+5. Check that the port serves the new dashboard. With a dashboard canvas open:
+
+   ```bash
+   curl -s http://127.0.0.1:7927/api/health
+   ```
+
+   The answer must include `"version":"0.2.0"`. If it shows an older version, a session still hosts the old server: restart the app.

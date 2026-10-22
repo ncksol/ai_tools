@@ -1,5 +1,6 @@
 import { access, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { isStableVersion, releaseNotesProblem } from './release.mjs';
 
 export const AGENTS_DIR = 'com.github.copilot/agents';
 export const PACKAGED_AGENTS = Object.freeze([
@@ -103,9 +104,10 @@ export async function validatePackage(root, repositoryRoot, manifest) {
   }
   try {
     const changelog = await readFile(path.join(root, 'CHANGELOG.md'), 'utf8');
-    const version = String(manifest.version ?? '').replace(/\./g, '\\.');
-    if (!version || !new RegExp(`^## \\[?${version}\\]?(?:\\s|$)`, 'm').test(changelog)) {
-      errors.push(`CHANGELOG.md must have a "## ${manifest.version}" entry for the current version`);
+    // validate-plugin.mjs reports a version that breaks the version rule.
+    if (isStableVersion(manifest.version)) {
+      const problem = releaseNotesProblem(changelog, manifest.version);
+      if (problem) errors.push(problem);
     }
   } catch (error) {
     errors.push(error.code === 'ENOENT' ? 'CHANGELOG.md: required file is missing' : `CHANGELOG.md: ${error.message}`);

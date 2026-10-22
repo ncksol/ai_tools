@@ -30,8 +30,8 @@ After merge, with the user's go-ahead, in this order (also in `CHANGELOG.md` 0.2
 1. Remove the six agent symlinks from `~/.copilot/agents/`. A user agent with the same file stem does not shadow a plugin agent; both load (checked on Copilot CLI 1.0.101-0). But the plugin agents are reached only by their `wintermute:` IDs, and the old symlinks would stay separate bare-named agents with the same display names in the picker, running old prompts that start bare-named workers. Once the main checkout pulls this change, the symlinks also point at files that no longer exist.
 2. Uninstall `swarm-dashboard@ai-tools`. Two installed plugins that both register the `swarm-dashboard` canvas would clash.
 3. Install `wintermute@ai-tools`.
-4. Restart the app, or start new sessions, so that sessions use the plugin's agents. Reloading extensions refreshes the dashboard canvas in a running session, but not its agents.
-5. Check that a new `session-orchestrator` session starts `wintermute:session-worker` children and that the dashboard shows them.
+4. Restart the app, or reload extensions in every open session: any session that still runs the old extension can keep hosting the 0.1.x dashboard server on port 7927, and versions before 0.2.0 show no out-of-date notice. A session keeps the agents it started with until the app restarts, so after an extension reload alone, orchestrator work starts in a new session.
+5. Check that `curl -s http://127.0.0.1:7927/api/health` reports `"version":"0.2.0"` with a dashboard canvas open, and that a new `session-orchestrator` session starts `wintermute:session-worker` children and that the dashboard shows them.
 
 ## Trade-off
 

@@ -150,15 +150,13 @@ copilot plugin install adr-authoring@ai-tools
 
 Direct installs from a repo, URL or local path (`copilot plugin install ./ghcp/plugins/adr-authoring`) still work, but the CLI marks them deprecated in favour of `plugin@marketplace`.
 
-For the orchestrator agents and the swarm dashboard, install `wintermute`:
+For the orchestrator agents and the swarm dashboard, install `wintermute`. If you used the `swarm-dashboard` plugin or symlinked the orchestrator agents into `~/.copilot/agents/`, follow the migration steps in the [`wintermute` CHANGELOG](./ghcp/plugins/wintermute/CHANGELOG.md) instead of the command below: old copies in `~/.copilot/agents/` stay separate agents with the same names in the picker and run the old prompts, and two plugins with the `swarm-dashboard` canvas clash.
 
 ```bash
 copilot plugin install wintermute@ai-tools
 ```
 
 To update it, run `copilot plugin update wintermute@ai-tools`. After you install or update it, start new sessions, or restart the Copilot app, to get the new agents: a running session keeps the agents it started with. Reloading extensions in a session, or restarting the app, refreshes the dashboard canvas. Changes to the agents reach you through a plugin update after they merge, not through `git pull`.
-
-If you used the `swarm-dashboard` plugin or symlinked the orchestrator agents into `~/.copilot/agents/`, follow the migration steps in the [`wintermute` CHANGELOG](./ghcp/plugins/wintermute/CHANGELOG.md) first: old copies in `~/.copilot/agents/` stay separate agents with the same names in the picker and run the old prompts, and two plugins with the `swarm-dashboard` canvas clash.
 
 ### Option 1: Symlink (recommended — you get updates with `git pull`)
 

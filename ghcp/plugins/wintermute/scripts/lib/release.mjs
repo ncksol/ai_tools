@@ -5,6 +5,24 @@ import { fileURLToPath } from 'node:url';
 export const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 export const repositoryRoot = path.resolve(pluginRoot, '../../..');
 
+/** The text release:bump writes into a new CHANGELOG section; validate and publish refuse a section that still has it. */
+export const NOTES_PLACEHOLDER = 'TODO: Describe this release.';
+
+/** A CHANGELOG section heading: `## X.Y.Z — YYYY-MM-DD`. */
+export function changelogHeading(version, date) {
+  return `## ${version} — ${date}`;
+}
+
+/** Whether `version` is stable SemVer X.Y.Z with no leading zeros, the one version rule for validate, bump and publish. */
+export function isStableVersion(version) {
+  try {
+    versionParts(version);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function versionParts(version) {
   if (typeof version !== 'string' || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version) || version.includes('\n')) {
     throw new Error(`Invalid version ${JSON.stringify(version)}: expected stable SemVer X.Y.Z (no prerelease or build suffix).`);
@@ -37,4 +55,17 @@ export function releaseSection(changelog, version) {
   const rest = changelog.slice(start);
   const next = rest.search(/^## /m);
   return rest.slice(0, next < 0 ? undefined : next).trim();
+}
+
+/** Why the CHANGELOG section for `version` is not ready to release, or null when it is. */
+export function releaseNotesProblem(changelog, version) {
+  let notes;
+  try {
+    notes = releaseSection(changelog, version);
+  } catch (error) {
+    return error.message;
+  }
+  if (notes === null) return `CHANGELOG.md must have a "## ${version}" entry for the current version`;
+  if (!notes || notes.includes(NOTES_PLACEHOLDER)) return `CHANGELOG.md entry for ${version} is empty or unfinished`;
+  return null;
 }

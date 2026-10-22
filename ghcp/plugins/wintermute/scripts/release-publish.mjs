@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { validatePlugin } from './validate-plugin.mjs';
-import { pluginRoot, repositoryRoot, readReleaseFiles, releaseSection, versionParts } from './lib/release.mjs';
+import { NOTES_PLACEHOLDER, pluginRoot, repositoryRoot, readReleaseFiles, releaseSection, versionParts } from './lib/release.mjs';
 
 function run(command, args, input) {
   const result = spawnSync(command, args, { cwd: repositoryRoot, encoding: 'utf8', input });
@@ -45,7 +45,7 @@ async function main() {
   const version = files.manifest.version;
   versionParts(version);
   const notes = releaseSection(files.changelog, version);
-  if (!notes || notes.includes('TODO: Describe this release.')) throw new Error(`CHANGELOG.md entry for ${version} is empty or unfinished.`);
+  if (!notes || notes.includes(NOTES_PLACEHOLDER)) throw new Error(`CHANGELOG.md entry for ${version} is empty or unfinished.`);
   const tag = `wintermute-v${version}`;
   const tagRef = `refs/tags/${tag}`;
   if (run('git', ['tag', '--list', tag])) throw new Error(`Tag ${tag} already exists locally.`);

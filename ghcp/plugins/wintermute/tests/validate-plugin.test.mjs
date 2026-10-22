@@ -174,3 +174,13 @@ test('a quoted agent name is compared after decoding, and an invalid description
   assert.deepEqual(await validatePlugin(root, repo),
     ['com.github.copilot/agents/session-worker.agent.md: frontmatter description contains ": ", " #", a tab or a trailing ":"; quote it']);
 });
+
+test('validate applies the release version rule: stable SemVer with no leading zeros', async () => {
+  for (const version of ['0.02.0', '01.2.0', '0.2.0-beta.1', '0.2']) {
+    const { repo, root } = sandbox();
+    for (const file of ['plugin.json', 'package.json']) editJson(path.join(root, file), value => { value.version = version; });
+    editJson(path.join(repo, '.github/plugin/marketplace.json'), marketplace => { marketplace.plugins.find(plugin => plugin.name === 'wintermute').version = version; });
+    const errors = await validatePlugin(root, repo);
+    assert.deepEqual(errors, ['plugin.json version must be stable SemVer X.Y.Z with no leading zeros'], version);
+  }
+});

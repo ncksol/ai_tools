@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateDashboard } from './lib/validate-dashboard.mjs';
 import { validatePackage } from './lib/validate-package.mjs';
+import { isStableVersion } from './lib/release.mjs';
 
 export const PLUGIN_NAME = 'wintermute';
 export const REQUIRED_FILES = [
@@ -42,7 +43,7 @@ export async function validatePlugin(root, repositoryRoot) {
   ]);
   if (manifest.name !== PLUGIN_NAME || pkg.name !== PLUGIN_NAME) errors.push(`plugin.json and package.json name must be ${PLUGIN_NAME}`);
   if (!/^[a-z0-9-]{1,64}$/.test(manifest.name ?? '')) errors.push('plugin.json name must be kebab-case and at most 64 characters');
-  if (!/^\d+\.\d+\.\d+$/.test(manifest.version ?? '')) errors.push('plugin.json version must be semantic x.y.z');
+  if (!isStableVersion(manifest.version)) errors.push('plugin.json version must be stable SemVer X.Y.Z with no leading zeros');
   if (pkg.version !== manifest.version) errors.push('package.json version must match plugin.json version');
   if (typeof manifest.description !== 'string' || !manifest.description.trim()) errors.push('plugin.json requires a description');
   if (manifest.license !== 'MIT') errors.push('plugin.json license must be MIT');

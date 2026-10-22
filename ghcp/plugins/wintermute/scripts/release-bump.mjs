@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { writeFile } from 'node:fs/promises';
-import { readReleaseFiles, releaseSection, versionParts } from './lib/release.mjs';
+import { NOTES_PLACEHOLDER, changelogHeading, readReleaseFiles, releaseSection, versionParts } from './lib/release.mjs';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -26,7 +26,8 @@ async function main() {
     const first = changelog.search(/^## /m);
     const index = first < 0 ? changelog.length : first;
     const preamble = changelog.slice(0, index).trimEnd();
-    changelog = `${preamble}\n\n## ${version}\n\n- TODO: Describe this release.\n\n${changelog.slice(index)}`;
+    const date = new Date().toISOString().slice(0, 10);
+    changelog = `${preamble}\n\n${changelogHeading(version, date)}\n\n- ${NOTES_PLACEHOLDER}\n\n${changelog.slice(index)}`;
   }
   files.manifest.version = files.pkg.version = files.entry.version = version;
   const contents = [files.manifest, files.pkg, files.marketplace].map(value => `${JSON.stringify(value, null, 2)}\n`);

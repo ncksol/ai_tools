@@ -38,7 +38,7 @@ You need:
 - Node 24.
 - `gh`, logged in as the repo owner (`ncksol` by default) with the `repo` scope. Several accounts may be logged in, so `new-run` checks the active account and stops if it isn't the owner. Switch with `gh auth switch`, or check `GH_TOKEN`.
 - The Copilot app.
-- The installed `wintermute@ai-tools` plugin; follow [its installation and migration steps](../../../ghcp/plugins/wintermute/README.md). After migration, remove the six old loose-agent symlinks as that runbook directs, and start a new app session so it loads the plugin agents. Do not link the live agents back into `~/.copilot/agents/`. The pinned A/B/C comparison has a separate registration step below.
+- The installed `wintermute@ai-tools` plugin; follow [its installation and migration steps](../../../ghcp/plugins/wintermute/README.md). Follow the migration steps there (step 1 removes the six old loose-agent symlinks), then start a new app session so it loads the plugin agents. Do not link the live agents back into `~/.copilot/agents/`. The pinned A/B/C comparison has a separate registration step below.
 - An orchestrator agent that can read files, for example with a `view` tool. The kickoff doesn't include the spec; it points at `docs/spec-v2.md` in the run repo. An agent that can't read files has to delegate the read, and that time counts in its score.
 
 Choose one model and effort for the orchestrator session, for example Claude Opus 5.5 at max. Use the same model and effort for every run. `score` records them from the session log. Child sessions and sub-agents pick their own models from each agent's tier table; that is part of what the eval tests.
