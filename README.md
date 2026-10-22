@@ -158,7 +158,7 @@ copilot plugin install wintermute@ai-tools
 
 To update it, run `copilot plugin update wintermute@ai-tools`. After you install or update it, start new sessions, or restart the Copilot app, to get the new agents: a running session keeps the agents it started with. Reloading extensions in a session, or restarting the app, refreshes the dashboard canvas. Changes to the agents reach you through a plugin update after they merge, not through `git pull`.
 
-If you used the `swarm-dashboard` plugin or symlinked the orchestrator agents into `~/.copilot/agents/`, follow the migration steps in the [`wintermute` CHANGELOG](./ghcp/plugins/wintermute/CHANGELOG.md) first: agents in `~/.copilot/agents/` shadow the plugin's, and two plugins with the `swarm-dashboard` canvas clash.
+If you used the `swarm-dashboard` plugin or symlinked the orchestrator agents into `~/.copilot/agents/`, follow the migration steps in the [`wintermute` CHANGELOG](./ghcp/plugins/wintermute/CHANGELOG.md) first: old copies in `~/.copilot/agents/` stay separate agents with the same names in the picker and run the old prompts, and two plugins with the `swarm-dashboard` canvas clash.
 
 ### Option 1: Symlink (recommended — you get updates with `git pull`)
 
@@ -180,7 +180,7 @@ done
 
 To update, run `git -C ~/src/ai_tools pull`, then run both loops again. `git pull` updates the skills and agents you have already linked, but a new one needs a link of its own. The `-n` flag makes a rerun replace each existing link instead of creating a new link inside the folder it points to.
 
-The loops cover the loose skills and agents only. The orchestrator agents come with the `wintermute` plugin; don't link them into `~/.copilot/agents/`, where they would shadow the plugin's copies.
+The loops cover the loose skills and agents only. The orchestrator agents come with the `wintermute` plugin; don't link them into `~/.copilot/agents/`, where they would show up as separate bare-named agents beside the plugin's `wintermute:` ones.
 
 ### Option 2: Copy
 

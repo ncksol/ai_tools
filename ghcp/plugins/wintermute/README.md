@@ -28,7 +28,7 @@ Then start new sessions, or restart the app, to get the updated agents: a runnin
 
 Before 0.2.0 the dashboard was the `swarm-dashboard` plugin and the agents were loose files that you linked or copied into `~/.copilot/agents/`. To move to `wintermute`:
 
-1. Remove the six agents from `~/.copilot/agents/`. Agents there load before plugin agents and would shadow this plugin's copies.
+1. Remove the six agents from `~/.copilot/agents/`. The plugin's agents answer only to their `wintermute:` IDs. Old copies there stay separate agents under the bare names, with the same names in the agent picker, and run the old prompts, which start bare-named workers. Once your clone pulls this release, the symlinks also point at files that no longer exist.
 2. Run `copilot plugin uninstall swarm-dashboard@ai-tools`. Two installed plugins that both register the `swarm-dashboard` canvas would clash.
 3. Run `copilot plugin install wintermute@ai-tools`.
 4. Restart the app, or start new sessions, so that sessions use this plugin's agents. Reloading extensions refreshes the dashboard canvas in a running session, but not its agents.
@@ -48,7 +48,7 @@ The agents are in `com.github.copilot/agents/`. Copilot names a plugin agent `<p
 | `orchestrator-worker` | `wintermute:orchestrator-worker` | Does one-off jobs for `orchestrator` and `hands-on-orchestrator`, which start it through `task`. Hidden from the picker. |
 | `session-worker` | `wintermute:session-worker` | The agent every child session of `session-orchestrator` and `hands-on-session-orchestrator` runs as. Hidden from the picker. |
 
-Run an orchestrator as the session's agent in the GitHub Copilot app: pick it before your first message, from the composer's **+** menu or with `/agent`. Where a tool or CLI flag takes an agent ID, use the `wintermute:` ID. The orchestrators start their workers by these IDs, so the workers must come from this plugin too.
+Run an orchestrator as the session's agent in the GitHub Copilot app: pick it before your first message, from the composer's **+** menu or with `/agent`. Where a tool or CLI flag takes an agent ID, use the `wintermute:` ID. A bare name never resolves to a plugin agent, so the orchestrators start their workers by these IDs, and the workers must come from this plugin too.
 
 ## The swarm dashboard
 

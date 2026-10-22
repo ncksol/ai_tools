@@ -25,7 +25,7 @@ The `swarm-dashboard` plugin is now `wintermute`: one plugin that ships the orch
 
 Do these steps in order:
 
-1. Remove the six agent symlinks or copies from `~/.copilot/agents/`. Agents there load before plugin agents and would shadow the plugin's copies:
+1. Remove the six agent symlinks or copies from `~/.copilot/agents/`. The plugin's agents answer only to their `wintermute:` IDs. Old copies there stay separate agents under the bare names, with the same names in the agent picker, and run the old prompts, which start bare-named workers. Once your clone pulls this release, the symlinks also point at files that no longer exist. A bare name never resolves to a plugin agent, so the orchestrators start their workers by `wintermute:` IDs. To remove the old agents:
 
    ```bash
    for agent in orchestrator session-orchestrator hands-on-orchestrator hands-on-session-orchestrator orchestrator-worker session-worker; do
