@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { run } from "../lib/proc.ts";
 import { RESULT_COLUMNS } from "../lib/results.ts";
 import { KIT_DIR } from "../lib/suite.ts";
+import { loadState } from "../lib/batch/state.ts";
 
 let dir: string;
 let common: string[];
@@ -24,16 +25,18 @@ before(async () => {
 });
 after(() => rmSync(dir, { recursive: true, force: true }));
 
-function batch(args: string[]) {
-  const env: NodeJS.ProcessEnv = { ...process.env };
+function batch(args: string[], extraEnv: NodeJS.ProcessEnv = {}) {
+  const env: NodeJS.ProcessEnv = { ...process.env, ...extraEnv };
   delete env.NODE_TEST_CONTEXT;
   return run(process.execPath, ["scripts/batch.ts", ...args], { cwd: KIT_DIR, env });
 }
 
 test("init refuses a self-test agent that is an orchestrator", async () => {
-  const result = await batch(["init", "--dry-run", "--memory-off", "--variants", "variant-a", "--self-test-agent", "session-orchestrator", ...common]);
-  assert.equal(result.code, 2);
-  assert.match(result.stderr, /must not use the agent "session-orchestrator"/);
+  for (const agent of ["session-orchestrator", "wintermute:session-orchestrator", "wintermute:hands-on-orchestrator"]) {
+    const result = await batch(["init", "--dry-run", "--memory-off", "--variants", "variant-a", "--self-test-agent", agent, ...common]);
+    assert.equal(result.code, 2);
+    assert.ok(result.stderr.includes(`must not use the agent "${agent}"`), result.stderr);
+  }
 });
 
 test("init selects all pinned aliases and refuses ambiguous selection or a variant self-test", async () => {
@@ -85,6 +88,41 @@ test("init runs the four orchestrators in parallel by default and refuses more r
     assert.equal(rejected.code, 2);
     assert.match(rejected.stderr, error);
   }
+});
+
+test("prefixed live selection keeps historical labels and rejects duplicate spellings", async () => {
+  writeFileSync(join(dir, "agents", "orchestrator.agent.md"), "live\n");
+  const init = await batch(["init", "--dry-run", "--memory-off", "--variants", "wintermute:orchestrator", "--id", "prefixed", ...common]);
+  assert.equal(init.code, 0, init.stdout + init.stderr);
+  const config = JSON.parse(readFileSync(join(dir, "batches", "prefixed", "config.json"), "utf8"));
+  const state = loadState(join(dir, "batches", "prefixed"));
+  assert.deepEqual(config.variants, ["orchestrator"]);
+  assert.ok(state.pins.agents["wintermute:orchestrator"]);
+  const duplicate = await batch(["init", "--dry-run", "--memory-off", "--variants", "orchestrator,wintermute:orchestrator", "--id", "duplicate", ...common]);
+  assert.equal(duplicate.code, 2);
+  assert.match(duplicate.stderr, /listed twice/);
+});
+
+test("live defaults read installed plugin files while manifest defaults read user-registered aliases", async () => {
+  const home = join(dir, "home");
+  const plugin = join(home, ".copilot", "installed-plugins", "ai-tools", "wintermute", "com.github.copilot", "agents");
+  const aliases = join(home, ".copilot", "agents");
+  mkdirSync(plugin, { recursive: true });
+  mkdirSync(aliases);
+  writeFileSync(join(plugin, "orchestrator.agent.md"), 'Use wintermute:orchestrator-worker.\n');
+  writeFileSync(join(plugin, "orchestrator-worker.agent.md"), "worker\n");
+  const noAgentsOverride = common.filter((arg, i) => arg !== "--agents-dir" && common[i - 1] !== "--agents-dir");
+  const live = await batch(["init", "--dry-run", "--memory-off", "--variants", "orchestrator", "--id", "default-live", ...noAgentsOverride], { HOME: home });
+  assert.equal(live.code, 0, live.stdout + live.stderr);
+  assert.equal(JSON.parse(readFileSync(join(dir, "batches", "default-live", "config.json"), "utf8")).agentsDir, plugin);
+  const manifest = join(KIT_DIR, "variants", "review-policy.json");
+  for (const agent of ["orchestrator-review-a", "orchestrator-review-b", "orchestrator-review-c", "orchestrator-worker"]) {
+    cpSync(join(KIT_DIR, "variants", `${agent}.agent.md`), join(aliases, `${agent}.agent.md`));
+  }
+  const pinned = await batch(["init", "--dry-run", "--memory-off", "--variants-file", manifest, "--id", "default-pinned", ...noAgentsOverride], { HOME: home });
+  assert.equal(pinned.code, 0, pinned.stdout + pinned.stderr);
+  assert.equal(JSON.parse(readFileSync(join(dir, "batches", "default-pinned", "config.json"), "utf8")).agentsDir, aliases);
+  assert.match(pinned.stdout, /PASS variant snapshot hashes/);
 });
 
 test("init, next, record and status work from the command line", async () => {

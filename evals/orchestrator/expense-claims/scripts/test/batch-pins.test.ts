@@ -57,3 +57,30 @@ test("any change to a pinned agent, its link, the kit files or the versions is d
   writeFileSync(join(dir, "Info.plist"), "<key>CFBundleShortVersionString</key><string>1.1.31</string>");
   assert.deepEqual(diffPins(third, pins()), ["kickoff.md changed", "app version 1.1.30 -> 1.1.31"]);
 });
+
+test("plugin IDs resolve to bare filenames and pin prefixed workers and their dependencies", () => {
+  const plugin = join(dir, "plugin");
+  mkdirSync(plugin);
+  writeFileSync(join(plugin, "orchestrator.agent.md"), 'Use agent_type: "wintermute:orchestrator-worker". Not other:session-worker.\n');
+  writeFileSync(join(plugin, "orchestrator-worker.agent.md"), 'Use wintermute:session-worker.\n');
+  writeFileSync(join(plugin, "session-worker.agent.md"), "worker\n");
+  const options = { agentsDir: plugin, variants: ["wintermute:orchestrator"], files: {}, appPlist: "", cliVersionFile: "" };
+  assert.deepEqual(agentsToPin(plugin, options.variants), {
+    names: ["wintermute:orchestrator", "wintermute:orchestrator-worker", "wintermute:session-worker"], missing: [],
+  });
+  const before = computePins(options);
+  assert.equal(before.agents["wintermute:orchestrator-worker"].path, realpathSync(join(plugin, "orchestrator-worker.agent.md")));
+  writeFileSync(join(plugin, "orchestrator-worker.agent.md"), 'Changed; use wintermute:session-worker.\n');
+  assert.match(diffPins(before, computePins(options)).join("; "), /agent wintermute:orchestrator-worker changed/);
+  unlinkSync(join(plugin, "session-worker.agent.md"));
+  assert.deepEqual(agentsToPin(plugin, options.variants).missing, ["wintermute:session-worker"]);
+  assert.ok(diffPins(before, computePins(options)).includes("agent wintermute:session-worker is gone"));
+});
+
+test("names in a different plugin namespace do not pin a local worker", () => {
+  const plugin = join(dir, "isolated-plugin");
+  mkdirSync(plugin);
+  writeFileSync(join(plugin, "orchestrator.agent.md"), "Do not use other:session-worker.\n");
+  writeFileSync(join(plugin, "session-worker.agent.md"), "unrelated\n");
+  assert.deepEqual(agentsToPin(plugin, ["wintermute:orchestrator"]), { names: ["wintermute:orchestrator"], missing: [] });
+});

@@ -22,6 +22,16 @@ before(() => {
 });
 after(() => rmSync(dir, { recursive: true, force: true }));
 
+test("manual session discovery matches a namespaced live agent to its historical variant label", () => {
+  const state = mkdtempSync(join(dir, "plugin-"));
+  for (const [id, agent] of [["live", "wintermute:orchestrator"], ["other", "wintermute:session-orchestrator"]]) {
+    writeSession(state, id, "test/plugin-run", "2026-01-01T10:00:00Z", [
+      ev("subagent.selected", 0, { agentName: agent }), ev("user.message", 1, { content: "Start" }),
+    ]);
+  }
+  assert.equal(chooseRunSession(state, "test/plugin-run", "orchestrator").session.id, "live");
+});
+
 test("wall time runs from the kickoff to the last assistant message", () => {
   const timing = computeTiming(basic());
   assert.equal(timing.wallMs, 20 * MIN);
