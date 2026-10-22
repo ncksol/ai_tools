@@ -147,6 +147,8 @@ export interface RunState {
   answerSource?: string;
   final?: FinalMessage;
   endReason?: "final" | "timeout" | "stalled";
+  // When the runner ended a timeout or stall run: its cutoff for permission prompts, saved once.
+  endAt?: string;
   endingSince?: string;
   scoredAt?: string;
   scoreExit?: number;

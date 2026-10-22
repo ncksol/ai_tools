@@ -323,3 +323,45 @@ test("regression: a run whose row score saved before the runner stopped is adopt
   assert.match(report, /- variant-a #1: its result stands/);
   assert.match(report, /\| stalled \|/);
 });
+
+// Critical re-review SF: the scoring hold is bounded. A timeout or stall run's end is saved once, so
+// requests that start after it never delay scoring past the end plus the grace period.
+test("regression: new permission requests at every poll after a stall don't hold scoring past its end plus 30 seconds", async () => {
+  const h = await make({ scenarios: ["stall"], runsPerVariant: 1 });
+  const judge = await h.until((action) => action.action === "judge_idle" && action.target === "run");
+  await h.drive(judge);
+  // A resumed state from before the end time was saved: the runner had ended the run as stalled.
+  const state = h.state();
+  Object.assign(state.runs[0], { status: "scoring", endReason: "stalled" });
+  saveState(h.config.dir, state);
+  const session = state.runs[0].sessionId!;
+  const resumedAt = h.clock.now;
+  let seq = 0;
+  // A request that opened just as the run ended: it holds scoring until its 30 seconds pass.
+  let open: string | null = "poll-0";
+  appendEvent(h, session, "permission.requested", pendingShell(open));
+  let scoredAt: number | null = null;
+  const sleep = h.ctx.deps.sleep;
+  const exec = h.ctx.deps.exec;
+  h.ctx.deps.exec = async (cmd, args, opts) => {
+    if (args[0] === h.config.scoreScript) scoredAt ??= h.clock.now;
+    return exec(cmd, args, opts);
+  };
+  // Every poll, the last request is approved a millisecond after it started and a new one opens.
+  h.ctx.deps.sleep = async (ms) => {
+    await sleep(ms);
+    if (scoredAt !== null) return;
+    if (open) appendEvent(h, session, "permission.completed", { requestId: open, result: { kind: "approved" }, decisionSource: "host_policy" }, -ms + 1);
+    open = `poll-${++seq}`;
+    appendEvent(h, session, "permission.requested", pendingShell(open));
+  };
+  const ctx = makeCtx(h.config, h.ctx.deps);
+  while (scoredAt === null && h.clock.now - resumedAt < 10 * 60_000) {
+    const action = await next(ctx, { maxWaitMs: 60_000 });
+    if (action.action === "done") break;
+    if (action.action !== "wait") await actAsDriver(ctx, h.app, h.clock, action);
+  }
+  assert.notEqual(scoredAt, null, "scored");
+  assert.ok(scoredAt! - resumedAt <= 30_000 + h.config.pollSec * 1000, `scored ${Math.round((scoredAt! - resumedAt) / 1000)} s after the end`);
+  assert.equal(h.state().runs[0].endAt, new Date(resumedAt).toISOString(), "the end is saved once, at the resume");
+});

@@ -782,11 +782,13 @@ function voidRun(ctx: Ctx, state: BatchState, run: RunState, reason: string, sta
 // so a runner that stops in between resumes with its state behind the row.
 const rowOf = (ctx: Ctx, run: RunState) => runRowFor(readResults(ctx.config.resultsPath), run);
 
-// The run's end on the log's clock: its final report, or for a timeout or stall the time score
-// runs (score ends those runs at its own time), or once scored, when it was scored.
+// The run's end on the log's clock: its final report, or for a timeout or stall the moment the
+// runner ended it. That moment is saved once (a state from before it was saved gets it now), so
+// later requests never count as before the end, and a scoring hold ends by the end plus the grace.
 function runCutoff(run: RunState, now: number): number {
   if (run.endReason === "final" && run.final) return Date.parse(run.final.timestamp);
-  return run.scoredAt ? ms(run.scoredAt) : now;
+  run.endAt ??= run.scoredAt ?? iso(now);
+  return ms(run.endAt);
 }
 
 // The permission check once watching has ended. Whether a prompt came before or after the run's end
@@ -993,6 +995,7 @@ async function watchRun(ctx: Ctx, state: BatchState, run: RunState, index: numbe
       };
     }
     run.endReason = timedOut ? "timeout" : "stalled";
+    run.endAt = at;
     run.status = "scoring";
     if (stalled) {
       for (const s of swarm.sessions) {
