@@ -163,7 +163,7 @@ npm run score -- --summary
 
 Commit `results.csv` after each run, so the history across agent versions is kept. The scorer can read the old 21-column format and upgrades it on append or replacement. Historical fields stay unchanged; new fields remain blank rather than being backfilled with guesses.
 
-**Wintermute labels:** live runs keep the four historical bare `variant` labels and `orch-eval-<variant>-<n>` repo names. `new-run --variant` and `batch init --variants` accept either a bare live label or its `wintermute:` ID and normalize it to the bare label. `agent` records the actual logged ID, now `wintermute:<variant>`; historical rows are not rewritten. This keeps run numbering, calibration lookup and unpinned summary groups continuous with earlier rows rather than splitting a series just because of packaging. It does not claim that different agent revisions have identical behavior. Pinned A/B/C labels, logged IDs, hashes and separate bundle groups are unchanged.
+**Wintermute labels:** live runs keep the four historical bare `variant` labels and `orch-eval-<variant>-<n>` repo names. `new-run --variant`, `score --variant` and `batch init --variants` accept either a bare live label or its `wintermute:` ID and normalize it to the bare label. `agent` records the actual logged ID, now `wintermute:<variant>`; historical rows are not rewritten. This keeps run numbering, calibration lookup and unpinned summary groups continuous with earlier rows rather than splitting a series just because of packaging. It does not claim that different agent revisions have identical behavior. Pinned A/B/C labels, logged IDs, hashes and separate bundle groups are unchanged.
 
 ### Post-score robustness
 
@@ -233,6 +233,8 @@ The comparison for [#49](https://github.com/ncksol/ai_tools/issues/49) uses thre
 All snapshots live in `variants/`, outside `ghcp/agents/`. `variants/review-policy.json` pins their exact bytes. Its three `variants` entries use the alias file ID as both result label and `agent`, and include the full source `revision`, relative `file` path and `sha256`. One root `workers` map pins `orchestrator-worker` for all three; its source is identical in A and B. A and B change only their source frontmatter's `name`. C additionally changes exactly the regular-review tier row and routing sentence. Tests compare normalized source hashes, not moving branch names.
 
 Before a batch, **the user** registers four snapshot files at the top level of `~/.copilot/agents/`: `orchestrator-review-a.agent.md`, `orchestrator-review-b.agent.md`, `orchestrator-review-c.agent.md` **and `orchestrator-worker.agent.md`**, all from this kit's `variants/`. The snapshots still call the bare `orchestrator-worker`; the plugin's `wintermute:orchestrator-worker` does not satisfy that ID or the pinned worker hash. After the old live-agent symlinks are removed, the A/B/C variants need this separate, exact worker registration to work.
+
+An isolated check with Copilot CLI 1.0.101-0 confirmed that a same-stem user or project agent and a plugin agent load as separate agents: the bare ID selects the user/project copy, while the prefixed ID selects the plugin copy. A bare name never resolves to a plugin agent. Registering the bare A/B/C `orchestrator-worker` snapshot therefore leaves `wintermute:orchestrator-worker` intact.
 
 Copy the corresponding files, or link each file individually into a checkout that will not move. From this kit folder, with no batch active and none of these destinations already present:
 

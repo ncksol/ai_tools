@@ -19,7 +19,7 @@ const { values } = parseArgs({
 });
 
 if (!values.variant) {
-  console.error("Usage: npm run new-run -- --variant <agent-name> [--n <k>] [--features <list>] [--owner <login>] [--runs-dir <dir>] [--dry-run]");
+  console.error("Usage: npm run new-run -- --variant <variant> [--n <k>] [--features <list>] [--owner <login>] [--runs-dir <dir>] [--dry-run]");
   process.exit(2);
 }
 
