@@ -1,4 +1,56 @@
-# Swarm dashboard
+# Wintermute
+
+Wintermute is one Copilot plugin with two parts that are released and updated together:
+
+- the orchestrator agents for the GitHub Copilot app, which plan work and hand it to child sessions and sub-agents;
+- the swarm dashboard, which shows what those sessions and sub-agents are doing.
+
+Each release is listed in the [CHANGELOG](CHANGELOG.md).
+
+## Install
+
+```bash
+copilot plugin marketplace add ncksol/ai_tools
+copilot plugin install wintermute@ai-tools
+```
+
+Then restart the Copilot app, or ask Copilot to reload extensions in each session, so the agents and the canvas load. The plugin has no npm dependencies, and the canvas runs on the Node.js that ships with Copilot. The browser launcher and the commands below need Node.js 18 or later.
+
+## Update
+
+```bash
+copilot plugin update wintermute@ai-tools
+```
+
+Then restart the app, or reload extensions in every session. A session keeps the agents and the canvas it started with, and a dashboard server that already runs on the port keeps serving the old version until no session hosts it any more (see [Troubleshooting](#troubleshooting)). Agent changes in this repository reach you only through a plugin update, not through `git pull`.
+
+## Moving from swarm-dashboard
+
+Before 0.2.0 the dashboard was the `swarm-dashboard` plugin and the agents were loose files that you linked or copied into `~/.copilot/agents/`. To move to `wintermute`:
+
+1. Remove the six agents from `~/.copilot/agents/`. Agents there load before plugin agents and would shadow this plugin's copies.
+2. Run `copilot plugin uninstall swarm-dashboard@ai-tools`. Two installed plugins that both register the `swarm-dashboard` canvas would clash.
+3. Run `copilot plugin install wintermute@ai-tools`.
+4. Restart the app, or reload extensions in every session.
+
+The [CHANGELOG](CHANGELOG.md) entry for 0.2.0 has the commands. The canvas id (`swarm-dashboard`), the port and the run history in `~/.copilot/swarm-dashboard/` stay the same, so past runs stay in History, including runs of the agents under their old plain names.
+
+## The agents
+
+The agents are in `com.github.copilot/agents/`. Copilot names a plugin agent `<plugin>:<file name>`, so their IDs are `wintermute:<name>`. The agent picker and the composer's **+** menu show the plain name.
+
+| Agent | ID | What it does |
+| --- | --- | --- |
+| `orchestrator` | `wintermute:orchestrator` | Plans, delegates and tracks multi-PR work, with no shell, file-editing, search, web or MCP tools. Hands owned work to child sessions and one-off jobs to `orchestrator-worker` sub-agents. |
+| `session-orchestrator` | `wintermute:session-orchestrator` | Like `orchestrator`, but delegates only to child sessions, which run as `session-worker`. |
+| `hands-on-orchestrator` | `wintermute:hands-on-orchestrator` | Like `orchestrator`, but may do a quick job itself, and commits small edits on its own session branch. |
+| `hands-on-session-orchestrator` | `wintermute:hands-on-session-orchestrator` | The same change made to `session-orchestrator`. |
+| `orchestrator-worker` | `wintermute:orchestrator-worker` | Does one-off jobs for `orchestrator` and `hands-on-orchestrator`, which start it through `task`. Hidden from the picker. |
+| `session-worker` | `wintermute:session-worker` | The agent every child session of `session-orchestrator` and `hands-on-session-orchestrator` runs as. Hidden from the picker. |
+
+Run an orchestrator as the session's agent in the GitHub Copilot app: pick it before your first message, from the composer's **+** menu or with `/agent`. Where a tool or CLI flag takes an agent ID, use the `wintermute:` ID. The orchestrators start their workers by these IDs, so the workers must come from this plugin too.
+
+## The swarm dashboard
 
 A watch-only dashboard for agentic swarms in the GitHub Copilot app. A swarm is a session that has started child sessions, such as an orchestrator that hands each unit of work to its own session. Before its first child session, an `orchestrator`, `session-orchestrator`, `hands-on-orchestrator` or `hands-on-session-orchestrator` session is a swarm once it has started a `task` sub-agent, or while it waits on a tagged question, such as its plan question, so that the question shows under "Needs you". Sub-agents alone don't make other sessions swarms. The dashboard shows what every session and sub-agent is doing, how far it has got, what it costs and what needs you, so you can follow the work at a glance instead of reading transcripts.
 
@@ -15,15 +67,6 @@ It opens as a canvas in the app's side panel, or in any browser through a small 
 - Detail panel: one unit's current activity, why it counts as stuck or waiting, its latest report, sub-agents, PR and monitor (for a sub-agent: its type, mode and effort), and recent activity.
 - History: finished runs with their duration, cost and outcomes, and a summary of each run.
 
-## Install
-
-```bash
-copilot plugin marketplace add ncksol/ai_tools
-copilot plugin install swarm-dashboard@ai-tools
-```
-
-Then restart your Copilot sessions, or ask Copilot to reload extensions, so the canvas loads. The plugin has no npm dependencies, and the canvas runs on the Node.js that ships with Copilot. The browser launcher and the commands below need Node.js 18 or later.
-
 ## Open the dashboard
 
 In the Copilot app, ask the agent to open the Swarm dashboard canvas. An orchestrator can open it itself with `open_canvas` and the canvas id `swarm-dashboard`, for example when it starts its first child session. The canvas shows the swarm of the session it was opened in. If that session is in no swarm, the canvas says so, offers the live swarms in its swarm picker, and shows the session's swarm as soon as the session joins one. To show a particular swarm, pass its root session id as input: `{ "swarm": "<root session id>" }`.
@@ -31,7 +74,7 @@ In the Copilot app, ask the agent to open the Swarm dashboard canvas. An orchest
 In a browser, run the launcher from the plugin folder and open the address it prints:
 
 ```bash
-cd ~/.copilot/installed-plugins/ai-tools/swarm-dashboard   # or ghcp/plugins/swarm-dashboard in a clone
+cd ~/.copilot/installed-plugins/ai-tools/wintermute   # or ghcp/plugins/wintermute in a clone
 npm start
 ```
 
@@ -80,7 +123,7 @@ Run these from the plugin folder.
 | `npm start` | Serve the dashboard for browsers (`--port`, `--demo`, `--still`) |
 | `npm run snapshot -- --list` | Print the swarms as JSON; `--swarm <id>`, `--history` and `--run <id>` print the rest |
 | `npm test` | Run the unit tests |
-| `npm run validate` | Check the plugin's manifests, files and marketplace entry |
+| `npm run validate` | Check the plugin's manifests, files and marketplace entry, the six agents and their worker IDs, and that the CHANGELOG has an entry for the current version |
 | `npm run check:layout` | Check every view, in the light and the dark theme, for overlap, clipped text, type, spacing and contrast at every width, and that live updates leave the page steady, that History refreshes in place when a run finishes or the page reconnects, and that the theme button switches and remembers the theme, in a local headless Chrome, Chromium or Edge (set `CHROME_PATH` to choose one); `-- --live <url>` checks a running dashboard, and `-- --engine webkit` runs the same checks in WebKit (see below) |
 | `node scripts/check-cockpit.mjs` | Run only the cockpit's checks: the scene, the panels' arrangement, type, spacing and contrast, motion, the links between the windows and the regular view's speed, in a local headless Chrome, Chromium or Edge (set `CHROME_PATH` to choose one) (`--engine webkit`, `--only <check>`, `--screenshots <dir>`); `npm run check:layout` runs them too |
 | `node scripts/cockpit-gpu.mjs` | Measure the cockpit's GPU time per frame on this machine for High and Balanced (`--engine webkit`) |
@@ -113,6 +156,7 @@ Without Playwright or its WebKit build the check says so and skips. `npm test` a
 | `engine/` | Reads Copilot's local data into swarm snapshots and run summaries |
 | `server/` | The local server, live updates, the shared port and the canvas host |
 | `ui/` | The dashboard page: plain ES modules and CSS, no build step |
+| `com.github.copilot/agents/` | The six orchestrator agents |
 | `com.github.copilot/extensions/swarm-dashboard/` | The canvas extension |
 | `scripts/` | The launcher, the snapshot command, the layout check and the validator |
 | `tests/` | Unit tests and synthetic fixtures |
