@@ -4,6 +4,7 @@ import { formatSummary, readResults, summarize } from "../results.ts";
 import type { AppDb } from "./appdb.ts";
 import { runRowFor } from "./plan.ts";
 import { variantBundle } from "../variants.ts";
+import { PERMISSION_REMEDY } from "./swarm.ts";
 import type { BatchConfig, BatchState, RunState } from "./state.ts";
 
 export interface ReportExtras {
@@ -37,6 +38,22 @@ export function sessionsToArchive(state: BatchState, appDb: AppDb): string[] {
   return lines;
 }
 
+// What a tool-permission prompt did in this batch: the self-test it failed, the runs it voided or
+// flagged. Empty when there was none.
+export function permissionLines(state: BatchState): string[] {
+  const lines: string[] = [];
+  for (const test of state.selftests) {
+    if (test.failure?.includes(PERMISSION_REMEDY)) lines.push(`- The self-test failed: ${test.failure.replace(`. ${PERMISSION_REMEDY}`, "")}.`);
+  }
+  for (const run of state.runs) {
+    const flags = run.flags.filter((flag) => flag.code === "permission-prompt");
+    if (flags.length === 0) continue;
+    lines.push(`- ${runLabel(run)}: ${run.status === "void" ? "void, not scored" : "its result stands; the prompt came after its end"}.`);
+    for (const flag of flags) lines.push(`  - ${flag.detail}`);
+  }
+  return lines;
+}
+
 export function buildReport(config: BatchConfig, state: BatchState, appDb: AppDb, extras: ReportExtras): string {
   const rows = readResults(config.resultsPath);
   const out: string[] = [];
@@ -54,6 +71,12 @@ export function buildReport(config: BatchConfig, state: BatchState, appDb: AppDb
   if (state.calibration) out.push(`- Calibration: ${state.calibration}`);
   if (config.dryRun) out.push("- DRY RUN: no GitHub repos; app steps were stubbed.");
   out.push("");
+
+  const permissions = permissionLines(state);
+  if (permissions.length > 0) {
+    out.push("## Tool-permission prompts", "", "A tool-permission prompt that nobody could answer stopped this batch.", "", ...permissions, "");
+    out.push(`Cause and remedy: ${PERMISSION_REMEDY}. A void run has no row in results.csv and doesn't count toward its variant's scored runs or the calibration.`, "");
+  }
 
   out.push("## Robustness and cost", "", "Post-score robustness never changes the gate or minutes; compare counts only within the same suite hash. Cost covers the run's swarm up to the recorded snapshot, not the batch driver. Missing prices or logs leave USD blank.", "");
   out.push("| Run | Robustness | Suite SHA-256 | Cost status | USD | Sessions | Usage records | Pricing version |");
@@ -128,7 +151,7 @@ export function buildReport(config: BatchConfig, state: BatchState, appDb: AppDb
   out.push("## Morning checklist", "");
   out.push("1. Turn Copilot Memory back on at https://github.com/settings/copilot/features.");
   out.push("2. Archive the sessions listed above.");
-  out.push("3. Review the flagged runs.");
+  out.push(permissions.length > 0 ? "3. Review the flagged runs, and read \"Tool-permission prompts\" above before the next batch." : "3. Review the flagged runs.");
   out.push("4. Land the results.csv commits.");
   out.push("5. Re-enable macOS updates if you deferred them.");
   return out.join("\n") + "\n";

@@ -48,7 +48,6 @@ test("every lookup the runner uses works on the full schema, and the file is nev
   assert.deepEqual(db.probe(), []);
   assert.equal(db.sessionForWorkspace("w1"), "s1");
   assert.equal(db.workspaceForSession("s1"), "w1");
-  assert.equal(db.projectAutoApprove("p1"), 1);
   assert.deepEqual(db.interruption("s1"), { wasInterrupted: true, reason: "shutdown" });
   assert.deepEqual(db.workspaces("p1"), [{ id: "w1", sessionId: "s1", name: "run", archivedAt: null, createdBy: "agent", createdAt: "2026-10-19T22:00:00.000Z" }]);
   assert.deepEqual(db.creatorLinks("w1"), { creator: null, coordinator: null, createdBy: "agent" });

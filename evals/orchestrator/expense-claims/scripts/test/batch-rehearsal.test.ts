@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, rmSync } from "node:fs";
+import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { after, test } from "node:test";
 import { rehearse, REHEARSAL_VARIANTS, type RehearsalResult } from "../lib/batch/rehearsal.ts";
 import { run as runProc } from "../lib/proc.ts";
@@ -8,8 +8,9 @@ import { readResults } from "../lib/results.ts";
 // The whole batch, stubbed only where the app and the driver agent would act: real new-run
 // --dry-run, real score with its acceptance suite, real git commits, real curl to a local stub.
 let result: RehearsalResult | undefined;
+const others: RehearsalResult[] = [];
 after(() => {
-  if (result) rmSync(result.dir, { recursive: true, force: true });
+  for (const r of [result, ...others]) if (r) rmSync(r.dir, { recursive: true, force: true });
 });
 
 test("a rehearsal of a whole batch runs the self-test and four runs, scores each, and reports", { timeout: 600_000 }, async () => {
@@ -65,4 +66,27 @@ test("a rehearsal of a whole batch runs the self-test and four runs, scores each
   }
   assert.match(report, /Turn Copilot Memory back on/);
   assert.equal(app.sessions.size, 5);
+});
+
+test("a rehearsal without allow-all permissions stops at the self-test, before any run repo", { timeout: 120_000 }, async () => {
+  const r = await rehearse({ allowAll: false });
+  others.push(r);
+  assert.equal(r.final.details?.phase, "stopped");
+  assert.match(String(r.final.details?.reason), /^the self-test failed: no tool-permission prompt .*"Tool permissions" under "Overnight batches"/);
+  assert.equal(r.app.sessions.size, 1, "only the self-test session");
+  assert.deepEqual(readdirSync(r.config.runsDir), []);
+  assert.deepEqual(r.notifications.map((n) => n.title), ["Eval batch started", "Eval self-test FAILED", "Eval batch STOPPED"]);
+});
+
+test("a rehearsal whose run hits a permission prompt voids it, lets the other run finish, and stops early", { timeout: 600_000 }, async () => {
+  const r = await rehearse({ scenarios: ["permission-prompt", "ask-final"] });
+  others.push(r);
+  assert.equal(r.final.details?.phase, "stopped");
+  assert.match(String(r.final.details?.reason), /^variant-a#1 was blocked by a tool-permission prompt/);
+  const rows = readResults(r.config.resultsPath).filter((row) => REHEARSAL_VARIANTS.includes(row.variant));
+  assert.deepEqual(rows.map((row) => [row.variant, row.run]), [["variant-b", "1"]], "only the run that wasn't blocked is scored");
+  assert.equal(r.app.sessions.size, 3, "the self-test and round 1; no run started after the prompt");
+  assert.deepEqual(r.notifications.map((n) => n.title), ["Eval batch started", "Eval self-test passed", "Eval batch problem", "Eval run 1/4: gate-failed", "Eval batch STOPPED"]);
+  assert.equal(r.transcript.filter((line) => /send_session_message "This run is over/.test(line)).length, 1, "the void run gets the stop message");
+  assert.match(readFileSync(String(r.final.details?.report), "utf8"), /## Tool-permission prompts/);
 });

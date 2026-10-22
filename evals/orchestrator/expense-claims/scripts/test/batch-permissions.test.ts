@@ -1,0 +1,162 @@
+// Tool-permission prompts: the self-test proves a detached session can use tools with nobody
+// present, and a prompt during a batch voids the run and stops the batch.
+import assert from "node:assert/strict";
+import { appendFileSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { after, test } from "node:test";
+import type { LogEvent } from "../lib/events.ts";
+import { calibrationDecision, scoredCount } from "../lib/batch/plan.ts";
+import { STOP_MESSAGE } from "../lib/batch/runner.ts";
+import { eventsPath, PERMISSION_REMEDY } from "../lib/batch/swarm.ts";
+import { readResults } from "../lib/results.ts";
+import { harness, type Harness } from "./fixtures/batch.ts";
+
+const made: Harness[] = [];
+async function make(opts: Parameters<typeof harness>[0]): Promise<Harness> {
+  const h = await harness(opts);
+  made.push(h);
+  return h;
+}
+after(() => {
+  for (const h of made) rmSync(h.dir, { recursive: true, force: true });
+});
+
+function appendEvent(h: Harness, sessionId: string, type: string, data: Record<string, unknown>, offsetMs = 0): void {
+  const event: LogEvent = { type, timestamp: new Date(h.clock.now + offsetMs).toISOString(), data };
+  appendFileSync(eventsPath(h.config.stateDir, sessionId), JSON.stringify(event) + "\n");
+}
+
+test("the self-test prompt asks for a compound shell command with the nonce marker", async () => {
+  const h = await make({ scenarios: [], selfTest: true });
+  const action = await h.until((a) => a.action === "create_session");
+  const prompt = String((action.tool!.args.kickoff as Record<string, unknown>).prompt);
+  const nonce = h.state().selftests[0].nonce;
+  assert.match(prompt, new RegExp(`exactly as written: pwd && echo eval-selftest-${nonce}$`, "m"));
+  assert.equal((action.tool!.args.kickoff as Record<string, unknown>).agent, undefined, "still the default agent, never an orchestrator");
+});
+
+test("a self-test session without allow-all permissions fails fast and stops the batch before any run repo", async () => {
+  const h = await make({ scenarios: ["ask-final"], selfTest: true });
+  h.app.allowAll = false;
+  const started = h.clock.now;
+  await h.until(() => false);
+  const state = h.state();
+  const test = state.selftests[0];
+  assert.equal(test.status, "failed");
+  assert.match(test.failure!, /^no tool-permission prompt \(allow-all permissions\): session \S+: a shell request for pwd && echo eval-selftest-\S+ has waited for approval since .* \(permission mode manual\)\. /);
+  assert.ok(test.failure!.endsWith(PERMISSION_REMEDY));
+  assert.ok(h.clock.now - started < 5 * 60_000, `it failed after ${Math.round((h.clock.now - started) / 1000)} s, not at the 20-minute limit`);
+  assert.equal(state.runs.length, 0);
+  assert.deepEqual(readdirSync(h.config.runsDir), [], "no run repo was created");
+  assert.equal(state.phase, "stopped");
+  assert.match(state.stopReason!, /^the self-test failed: no tool-permission prompt/);
+  assert.match(state.stopReason!, /"Tool permissions" under "Overnight batches" in the kit's README/);
+  assert.deepEqual(h.notices.map((n) => n.key), ["batch-started", "selftest-1", "batch-stopped"]);
+  assert.match(h.notices[1].body, /Tool permissions/);
+  const report = readFileSync(state.reportPath!, "utf8");
+  assert.match(report, /## Tool-permission prompts\n\nA tool-permission prompt that nobody could answer stopped this batch\.\n\n- The self-test failed: no tool-permission prompt/);
+});
+
+test("a self-test whose prompt someone approved by hand still fails: the runtime was in manual mode", async () => {
+  const h = await make({ scenarios: ["ask-final"], selfTest: true });
+  await h.until((action, state) => {
+    const test = state.selftests[0];
+    if (action.action === "judge_idle" && test?.sessionId) {
+      appendEvent(h, test.sessionId, "permission.requested", { requestId: "r1", permissionRequest: { kind: "shell", fullCommandText: "pwd && echo x" }, agentMode: "interactive", permissionMode: "manual" }, -60_000);
+      appendEvent(h, test.sessionId, "permission.completed", { requestId: "r1", result: { kind: "approved" }, decisionSource: "human_response" }, -50_000);
+    }
+    return false;
+  });
+  const test = h.state().selftests[0];
+  assert.equal(test.status, "failed");
+  const check = test.checks.find((c) => c.name === "no tool-permission prompt (allow-all permissions)")!;
+  assert.deepEqual([check.ok, check.detail], [false, "1 permission request(s): 1 in manual mode, 0 pending, 0 denied; first: a shell request for pwd && echo x"]);
+  assert.ok(test.checks.find((c) => c.name === "a shell command ran with nobody present")!.ok);
+  assert.ok(test.failure!.endsWith(PERMISSION_REMEDY));
+  assert.equal(h.state().runs.length, 0);
+});
+
+test("a passing self-test ran its shell command and logged no permission request", async () => {
+  const h = await make({ scenarios: [], selfTest: true });
+  h.config.selfTest.only = true;
+  await h.until(() => false);
+  const test = h.state().selftests[0];
+  assert.equal(test.status, "passed", JSON.stringify(test.checks));
+  assert.deepEqual(
+    test.checks.filter((c) => /shell|permission/.test(c.name)).map((c) => [c.name, c.ok, c.detail]),
+    [
+      ["a shell command ran with nobody present", true, `bash completed and printed eval-selftest-${test.nonce}`],
+      ["no tool-permission prompt (allow-all permissions)", true, "no permission requests"],
+    ],
+  );
+  assert.ok(!test.checks.some((c) => /auto-approve/.test(c.name)), "the projects.auto_approve check is gone");
+});
+
+for (const scenario of ["permission-prompt", "permission-denied"] as const) {
+  test(`${scenario}: the run is void, gets the stop message, is never scored or counted, and the batch stops`, async () => {
+    const h = await make({ scenarios: [scenario, "ask-final"], runsPerVariant: 2 });
+    const sent: string[] = [];
+    const done = await h.until((action) => {
+      if (action.action === "send_message") sent.push(`${action.what} | ${String(action.tool!.args.message)}`);
+      return false;
+    });
+    assert.equal(done.action, "done");
+    const state = h.state();
+    assert.equal(state.runs.length, 1, "no further run started");
+    const run = state.runs[0];
+    assert.equal(run.status, "void");
+    assert.match(run.voidReason!, /^blocked by a tool-permission prompt: session \S+/);
+    if (scenario === "permission-prompt") assert.match(run.voidReason!, /\(sub-agent sub-agent-1\): a shell request for npm test has waited for approval/);
+    else assert.match(run.voidReason!, /was denied at .* because no one could be asked/);
+    assert.ok(run.flags.some((f) => f.code === "permission-prompt"));
+    assert.deepEqual(sent, [`The run is void and won't be scored. Send this stop message to the run's orchestrator, word for word. | ${STOP_MESSAGE}`]);
+    assert.ok(run.stopSentAt);
+    assert.equal(h.scoreCalls.length, 0);
+    const rows = readResults(h.config.resultsPath);
+    assert.equal(rows.length, 0, "a void run has no results.csv row");
+    assert.equal(scoredCount(state.runs, rows, "variant-a", run.features), 0);
+    assert.deepEqual(calibrationDecision(rows, h.config.variants).pending, ["variant-a"], "calibration still waits for a real run");
+    assert.equal(state.phase, "stopped");
+    assert.equal(state.failed, true);
+    assert.match(state.stopReason!, /^variant-a#1 was blocked by a tool-permission prompt \(/);
+    assert.ok(state.stopReason!.endsWith(PERMISSION_REMEDY));
+    assert.deepEqual(h.notices.map((n) => n.key), ["batch-started", "failure-permission-prompt", "batch-stopped"]);
+    assert.match(h.notices[1].body, /variant-a#1 is void and won't be scored.*No further run starts; the batch stops once the runs in progress end\./);
+    const report = readFileSync(state.reportPath!, "utf8");
+    assert.match(report, /## Tool-permission prompts/);
+    assert.match(report, /- variant-a #1: void, not scored\./);
+    assert.match(report, /\| void: blocked by a tool-permission prompt/);
+  });
+}
+
+test("a prompt in one run of a round voids that run; the other run already in progress finishes and is scored", async () => {
+  const h = await make({ scenarios: ["permission-prompt", "ask-final"], variants: ["variant-a", "variant-b"], runsPerVariant: 2, parallel: 2 });
+  await h.until(() => false);
+  const state = h.state();
+  assert.deepEqual(state.runs.map((r) => [r.key, r.status]), [["variant-a#1", "void"], ["variant-b#1", "done"]]);
+  assert.deepEqual(readResults(h.config.resultsPath).map((r) => [r.variant, r.outcome]), [["variant-b", "passed"]]);
+  assert.equal(state.phase, "stopped");
+  assert.match(state.stopReason!, /variant-a#1 was blocked by a tool-permission prompt/);
+});
+
+test("a prompt after a run's final report keeps its score but stops the batch", async () => {
+  const h = await make({ scenarios: ["ask-final", "ask-final"], runsPerVariant: 2 });
+  let injected = false;
+  // Injected while the final report is being judged, so the runner first sees it after the run's end.
+  await h.until((action, state) => {
+    const run = state.runs[0];
+    if (!injected && action.action === "judge_idle" && /work is done/.test(JSON.stringify(action.details?.messages))) {
+      injected = true;
+      appendEvent(h, run.sessionId!, "permission.requested", { requestId: "late", permissionRequest: { kind: "custom-tool", toolName: "archive_session" }, agentMode: "interactive", permissionMode: "manual" }, -120_000);
+    }
+    return false;
+  });
+  const state = h.state();
+  assert.ok(injected);
+  assert.equal(state.runs.length, 1);
+  assert.equal(state.runs[0].status, "done");
+  assert.equal(readResults(h.config.resultsPath)[0].outcome, "passed");
+  assert.match(readResults(h.config.resultsPath)[0].note, /permission-prompt/);
+  assert.equal(state.phase, "stopped");
+  assert.match(state.stopReason!, /^variant-a#1's swarm hit a tool-permission prompt after the run ended \(.*archive_session/);
+  assert.match(readFileSync(state.reportPath!, "utf8"), /- variant-a #1: its result stands; the prompt came after its end\./);
+});

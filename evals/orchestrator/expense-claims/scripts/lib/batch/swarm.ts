@@ -282,24 +282,15 @@ export interface SessionActivity {
   id: string;
   lastAt: number;
   openTools: { toolName: string; agentId: string | null; at: number }[];
-  pendingPermissions: number;
-  unattendedDenials: number;
 }
 
 export function sessionActivity(id: string, events: LogEvent[]): SessionActivity {
   const completed = new Set<string>();
-  const permissionsDone = new Set<string>();
-  let unattendedDenials = 0;
   for (const event of events) {
     const data = event.data ?? {};
     if (event.type === "tool.execution_complete" && str(data.toolCallId)) completed.add(String(data.toolCallId));
-    if (event.type === "permission.completed") {
-      if (str(data.requestId)) permissionsDone.add(String(data.requestId));
-      if (data.decisionSource === "unattended_fallback") unattendedDenials++;
-    }
   }
   let lastAt = 0;
-  let pendingPermissions = 0;
   const openTools: SessionActivity["openTools"] = [];
   for (const event of events) {
     const data = event.data ?? {};
@@ -307,9 +298,151 @@ export function sessionActivity(id: string, events: LogEvent[]): SessionActivity
     if (event.type === "tool.execution_start" && str(data.toolCallId) && !completed.has(String(data.toolCallId))) {
       openTools.push({ toolName: str(data.toolName) ?? "unknown", agentId: event.agentId ?? null, at: at(event) });
     }
-    if (event.type === "permission.requested" && str(data.requestId) && !permissionsDone.has(String(data.requestId))) pendingPermissions++;
   }
-  return { id, lastAt, openTools, pendingPermissions, unattendedDenials };
+  return { id, lastAt, openTools };
+}
+
+// ---------- tool permissions ----------
+
+// Why a tool-permission prompt stops a batch, and where the user reads what to do about it.
+export const PERMISSION_REMEDY =
+  "Sessions that create_session starts detached don't get allow-all tool permissions (app 1.1.30, CLI 1.0.99-2), so their tool prompts wait for a user who isn't there. No batch can run unattended until run sessions start with them: see \"Tool permissions\" under \"Overnight batches\" in the kit's README";
+export const PERMISSION_VOID = "blocked by a tool-permission prompt";
+
+// A permission request still open after this long is a prompt waiting for a user. Host-policy
+// decisions complete within milliseconds (at most 66 ms in 377 logged ones), so this leaves wide room.
+export const PERMISSION_GRACE_MS = 30_000;
+
+export interface PermissionRequestView {
+  sessionId: string;
+  requestId: string;
+  agentId: string | null;
+  at: number;
+  timestamp: string;
+  kind: string;
+  // The tool name or the command text, short.
+  what: string;
+  // "manual" when the runtime asked because the session lacks allow-all permissions.
+  permissionMode: string | null;
+  decision: { kind: string; source: string | null } | null;
+}
+
+function requestWhat(request: Record<string, unknown>): string {
+  const text = str(request.toolName) ?? str(request.fullCommandText) ?? str(request.path) ?? str(request.intention) ?? "";
+  const line = text.split("\n")[0];
+  return line.length > 120 ? `${line.slice(0, 117)}...` : line;
+}
+
+// Every tool-permission request in one session's log (sub-agents included) with its decision, if
+// any. A completion whose request isn't in the log still counts, so a denial is never lost.
+export function permissionRequests(sessionId: string, events: LogEvent[]): PermissionRequestView[] {
+  const decisions = new Map<string, { kind: string; source: string | null; event: LogEvent }>();
+  for (const event of events) {
+    const data = event.data ?? {};
+    if (event.type !== "permission.completed" || !str(data.requestId)) continue;
+    const result = (data.result ?? {}) as Record<string, unknown>;
+    decisions.set(String(data.requestId), { kind: str(result.kind) ?? "unknown", source: str(data.decisionSource), event });
+  }
+  const views: PermissionRequestView[] = [];
+  const seen = new Set<string>();
+  for (const event of events) {
+    const data = event.data ?? {};
+    if (event.type !== "permission.requested" || !str(data.requestId)) continue;
+    const requestId = String(data.requestId);
+    seen.add(requestId);
+    const request = (data.permissionRequest ?? {}) as Record<string, unknown>;
+    const decision = decisions.get(requestId);
+    views.push({
+      sessionId,
+      requestId,
+      agentId: event.agentId ?? null,
+      at: at(event),
+      timestamp: event.timestamp,
+      kind: str(request.kind) ?? "unknown",
+      what: requestWhat(request),
+      permissionMode: str(data.permissionMode),
+      decision: decision ? { kind: decision.kind, source: decision.source } : null,
+    });
+  }
+  for (const [requestId, decision] of decisions) {
+    if (seen.has(requestId)) continue;
+    views.push({
+      sessionId,
+      requestId,
+      agentId: decision.event.agentId ?? null,
+      at: at(decision.event),
+      timestamp: decision.event.timestamp,
+      kind: "unknown",
+      what: str(decision.event.data?.toolCallId) ?? "",
+      permissionMode: null,
+      decision: { kind: decision.kind, source: decision.source },
+    });
+  }
+  return views;
+}
+
+export interface PermissionBlock {
+  request: PermissionRequestView;
+  reason: "pending" | "denied";
+}
+
+// Requests that nobody present can resolve: one still pending after the grace period, or one the
+// runtime denied because it could not ask anyone (decisionSource "unattended_fallback"). ask_user
+// is a question, not a permission prompt, and is never counted.
+export function permissionBlocks(sessionId: string, events: LogEvent[], now: number, graceMs = PERMISSION_GRACE_MS): PermissionBlock[] {
+  const blocks: PermissionBlock[] = [];
+  for (const request of permissionRequests(sessionId, events)) {
+    if (request.what === "ask_user") continue;
+    if (!request.decision) {
+      if (now - request.at >= graceMs) blocks.push({ request, reason: "pending" });
+    } else if (request.decision.source === "unattended_fallback" && request.decision.kind !== "approved") {
+      blocks.push({ request, reason: "denied" });
+    }
+  }
+  return blocks;
+}
+
+export function describePermissionBlock(block: PermissionBlock): string {
+  const r = block.request;
+  const who = `session ${r.sessionId}${r.agentId ? ` (sub-agent ${r.agentId})` : ""}`;
+  const what = `a ${r.kind} request${r.what ? ` for ${r.what}` : ""}`;
+  return block.reason === "pending"
+    ? `${who}: ${what} has waited for approval since ${r.timestamp}${r.permissionMode ? ` (permission mode ${r.permissionMode})` : ""}`
+    : `${who}: ${what} was denied at ${r.timestamp} because no one could be asked (${r.decision!.kind})`;
+}
+
+// The self-test's view: the session must use tools with nobody present. Any request in manual mode,
+// any pending request and any denial fails it, whatever the grace period.
+export function permissionProblems(sessionId: string, events: LogEvent[]): { requests: number; manual: number; pending: number; denied: number; detail: string } {
+  const requests = permissionRequests(sessionId, events).filter((request) => request.what !== "ask_user");
+  const manual = requests.filter((request) => request.permissionMode === "manual").length;
+  const pending = requests.filter((request) => !request.decision).length;
+  const denied = requests.filter((request) => request.decision && request.decision.kind !== "approved").length;
+  const first = requests.find((request) => request.permissionMode === "manual" || !request.decision || request.decision.kind !== "approved");
+  const detail = requests.length === 0
+    ? "no permission requests"
+    : `${requests.length} permission request(s): ${manual} in manual mode, ${pending} pending, ${denied} denied` +
+      (first ? `; first: a ${first.kind} request${first.what ? ` for ${first.what}` : ""}` : "");
+  return { requests: requests.length, manual, pending, denied, detail };
+}
+
+// The self-test's shell command: started with the marker in its arguments, completed successfully,
+// and its output holds the marker.
+export function shellProbe(events: LogEvent[], marker: string): { ok: boolean; detail: string } {
+  const own = events.filter((event) => !event.agentId);
+  const starts = own.filter((event) =>
+    event.type === "tool.execution_start" && str(event.data?.toolName) !== "ask_user" && JSON.stringify(event.data?.arguments ?? {}).includes(marker));
+  if (starts.length === 0) return { ok: false, detail: `no tool call ran a command with ${marker}` };
+  for (const start of starts) {
+    const id = str(start.data?.toolCallId);
+    const done = own.find((event) => event.type === "tool.execution_complete" && id && event.data?.toolCallId === id);
+    if (done && done.data?.success === true && JSON.stringify(done.data?.result ?? {}).includes(marker)) {
+      return { ok: true, detail: `${str(start.data?.toolName) ?? "a tool"} completed and printed ${marker}` };
+    }
+  }
+  const last = starts.at(-1)!;
+  const done = own.find((event) => event.type === "tool.execution_complete" && event.data?.toolCallId === last.data?.toolCallId);
+  return { ok: false, detail: done ? `${str(last.data?.toolName) ?? "the tool"} completed without success or without printing ${marker}` : `${str(last.data?.toolName) ?? "the tool"} call never completed` };
 }
 
 export interface SwarmView {
