@@ -43,8 +43,10 @@ import {
   messageArrived,
   orchestratorView,
   PERMISSION_REMEDY,
+  PERMISSION_GRACE_MS,
   PERMISSION_VOID,
   permissionBlocks,
+  permissionRequests,
   permissionProblems,
   SessionIndex,
   shellProbe,
@@ -775,13 +777,38 @@ function voidRun(ctx: Ctx, state: BatchState, run: RunState, reason: string, sta
   log(ctx, `${run.key} void: ${reason}${stopFirst ? "; the stop message goes out first" : ""}`);
 }
 
-function swarmPermissionBlocks(ctx: Ctx, run: RunState, now: number): PermissionBlock[] {
-  return readLogs(ctx, runSessionIds(ctx, run)).flatMap((log) => permissionBlocks(log.id, log.events, now));
+// The run's end on the log's clock: its final report, or for a timeout or stall the time score
+// runs (score ends those runs at its own time), or once scored, when it was scored.
+function runCutoff(run: RunState, now: number): number {
+  if (run.endReason === "final" && run.final) return Date.parse(run.final.timestamp);
+  return run.scoredAt ? ms(run.scoredAt) : now;
+}
+
+// The permission check once watching has ended. Whether a prompt came before or after the run's end
+// is decided by the request's own timestamp against the cutoff, never by the runner's phase, so a
+// child's prompt just before the final report, or one written while the runner was down, still
+// voids an unscored run. A run already scored keeps its result. "hold": a request from before the
+// end is still within its grace period, so score waits for it.
+async function permissionsAfterWatching(ctx: Ctx, state: BatchState, run: RunState, now: number): Promise<"void" | "hold" | "ok"> {
+  const logs = readLogs(ctx, runSessionIds(ctx, run));
+  const cutoff = runCutoff(run, now);
+  const blocks = logs.flatMap((log) => permissionBlocks(log.id, log.events, now));
+  const unscored = run.status === "ending" || run.status === "scoring";
+  const before = blocks.filter((block) => block.request.at <= cutoff);
+  if (unscored && before.length > 0) {
+    await permissionBlocked(ctx, state, run, before, true);
+    return "void";
+  }
+  const late = unscored ? blocks.filter((block) => block.request.at > cutoff) : blocks;
+  if (late.length > 0) await permissionBlocked(ctx, state, run, late, false);
+  const waiting = run.status === "scoring" && logs.some((log) => permissionRequests(log.id, log.events).some((request) =>
+    !request.decision && request.what !== "ask_user" && request.at <= cutoff && now - request.at < PERMISSION_GRACE_MS));
+  return waiting ? "hold" : "ok";
 }
 
 // A tool-permission prompt in a run's swarm: nobody can answer it, and every later run would hit
-// the same, so no further run starts. Before the run's end it voids the run; after its end (a judged
-// final report, or scoring) the run's result stands.
+// the same, so no further run starts. A prompt from before the run's end voids an unscored run;
+// one from after its end, or found once the run is scored, leaves the result standing.
 async function permissionBlocked(ctx: Ctx, state: BatchState, run: RunState, blocks: PermissionBlock[], voidIt: boolean): Promise<void> {
   const at = iso(ctx.deps.now());
   for (const block of blocks) addFlag(run, "permission-prompt", describePermissionBlock(block), at);
@@ -1075,8 +1102,8 @@ function swarmQuietFor(ctx: Ctx, run: RunState, now: number): number {
 
 // Runs that haven't asked for their session yet.
 const NOT_STARTED = new Set(["new", "repo", "project"]);
-// Runs past their end whose swarm is still watched.
-const AFTER_END = new Set(["ending", "settling", "stopping", "draining"]);
+// Runs whose watching has ended but whose swarm is still checked for permission prompts.
+const AFTER_WATCHING = new Set(["ending", "scoring", "scored", "settling", "stopping", "draining"]);
 
 // A stop that is already known without the full admission checks.
 function knownStop(state: BatchState): Stop | null {
@@ -1105,7 +1132,7 @@ async function runsStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
     }
     if (result.action) return result;
     if (result.progressed) progressed = true;
-    if (before === "scoring") return { progressed: true };
+    if (before === "scoring" && result.progressed) return { progressed: true };
   }
   return { progressed };
 }
@@ -1114,9 +1141,10 @@ async function runStep(ctx: Ctx, state: BatchState, index: number): Promise<Step
   const { config, deps } = ctx;
   const run = state.runs[index];
   const now = deps.now();
-  if (AFTER_END.has(run.status) && !run.voidReason) {
-    const blocks = swarmPermissionBlocks(ctx, run, now);
-    if (blocks.length > 0) await permissionBlocked(ctx, state, run, blocks, false);
+  if (AFTER_WATCHING.has(run.status) && !run.voidReason) {
+    const verdict = await permissionsAfterWatching(ctx, state, run, now);
+    if (verdict === "void") return { progressed: true };
+    if (verdict === "hold") return {};
   }
   switch (run.status) {
     case "new":

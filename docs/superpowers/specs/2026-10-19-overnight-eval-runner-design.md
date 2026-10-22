@@ -39,7 +39,7 @@ This supersedes one non-goal of the eval's design ("Automating the Copilot app i
 ### Anti-goals
 
 - An orchestrator run started as a child session, by `send_session_message`, by the CLI, or in any way other than a detached top-level `create_session` from the runner. **Decided by the user**
-- Any message to a run before it is scored, other than the answer sheet's replies: no nudges, status checks or hints. **Decided by the user**
+- Any message to a run before it is scored, other than the answer sheet's replies: no nudges, status checks or hints. **Decided by the user** One narrow exception, a **Design call** rather than a user decision: a run voided by a tool-permission prompt, which will never be scored, gets the fixed stop message (see "A tool-permission prompt voids the run" under [The end of a run](#the-end-of-a-run)).
 - A run's own orchestrator sending notifications or doing batch housekeeping. **Decided by the user**
 - The self-test using an orchestrator agent. **Decided by the user**
 
@@ -114,7 +114,7 @@ Never as a child session, and never with `send_session_message`.
 - "Final" means the attempt has ended, not that it succeeded. An unambiguous terminal report, an honest failure included, is scored at its timestamp with `--end-at`, and the suite decides between `passed` and `gate-failed`. Only progress and waiting messages are not final. **Decided by the user** (after the fidelity review, replacing an earlier call that a run which gave up ends as `stalled`)
 - A final-report candidate whose own timestamp is within 90 minutes is judged before a timeout, whenever it is seen, and the cutoff is `>`, as in `score`. **Decided by the user**
 - A pending `ask_user` question is not a stall: the swarm is waiting on the user, which is blocked time. The question is answered even after a long driver gap, and the run's notification and report show the `driver-gap` flag. **Decided by the user** (the core review's M1 was rejected as a defect)
-- Score before sending anything else.
+- Score before sending anything else. One narrow exception, a **Design call** rather than a user decision: a run voided by a tool-permission prompt, which will never be scored, gets the fixed stop message (see "A tool-permission prompt voids the run" under [The end of a run](#the-end-of-a-run)).
 - Tool-permission prompts and MCP elicitations can't be answered: they are flagged, and the stall rule applies. For tool-permission prompts, the design call "A tool-permission prompt voids the run" below replaces this rule; MCP elicitations keep it.
 
 **Design call:**
@@ -130,9 +130,9 @@ Never as a child session, and never with `send_session_message`.
 - Activity is a new event in any of the swarm's logs. At a stall, every open tool call in the swarm is flagged as a possible prompt.
 - A tool-permission prompt voids the run. This replaces the stall rule for tool-permission prompts, after batch 20261021-2217, where all 15 runs waited on prompts nobody could answer until the stall rule ended them, and were scored `stalled`. **Design call**
   - The trigger: a `permission.requested` anywhere in the swarm, sub-agents included, with no `permission.completed` after 30 seconds, or a `permission.completed` with `decisionSource: "unattended_fallback"` that isn't an approval. Host-policy decisions complete within milliseconds (at most 66 ms in 377 logged ones), so 30 seconds is far above them and well below the 15-minute stall. A pending `ask_user` is a question, not a prompt, and never counts.
-  - The run is void: no `score`, no row in `results.csv`, and it counts toward neither the variant's scored runs nor the calibration. It still gets the stop message and the drain wait, as a scored run does, because a prompt in one child leaves the rest of the swarm working. The stop message's action says the run is void rather than scored.
+  - The run is void: no `score`, no row in `results.csv`, and it counts toward neither the variant's scored runs nor the calibration. It still gets the stop message and the drain wait, as a scored run does, because a prompt in one child leaves the rest of the swarm working. The stop message's action says the run is void rather than scored. This is the only message a run gets before scoring outside the answer sheet, and only because the run will never be scored; it is an exception to the user's rules "Any message to a run before it is scored…" and "Score before sending anything else", not a user decision.
   - The batch then stops through the fatal path: no further run starts, a notification names the run, the request and the remedy, and the report gets a "Tool-permission prompts" section. The round's other started runs finish as the fatal path lets them; each is voided too if it hits a prompt.
-  - A prompt that appears after a run's end (its judged final report, or scoring) keeps the run's result, flags it, and stops the batch the same way.
+  - Before or after the run's end is decided by the request's own timestamp against the run's cutoff, never by the runner's phase: the final report's timestamp, or for a timeout or stall the time `score` runs. The swarm is checked again just before scoring, also after a restart, and scoring waits while a request from before the cutoff is still within its 30 seconds. A request from before the cutoff voids the unscored run; one from after it keeps the run's result, flags it, and stops the batch the same way.
 
 ### After a timeout or a stall
 

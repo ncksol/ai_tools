@@ -5,7 +5,9 @@ import { appendFileSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { after, test } from "node:test";
 import type { LogEvent } from "../lib/events.ts";
 import { calibrationDecision, scoredCount } from "../lib/batch/plan.ts";
-import { STOP_MESSAGE } from "../lib/batch/runner.ts";
+import { makeCtx, next, STOP_MESSAGE } from "../lib/batch/runner.ts";
+import { saveState } from "../lib/batch/state.ts";
+import { actAsDriver } from "../lib/batch/rehearsal.ts";
 import { eventsPath, PERMISSION_REMEDY } from "../lib/batch/swarm.ts";
 import { readResults } from "../lib/results.ts";
 import { harness, type Harness } from "./fixtures/batch.ts";
@@ -21,9 +23,15 @@ after(() => {
 });
 
 function appendEvent(h: Harness, sessionId: string, type: string, data: Record<string, unknown>, offsetMs = 0): void {
-  const event: LogEvent = { type, timestamp: new Date(h.clock.now + offsetMs).toISOString(), data };
+  appendAt(h, sessionId, type, data, h.clock.now + offsetMs);
+}
+
+function appendAt(h: Harness, sessionId: string, type: string, data: Record<string, unknown>, atMs: number): void {
+  const event: LogEvent = { type, timestamp: new Date(atMs).toISOString(), data };
   appendFileSync(eventsPath(h.config.stateDir, sessionId), JSON.stringify(event) + "\n");
 }
+
+const pendingShell = (requestId: string) => ({ requestId, permissionRequest: { kind: "shell", fullCommandText: "npm test" }, agentMode: "interactive", permissionMode: "manual" });
 
 test("the self-test prompt asks for a compound shell command with the nonce marker", async () => {
   const h = await make({ scenarios: [], selfTest: true });
@@ -138,15 +146,16 @@ test("a prompt in one run of a round voids that run; the other run already in pr
   assert.match(state.stopReason!, /variant-a#1 was blocked by a tool-permission prompt/);
 });
 
-test("a prompt after a run's final report keeps its score but stops the batch", async () => {
+test("a prompt that starts after a run's final report keeps its score but stops the batch", async () => {
   const h = await make({ scenarios: ["ask-final", "ask-final"], runsPerVariant: 2 });
   let injected = false;
-  // Injected while the final report is being judged, so the runner first sees it after the run's end.
+  // Injected while the final report is being judged, timed one second after the report.
   await h.until((action, state) => {
     const run = state.runs[0];
-    if (!injected && action.action === "judge_idle" && /work is done/.test(JSON.stringify(action.details?.messages))) {
+    const final = (action.details?.messages as { text: string; timestamp: string }[] | undefined)?.find((m) => /work is done/.test(m.text));
+    if (!injected && action.action === "judge_idle" && final) {
       injected = true;
-      appendEvent(h, run.sessionId!, "permission.requested", { requestId: "late", permissionRequest: { kind: "custom-tool", toolName: "archive_session" }, agentMode: "interactive", permissionMode: "manual" }, -120_000);
+      appendAt(h, run.sessionId!, "permission.requested", { requestId: "late", permissionRequest: { kind: "custom-tool", toolName: "archive_session" }, agentMode: "interactive", permissionMode: "manual" }, Date.parse(final.timestamp) + 1000);
     }
     return false;
   });
@@ -155,8 +164,57 @@ test("a prompt after a run's final report keeps its score but stops the batch", 
   assert.equal(state.runs.length, 1);
   assert.equal(state.runs[0].status, "done");
   assert.equal(readResults(h.config.resultsPath)[0].outcome, "passed");
-  assert.match(readResults(h.config.resultsPath)[0].note, /permission-prompt/);
   assert.equal(state.phase, "stopped");
   assert.match(state.stopReason!, /^variant-a#1's swarm hit a tool-permission prompt after the run ended \(.*archive_session/);
   assert.match(readFileSync(state.reportPath!, "utf8"), /- variant-a #1: its result stands; the prompt came after its end\./);
+});
+
+// Finding 1 of the final panel: a runner restarted in "scoring" must check the swarm before scoring.
+test("regression: a run persisted in scoring with a prompt that appeared while the runner was down is void, not scored", async () => {
+  const h = await make({ scenarios: ["stall", "ask-final"], runsPerVariant: 2 });
+  const judge = await h.until((action) => action.action === "judge_idle" && action.target === "run");
+  await h.drive(judge);
+  // The runner stopped right after it ended the run as stalled, before score ran.
+  const state = h.state();
+  assert.equal(state.runs[0].status, "running");
+  assert.equal(state.pending, null);
+  Object.assign(state.runs[0], { status: "scoring", endReason: "stalled" });
+  saveState(h.config.dir, state);
+  appendEvent(h, state.runs[0].sessionId!, "permission.requested", pendingShell("down"));
+  h.clock.now += 31_000;
+  const ctx = makeCtx(h.config, h.ctx.deps);
+  for (let i = 0; i < 200; i++) {
+    const action = await next(ctx, { maxWaitMs: 540_000 });
+    if (action.action === "done") break;
+    await actAsDriver(ctx, h.app, h.clock, action);
+  }
+  const after = h.state();
+  assert.equal(h.scoreCalls.length, 0, "never scored");
+  assert.equal(readResults(h.config.resultsPath).length, 0);
+  assert.equal(after.runs[0].status, "void");
+  assert.match(after.runs[0].voidReason!, /^blocked by a tool-permission prompt/);
+  assert.equal(after.runs.length, 1);
+  assert.match(after.stopReason!, /^variant-a#1 was blocked by a tool-permission prompt/);
+});
+
+// Finding 2 of the final panel: the run's end is decided by timestamps, not by the runner's phase.
+test("regression: a child's prompt one second before the final report voids the run", async () => {
+  const h = await make({ scenarios: ["ask-final", "ask-final"], runsPerVariant: 2 });
+  let injected = false;
+  await h.until((action) => {
+    const final = (action.details?.messages as { text: string; timestamp: string }[] | undefined)?.find((m) => /work is done/.test(m.text));
+    if (!injected && action.action === "judge_idle" && final) {
+      injected = true;
+      const child = [...h.app.sessions.values()][0].children[0];
+      appendAt(h, child, "permission.requested", pendingShell("edge"), Date.parse(final.timestamp) - 1000);
+    }
+    return false;
+  });
+  const state = h.state();
+  assert.ok(injected);
+  assert.equal(h.scoreCalls.length, 0, "never scored");
+  assert.equal(readResults(h.config.resultsPath).length, 0);
+  assert.equal(state.runs[0].status, "void");
+  assert.match(state.runs[0].voidReason!, /^blocked by a tool-permission prompt: session child-/);
+  assert.match(state.stopReason!, /^variant-a#1 was blocked by a tool-permission prompt/);
 });
