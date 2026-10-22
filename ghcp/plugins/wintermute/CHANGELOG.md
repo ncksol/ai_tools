@@ -1,0 +1,48 @@
+# Changelog
+
+All notable changes to the `wintermute` plugin. Each version here matches `plugin.json`, `package.json` and the plugin's entry in the root `.github/plugin/marketplace.json`.
+
+## 0.2.0 — 2026-10-22
+
+The `swarm-dashboard` plugin is now `wintermute`: one plugin that ships the orchestrator agents and the swarm dashboard, released and updated together.
+
+### Added
+
+- Six agents, in `com.github.copilot/agents/`: `orchestrator`, `session-orchestrator`, `hands-on-orchestrator`, `hands-on-session-orchestrator`, `orchestrator-worker` and `session-worker`. Before, they were loose files in `ghcp/agents/` that you symlinked or copied into `~/.copilot/agents/`.
+- This changelog.
+- `npm run validate` also checks the six agents (each exists, its frontmatter parses and its `name` matches the file name, and it starts the workers by their `wintermute:` IDs), that `plugin.json` has no `agents` field, that no copy of them stays in `ghcp/agents/`, and that this file has an entry for the current version.
+
+### Changed
+
+- Plugin agents run under the ID `wintermute:<agent>`. The orchestrators now start their workers as `wintermute:orchestrator-worker` (`task` `agent_type`) and `wintermute:session-worker` (`create_session` `kickoff.agent`). To pick an orchestrator, choose it in the agent picker, or pass `wintermute:orchestrator` (or another `wintermute:` ID) where a tool or CLI flag takes an agent ID.
+- The dashboard treats a top session as an orchestrator when its agent is `wintermute:orchestrator`, `wintermute:session-orchestrator`, `wintermute:hands-on-orchestrator` or `wintermute:hands-on-session-orchestrator`, and still when it is the bare name, so runs from before this release stay in History.
+
+### Unchanged
+
+- The canvas is still `swarm-dashboard`. The shared server still uses port 7927 and reports `"app": "swarm-dashboard"`, and run history stays in `~/.copilot/swarm-dashboard/`.
+
+### Migration from `swarm-dashboard` and symlinked agents
+
+Do these steps in order:
+
+1. Remove the six agent symlinks or copies from `~/.copilot/agents/`. Agents there load before plugin agents and would shadow the plugin's copies:
+
+   ```bash
+   for agent in orchestrator session-orchestrator hands-on-orchestrator hands-on-session-orchestrator orchestrator-worker session-worker; do
+     rm -f ~/.copilot/agents/"$agent".agent.md
+   done
+   ```
+
+2. Uninstall the old plugin. Two installed plugins that both register the `swarm-dashboard` canvas would clash:
+
+   ```bash
+   copilot plugin uninstall swarm-dashboard@ai-tools
+   ```
+
+3. Install the new one:
+
+   ```bash
+   copilot plugin install wintermute@ai-tools
+   ```
+
+4. Restart the Copilot app, or reload extensions in every session, so that the agents and the canvas load from the new plugin. A dashboard server that already runs on port 7927 keeps serving the old version until no session hosts it any more.

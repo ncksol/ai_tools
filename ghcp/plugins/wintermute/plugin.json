@@ -1,16 +1,18 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "swarm-dashboard",
-  "description": "Watch-only dashboard for agentic swarms in the GitHub Copilot app: sessions, sub-agents, cost, stuck detection and run history.",
-  "version": "0.1.7",
+  "name": "wintermute",
+  "description": "Orchestrator agents for the GitHub Copilot app and a watch-only dashboard for the swarms they run: sessions, sub-agents, cost, stuck detection and run history.",
+  "version": "0.2.0",
   "author": {
     "name": "Nick Sologoub"
   },
   "license": "MIT",
   "keywords": [
-    "dashboard",
+    "orchestrator",
+    "agents",
     "agentic-swarm",
     "orchestration",
+    "dashboard",
     "cost",
     "copilot-app"
   ],

@@ -1,6 +1,6 @@
 {
-  "name": "swarm-dashboard",
-  "version": "0.1.7",
+  "name": "wintermute",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "engines": {

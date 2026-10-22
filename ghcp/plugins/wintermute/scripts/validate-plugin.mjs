@@ -3,10 +3,11 @@ import { access, readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateDashboard } from './lib/validate-dashboard.mjs';
+import { validatePackage } from './lib/validate-package.mjs';
 
-export const PLUGIN_NAME = 'swarm-dashboard';
+export const PLUGIN_NAME = 'wintermute';
 export const REQUIRED_FILES = [
-  'LICENSE', 'plugin.json', 'package.json', 'scripts/validate-plugin.mjs', 'scripts/swarm-snapshot.mjs',
+  'LICENSE', 'plugin.json', 'package.json', 'scripts/validate-plugin.mjs', 'scripts/lib/validate-package.mjs', 'scripts/swarm-snapshot.mjs',
   'engine/schema.mjs', 'engine/fake-engine.mjs', 'engine/engine.mjs', 'engine/config.mjs', 'engine/sqlite.mjs', 'engine/time.mjs', 'engine/text.mjs',
   'engine/readers/app-db.mjs', 'engine/readers/events.mjs', 'engine/readers/ledger.mjs', 'engine/readers/process-probe.mjs', 'engine/readers/session-files.mjs',
   'engine/model/contract.mjs', 'engine/model/forest.mjs', 'engine/model/history.mjs', 'engine/model/messages.mjs', 'engine/model/pr-lookup.mjs',
@@ -86,6 +87,7 @@ export async function validatePlugin(root, repositoryRoot) {
       errors.push(`${file}: required file is missing`);
     }
   }
+  errors.push(...await validatePackage(root, repositoryRoot, manifest));
   errors.push(...await validateDashboard(root, manifest, pkg));
   return errors;
 }
@@ -97,6 +99,6 @@ if (process.argv[1] && await realpath(fileURLToPath(import.meta.url)) === await 
     for (const error of errors) console.error(error);
     process.exitCode = 1;
   } else {
-    console.log('Plugin validation passed: manifests, root marketplace entry and required files.');
+    console.log('Plugin validation passed: manifests, root marketplace entry, packaged agents, CHANGELOG and required files.');
   }
 }
