@@ -178,6 +178,7 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 .th-icon { display: grid; color: var(--icon); }
 .th-icon svg { display: block; grid-area: 1 / 1; transition: opacity .2s ease, transform .3s cubic-bezier(.25, 1, .5, 1); }
 :root[data-theme="dark"] .th-moon, :root:not([data-theme="dark"]) .th-sun { opacity: 0; transform: rotate(90deg) scale(.5); }
+.v-out { padding: 8px 12px; border: 1px solid var(--blocked); border-radius: 8px; background: var(--blocked-soft); color: var(--ink); font-size: 12px; line-height: 16px; overflow-wrap: anywhere; }
 .d-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px 32px; }
 .d-id { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .d-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

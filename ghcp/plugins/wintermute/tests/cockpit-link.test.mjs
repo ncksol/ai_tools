@@ -25,7 +25,9 @@ test('the Cockpit control shows the spaceship icon, named Cockpit for screen rea
 
 test('addresses for the cockpit and for the regular view', () => {
   assert.equal(cockpitPath('ws 1'), '/cockpit?swarm=ws+1');
+  assert.equal(cockpitPath('ws-1', '0.2.0'), '/cockpit?swarm=ws-1&plugin=0.2.0');
   assert.equal(regularPath({ swarm: 'ws-1', detail: 'u1', tab: 'board' }), '/?swarm=ws-1&tab=board&detail=u1');
+  assert.equal(regularPath({ swarm: 'ws-1', detail: 'u1', tab: 'board', plugin: '0.2.0' }), '/?swarm=ws-1&tab=board&detail=u1&plugin=0.2.0');
   assert.equal(regularPath({ swarm: 'ws-1', tab: 'nonsense' }), '/?swarm=ws-1');
 });
 

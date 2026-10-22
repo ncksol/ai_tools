@@ -31,10 +31,11 @@ const host = (port, options = {}) => createCanvasHost({
   ...options,
 });
 
-test('the page address names the swarm from the input, else the session', () => {
+test('the page address names the swarm from the input, else the session, and carries the plugin version when given', () => {
   assert.equal(pageUrl(7927, { sessionId: 'cli-1' }), 'http://127.0.0.1:7927/?host=canvas&session=cli-1');
-  assert.equal(pageUrl(7927, { sessionId: 'cli-1', input: { swarm: 'ws-0000-root' } }), 'http://127.0.0.1:7927/?host=canvas&swarm=ws-0000-root');
-  assert.equal(pageUrl(7927, { input: { swarm: '  ' } }), 'http://127.0.0.1:7927/?host=canvas');
+  assert.equal(pageUrl(7927, { sessionId: 'cli-1', version: '0.2.0' }), 'http://127.0.0.1:7927/?host=canvas&session=cli-1&plugin=0.2.0');
+  assert.equal(pageUrl(7927, { sessionId: 'cli-1', input: { swarm: 'ws-0000-root' }, version: '0.2.0' }), 'http://127.0.0.1:7927/?host=canvas&swarm=ws-0000-root&plugin=0.2.0');
+  assert.equal(pageUrl(7927, { input: { swarm: '  ' }, version: '  ' }), 'http://127.0.0.1:7927/?host=canvas');
   assert.equal(pageUrl(7927, { sessionId: 'a b&c' }), 'http://127.0.0.1:7927/?host=canvas&session=a+b%26c');
 });
 
@@ -56,11 +57,11 @@ test('the first canvas hosts the server and later canvases reuse it', async () =
   const first = host(port);
   const second = host(port);
   try {
-    assert.deepEqual(await first.open({ sessionId: 'cli-1', instanceId: 'a' }), { url: `http://127.0.0.1:${port}/?host=canvas&session=cli-1`, title: CANVAS_TITLE });
+    assert.deepEqual(await first.open({ sessionId: 'cli-1', instanceId: 'a' }), { url: `http://127.0.0.1:${port}/?host=canvas&session=cli-1&plugin=test`, title: CANVAS_TITLE });
     assert.equal(first.hosting(), true);
     assert.equal((await probePort(port)).state, 'ours');
     const reused = await second.open({ sessionId: 'cli-2', instanceId: 'b', input: { swarm: 'ws-0000-root' } });
-    assert.equal(reused.url, `http://127.0.0.1:${port}/?host=canvas&swarm=ws-0000-root`);
+    assert.equal(reused.url, `http://127.0.0.1:${port}/?host=canvas&swarm=ws-0000-root&plugin=test`);
     assert.equal(second.hosting(), false);
     await second.open({ sessionId: 'cli-2', instanceId: 'b' });
     assert.equal(second.instanceCount(), 1, 'opening the same instance again only focuses it');
@@ -77,7 +78,8 @@ test('a canvas that reuses an older dashboard says so in its log', async () => {
   const second = host(port, { version: 'next', log: entry => entries.push(entry) });
   try {
     await first.open({ sessionId: 'cli-1', instanceId: 'a' });
-    await second.open({ sessionId: 'cli-2', instanceId: 'b' });
+    const opened = await second.open({ sessionId: 'cli-2', instanceId: 'b' });
+    assert.equal(opened.url, `http://127.0.0.1:${port}/?host=canvas&session=cli-2&plugin=next`);
     assert.ok(entries.some(entry => entry.level === 'warn' && entry.message.startsWith('version test of the dashboard')), JSON.stringify(entries));
   } finally {
     await second.dispose();
@@ -289,11 +291,12 @@ test('the extension joins with one canvas that opens the shared page', async () 
     assert.equal(canvas.declaration.displayName, 'Swarm dashboard');
     assert.deepEqual(canvas.declaration.inputSchema.required ?? [], [], 'the input stays optional');
     assert.equal(extension.canvasHost.hosting(), false, 'loading starts nothing');
+    const pluginVersion = JSON.parse(readFileSync(path.join(root, 'plugin.json'), 'utf8')).version;
     const opened = await canvas.open({ sessionId: 'cli-0003-b1', extensionId: 'test', canvasId: 'swarm-dashboard', instanceId: 'one' });
-    assert.deepEqual(opened, { url: `http://127.0.0.1:${port}/?host=canvas&session=cli-0003-b1`, title: 'Swarm dashboard' });
+    assert.deepEqual(opened, { url: `http://127.0.0.1:${port}/?host=canvas&session=cli-0003-b1&plugin=${pluginVersion}`, title: 'Swarm dashboard' });
     const health = await (await fetch(`http://127.0.0.1:${port}/api/health`)).json();
     assert.equal(health.app, 'swarm-dashboard');
-    assert.equal(health.version, JSON.parse(readFileSync(path.join(root, 'plugin.json'), 'utf8')).version);
+    assert.equal(health.version, pluginVersion);
     assert.match(await (await fetch(opened.url)).text(), /id="dash"/);
     canvas.onClose({ instanceId: 'one' });
   } finally {

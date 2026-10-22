@@ -367,7 +367,10 @@ test('the page and its hello carry the same UI fingerprint, and every UI file is
     const own = pageFingerprint(shell.body);
     assert.match(own, /^[0-9a-f]{16}$/);
     assert.equal(own, assetsFingerprint(loadAssets()));
-    assert.equal((await page.waitFor(entry => entry.event === 'hello')).data.ui, own);
+    assert.equal(pageFingerprint((await get(server.port, '/cockpit')).body), own);
+    const hello = (await page.waitFor(entry => entry.event === 'hello')).data;
+    assert.equal(hello.ui, own);
+    assert.equal(hello.version, 'test');
     for (const path of ['/', ...loadAssets().keys()]) assert.equal((await get(server.port, path)).headers['cache-control'], 'no-store', path);
   } finally {
     page.close();

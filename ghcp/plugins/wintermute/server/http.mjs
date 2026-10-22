@@ -31,9 +31,11 @@ export function createDashboardServer({ createEngine, host = '127.0.0.1', port =
   const assets = loadAssets();
   // The page carries the fingerprint of the files it came with; hello sends the current one, so an open page can tell it is out of date.
   const fingerprint = uiFingerprint ?? assetsFingerprint(assets);
-  const shell = assets.get('/index.html');
-  assets.set('/index.html', { ...shell, body: Buffer.from(withFingerprint(shell.body.toString('utf8'), fingerprint)) });
-  const hub = createHub({ createEngine, now, log, onIdle, ...hubOptions, ui: fingerprint });
+  for (const name of ['/index.html', '/ui/cockpit.html']) {
+    const shell = assets.get(name);
+    assets.set(name, { ...shell, body: Buffer.from(withFingerprint(shell.body.toString('utf8'), fingerprint)) });
+  }
+  const hub = createHub({ createEngine, now, log, onIdle, ...hubOptions, ui: fingerprint, version });
   const startedAt = now();
   let boundPort = null;
 

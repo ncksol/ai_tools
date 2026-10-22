@@ -281,12 +281,12 @@ async function checkLayout(context) {
     states.push({ label: `${scenario} small`, url: `${base}cockpit?debug=1&quality=high`, width: SMALL_SIZE[0], height: SMALL_SIZE[1], expect: { fit: 'small', gl: 'on' } });
     states.push({ label: `${scenario} no-webgl`, url: `${base}cockpit?debug=1&quality=high&gl=0`, width: 1440, height: 900, expect: { fit: 'ok', gl: 'off' } });
   }
-  // On the synthetic swarms, also the longest values, at the smallest and a common window size.
-  const edge = urls.example ? createDashboardServer({ createEngine: edgeEngine, port: 0, version: 'cockpit-check', hub: { engineIdleMs: 600000 } }) : null;
+  // On the synthetic swarms, also the longest values and the out-of-date notice, at the smallest and a common window size.
+  const edge = urls.example ? createDashboardServer({ createEngine: edgeEngine, port: 0, version: '0.1.0', hub: { engineIdleMs: 600000 } }) : null;
   try {
     if (edge) {
       await edge.listen();
-      for (const [width, height] of [[1100, 800], [1440, 900]]) states.push({ label: `edge ${width}x${height}`, url: `${edge.url}cockpit?debug=1&quality=high`, width, height, expect: { fit: 'ok', gl: 'on' }, texts: ['1234567', 'B0 F2a B1 D5 I1'] });
+      for (const [width, height] of [[1100, 800], [1440, 900]]) states.push({ label: `edge ${width}x${height}`, url: `${edge.url}cockpit?debug=1&quality=high&plugin=0.2.0`, width, height, expect: { fit: 'ok', gl: 'on' }, texts: ['1234567', 'B0 F2a B1 D5 I1', 'Dashboard server v0.1.0 is older than installed plugin v0.2.0'] });
     }
     for (const state of states) {
       const result = await checkState(context, state);

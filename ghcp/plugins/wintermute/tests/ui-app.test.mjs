@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, historyReloadWanted, isNarrow, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, retryBudget, staleChoice, staleShown, startShown, startSwarm } from '../ui/app.mjs';
+import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, compareVersions, historyReloadWanted, isNarrow, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, retryBudget, staleChoice, staleShown, startShown, startSwarm, versionNotice } from '../ui/app.mjs';
 import { NOW, deepFreeze, exampleSnapshot, fixture } from './helpers/ui.mjs';
 
 const view = (overrides = {}) => ({
@@ -471,10 +471,48 @@ test('a default page keeps the swarm on screen when it connects again, unless th
   assert.equal(keptDefault({ ...base, onScreen: null }), null, 'no snapshot');
 });
 
-test('after a self-reload the address goes back to the host, the session and an addressed swarm', () => {
+test('after a self-reload the address goes back to the host, the session, an addressed swarm and the plugin version', () => {
   assert.equal(RESTORED_KEY, 'swarm-dashboard:restored');
   const read = search => Object.fromEntries(new URLSearchParams(search));
-  assert.deepEqual(read(baseSearch(new URLSearchParams('host=canvas&session=s-1&tab=board&span=3h&detail=u-1&page=run&run=ws-old'))), { host: 'canvas', session: 's-1' });
+  assert.deepEqual(read(baseSearch(new URLSearchParams('host=canvas&session=s-1&plugin=0.2.0&tab=board&span=3h&detail=u-1&page=run&run=ws-old'))), { host: 'canvas', session: 's-1', plugin: '0.2.0' });
   assert.deepEqual(read(baseSearch(new URLSearchParams('host=browser&swarm=ws-1&tab=plan'))), { host: 'browser', swarm: 'ws-1' });
   assert.equal(baseSearch(new URLSearchParams('tab=board')), '');
+});
+
+test('version comparison orders semantic versions and ignores unset or non-version strings', () => {
+  assert.equal(compareVersions('0.1.7', '0.2.0'), -1);
+  assert.equal(compareVersions('v0.1.7', 'v0.2.0'), -1);
+  assert.equal(compareVersions('0.2.0', '0.2.0'), 0);
+  assert.equal(compareVersions('0.2.0', '0.1.7'), 1);
+  assert.equal(compareVersions('0.2.0', '0.10.0'), -1);
+  assert.equal(compareVersions('0.2.0-alpha.1', '0.2.0'), -1);
+  assert.equal(compareVersions('0.2.0-alpha.1', '0.2.0-alpha.2'), -1);
+  assert.equal(compareVersions('0.2.0-alpha.10', '0.2.0-alpha.2'), 1);
+  assert.equal(compareVersions('0.0.0', '0.2.0'), null);
+  assert.equal(compareVersions('0.2.0', '0.0.0'), null);
+  assert.equal(compareVersions('test', '0.2.0'), null);
+  assert.equal(compareVersions('0.1.7', null), null);
+  assert.equal(compareVersions(null, '0.2.0'), null);
+});
+
+test('the out-of-date notice shows only when a newer installed plugin is served by an older running server', () => {
+  assert.equal(versionNotice({ serverVersion: '0.2.0', installedVersion: '0.2.0' }), null, 'matching versions');
+  assert.equal(versionNotice({ serverVersion: '0.3.0', installedVersion: '0.2.0' }), null, 'running server is newer');
+  assert.equal(versionNotice({ serverVersion: '0.1.7', installedVersion: null }), null, 'browser launcher server has no plugin parameter');
+  assert.equal(versionNotice({ serverVersion: null, installedVersion: '0.2.0' }), null, 'server version not yet known');
+  const notice = versionNotice({ serverVersion: '0.1.7', installedVersion: '0.2.0' });
+  assert.ok(notice);
+  assert.equal(notice.running, '0.1.7');
+  assert.equal(notice.installed, '0.2.0');
+  assert.match(notice.text, /v0\.1\.7/);
+  assert.match(notice.text, /v0\.2\.0/);
+  assert.match(notice.text, /reload extensions in every session or restart the app/i);
+  assert.match(notice.text, /browser[\s\S]*restarted by whoever started it/i);
+  assert.doesNotMatch(notice.text, /agent/i, 'extension reload refreshes only the dashboard');
+  for (const page of ['live', 'history', 'run']) {
+    const html = renderApp(view({ page, runs: [], run: fixture('example-run-summary.json'), serverVersion: '0.1.7', installedVersion: '0.2.0' }));
+    assert.match(html, /<div class="v-out" role="status" data-version-notice>[\s\S]*v0\.1\.7[\s\S]*v0\.2\.0[\s\S]*<\/div>/, page);
+  }
+  assert.doesNotMatch(renderApp(view({ serverVersion: '0.2.0', installedVersion: '0.2.0' })), /data-version-notice/);
+  assert.doesNotMatch(renderApp(view({ serverVersion: '0.1.7', installedVersion: null })), /data-version-notice/);
 });

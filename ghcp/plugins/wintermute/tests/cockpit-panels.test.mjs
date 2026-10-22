@@ -153,6 +153,10 @@ test('the top line, the quality switch and the note', () => {
   const finished = exampleSnapshot();
   finished.run.lifecycle = 'finished';
   assert.equal(hudHtml({ demo: true, connection: 'retrying', snapshot: finished }), '<span>Swarm cockpit · Sample data · Swarm finished</span><span class="ck-warn"> · Disconnected · retrying</span>');
+  const outOfDate = hudHtml({ demo: false, connection: 'open', snapshot: example(), serverVersion: '0.1.7', installedVersion: '0.2.0' });
+  assert.match(outOfDate, /^<span>Swarm cockpit<\/span><span class="ck-warn" data-version-notice title="[^"]*v0\.1\.7[^"]*v0\.2\.0[^"]*"> · Dashboard server v0\.1\.7 is older than installed plugin v0\.2\.0: to update the dashboard, reload extensions in every session or restart the app; a dashboard started separately in a browser has to be restarted by whoever started it\.<\/span>$/);
+  assert.doesNotMatch(hudHtml({ demo: false, connection: 'open', snapshot: example(), serverVersion: '0.2.0', installedVersion: '0.2.0' }), /data-version-notice/);
+  assert.doesNotMatch(hudHtml({ demo: false, connection: 'open', snapshot: example(), serverVersion: '0.1.7', installedVersion: null }), /data-version-notice/);
   assert.equal(qualityHtml('balanced'), '<button type="button" data-quality="high" aria-pressed="false">High</button><button type="button" data-quality="balanced" aria-pressed="true">Balanced</button>');
   assert.match(noteHtml(), /Make this window larger to see the cockpit\.[\s\S]*data-tab="cards">Open the regular view<\/button>/);
 });

@@ -442,8 +442,8 @@ const nothingLiveDemo = () => nothingLive(createDemoEngine({ scenario: 'example'
 function phaseServers(servers, issues) {
   const started = [];
   let port = 0;
-  const serve = async (uiFingerprint, createEngine) => {
-    const server = createDashboardServer({ createEngine, port, version: 'layout-check', uiFingerprint, hub: { engineIdleMs: 600000 } });
+  const serve = async (uiFingerprint, createEngine, version = '0.1.0') => {
+    const server = createDashboardServer({ createEngine, port, version, uiFingerprint, hub: { engineIdleMs: 600000 } });
     started.push(server);
     servers.push(server);
     await server.listen();
@@ -611,6 +611,45 @@ async function watchReload(page, servers) {
     }
     await new Promise(resolve => setTimeout(resolve, 3000));
     if (await page.evaluate('window.swarmMark').catch(() => undefined) !== 'b') issues.push('the page reloaded again for a fingerprint it had already tried');
+
+    // Out-of-date notice in the regular view (light and dark, narrow canvas width) must pass the layout audit.
+    const noticeUrl = `${third.url}?host=canvas&plugin=0.2.0`;
+    for (const theme of THEMES) {
+      await page.setColorScheme(theme);
+      await page.goto(noticeUrl, 480);
+      await page.waitFor(`location.href === ${JSON.stringify(noticeUrl)} && document.documentElement.dataset.ready === '1' && document.querySelector('[data-version-notice]') !== null`, 5000);
+      const audit = await page.evaluate(auditScript(AUDIT_DEFAULTS));
+      for (const issue of audit.issues) issues.push(`version notice (${theme}): ${issue.rule} on ${issue.target} (${issue.detail})`);
+    }
+    await page.setColorScheme('light');
+
+    // Cockpit self-reload on changed UI fingerprint after reconnect, preserving plugin=0.2.0 and not reloading twice.
+    const ckUrl = `${third.url}cockpit?host=canvas&plugin=0.2.0`;
+    await page.goto(ckUrl, 1280, 800);
+    await page.waitFor(`location.href === ${JSON.stringify(ckUrl)} && document.documentElement.dataset.ready === '1' && document.querySelector('[data-version-notice]') !== null`, 8000);
+    await page.evaluate("sessionStorage.removeItem('swarm-dashboard:reloaded-for'); window.swarmMark = 'ck-a'");
+    if (!await waitForClient(third, 5000)) {
+      issues.push('the cockpit did not open its live connection within 5 s');
+      return { issues };
+    }
+    const fourth = await phase.restart(third, 'layout-check-d', moved);
+    if (!fourth) return { issues };
+    try {
+      await page.waitFor("window.swarmMark === undefined && document.documentElement.dataset.ready === '1'", 15000);
+    } catch {
+      issues.push('the cockpit did not reload for new dashboard files within 15 s');
+      return { issues };
+    }
+    const ckAfter = await page.evaluate(`({
+      own: document.querySelector('meta[name="swarm-ui"]')?.content,
+      search: location.search,
+      attempted: sessionStorage.getItem('swarm-dashboard:reloaded-for'),
+      notice: document.querySelector('[data-version-notice]')?.textContent ?? null,
+    })`);
+    if (ckAfter.own !== 'layout-check-d') issues.push(`the reloaded cockpit has the dashboard files ${ckAfter.own}, not layout-check-d`);
+    if (ckAfter.search !== '?host=canvas&plugin=0.2.0') issues.push(`the reloaded cockpit changed its address: ${ckAfter.search}`);
+    if (ckAfter.attempted !== 'layout-check-d') issues.push(`the cockpit remembered the attempt as ${ckAfter.attempted}, not layout-check-d`);
+    if (!ckAfter.notice?.includes('v0.1.0 is older than installed plugin v0.2.0')) issues.push('the reloaded cockpit lost its out-of-date notice');
     return { issues };
   } finally {
     await phase.close();

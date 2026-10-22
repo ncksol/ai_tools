@@ -30,6 +30,7 @@ const saved = readSaved();
 // An empty parameter is no parameter, as on the server.
 const urlSwarm = params.get('swarm') || null;
 const urlSession = params.get('session') || null;
+const urlPlugin = params.get('plugin')?.trim() || null;
 /** After a self-reload: the swarm picked or shown by default before it, and whether the address still carries the reload's state. */
 let restoredPick = null;
 let restoredShown = null;
@@ -68,6 +69,8 @@ const view = {
   fresh: emptyFresh(),
   host: document.documentElement.dataset.host,
   cockpitNote: null,
+  installedVersion: urlPlugin,
+  serverVersion: null,
   /** Set by ui/theme-boot.mjs before the first paint. */
   theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light',
 };
@@ -121,6 +124,21 @@ const themeChoice = createThemeChoice({ win: window, prefersDark: () => darkSche
 view.theme = themeChoice.current();
 document.documentElement.dataset.theme = view.theme;
 
+async function checkServerVersion() {
+  if (!view.installedVersion) return;
+  try {
+    const response = await fetch('/api/health');
+    if (!response.ok) return;
+    const data = await response.json();
+    if (typeof data.version === 'string' && view.serverVersion !== data.version) {
+      view.serverVersion = data.version;
+      scheduleRender();
+    }
+  } catch {
+    // The hello event also carries the server version.
+  }
+}
+
 function connect() {
   clearTimeout(reconnectTimer);
   source?.close();
@@ -141,6 +159,7 @@ function connect() {
     // After a reconnect the server may know runs that finished meanwhile.
     if (wasOpen && historyAsked) reloadHistory();
     wasOpen = true;
+    checkServerVersion();
     scheduleRender();
   });
   source.addEventListener('error', () => {
@@ -160,8 +179,10 @@ function connect() {
     const data = JSON.parse(event.data);
     offset = data.serverNow - Date.now();
     view.demo = Boolean(data.demo);
+    if (typeof data.version === 'string') view.serverVersion = data.version;
     servedUi = data.ui ?? null;
     considerReload();
+    scheduleRender();
   });
   source.addEventListener('swarms', event => {
     view.swarms = JSON.parse(event.data);
@@ -476,7 +497,7 @@ function act(target) {
     view.run = null;
     loadRun(view.runId);
   } else if (el.dataset.cockpit !== undefined) {
-    view.cockpitNote = view.snapshot ? openCockpit(window, { swarm: view.snapshot.run.id, host: view.host }) : null;
+    view.cockpitNote = view.snapshot ? openCockpit(window, { swarm: view.snapshot.run.id, host: view.host, plugin: view.installedVersion }) : null;
   } else if (el.dataset.themeToggle !== undefined) {
     themeChoice.toggle();
     return;

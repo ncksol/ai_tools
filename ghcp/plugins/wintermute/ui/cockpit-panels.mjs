@@ -1,4 +1,5 @@
 /** HTML for the cockpit's panels, its top line, its quality switch and its note. Pure: Node tests import it. */
+import { versionNotice } from './app.mjs';
 import { count, countdown, credits, dur, esc, liveTime, plural, usdRounded } from './format.mjs';
 import { runClockEnd, runEnd } from './model.mjs';
 import { activityRows, clockText, costView, dateText, legend, needRows, nextCheckAt, prRows, runLine, stateWord, tileGrid, timeText, unitCounts } from './cockpit-model.mjs';
@@ -103,11 +104,12 @@ export function prsHtml(snapshot) {
   return head('Pull requests', 'board', side) + `<ul class="ck-prs">${rows}</ul>`;
 }
 
-export function hudHtml({ demo, connection, snapshot }) {
+export function hudHtml({ demo, connection, snapshot, serverVersion = null, installedVersion = null }) {
   const parts = ['Swarm cockpit'];
   if (demo) parts.push('Sample data');
   if (snapshot?.run.lifecycle === 'finished') parts.push('Swarm finished');
-  return `<span>${parts.join(' · ')}</span>${connection === 'retrying' ? '<span class="ck-warn"> · Disconnected · retrying</span>' : ''}`;
+  const notice = versionNotice({ serverVersion, installedVersion });
+  return `<span>${parts.join(' · ')}</span>${connection === 'retrying' ? '<span class="ck-warn"> · Disconnected · retrying</span>' : ''}${notice ? `<span class="ck-warn" data-version-notice title="${esc(notice.text)}"> · ${esc(notice.text)}</span>` : ''}`;
 }
 
 export const qualityHtml = quality => QUALITIES.map(name => `<button type="button" data-quality="${name}" aria-pressed="${name === quality}">${QUALITY_WORDS[name]}</button>`).join('');

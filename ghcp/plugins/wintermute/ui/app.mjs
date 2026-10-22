@@ -57,6 +57,63 @@ export function reloadCarry({ swarm, fromUrl, session, onScreen, transport, swar
   if (swarm) return { pick: swarm, shown: null };
   return { pick: null, shown: keptDefault({ swarm: null, session, onScreen: onScreen ?? transport, swarms }) };
 }
+const SEMVER = /^\s*v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?\s*$/;
+
+function parseSemver(value) {
+  if (typeof value !== 'string') return null;
+  const match = value.match(SEMVER);
+  if (!match) return null;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  const patch = Number(match[3]);
+  if (major === 0 && minor === 0 && patch === 0 && !match[4]) return null;
+  return {
+    version: `${major}.${minor}.${patch}${match[4] ? `-${match[4]}` : ''}`,
+    nums: [major, minor, patch],
+    pre: match[4] ? match[4].split('.') : null,
+  };
+}
+
+/** Compare two semver strings: -1 when a < b, 0 when equal, 1 when a > b, or null when either is not a comparable version. */
+export function compareVersions(a, b) {
+  const left = parseSemver(a);
+  const right = parseSemver(b);
+  if (!left || !right) return null;
+  for (let i = 0; i < 3; i += 1) {
+    if (left.nums[i] !== right.nums[i]) return left.nums[i] < right.nums[i] ? -1 : 1;
+  }
+  if (!left.pre && !right.pre) return 0;
+  if (!left.pre) return 1;
+  if (!right.pre) return -1;
+  const len = Math.max(left.pre.length, right.pre.length);
+  for (let i = 0; i < len; i += 1) {
+    const l = left.pre[i];
+    const r = right.pre[i];
+    if (l === undefined) return -1;
+    if (r === undefined) return 1;
+    if (l === r) continue;
+    const ln = /^\d+$/.test(l) ? Number(l) : null;
+    const rn = /^\d+$/.test(r) ? Number(r) : null;
+    if (ln !== null && rn !== null) return ln < rn ? -1 : 1;
+    if (ln !== null) return -1;
+    if (rn !== null) return 1;
+    return l < r ? -1 : 1;
+  }
+  return 0;
+}
+
+/** Notice shown when a running server is older than the installed plugin that opened the canvas. */
+export function versionNotice({ serverVersion, installedVersion } = {}) {
+  if (compareVersions(serverVersion, installedVersion) !== -1) return null;
+  const running = parseSemver(serverVersion).version;
+  const installed = parseSemver(installedVersion).version;
+  return {
+    running,
+    installed,
+    text: `Dashboard server v${running} is older than installed plugin v${installed}: to update the dashboard, reload extensions in every session or restart the app; a dashboard started separately in a browser has to be restarted by whoever started it.`,
+  };
+}
+
 /**
  * What to do once the server's UI fingerprint is known: 'stay', 'wait' (hidden: decide again when visible) or 'reload'.
  * A tab reloads at most once for each new fingerprint, so files that still do not match after a reload cause no loop.
@@ -65,10 +122,10 @@ export function reloadDecision({ own, served, attempted, hidden }) {
   if (!own || !served || own === served || attempted === served) return 'stay';
   return hidden ? 'wait' : 'reload';
 }
-/** The address to reload at: it keeps the host, the session, an addressed swarm, the page, the run, the tab, the time window and the open detail. */
+/** The address to reload at: it keeps the host, the session, the plugin version, an addressed swarm, the page, the run, the tab, the time window and the open detail. */
 export function reloadSearch(view, params, swarmFromUrl) {
   const next = new URLSearchParams();
-  for (const name of ['host', 'session']) if (params.get(name)) next.set(name, params.get(name));
+  for (const name of ['host', 'session', 'plugin']) if (params.get(name)) next.set(name, params.get(name));
   if (swarmFromUrl && view.swarm) next.set('swarm', view.swarm);
   if (view.page !== 'live') next.set('page', view.page);
   if (view.page === 'run' && view.runId) next.set('run', view.runId);
@@ -78,10 +135,10 @@ export function reloadSearch(view, params, swarmFromUrl) {
   return next.toString();
 }
 
-/** The address after a self-reload: only the host, the session and an addressed swarm, so a later manual reload shows the saved state. */
+/** The address after a self-reload: only the host, the session, an addressed swarm and the plugin version, so a later manual reload shows the saved state. */
 export function baseSearch(params) {
   const next = new URLSearchParams();
-  for (const name of ['host', 'session', 'swarm']) if (params.get(name)) next.set(name, params.get(name));
+  for (const name of ['host', 'session', 'swarm', 'plugin']) if (params.get(name)) next.set(name, params.get(name));
   return next.toString();
 }
 /**
@@ -171,10 +228,17 @@ export function renderApp(view) {
   return top + liveHtml(view);
 }
 
+function versionNoticeHtml(view) {
+  const notice = versionNotice(view);
+  if (!notice) return '';
+  return `<div class="v-out" role="status" data-version-notice>${esc(notice.text)}</div>`;
+}
+
 function topHtml(view) {
   const current = view.page === 'run' ? 'history' : view.page;
   const pages = ['live', 'history'].map(page => `<button type="button" data-page="${page}" aria-pressed="${current === page}">${page === 'live' ? 'Live' : 'History'}</button>`).join('');
   return `<div class="d-top"><div class="seg" role="group" aria-label="Dashboard">${pages}</div><div class="d-top-r">${pickerHtml(view)}${statusHtml(view)}<div class="d-tools">${cockpitControlHtml(view)}${themeControlHtml(view.theme)}</div></div></div>`
+    + versionNoticeHtml(view)
     + (view.page === 'live' ? cockpitAddressHtml(view.cockpitNote ?? null) : '');
 }
 

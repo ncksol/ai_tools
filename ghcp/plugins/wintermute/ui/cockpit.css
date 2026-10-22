@@ -38,7 +38,7 @@ html[data-gl="off"] body { background: radial-gradient(ellipse at 50% 38%, rgb(2
 .ck-ellipsis { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* The flat line at the top left, and the quality switch at the top right. */
-.ck-hud { position: fixed; left: 24px; top: 16px; height: 24px; padding: 4px 8px; border-radius: 4px; background-color: var(--glass-top); font-size: 12px; line-height: 16px; color: var(--ink-2); white-space: nowrap; pointer-events: none; }
+.ck-hud { position: fixed; left: 24px; top: 16px; max-width: calc(100vw - 176px); height: 24px; padding: 4px 8px; border-radius: 4px; background-color: var(--glass-top); font-size: 12px; line-height: 16px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
 .ck-warn { color: var(--blocked); }
 .ck-qual { position: fixed; z-index: 1; right: 24px; top: 16px; display: flex; gap: 4px; height: 24px; }
 .ck-qual button { height: 24px; padding: 4px 8px; border-radius: 4px; background-color: var(--glass-top); font-size: 12px; line-height: 16px; color: var(--ink-2); }
