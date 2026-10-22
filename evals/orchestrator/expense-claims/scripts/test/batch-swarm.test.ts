@@ -230,9 +230,33 @@ test("the self-test's shell probe needs the marker in the command and a successf
   assert.match(shellProbe(started, "eval-selftest-st1").detail, /never completed/);
   const failed = [...started, ev("tool.execution_complete", 2, { toolCallId: "b1", success: false, result: { content: "denied" } })];
   assert.match(shellProbe(failed, "eval-selftest-st1").detail, /without success/);
-  assert.match(shellProbe([], "eval-selftest-st1").detail, /no tool call ran/);
+  assert.match(shellProbe([], "eval-selftest-st1").detail, /no shell tool call \(bash or powershell\) ran/);
   const subAgent = [ev("tool.execution_start", 2, { toolName: "bash", toolCallId: "b1", arguments: { command: "echo eval-selftest-st1" } }, "sub-1")];
   assert.equal(shellProbe(subAgent, "eval-selftest-st1").ok, false, "only the session's own calls count");
+});
+
+test("regression: the shell probe accepts only a shell tool whose output prints the marker", () => {
+  const marker = "eval-selftest-st1";
+  const viewed = [
+    ev("tool.execution_start", 2, { toolName: "view", toolCallId: "v1", arguments: { path: `/tmp/${marker}` } }),
+    ev("tool.execution_complete", 2, { toolCallId: "v1", success: true, result: { content: `${marker}\n` } }),
+  ];
+  assert.equal(shellProbe(viewed, marker).ok, false, "a non-shell tool carrying the marker proves nothing");
+  const echoedCommandOnly = [
+    ev("tool.execution_start", 2, { toolName: "bash", toolCallId: "b1", arguments: { command: `pwd && echo ${marker}` } }),
+    ev("tool.execution_complete", 2, { toolCallId: "b1", success: true, result: { content: `$ pwd && echo ${marker}\n<exited with exit code 0>` } }),
+  ];
+  assert.equal(shellProbe(echoedCommandOnly, marker).ok, false, "the marker must be printed on its own line");
+  const printed = [
+    ev("tool.execution_start", 2, { toolName: "bash", toolCallId: "b1", arguments: { command: `pwd && echo ${marker}` } }),
+    ev("tool.execution_complete", 2, { toolCallId: "b1", success: true, result: { content: `/tmp/x\n${marker}\n<exited with exit code 0>` } }),
+  ];
+  assert.equal(shellProbe(printed, marker).ok, true);
+  const markerInOtherArgument = [
+    ev("tool.execution_start", 2, { toolName: "bash", toolCallId: "b1", arguments: { command: "pwd", description: marker } }),
+    ev("tool.execution_complete", 2, { toolCallId: "b1", success: true, result: { content: marker } }),
+  ];
+  assert.equal(shellProbe(markerInOtherArgument, marker).ok, false, "the marker must be in the command");
 });
 
 test("the driver's reply source is read from the log, not guessed", () => {

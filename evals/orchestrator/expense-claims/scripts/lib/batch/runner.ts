@@ -931,15 +931,30 @@ async function watchRun(ctx: Ctx, state: BatchState, run: RunState, index: numbe
   const logs = readLogs(ctx, runSessionIds(ctx, run));
   const swarm = swarmView(logs);
   const blocks = logs.flatMap((log) => permissionBlocks(log.id, log.events, now));
-  if (blocks.length > 0) {
-    await permissionBlocked(ctx, state, run, blocks, true);
-    return { progressed: true };
-  }
   findAnswerSource(ctx, run, events);
 
   const session = run.appSessionId ?? run.sessionId;
   const kickoffMs = ms(run.kickoffAt);
   const limitMs = minutes(config.timeoutMin);
+  if (blocks.length > 0) {
+    // The run's end decides whether a prompt voids it: a final report written before the first
+    // blocking request (and within the time limit) is judged first. If it is the report, the run
+    // ends there and permissionsAfterWatching sorts the prompts by their timestamps.
+    const firstRequestAt = Math.min(...blocks.map((block) => block.request.at));
+    const earlier = orch.messages.filter((message) => message.at < firstRequestAt && message.at - kickoffMs <= limitMs);
+    const unjudged = earlier.slice(-3).filter((message) => !run.judged.includes(message.messageId));
+    if (unjudged.length > 0) {
+      return {
+        action: judgeAction(ctx, state, index, session, {
+          messages: unjudged,
+          swarmQuiet: since(now, swarm.lastActivityAt) >= config.swarmSettleSec * 1000,
+          reason: "a tool-permission prompt appeared after these messages; a final report among them is the run's end, and a prompt after it doesn't void the run",
+        }),
+      };
+    }
+    await permissionBlocked(ctx, state, run, blocks, true);
+    return { progressed: true };
+  }
   // As in score: a run is over time only when more than 90 minutes have passed.
   const timedOut = since(now, kickoffMs) > limitMs;
   const ask = orch.openAsk;
@@ -1114,9 +1129,30 @@ function knownStop(state: BatchState): Stop | null {
   );
 }
 
+// The swarms of runs that have ended are still checked for permission prompts until the batch
+// finishes. Such a prompt keeps the run's result, but no further run starts. Void runs are skipped:
+// they are never scored, and a permission void has already stopped the batch.
+async function watchFinishedSwarms(ctx: Ctx, state: BatchState): Promise<void> {
+  const finished = state.runs.filter((run, index) => run.status === "done" && !state.active.includes(index) && run.sessionId && run.startRequestedAt);
+  if (finished.length === 0) return;
+  const now = ctx.deps.now();
+  // One scan of the session folders for every finished run.
+  const recent = ctx.index.recent(Math.min(...finished.map((run) => ms(run.startRequestedAt) - minutes(2))));
+  for (const run of finished) {
+    const ids = new Set(recent.filter((meta) => meta.repository?.toLowerCase() === run.repo.toLowerCase()).map((meta) => meta.id));
+    ids.add(run.sessionId!);
+    const known = new Set(run.flags.filter((flag) => flag.code === "permission-prompt").map((flag) => flag.detail));
+    const fresh = readLogs(ctx, [...ids])
+      .flatMap((log) => permissionBlocks(log.id, log.events, now))
+      .filter((block) => !known.has(describePermissionBlock(block)));
+    if (fresh.length > 0) await permissionBlocked(ctx, state, run, fresh, false);
+  }
+}
+
 // Steps every run of the round until one needs the driver. Once a stop is known, the round's runs
 // that haven't started are void; the others finish first.
 async function runsStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
+  await watchFinishedSwarms(ctx, state);
   if (state.active.length === 0) return startNextRound(ctx, state);
   // Scored runs go first, so a run's row is committed before another run writes its own.
   const order = [...state.active].sort((a, b) => Number(state.runs[b].status === "scored") - Number(state.runs[a].status === "scored"));

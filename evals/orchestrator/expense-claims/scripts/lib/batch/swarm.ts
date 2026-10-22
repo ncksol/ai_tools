@@ -426,23 +426,36 @@ export function permissionProblems(sessionId: string, events: LogEvent[]): { req
   return { requests: requests.length, manual, pending, denied, detail };
 }
 
-// The self-test's shell command: started with the marker in its arguments, completed successfully,
-// and its output holds the marker.
+// The CLI's shell tools: bash on macOS and Linux, powershell on Windows.
+export const SHELL_TOOLS = ["bash", "powershell"];
+
+const resultText = (data: Record<string, unknown> | undefined): string => {
+  const result = data?.result;
+  if (typeof result === "string") return result;
+  const content = (result as Record<string, unknown> | undefined)?.content;
+  return typeof content === "string" ? content : "";
+};
+
+// The self-test's shell command: a shell tool call whose command holds the marker, completed
+// successfully, with the marker alone on a line of its output (the echo, not the command text).
 export function shellProbe(events: LogEvent[], marker: string): { ok: boolean; detail: string } {
   const own = events.filter((event) => !event.agentId);
-  const starts = own.filter((event) =>
-    event.type === "tool.execution_start" && str(event.data?.toolName) !== "ask_user" && JSON.stringify(event.data?.arguments ?? {}).includes(marker));
-  if (starts.length === 0) return { ok: false, detail: `no tool call ran a command with ${marker}` };
-  for (const start of starts) {
+  const starts = own.filter((event) => {
+    if (event.type !== "tool.execution_start" || !SHELL_TOOLS.includes(str(event.data?.toolName) ?? "")) return false;
+    const command = (event.data?.arguments as Record<string, unknown> | undefined)?.command;
+    return typeof command === "string" && command.includes(marker);
+  });
+  if (starts.length === 0) return { ok: false, detail: `no shell tool call (${SHELL_TOOLS.join(" or ")}) ran a command with ${marker}` };
+  const printed = new RegExp(`^\\s*${marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "m");
+  const outcomes = starts.map((start) => {
     const id = str(start.data?.toolCallId);
-    const done = own.find((event) => event.type === "tool.execution_complete" && id && event.data?.toolCallId === id);
-    if (done && done.data?.success === true && JSON.stringify(done.data?.result ?? {}).includes(marker)) {
-      return { ok: true, detail: `${str(start.data?.toolName) ?? "a tool"} completed and printed ${marker}` };
-    }
-  }
-  const last = starts.at(-1)!;
-  const done = own.find((event) => event.type === "tool.execution_complete" && event.data?.toolCallId === last.data?.toolCallId);
-  return { ok: false, detail: done ? `${str(last.data?.toolName) ?? "the tool"} completed without success or without printing ${marker}` : `${str(last.data?.toolName) ?? "the tool"} call never completed` };
+    const done = own.find((event) => event.type === "tool.execution_complete" && id !== null && event.data?.toolCallId === id);
+    return { name: str(start.data?.toolName)!, done, ok: Boolean(done && done.data?.success === true && printed.test(resultText(done.data))) };
+  });
+  const passed = outcomes.find((outcome) => outcome.ok);
+  if (passed) return { ok: true, detail: `${passed.name} completed and printed ${marker}` };
+  const last = outcomes.at(-1)!;
+  return { ok: false, detail: last.done ? `${last.name} completed without success or without printing ${marker}` : `${last.name} call never completed` };
 }
 
 export interface SwarmView {

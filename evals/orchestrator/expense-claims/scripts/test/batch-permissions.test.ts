@@ -1,14 +1,14 @@
 // Tool-permission prompts: the self-test proves a session the batch creates can use tools with nobody
 // present, and a prompt during a batch voids the run and stops the batch.
 import assert from "node:assert/strict";
-import { appendFileSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { appendFileSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { after, test } from "node:test";
 import type { LogEvent } from "../lib/events.ts";
 import { calibrationDecision, scoredCount } from "../lib/batch/plan.ts";
 import { makeCtx, next, STOP_MESSAGE } from "../lib/batch/runner.ts";
 import { saveState } from "../lib/batch/state.ts";
 import { actAsDriver } from "../lib/batch/rehearsal.ts";
-import { eventsPath, PERMISSION_REMEDY } from "../lib/batch/swarm.ts";
+import { eventsPath, LogCache, PERMISSION_REMEDY } from "../lib/batch/swarm.ts";
 import { readResults } from "../lib/results.ts";
 import { harness, type Harness } from "./fixtures/batch.ts";
 
@@ -217,4 +217,71 @@ test("regression: a child's prompt one second before the final report voids the 
   assert.equal(state.runs[0].status, "void");
   assert.match(state.runs[0].voidReason!, /^blocked by a tool-permission prompt: session child-/);
   assert.match(state.stopReason!, /^variant-a#1 was blocked by a tool-permission prompt/);
+});
+
+// Critical review A: a request after the final report, seen when an open judgment is recomputed
+// after a restart, must let the earlier final report be judged first, not void the run.
+test("regression: after a restart, a final report written before a later prompt is judged first and the run keeps its result", async () => {
+  const h = await make({ scenarios: ["ask-final", "ask-final"], runsPerVariant: 2 });
+  const judge = await h.until((action) => action.action === "judge_idle" && /work is done/.test(JSON.stringify(action.details?.messages)));
+  const final = (judge.details!.messages as { text: string; timestamp: string }[]).find((m) => /work is done/.test(m.text))!;
+  const run = h.state().runs[0];
+  // The driver stopped before judging; a prompt starts a second after the report, and the runner
+  // comes back after the grace period.
+  appendAt(h, run.sessionId!, "permission.requested", pendingShell("after"), Date.parse(final.timestamp) + 1000);
+  h.clock.now += 31_000;
+  const ctx = makeCtx(h.config, h.ctx.deps);
+  const actions: string[] = [];
+  for (let i = 0; i < 200; i++) {
+    const action = await next(ctx, { maxWaitMs: 540_000 });
+    if (action.action === "done") break;
+    actions.push(`${action.action} ${String(action.details?.reason ?? "")}`);
+    await actAsDriver(ctx, h.app, h.clock, action);
+  }
+  assert.match(actions[0], /^judge_idle a tool-permission prompt appeared after these messages/);
+  const state = h.state();
+  assert.equal(state.runs.length, 1);
+  assert.equal(state.runs[0].status, "done");
+  assert.equal(readResults(h.config.resultsPath)[0].outcome, "passed");
+  assert.match(state.stopReason!, /^variant-a#1's swarm hit a tool-permission prompt after the run ended/);
+});
+
+// Critical review B: a finished run's swarm is still checked until the batch finishes.
+test("regression: a prompt in a finished run's swarm keeps its row but stops further runs", async () => {
+  const h = await make({ scenarios: ["ask-final", "ask-final", "ask-final"], runsPerVariant: 3 });
+  let injected = false;
+  await h.until((_, state) => {
+    if (!injected && state.runs[0]?.status === "done" && state.runs[1]?.status === "running") {
+      injected = true;
+      appendEvent(h, state.runs[0].sessionId!, "permission.requested", pendingShell("finished"), -60_000);
+    }
+    return false;
+  });
+  const state = h.state();
+  assert.ok(injected);
+  assert.deepEqual(state.runs.map((r) => r.status), ["done", "done"], "the run in progress finished; no third run started");
+  assert.equal(readResults(h.config.resultsPath).length, 2);
+  assert.equal(h.scoreCalls.length, 2);
+  assert.ok(state.runs[0].flags.some((f) => f.code === "permission-prompt"));
+  assert.equal(state.phase, "stopped");
+  assert.match(state.stopReason!, /^variant-a#1's swarm hit a tool-permission prompt after the run ended/);
+});
+
+// Critical review C: only a shell tool's own output proves the shell ran.
+test("regression: a self-test that proved the marker with a non-shell tool fails", async () => {
+  const h = await make({ scenarios: [], selfTest: true });
+  h.config.selfTest.only = true;
+  await h.until((action, state) => {
+    const test = state.selftests[0];
+    if (action.action === "answer_question" && test?.sessionId) {
+      const path = eventsPath(h.config.stateDir, test.sessionId);
+      writeFileSync(path, readFileSync(path, "utf8").replace(/"toolName":"bash","toolCallId":"([^"]+)","arguments":\{"command":"[^"]*"\}/, (_m, id) => `"toolName":"view","toolCallId":"${id}","arguments":{"path":"/tmp/eval-selftest-${test.nonce}"}`));
+      h.ctx.logs = new LogCache();
+    }
+    return false;
+  });
+  const test = h.state().selftests[0];
+  assert.equal(test.status, "failed");
+  const check = test.checks.find((c) => c.name === "a shell command ran with nobody present")!;
+  assert.deepEqual([check.ok, check.detail], [false, `no shell tool call (bash or powershell) ran a command with eval-selftest-${test.nonce}`]);
 });
