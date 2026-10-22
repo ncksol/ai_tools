@@ -156,7 +156,7 @@ For the orchestrator agents and the swarm dashboard, install `wintermute`:
 copilot plugin install wintermute@ai-tools
 ```
 
-To update it, run `copilot plugin update wintermute@ai-tools`. Its agents and its canvas load when a session starts, so restart the Copilot app, or ask Copilot to reload extensions in each session, after you install or update it. Changes to the agents reach you through a plugin update after they merge, not through `git pull`.
+To update it, run `copilot plugin update wintermute@ai-tools`. After you install or update it, start new sessions, or restart the Copilot app, to get the new agents: a running session keeps the agents it started with. Reloading extensions in a session, or restarting the app, refreshes the dashboard canvas. Changes to the agents reach you through a plugin update after they merge, not through `git pull`.
 
 If you used the `swarm-dashboard` plugin or symlinked the orchestrator agents into `~/.copilot/agents/`, follow the migration steps in the [`wintermute` CHANGELOG](./ghcp/plugins/wintermute/CHANGELOG.md) first: agents in `~/.copilot/agents/` shadow the plugin's, and two plugins with the `swarm-dashboard` canvas clash.
 

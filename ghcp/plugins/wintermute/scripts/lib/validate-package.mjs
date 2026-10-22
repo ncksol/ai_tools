@@ -7,32 +7,71 @@ export const PACKAGED_AGENTS = Object.freeze([
 ]);
 const BARE_ID = new RegExp(`(?:agent_type|kickoff\\.agent):\\s*"(${PACKAGED_AGENTS.join('|')})"`, 'g');
 
-/** Parses an agent file's frontmatter: `key: value` lines, with `tools` as a JSON array of strings. */
+/**
+ * Agent frontmatter is checked against a strict, flat subset of YAML, so that a value this check accepts reads the same in
+ * any YAML parser. Each line is `key: value`, with a lowercase kebab-case key. A value is one of:
+ * - a plain scalar on one line: it must not start with a YAML indicator (`[]{},&*!|>'"%@` or a backtick, `#`, or `-`,
+ *   `?` or `:` followed by a space), and must not contain `: ` or ` #` or end with `:`;
+ * - a single-quoted scalar, `'...'`, where `''` stands for one quote;
+ * - a double-quoted scalar, `"..."`, with JSON escapes only;
+ * - a flow sequence written as a JSON array of strings, such as `tools: ["view", "grep"]`.
+ * Block scalars (`|`, `>`), nested maps, comments and multi-line values are not part of the subset.
+ */
+const PLAIN_START = /^(?:[[\]{},&*!|>'"%@`#]|[-?:](?:\s|$))/;
+
+function scalar(raw) {
+  if (raw.startsWith('"')) {
+    if (!/^"(?:[^"\\]|\\.)*"$/.test(raw)) return { error: 'has an unterminated or malformed double-quoted string' };
+    try {
+      return { value: JSON.parse(raw) };
+    } catch {
+      return { error: 'uses an escape outside JSON escapes in a double-quoted string' };
+    }
+  }
+  if (raw.startsWith("'")) {
+    if (!/^'(?:[^']|'')*'$/.test(raw)) return { error: 'has an unterminated or malformed single-quoted string' };
+    return { value: raw.slice(1, -1).replace(/''/g, "'") };
+  }
+  if (raw.startsWith('[')) {
+    try {
+      const value = JSON.parse(raw);
+      if (Array.isArray(value) && value.every(item => typeof item === 'string' && item)) return { value };
+    } catch {
+      // Reported below.
+    }
+    return { error: 'must be a JSON array of non-empty strings' };
+  }
+  if (PLAIN_START.test(raw)) return { error: 'starts with a YAML indicator; quote it' };
+  if (/: |:$| #|\t/.test(raw)) return { error: 'contains ": ", " #", a tab or a trailing ":"; quote it' };
+  return { value: raw };
+}
+
+/** Parses an agent file's frontmatter under the subset above; `fields` holds the decoded values. */
 export function parseAgentFrontmatter(text) {
   const block = text.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
   if (!block) return { errors: ['missing or invalid frontmatter'], fields: {} };
   const errors = [];
   const fields = {};
   for (const line of block[1].split(/\r?\n/)) {
-    const match = line.match(/^([a-z][a-z-]*):[ \t]*(.*)$/);
+    const match = line.match(/^([a-z][a-z-]*):(?:[ ]+(.*?))?[ ]*$/);
     if (!match) {
       errors.push(`unsupported frontmatter line: ${line}`);
       continue;
     }
-    const [, key, raw] = match;
+    const [, key, raw = ''] = match;
     if (Object.hasOwn(fields, key)) errors.push(`duplicate frontmatter key ${key}`);
-    let value = raw.trim();
-    if (key === 'tools') {
-      try {
-        value = JSON.parse(value);
-        if (!Array.isArray(value) || value.some(tool => typeof tool !== 'string' || !tool)) throw new Error('not a list of names');
-      } catch {
-        errors.push('tools must be a JSON array of tool names');
-      }
+    if (!raw) {
+      errors.push(`frontmatter ${key} has no value`);
+      fields[key] = null;
+      continue;
     }
-    fields[key] = value;
+    const result = scalar(raw);
+    if (result.error) errors.push(`frontmatter ${key} ${result.error}`);
+    else if (key === 'tools' && !Array.isArray(result.value)) errors.push('frontmatter tools must be a JSON array of non-empty strings');
+    fields[key] = result.error ? null : result.value;
   }
   for (const key of ['name', 'description']) {
+    if (Object.hasOwn(fields, key) && fields[key] === null) continue;
     if (typeof fields[key] !== 'string' || !fields[key]) errors.push(`missing frontmatter ${key}`);
   }
   return { errors, fields };

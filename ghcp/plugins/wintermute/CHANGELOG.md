@@ -10,7 +10,7 @@ The `swarm-dashboard` plugin is now `wintermute`: one plugin that ships the orch
 
 - Six agents, in `com.github.copilot/agents/`: `orchestrator`, `session-orchestrator`, `hands-on-orchestrator`, `hands-on-session-orchestrator`, `orchestrator-worker` and `session-worker`. Before, they were loose files in `ghcp/agents/` that you symlinked or copied into `~/.copilot/agents/`.
 - This changelog.
-- `npm run validate` also checks the six agents (each exists, its frontmatter parses and its `name` matches the file name, and it starts the workers by their `wintermute:` IDs), that `plugin.json` has no `agents` field, that no copy of them stays in `ghcp/agents/`, and that this file has an entry for the current version.
+- `npm run validate` also checks the six agents (each exists, its frontmatter follows a strict flat YAML subset and its decoded `name` matches the file name, and it starts the workers by their `wintermute:` IDs), that `plugin.json` has no `agents` field, that no copy of them stays in `ghcp/agents/`, and that this file has an entry for the current version.
 
 ### Changed
 
@@ -45,4 +45,4 @@ Do these steps in order:
    copilot plugin install wintermute@ai-tools
    ```
 
-4. Restart the Copilot app, or reload extensions in every session, so that the agents and the canvas load from the new plugin. A dashboard server that already runs on port 7927 keeps serving the old version until no session hosts it any more.
+4. Restart the Copilot app, or start new sessions, so that sessions use the plugin's agents; a running session keeps the agents it started with. Reloading extensions in a session, or restarting the app, refreshes the dashboard canvas. A dashboard server that already runs on port 7927 keeps serving the old version until no session hosts it any more.

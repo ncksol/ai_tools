@@ -86,7 +86,7 @@ test('an agent whose frontmatter name differs from its file name, or whose front
   writeFileSync(plain, readFileSync(plain, 'utf8').replace(/^---\n/, ''));
   const errors = await validatePlugin(root, repo);
   assert.ok(errors.includes('com.github.copilot/agents/orchestrator-worker.agent.md: frontmatter name worker must match the file name orchestrator-worker'), errors.join('\n'));
-  assert.ok(errors.includes('com.github.copilot/agents/session-worker.agent.md: tools must be a JSON array of tool names'), errors.join('\n'));
+  assert.ok(errors.includes('com.github.copilot/agents/session-worker.agent.md: frontmatter tools must be a JSON array of non-empty strings'), errors.join('\n'));
   assert.ok(errors.includes('com.github.copilot/agents/orchestrator.agent.md: missing or invalid frontmatter'), errors.join('\n'));
 });
 
@@ -139,4 +139,38 @@ test('a CHANGELOG with no entry for the current version, or no CHANGELOG, is rep
   rmSync(path.join(root, 'CHANGELOG.md'));
   errors = await validatePlugin(root, repo);
   assert.deepEqual(errors, ['CHANGELOG.md: required file is missing']);
+});
+
+test('agent frontmatter follows a strict flat YAML subset and decodes quoted values', async () => {
+  const parse = lines => parseAgentFrontmatter(`---\n${lines.join('\n')}\n---\n\nBody.\n`);
+  assert.deepEqual(parse(['name: orchestrator', 'description: Coordinates work: dispatch and track']).errors,
+    ['frontmatter description contains ": ", " #", a tab or a trailing ":"; quote it']);
+  assert.deepEqual(parse(['name: orchestrator', 'description: Plans work # and tracks it']).errors,
+    ['frontmatter description contains ": ", " #", a tab or a trailing ":"; quote it']);
+  assert.deepEqual(parse(['name: orchestrator', 'description: "Plans work']).errors,
+    ['frontmatter description has an unterminated or malformed double-quoted string']);
+  assert.deepEqual(parse(['name: orchestrator', "description: 'Plans work"]).errors,
+    ['frontmatter description has an unterminated or malformed single-quoted string']);
+  assert.deepEqual(parse(['name: orchestrator', 'description: "Plans" work']).errors,
+    ['frontmatter description has an unterminated or malformed double-quoted string']);
+  assert.deepEqual(parse(['name: orchestrator', 'description: - Plans work']).errors, ['frontmatter description starts with a YAML indicator; quote it']);
+  assert.deepEqual(parse(['name: orchestrator', 'description: >-', '  Plans work']).errors,
+    ['frontmatter description starts with a YAML indicator; quote it', 'unsupported frontmatter line:   Plans work']);
+  assert.deepEqual(parse(['name: orchestrator', 'description:']).errors, ['frontmatter description has no value']);
+  assert.deepEqual(parse(['name: orchestrator', 'description: Plans', 'tools: [view, grep]']).errors,
+    ['frontmatter tools must be a JSON array of non-empty strings']);
+  const quoted = parse(['name: "orchestrator"', "description: 'Coordinates work: it''s quoted'", 'tools: ["view", "grep"]', 'model: ["a", "b"]']);
+  assert.deepEqual(quoted.errors, []);
+  assert.deepEqual(quoted.fields, { name: 'orchestrator', description: "Coordinates work: it's quoted", tools: ['view', 'grep'], model: ['a', 'b'] });
+});
+
+test('a quoted agent name is compared after decoding, and an invalid description is reported by the validator', async () => {
+  const { repo, root } = sandbox();
+  const file = agentFile(root, 'orchestrator');
+  writeFileSync(file, readFileSync(file, 'utf8').replace('name: orchestrator\n', 'name: "orchestrator"\n'));
+  assert.deepEqual(await validatePlugin(root, repo), []);
+  const worker = agentFile(root, 'session-worker');
+  writeFileSync(worker, readFileSync(worker, 'utf8').replace(/^description: .*$/m, 'description: Runs one unit: a branch or a job'));
+  assert.deepEqual(await validatePlugin(root, repo),
+    ['com.github.copilot/agents/session-worker.agent.md: frontmatter description contains ": ", " #", a tab or a trailing ":"; quote it']);
 });

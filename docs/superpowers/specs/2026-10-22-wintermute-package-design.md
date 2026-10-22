@@ -14,7 +14,7 @@ The user asked to "wrap the dashboard and the orchestrator agents into one packa
 4. **Prefixed agent IDs everywhere.** Copilot names a plugin agent `<plugin>:<file-stem>`. `~/.copilot/data.db` `sessions.agent` records such IDs (for example `adr-authoring:adr-writer`), and `task` `agent_type` and `create_session` `kickoff.agent` accept them. Whether a bare name resolves to a plugin agent is unknown, so every reference that starts or matches one of these agents uses the prefixed ID: `agent_type: "wintermute:orchestrator-worker"` and `kickoff.agent: "wintermute:session-worker"`. The display name in the agent picker stays plain. The runtime prefix meets the repository rule that agent names inside a plugin are namespaced, so the files keep their plain names.
 5. **The dashboard matches both forms.** `ORCHESTRATOR_AGENTS` in `engine/model/forest.mjs` lists the four orchestrators by bare name and by `wintermute:` ID. A childless top session becomes a swarm root only when its agent is on that list, so keeping the bare names keeps past runs in History.
 6. **One version, one changelog.** Version 0.2.0 in `plugin.json`, `package.json` and the root marketplace entry. Any change to an agent or the dashboard bumps all three and adds a `CHANGELOG.md` entry. The marketplace keeps a relative `source` that tracks `main`.
-7. **The validator checks the package.** `npm run validate` checks that the six agents exist with parseable frontmatter whose `name` matches the file name, that they start their workers by `wintermute:` IDs, that no copy stays in `ghcp/agents/`, that `plugin.json` has no `agents` field, that the three versions are equal, and that `CHANGELOG.md` has an entry for the current version.
+7. **The validator checks the package.** `npm run validate` checks that the six agents exist with frontmatter in a strict flat YAML subset (documented in `scripts/lib/validate-package.mjs`) whose decoded `name` matches the file name, that they start their workers by `wintermute:` IDs, that no copy stays in `ghcp/agents/`, that `plugin.json` has no `agents` field, that the three versions are equal, and that `CHANGELOG.md` has an entry for the current version.
 8. **Dashboard identity unchanged.** The canvas id stays `swarm-dashboard` (its provider ID becomes `plugin:wintermute:swarm-dashboard`), the shared server keeps port 7927 and its health identity `"app": "swarm-dashboard"`, and history stays in `~/.copilot/swarm-dashboard/`. A new canvas still recognises an old server, and history survives. The dashboard's internal file and folder names stay as they are.
 
 ## Related work, in separate units
@@ -30,7 +30,7 @@ After merge, with the user's go-ahead, in this order (also in `CHANGELOG.md` 0.2
 1. Remove the six agent symlinks from `~/.copilot/agents/`. User agents load before plugin agents and would shadow them.
 2. Uninstall `swarm-dashboard@ai-tools`. Two installed plugins that both register the `swarm-dashboard` canvas would clash.
 3. Install `wintermute@ai-tools`.
-4. Restart the app, or reload extensions in every session.
+4. Restart the app, or start new sessions, so that sessions use the plugin's agents. Reloading extensions refreshes the dashboard canvas in a running session, but not its agents.
 5. Check that a new `session-orchestrator` session starts `wintermute:session-worker` children and that the dashboard shows them.
 
 ## Trade-off

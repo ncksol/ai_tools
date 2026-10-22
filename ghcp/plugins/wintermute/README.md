@@ -14,7 +14,7 @@ copilot plugin marketplace add ncksol/ai_tools
 copilot plugin install wintermute@ai-tools
 ```
 
-Then restart the Copilot app, or ask Copilot to reload extensions in each session, so the agents and the canvas load. The plugin has no npm dependencies, and the canvas runs on the Node.js that ships with Copilot. The browser launcher and the commands below need Node.js 18 or later.
+Then start new sessions, or restart the Copilot app, to get the agents; a session that was already running keeps the agents it started with. Reloading extensions in a session, or restarting the app, loads the dashboard canvas. The plugin has no npm dependencies, and the canvas runs on the Node.js that ships with Copilot. The browser launcher and the commands below need Node.js 18 or later.
 
 ## Update
 
@@ -22,7 +22,7 @@ Then restart the Copilot app, or ask Copilot to reload extensions in each sessio
 copilot plugin update wintermute@ai-tools
 ```
 
-Then restart the app, or reload extensions in every session. A session keeps the agents and the canvas it started with, and a dashboard server that already runs on the port keeps serving the old version until no session hosts it any more (see [Troubleshooting](#troubleshooting)). Agent changes in this repository reach you only through a plugin update, not through `git pull`.
+Then start new sessions, or restart the app, to get the updated agents: a running session keeps the agents it started with. Reloading extensions in a session, or restarting the app, refreshes the dashboard canvas. A dashboard server that already runs on the port keeps serving the old version until no session hosts it any more (see [Troubleshooting](#troubleshooting)). Agent changes in this repository reach you only through a plugin update, not through `git pull`.
 
 ## Moving from swarm-dashboard
 
@@ -31,7 +31,7 @@ Before 0.2.0 the dashboard was the `swarm-dashboard` plugin and the agents were 
 1. Remove the six agents from `~/.copilot/agents/`. Agents there load before plugin agents and would shadow this plugin's copies.
 2. Run `copilot plugin uninstall swarm-dashboard@ai-tools`. Two installed plugins that both register the `swarm-dashboard` canvas would clash.
 3. Run `copilot plugin install wintermute@ai-tools`.
-4. Restart the app, or reload extensions in every session.
+4. Restart the app, or start new sessions, so that sessions use this plugin's agents. Reloading extensions refreshes the dashboard canvas in a running session, but not its agents.
 
 The [CHANGELOG](CHANGELOG.md) entry for 0.2.0 has the commands. The canvas id (`swarm-dashboard`), the port and the run history in `~/.copilot/swarm-dashboard/` stay the same, so past runs stay in History, including runs of the agents under their old plain names.
 
