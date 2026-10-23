@@ -116,7 +116,7 @@ export function buildReport(config: BatchConfig, state: BatchState, appDb: AppDb
     out.push(`- ${runLabel(run)}:`);
     for (const flag of run.flags) out.push(`  - ${flag.code}: ${flag.detail}`);
   }
-  out.push("", "A flag doesn't change the row in results.csv. Check each flagged run before you trust its row; to drop a row, delete its line from results.csv and commit.", "");
+  out.push("", `A flag doesn't change the row in results.csv. Check each flagged run before you trust its row; to drop a row, delete its line from results.csv and commit. At cleanup, confirm that exact run with \`npm run batch -- cleanup --batch ${config.id} --dropped <run-name> --yes\`; the confirmation is journaled and waives only that run's row-preservation check.`, "");
 
   out.push("## Self-test", "");
   if (state.selftests.length === 0) out.push("Not run.");
@@ -142,12 +142,12 @@ export function buildReport(config: BatchConfig, state: BatchState, appDb: AppDb
     out.push(`- ${config.dryRun ? run.repo : `https://github.com/${run.repo}`} (local clone ${run.repoDir})`);
   }
   for (const test of state.selftests) out.push(`- Permanent self-test project ${test.projectId ?? "not registered"} at ${test.repoDir} (local only; keep for later batches)`);
-  out.push("", "Deleting run repos needs a token with the delete_repo scope, or the GitHub web UI (README \"Cleaning up\").", "");
+  out.push("", `After reviewing results: \`npm run batch -- cleanup --batch ${config.id}\` previews cleanup; \`--yes\` archives logs before app removal and deletes eligible items (README "Cleaning up"). Never automatic.`, "");
   out.push("## Unused provisioned projects", "");
   const unused = (state.provisioned ?? []).filter((slot) => !state.runs.some((run) => run.repo === slot.repo && run.startRequestedAt));
   if (unused.length === 0) out.push("None.");
   for (const slot of unused) out.push(`- ${slot.name}: project ${slot.projectId ?? "not registered"}; repo ${slot.repo}; clone ${slot.repoDir}; provisioning status ${slot.status}.`);
-  out.push("", "Remove or keep these yourself. Later batches do not reuse them or build a trusted-project pool.", "");
+  out.push("", "The manual cleanup command includes these slots. Later batches do not reuse them or build a trusted-project pool.", "");
 
   out.push("## Land the results", "");
   if (extras.branch) {
@@ -160,9 +160,10 @@ export function buildReport(config: BatchConfig, state: BatchState, appDb: AppDb
 
   out.push("## Morning checklist", "");
   out.push("1. Turn Copilot Memory back on at https://github.com/settings/copilot/features.");
-  out.push("2. Archive the sessions listed above.");
+  out.push("2. Archive self-test sessions in kept projects. Run/child/trust sessions need no separate action when removing their projects through cleanup.");
   out.push(permissions.length > 0 ? "3. Review the flagged runs, and read \"Tool-permission prompts\" above before the next batch." : "3. Review the flagged runs.");
   out.push("4. Land the results.csv commits.");
-  out.push("5. Re-enable macOS updates if you deferred them.");
+  out.push(`5. After reviewing results, run \`npm run batch -- cleanup --batch ${config.id}\`. Run with \`--yes\` to archive logs before removing projects; follow its Next steps and rerun. Never automatic.`);
+  out.push("6. Re-enable macOS updates if you deferred them.");
   return out.join("\n") + "\n";
 }

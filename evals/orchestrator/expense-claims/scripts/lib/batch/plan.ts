@@ -2,7 +2,7 @@
 // results.ts, applied automatically, then rounds of runs across the variants.
 import { existsSync, readdirSync } from "node:fs";
 import { ALL_FEATURES, featureSetName, type Feature } from "../features.ts";
-import { parseRunName } from "../new-run.ts";
+import { highestRecordedRunNumber, parseRunName } from "../new-run.ts";
 import { CALIBRATION_LIMIT_MINUTES, matchesPinnedAgent, median, type ResultRow } from "../results.ts";
 import type { RunState } from "./state.ts";
 import { variantBundle, type VariantDefinition, type VariantSet } from "../variants.ts";
@@ -175,9 +175,9 @@ export function provisionPlan(rows: ResultRow[], variants: string[], target: num
   }
 }
 
-// One more than any run number of this variant in results.csv, the runs folder or this batch.
+// Retained batch records keep numbers reserved after cleanup removes clones and kickoff files.
 export function nextRunNumber(variant: string, rows: ResultRow[], runsDir: string, runs: RunState[]): number {
-  let max = 0;
+  let max = highestRecordedRunNumber(runsDir, variant);
   for (const row of rows) if (row.variant === variant && /^\d+$/.test(row.run)) max = Math.max(max, Number(row.run));
   if (existsSync(runsDir)) {
     for (const entry of readdirSync(runsDir)) {

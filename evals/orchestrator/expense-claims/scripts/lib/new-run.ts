@@ -39,13 +39,44 @@ export function parseRunName(name: string): { variant: string; n: number } | nul
 }
 
 export function nextRunNumber(runsDir: string, variant: string): number {
-  if (!existsSync(runsDir)) return 1;
-  let max = 0;
+  let max = highestRecordedRunNumber(runsDir, variant);
+  if (!existsSync(runsDir)) return max + 1;
   for (const entry of readdirSync(runsDir)) {
-    const parsed = parseRunName(entry);
+    const parsed = parseRunName(entry.replace(/\.kickoff\.md$/, ""));
     if (parsed && parsed.variant === variant) max = Math.max(max, parsed.n);
   }
   return max + 1;
+}
+
+export function highestRecordedRunNumber(runsDir: string, variant: string): number {
+  const batches = join(runsDir, "batches");
+  let directories;
+  try { directories = readdirSync(batches, { withFileTypes: true }); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
+    throw error;
+  }
+  let max = 0;
+  for (const directory of directories.filter(entry => entry.isDirectory())) {
+    const path = join(batches, directory.name, "state.json");
+    let text: string;
+    try { text = readFileSync(path, "utf8"); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+    const state: unknown = JSON.parse(text);
+    if (!state || typeof state !== "object" || !("runs" in state) || !Array.isArray(state.runs) ||
+        ("provisioned" in state && !Array.isArray(state.provisioned))) throw new Error(`Invalid retained batch state: ${path}`);
+    const provisioned = "provisioned" in state ? state.provisioned as unknown[] : [];
+    for (const record of [...state.runs, ...provisioned]) {
+      const parsed = record && typeof record === "object" && "name" in record && typeof record.name === "string"
+        ? parseRunName(record.name) : null;
+      if (!parsed || !Number.isSafeInteger(parsed.n) || parsed.n < 1) throw new Error(`Invalid retained run name in ${path}`);
+      if (parsed.variant === variant) max = Math.max(max, parsed.n);
+    }
+  }
+  return max;
 }
 
 export function listSeedFiles(seedDir: string): string[] {

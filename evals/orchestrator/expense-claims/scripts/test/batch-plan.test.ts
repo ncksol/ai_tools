@@ -18,6 +18,16 @@ after(() => rmSync(dir, { recursive: true, force: true }));
 const FULL = "policy+reports+import+summary";
 const THREE = "policy+reports+import";
 
+test("batch numbering retains run and provisioned names even without clones or local results rows", () => {
+  const runsDir = join(dir, "retained-runs");
+  const batch = join(runsDir, "batches", "old-batch");
+  mkdirSync(batch, { recursive: true });
+  writeFileSync(join(batch, "state.json"), JSON.stringify({
+    runs: [{ name: "orch-eval-a-7" }], provisioned: [{ name: "orch-eval-a-9" }],
+  }));
+  assert.equal(nextRunNumber("a", [], runsDir, []), 10);
+});
+
 function row(variant: string, run: number, features: string, calibration: "yes" | "no", outcome: string, minutes: number): ResultRow {
   const r = Object.fromEntries(RESULT_COLUMNS.map((c) => [c, ""])) as ResultRow;
   return { ...r, variant, run: String(run), repo: `ncksol/orch-eval-${variant}-${run}`, features, calibration, outcome, minutes: minutes.toFixed(1) };

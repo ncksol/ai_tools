@@ -40,6 +40,18 @@ test("nextRunNumber counts existing run folders", () => {
   assert.equal(nextRunNumber(dir, "a"), 4);
 });
 
+test("manual numbering retains runs and unused provisioned names after their clones are cleaned", () => {
+  const dir = mkdtempSync(join(runsDir, "retained-"));
+  const batch = join(dir, "batches", "old-batch");
+  mkdirSync(batch, { recursive: true });
+  writeFileSync(join(batch, "state.json"), JSON.stringify({
+    runs: [{ name: "orch-eval-a-7" }], provisioned: [{ name: "orch-eval-a-9" }, { name: "orch-eval-b-25" }],
+  }));
+  assert.equal(nextRunNumber(dir, "a"), 10);
+  assert.equal(nextRunNumber(dir, "b"), 26);
+  assert.equal(nextRunNumber(dir, "new"), 1);
+});
+
 test("listSeedFiles lists the seed without junk", () => {
   const files = listSeedFiles(seed);
   for (const f of ["README.md", "docs/spec-v2.md", ".github/workflows/ci.yml", "src/routes.ts"]) assert.ok(files.includes(f), f);
