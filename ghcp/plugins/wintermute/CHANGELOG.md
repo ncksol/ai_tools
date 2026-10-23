@@ -6,6 +6,13 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace still follows main. See [Releases](README.md#releases) for prerequisites, checks and recovery after a partial publish.
 
+## 0.2.1 — 2026-10-23
+
+### Changed
+
+- Updated `orchestrator`, `session-orchestrator`, `hands-on-orchestrator` and `hands-on-session-orchestrator` to use the Copilot app's renamed `list_repositories` tool in their `tools` allowlists and child-session delegation instructions.
+- Updated `QUICK_TOOLS` (`engine/model/status.mjs`) to cover `list_repositories`, `add_repository` and `await_repository_creation` under the two-minute quick-tool limit.
+
 ## 0.2.0 — 2026-10-22
 
 The `swarm-dashboard` plugin is now `wintermute`: one plugin that ships the orchestrator agents and the swarm dashboard, released and updated together.

@@ -82,6 +82,9 @@ test('tool limits follow the design call', () => {
   assert.equal(limit('read_bash', { delay: 60 }), 3 * MINUTE);
   assert.equal(limit('read_agent', { timeout: 180 }), 5 * MINUTE);
   assert.equal(limit('create_session', {}), 2 * MINUTE);
+  assert.equal(limit('list_repositories', {}), 2 * MINUTE);
+  assert.equal(limit('add_repository', {}), 2 * MINUTE);
+  assert.equal(limit('await_repository_creation', {}), 2 * MINUTE);
   assert.equal(limit('grep', {}), 2 * MINUTE);
   assert.equal(limit('task', {}), null);
   assert.equal(limit('web_fetch', {}), null);
