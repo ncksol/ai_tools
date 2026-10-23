@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
-import { gunzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
 import { cleanupBatch, formatCleanup, type CleanupDeps, type CleanupApp } from "../lib/batch/cleanup.ts";
+import { openCleanupApp } from "../lib/batch/cleanup-io.ts";
 import { openAppDb } from "../lib/batch/appdb.ts";
 import { buildReport } from "../lib/batch/report.ts";
 import { initialState, saveConfig, saveState, type BatchConfig, type RunState } from "../lib/batch/state.ts";
@@ -25,6 +26,11 @@ function fixture(t: { after(fn: () => void): void }) {
   writeFileSync(join(repoDir, "keep-until-authorized"), "clone");
   writeFileSync(`${repoDir}.kickoff.md`, "Implement v2.");
   for (const id of [rootSession, childSession]) writeFileSync(join(home, ".copilot/session-state", id, "events.jsonl"), `{"id":"${id}"}\n`);
+  // A fake Git registry: the clone's .git/worktrees/<name>/gitdir files list its linked worktrees.
+  const admin = join(repoDir, ".git/worktrees/branch");
+  mkdirSync(admin, { recursive: true });
+  writeFileSync(join(admin, "gitdir"), `${worktree}/.git\n`);
+  writeFileSync(join(worktree, ".git"), `gitdir: ${admin}\n`);
   const config = {
     id: "20261022-2121", dir, owner: "ncksol", runsDir: join(home, "orch-evals"),
     stateDir: join(home, ".copilot/session-state"), appDb: join(home, ".copilot/data.db"),
@@ -66,7 +72,22 @@ function fixture(t: { after(fn: () => void): void }) {
       if (args.includes("remote")) return { code: 0, stdout: `https://github.com/${record.repo}.git\n`, stderr: "" };
       if (args.includes("--show-toplevel")) return { code: 0, stdout: `${opts?.cwd}\n`, stderr: "" };
       if (args.includes("merge-base")) return { code: 0, stdout: "", stderr: "" };
-      if (args[0] === "worktree" && args[1] === "list") return { code: 0, stdout: `worktree ${opts?.cwd}\0HEAD ${seed}\0branch refs/heads/main\0\0`, stderr: "" };
+      if (args[0] === "worktree") {
+        const admins = join(String(opts?.cwd), ".git/worktrees");
+        const linked = (existsSync(admins) ? readdirSync(admins) : []).filter(name => existsSync(join(admins, name, "gitdir")))
+          .map(name => ({ admin: join(admins, name), path: dirname(readFileSync(join(admins, name, "gitdir"), "utf8").trim()) }));
+        if (args[1] === "list") {
+          const entry = (fields: string[]) => fields.map(field => `${field}\0`).join("") + "\0";
+          return { code: 0, stdout: entry([`worktree ${opts?.cwd}`, `HEAD ${seed}`, "branch refs/heads/main"]) + linked.map(w =>
+            entry([`worktree ${w.path}`, `HEAD ${seed}`, "detached", ...(existsSync(join(w.admin, "locked")) ? ["locked"] : [])])).join(""), stderr: "" };
+        }
+        const found = linked.find(w => args[1] === "remove" && w.path === args.at(-1));
+        if (!found) return { code: 128, stdout: "", stderr: "not a working tree" };
+        rmSync(found.path, { recursive: true });
+        rmSync(found.admin, { recursive: true });
+        effects.push(`git-worktree-remove ${found.path}`);
+        return { code: 0, stdout: "", stderr: "" };
+      }
       throw new Error(`Unexpected command ${args.join(" ")}`);
     },
   };
@@ -240,7 +261,7 @@ test("independent guard: worktree root containment", async (t) => {
   f.appState.session = false;
   f.deps.app.inventory = () => ({ projects: [], sessions: [], workspaces: [], worktrees: [outside] });
   const result = await cleanupBatch(f.config, f.state, { yes: true, force: true }, f.deps);
-  assert.ok(result.items.some(i => i.kind === "worktree" && i.target === outside && i.reason === "folder is outside this run's allowed root"));
+  assert.ok(result.items.some(i => i.kind === "worktree" && i.target === outside && i.status === "blocked" && i.reason?.includes(outside) && /outside/.test(i.reason)), JSON.stringify(result));
   assert.ok(existsSync(outside));
   assert.ok(!f.effects.includes("delete-repo"));
 });
@@ -314,7 +335,8 @@ test("premature project removal reports lost discovery and cleans only still-kno
   f.appState.session = false;
   const result = await cleanupBatch(f.config, f.state, { yes: true, force: true }, f.deps);
   assert.ok(result.items.some(i => /LOST.*discovery/.test(i.reason ?? "")));
-  assert.ok(existsSync(f.worktree));
+  assert.ok(f.effects.includes(`git-worktree-remove ${f.worktree}`), "the clone's registry still finds the worktree");
+  assert.equal(existsSync(f.worktree), false);
   assert.equal(existsSync(f.record.repoDir), false);
   assert.ok(f.effects.includes("delete-repo"));
 });
@@ -405,7 +427,11 @@ for (const bad of ["foreign gitdir", "existing gitdir", "invalid clone", "app re
     f.deps.app.inventory = () => ({ projects: [], sessions: [], workspaces: [], worktrees: [f.worktree] });
     const gitdir = bad === "foreign gitdir" ? join(f.home, "other-clone", ".git", "worktrees", "branch") :
       join(f.record.repoDir, ".git", "worktrees", "branch");
-    if (bad === "existing gitdir") mkdirSync(gitdir, { recursive: true });
+    rmSync(join(f.record.repoDir, ".git", "worktrees", "branch"), { recursive: true });
+    if (bad === "existing gitdir") {
+      mkdirSync(gitdir, { recursive: true });
+      writeFileSync(join(gitdir, "gitdir"), `${join(f.home, "elsewhere")}/.git\n`);
+    }
     writeFileSync(join(f.worktree, ".git"), `gitdir: ${gitdir}\n`);
     if (bad === "app reference") f.deps.app.projectsForPath = path => path === f.worktree ? ["project-5"] : [];
     const exec = f.deps.exec;
@@ -425,6 +451,7 @@ for (const bad of ["foreign gitdir", "existing gitdir", "invalid clone", "app re
 test("a recorded dangling prewarm worktree is removed only after validating its clone", async (t) => {
   const f = fixture(t);
   f.state.provisioned = [];
+  rmSync(join(f.record.repoDir, ".git"), { recursive: true });
   const git = (args: string[]) => run("git", args, { cwd: f.record.repoDir });
   for (const args of [
     ["init", "-q", "-b", "main"], ["config", "user.name", "Test"], ["config", "user.email", "test@example.invalid"],
@@ -636,6 +663,7 @@ test("real Git folder verification allows exact recorded history and origin befo
   });
   delete f.record.sessionId;
   delete f.record.appSessionId;
+  rmSync(join(f.record.repoDir, ".git"), { recursive: true });
   const git = (args: string[]) => run("git", args, { cwd: f.record.repoDir });
   for (const args of [
     ["init", "-q", "-b", "main"], ["config", "user.name", "Test"], ["config", "user.email", "test@example.invalid"],
@@ -815,6 +843,7 @@ test("a dry run keeps the project while its live inventory has items --yes has n
 
 async function realClone(f: ReturnType<typeof fixture>) {
   f.state.provisioned = [];
+  rmSync(join(f.record.repoDir, ".git"), { recursive: true });
   const git = (args: string[]) => run("git", args, { cwd: f.record.repoDir });
   for (const args of [
     ["init", "-q", "-b", "main"], ["config", "user.name", "Test"], ["config", "user.email", "test@example.invalid"],
@@ -973,4 +1002,305 @@ test("when every archive name is taken by a file that does not verify, the dry r
   for (const path of names) assert.equal(readFileSync(path, "utf8"), "not gzip");
   assert.ok(existsSync(f.record.repoDir));
   assert.ok(!f.effects.includes("delete-repo"));
+});
+
+// Round 2: critical review of 737a5ff.
+const sessionDir = (f: ReturnType<typeof fixture>, id = rootSession) => join(f.config.stateDir, id);
+const archiveDir = (f: ReturnType<typeof fixture>, id = rootSession) => join(f.dir, "sessions", f.record.name, id);
+const rewriteJournal = (f: ReturnType<typeof fixture>, change: (e: Record<string, unknown>) => Record<string, unknown>) =>
+  writeFileSync(join(f.dir, "cleanup.jsonl"), journalOf(f).map(e => JSON.stringify(change(e)) + "\n").join(""));
+const assertKeep = (report: Awaited<ReturnType<typeof cleanupBatch>>) => {
+  assert.match(nextSteps(report), /KEEP project/);
+  assert.doesNotMatch(nextSteps(report), /remove or retry/);
+};
+
+for (const change of ["changed", "unarchived"] as const) {
+  test(`M1: a dry run keeps the project when events.jsonl is gone but workspace.yaml is ${change}`, async (t) => {
+    const f = fixture(t);
+    if (change === "changed") writeFileSync(join(sessionDir(f), "workspace.yaml"), "id: root\n");
+    await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+    rmSync(join(sessionDir(f), "events.jsonl"));
+    appendFileSync(join(sessionDir(f), "workspace.yaml"), "new: unarchived\n");
+    const report = await cleanupBatch(f.config, f.state, {}, f.deps);
+    assert.notEqual(report.items.find(i => i.kind === "archive" && i.target === sessionDir(f))?.status, "archived", JSON.stringify(report));
+    assertKeep(report);
+    await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+    const copies = readdirSync(archiveDir(f)).filter(name => name.startsWith("workspace.yaml"));
+    assert.ok(copies.some(name => gunzipSync(readFileSync(join(archiveDir(f), name))).toString().includes("new: unarchived")), copies.join());
+    const after = await cleanupBatch(f.config, f.state, {}, f.deps);
+    assert.match(nextSteps(after), /remove or retry removing project/);
+  });
+}
+
+test("S1: a dry run keeps the project and says to stop a running session", async (t) => {
+  const f = fixture(t);
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  f.deps.app.sessionRunning = id => id === childSession;
+  const report = await cleanupBatch(f.config, f.state, {}, f.deps);
+  assertKeep(report);
+  assert.match(nextSteps(report), new RegExp(`${childSession}.*still running.*stop.*--yes`, "i"));
+});
+
+test("S1: a dry run keeps the project when a log changes during the check", async (t) => {
+  const f = fixture(t);
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  const projectsForPath = f.deps.app.projectsForPath;
+  let written = false;
+  f.deps.app.projectsForPath = path => {
+    if (!written) { written = true; appendFileSync(join(sessionDir(f), "events.jsonl"), '{"late":true}\n'); }
+    return projectsForPath(path);
+  };
+  const report = await cleanupBatch(f.config, f.state, {}, f.deps);
+  assert.ok(written);
+  assertKeep(report);
+  assert.match(nextSteps(report), /changed during this check.*--yes/);
+});
+
+test("S1: the remove instruction says later writes need another --yes", async (t) => {
+  const f = fixture(t);
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  assert.match(nextSteps(await cleanupBatch(f.config, f.state, {}, f.deps)), /remove or retry removing project.*runs again.*--yes/);
+});
+
+async function recordedRealWorktree(f: ReturnType<typeof fixture>) {
+  f.state.provisioned = [];
+  rmSync(join(f.record.repoDir, ".git"), { recursive: true });
+  rmSync(f.worktree, { recursive: true });
+  const git = (args: string[], cwd = f.record.repoDir) => run("git", args, { cwd });
+  for (const args of [
+    ["init", "-q", "-b", "main"], ["config", "user.name", "Test"], ["config", "user.email", "test@example.invalid"],
+    ["add", "."], ["commit", "-qm", "Seed v1"], ["remote", "add", "origin", `https://github.com/${f.record.repo}.git`],
+  ]) assert.equal((await git(args)).code, 0);
+  f.record.seedSha = (await git(["rev-parse", "HEAD"])).stdout.trim();
+  assert.equal((await git(["worktree", "add", "-q", "--detach", f.worktree])).code, 0);
+  const calls: string[] = [];
+  f.deps.exec = (cmd, args, opts) => { calls.push(`${opts?.cwd}: ${args.join(" ")}`); return run(cmd, args, opts); };
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  assert.ok(journalOf(f).some(e => e.action === "inventory" && e.inventory.worktrees.includes(f.worktree)));
+  f.appState.project = false;
+  f.appState.session = false;
+  return { git, calls };
+}
+
+test("M3: a valid recorded worktree is removed through git, not a recursive delete", async (t) => {
+  const f = fixture(t);
+  const { calls } = await recordedRealWorktree(f);
+  const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  assert.ok(result.items.some(i => i.kind === "worktree" && i.target === f.worktree && i.status === "removed"), JSON.stringify(result));
+  assert.ok(calls.includes(`${f.record.repoDir}: worktree remove --force ${f.worktree}`), calls.join("\n"));
+  assert.ok(f.effects.includes("delete-repo"));
+});
+
+for (const scenario of ["locked", "referenced by an app workspace", "a worktree of another clone"] as const) {
+  test(`M3: a recorded worktree that is ${scenario} blocks the clone and the repo, even with --force`, async (t) => {
+    const f = fixture(t);
+    const { git } = await recordedRealWorktree(f);
+    if (scenario === "locked") assert.equal((await git(["worktree", "lock", f.worktree])).code, 0);
+    if (scenario === "referenced by an app workspace") f.deps.app.workspacesForPath = path => path === f.worktree ? ["workspace-9"] : [];
+    if (scenario === "a worktree of another clone") {
+      const other = join(f.home, "other-clone");
+      assert.equal((await git(["worktree", "remove", "--force", f.worktree])).code, 0);
+      assert.equal((await git(["clone", "-q", f.record.repoDir, other], f.home)).code, 0);
+      assert.equal((await git(["remote", "set-url", "origin", `https://github.com/${f.record.repo}.git`], other)).code, 0);
+      assert.equal((await git(["worktree", "add", "-q", "--detach", f.worktree], other)).code, 0);
+    }
+    writeFileSync(join(f.worktree, "evidence.txt"), "keep");
+    const result = await cleanupBatch(f.config, f.state, { yes: true, force: true }, f.deps);
+    assert.ok(result.items.some(i => i.kind === "worktree" && i.target === f.worktree && i.status === "blocked" && i.reason?.includes(f.worktree)), JSON.stringify(result));
+    assert.ok(result.items.some(i => i.kind === "clone" && i.status === "blocked"));
+    assert.ok(result.items.some(i => i.kind === "repo" && i.status === "blocked"));
+    assert.ok(existsSync(join(f.worktree, "evidence.txt")));
+    assert.ok(existsSync(f.record.repoDir));
+    assert.ok(!f.effects.includes("delete-repo"));
+    assert.ok(!journalOf(f).some(e => e.action === "removing" && ["worktree", "clone", "repo"].includes(e.kind)));
+  });
+}
+
+test("S2: a worktree created after the registry was read blocks the clone and the repo", async (t) => {
+  const f = fixture(t);
+  const { git } = await realClone(f);
+  const late = join(runFolder(f), "late-worktree");
+  let listed = false;
+  let created = false;
+  f.deps.exec = async (cmd, args, opts) => {
+    if (args[0] === "worktree" && args[1] === "list") listed = true;
+    if (listed && !created && opts?.cwd === f.record.repoDir && args.includes("--show-toplevel")) {
+      created = true;
+      assert.equal((await git(["worktree", "add", "-q", "--detach", late])).code, 0);
+    }
+    return run(cmd, args, opts);
+  };
+  const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  assert.ok(created);
+  assert.ok(result.items.some(i => i.kind === "clone" && i.status === "blocked" && i.reason?.includes(late)), JSON.stringify(result));
+  assert.ok(result.items.some(i => i.kind === "repo" && i.status === "blocked"));
+  assert.ok(existsSync(late));
+  assert.ok(existsSync(f.record.repoDir));
+  assert.ok(!f.effects.includes("delete-repo"));
+  assert.ok(!journalOf(f).some(e => ["removing", "removed"].includes(e.action) && ["clone", "repo"].includes(e.kind)));
+});
+
+for (const column of ["workspaces.source_path", "workspace_checkout_bindings.checkout_path", "worktrees.path"] as const) {
+  test(`M2: an app reference in ${column} that spells the worktree in another case protects it`, async (t) => {
+    const f = fixture(t);
+    const { git } = await realClone(f);
+    const linked = join(runFolder(f), "MixedCase");
+    assert.equal((await git(["worktree", "add", "-q", "--detach", linked])).code, 0);
+    const alias = join(runFolder(f), "mixedcase");
+    if (!existsSync(alias)) { t.skip("case-sensitive filesystem"); return; }
+    const { DatabaseSync } = await import("node:sqlite");
+    const path = join(f.home, "app.db");
+    const db = new DatabaseSync(path);
+    db.exec(`
+      CREATE TABLE projects(id TEXT, main_repo_path TEXT, name TEXT);
+      CREATE TABLE project_checkouts(project_id TEXT, host_id TEXT, root_resource_uri TEXT);
+      CREATE TABLE worktrees(id TEXT, project_id TEXT, path TEXT);
+      CREATE TABLE reusable_worktree_pool(id TEXT, project_id TEXT, path TEXT);
+      CREATE TABLE workspaces(id TEXT, source_path TEXT);
+      CREATE TABLE workspace_checkout_bindings(workspace_id TEXT, checkout_path TEXT);
+    `);
+    const [table, field] = column.split(".");
+    db.prepare(table === "worktrees" ? `INSERT INTO worktrees VALUES('w', 'other-project', ?)` :
+      `INSERT INTO ${table}(${table === "workspaces" ? "id" : "workspace_id"}, ${field}) VALUES('workspace-9', ?)`).run(alias);
+    db.close();
+    const app = openCleanupApp(path);
+    f.deps.app.projectsForPath = p => app.projectsForPath(p);
+    f.deps.app.workspacesForPath = p => app.workspacesForPath(p);
+    const result = await cleanupBatch(f.config, f.state, { yes: true, force: true }, f.deps);
+    assert.ok(result.items.some(i => i.kind === "worktree" && i.target === linked && i.status === "blocked"), JSON.stringify(result));
+    assert.ok(existsSync(linked));
+    assert.ok(existsSync(f.record.repoDir));
+    assert.ok(!f.effects.includes("delete-repo"));
+  });
+}
+
+// S3: one test per guard, so removing any single guard fails a test.
+test("S3: an archive record of another run identity does not verify the current logs", async (t) => {
+  const f = fixture(t);
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  rewriteJournal(f, e => e.action === "archived" ? { ...e, identity: "another-run" } : e);
+  const report = await cleanupBatch(f.config, f.state, {}, f.deps);
+  assert.ok(report.items.filter(i => i.kind === "archive").every(i => i.status !== "archived"), JSON.stringify(report));
+  assertKeep(report);
+});
+
+test("S3: an archive record whose file is outside the session archive folder does not verify", async (t) => {
+  const f = fixture(t);
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  const outside = join(f.dir, "elsewhere.gz");
+  writeFileSync(outside, readFileSync(join(archiveDir(f), "events.jsonl.gz")));
+  rewriteJournal(f, e => e.action === "archived" && e.source === join(sessionDir(f), "events.jsonl") ? { ...e, target: outside } : e);
+  const report = await cleanupBatch(f.config, f.state, {}, f.deps);
+  assert.notEqual(report.items.find(i => i.kind === "archive" && i.target === sessionDir(f))?.status, "archived");
+  assertKeep(report);
+});
+
+test("S3: a valid gzip of other content does not verify the current logs", async (t) => {
+  const f = fixture(t);
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  writeFileSync(join(archiveDir(f), "events.jsonl.gz"), gzipSync("other content\n"));
+  const report = await cleanupBatch(f.config, f.state, {}, f.deps);
+  assert.notEqual(report.items.find(i => i.kind === "archive" && i.target === sessionDir(f))?.status, "archived");
+  assertKeep(report);
+});
+
+test("S3: a symlinked archive file does not verify the current logs", async (t) => {
+  const f = fixture(t);
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  const copy = join(f.home, "copy.gz");
+  writeFileSync(copy, readFileSync(join(archiveDir(f), "events.jsonl.gz")));
+  rmSync(join(archiveDir(f), "events.jsonl.gz"));
+  symlinkSync(copy, join(archiveDir(f), "events.jsonl.gz"));
+  const report = await cleanupBatch(f.config, f.state, {}, f.deps);
+  assert.notEqual(report.items.find(i => i.kind === "archive" && i.target === sessionDir(f))?.status, "archived");
+  assertKeep(report);
+});
+
+test("S3: a dry run keeps the project when the app lists a session that --yes has not saved", async (t) => {
+  const f = fixture(t);
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  const later = "33333333-3333-4333-8333-333333333333";
+  const inventory = f.deps.app.inventory;
+  f.deps.app.inventory = record => { const live = inventory(record); return { ...live, sessions: [...live.sessions, later] }; };
+  assertKeep(await cleanupBatch(f.config, f.state, {}, f.deps));
+});
+
+for (const [name, output] of [
+  // Valid output with a failing exit code, so only the exit-code check can catch it.
+  ["a failed git worktree list", (f: ReturnType<typeof fixture>) => ({ code: 1, stdout: `worktree ${f.record.repoDir}\0HEAD x\0\0worktree ${f.worktree}\0HEAD x\0\0`, stderr: "fatal" })],
+  ["a registry whose first entry is another folder", (f: ReturnType<typeof fixture>) => ({ code: 0, stdout: `worktree /elsewhere\0HEAD x\0\0worktree ${f.worktree}\0HEAD x\0\0`, stderr: "" })],
+] as const) {
+  test(`S3: ${name} blocks the run before anything on disk is deleted`, async (t) => {
+    const f = fixture(t);
+    await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+    f.appState.project = false;
+    f.appState.session = false;
+    const exec = f.deps.exec;
+    f.deps.exec = async (cmd, args, opts) => args[0] === "worktree" && args[1] === "list" ? output(f) : exec(cmd, args, opts);
+    const result = await cleanupBatch(f.config, f.state, { yes: true, force: true }, f.deps);
+    assert.ok(result.items.some(i => i.kind === "clone" && i.status === "blocked" && /linked worktrees/.test(i.reason ?? "")), JSON.stringify(result));
+    assert.ok(existsSync(f.worktree));
+    assert.ok(existsSync(f.record.repoDir));
+    assert.ok(!f.effects.includes("delete-repo"));
+  });
+}
+
+for (const scenario of ["an existing admin folder of another clone", "a missing admin folder in this clone", "an invalid clone"] as const) {
+  test(`S3: a linked worktree with ${scenario} is not removed`, async (t) => {
+    const f = fixture(t);
+    const { git, calls } = await realClone(f);
+    const linked = join(runFolder(f), "copilot-prewarm-x");
+    assert.equal((await git(["worktree", "add", "-q", "--detach", linked])).code, 0);
+    if (scenario === "an existing admin folder of another clone") {
+      const foreign = join(f.home, "other/.git/worktrees/x");
+      mkdirSync(foreign, { recursive: true });
+      writeFileSync(join(linked, ".git"), `gitdir: ${foreign}\n`);
+    }
+    if (scenario === "a missing admin folder in this clone") writeFileSync(join(linked, ".git"), `gitdir: ${join(f.record.repoDir, ".git/worktrees/missing")}\n`);
+    if (scenario === "an invalid clone") assert.equal((await git(["remote", "set-url", "origin", "https://github.com/ncksol/other.git"])).code, 0);
+    const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+    assert.ok(result.items.some(i => i.kind === "worktree" && i.target === linked && i.status === "blocked"), JSON.stringify(result));
+    assert.ok(existsSync(linked));
+    assert.ok(!calls.some(call => call.includes("worktree remove")));
+  });
+}
+
+for (const [name, fake] of [
+  ["fails after removing the folder", "remove-then-fail"],
+  ["reports success but leaves the folder", "succeed-without-removing"],
+] as const) {
+  test(`S3: git worktree remove that ${name} blocks the clone`, async (t) => {
+    const f = fixture(t);
+    const { git } = await realClone(f);
+    const linked = join(runFolder(f), "copilot-prewarm-x");
+    assert.equal((await git(["worktree", "add", "-q", "--detach", linked])).code, 0);
+    f.deps.exec = async (cmd, args, opts) => {
+      if (args[0] === "worktree" && args[1] === "remove") {
+        if (fake === "remove-then-fail") await run(cmd, args, opts);
+        return { code: fake === "remove-then-fail" ? 1 : 0, stdout: "", stderr: "" };
+      }
+      return run(cmd, args, opts);
+    };
+    const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+    assert.ok(result.items.some(i => i.kind === "worktree" && i.target === linked && i.status === "blocked" && /git could not remove/.test(i.reason ?? "")), JSON.stringify(result));
+    assert.ok(existsSync(f.record.repoDir));
+    assert.ok(!f.effects.includes("delete-repo"));
+  });
+}
+
+test("S3: a file that appears in the run folder after the emptiness check is never deleted", async (t) => {
+  const f = fixture(t);
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  f.appState.project = false;
+  f.appState.session = false;
+  const io = await import("node:fs");
+  const late = join(runFolder(f), "late.txt");
+  f.deps.fs = { ...io, readdirSync: ((path: string, ...rest: unknown[]) => {
+    const names = (io.readdirSync as (...a: unknown[]) => string[])(path, ...rest);
+    if (path === runFolder(f) && names.length === 0) writeFileSync(late, "arrived late");
+    return names;
+  }) as typeof io.readdirSync };
+  const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  assert.equal(readFileSync(late, "utf8"), "arrived late");
+  assert.ok(result.items.some(i => i.kind === "worktree-parent" && i.status === "blocked"), JSON.stringify(result));
 });
