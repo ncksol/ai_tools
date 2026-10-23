@@ -1353,7 +1353,9 @@ test("a repo the current gh login cannot see does not block a dry run, and --yes
   assert.ok(!preview.items.some(i => i.status === "blocked"), JSON.stringify(preview.items.filter(i => i.status === "blocked")));
   for (const kind of ["clone", "kickoff"]) assert.ok(preview.items.some(i => i.kind === kind && i.status === "present"), kind);
   const repo = preview.items.find(i => i.kind === "repo");
-  assert.equal(repo?.status, "present");
+  assert.equal(repo?.status, "unchecked");
+  assert.match(formatCleanup(preview), /^UNCHECKED repo /m);
+  assert.doesNotMatch(formatCleanup(preview), /^PRESENT repo /m);
   assert.match(repo?.reason ?? "", /not visible to the current gh login; --yes rechecks with the owner's login/i);
   assert.match(nextSteps(preview), /rerun this batch with --yes/);
   // --yes: under the verified owner's login with repo scope, a 404 is absence.
@@ -1371,6 +1373,47 @@ test("a repo the owner's login cannot see still blocks --yes", async (t) => {
   f.deps.repo = async () => { throw new RepoNotVisible(); };
   const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
   assert.ok(result.items.some(i => i.kind === "repo" && i.status === "blocked" && /not found or not visible/.test(i.reason ?? "")));
+  assert.ok(!existsSync(join(f.dir, "cleanup.jsonl")) || !journalOf(f).some(e => e.kind === "repo"), "an ambient 404 is never recorded as absence");
   assert.ok(existsSync(f.record.repoDir));
   assert.ok(existsSync(`${f.record.repoDir}.kickoff.md`));
+});
+
+test("a repo --yes confirmed gone with the owner's login stays gone in later dry runs, with no --yes step", async (t) => {
+  const f = fixture(t);
+  f.appState.project = false;
+  f.appState.session = false;
+  f.deps.repo = async () => null;
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  assert.ok(journalOf(f).some(e => e.action === "absent" && e.kind === "repo" && e.target === f.record.repo), JSON.stringify(journalOf(f)));
+  let reads = 0;
+  f.deps.repo = async () => { reads++; throw new RepoNotVisible(); };
+  const report = await cleanupBatch(f.config, f.state, {}, f.deps);
+  assert.equal(reads, 0);
+  const repo = report.items.find(i => i.kind === "repo");
+  assert.equal(repo?.status, "already gone");
+  assert.match(repo?.reason ?? "", /Confirmed gone by --yes at 2026-10-23T10:00:00Z; remote not rechecked in this dry run/);
+  assert.ok(!report.items.some(i => i.kind !== "app-session" && ["blocked", "present", "unchecked"].includes(i.status)), JSON.stringify(report.items));
+  assert.equal(nextSteps(report), "- No cleanup actions remain.");
+  f.deps.repo = async () => null;
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  assert.equal(journalOf(f).filter(e => e.action === "absent").length, 1, "a repeat --yes does not journal the same absence again");
+});
+
+test("a batch finished by older code asks for one --yes to record the repo's absence, then reads as finished", async (t) => {
+  const f = fixture(t);
+  f.appState.project = false;
+  f.appState.session = false;
+  f.deps.repo = async () => null;
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  writeFileSync(join(f.dir, "cleanup.jsonl"), journalOf(f).filter(e => e.action !== "absent").map(e => JSON.stringify(e) + "\n").join(""));
+  f.deps.repo = async () => { throw new RepoNotVisible(); };
+  const before = await cleanupBatch(f.config, f.state, {}, f.deps);
+  const repo = before.items.find(i => i.kind === "repo");
+  assert.equal(repo?.status, "unchecked");
+  assert.match(repo?.reason ?? "", /run --yes once/);
+  assert.match(nextSteps(before), /rerun this batch with --yes/);
+  f.deps.repo = async () => null;
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  f.deps.repo = async () => { throw new RepoNotVisible(); };
+  assert.equal(nextSteps(await cleanupBatch(f.config, f.state, {}, f.deps)), "- No cleanup actions remain.");
 });

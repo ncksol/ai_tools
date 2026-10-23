@@ -35,7 +35,7 @@ export interface CleanupDeps {
 export interface CleanupItem {
   kind: "batch" | "run" | "token" | "results" | "app-project" | "app-session" | "archive" | "session-state" | "worktree" | "worktree-parent" | "clone" | "kickoff" | "repo";
   target: string;
-  status: "present" | "already gone" | "blocked" | "removed" | "archived";
+  status: "present" | "unchecked" | "already gone" | "blocked" | "removed" | "archived";
   reason?: string;
   checklist?: boolean;
   action?: boolean;
@@ -43,7 +43,7 @@ export interface CleanupItem {
 export interface CleanupReport { batch: string; dryRun: boolean; items: CleanupItem[] }
 interface JournalEntry {
   at: string;
-  action: "inventory" | "archived" | "removed" | "removing" | "lost" | "dropped";
+  action: "inventory" | "archived" | "removed" | "removing" | "lost" | "dropped" | "absent";
   identity: string;
   inventory?: CleanupInventory;
   kind?: CleanupItem["kind"];
@@ -187,6 +187,10 @@ export async function cleanupBatch(
     const receipt = (kind: CleanupItem["kind"], target: string, action = "removed") =>
       entries.some(e => e.identity === identity && e.kind === kind && e.target === target && e.action === action);
     const repoRemovedEarlier = !options.yes && receipt("repo", run.repo);
+    // --yes records a repo it found gone under the owner's verified login, so later dry runs,
+    // which only have the ambient login, can still tell that the batch is finished.
+    const repoAbsentEarlier = options.yes ? undefined : entries.findLast(e =>
+      e.identity === identity && e.kind === "repo" && e.target === run.repo && e.action === "absent");
     const archiveRecord = (source: string, dest: string, name: string) => entries.findLast(e =>
       e.action === "archived" && e.identity === identity &&
       (e.source === join(source, name) || (!e.source && e.target === join(dest, `${name}.gz`))));
@@ -204,7 +208,7 @@ export async function cleanupBatch(
         }
         add("results", run.name, "present", `${confirmedDrop(run) ? "Recorded" : "Preview"} deliberate result drop; results.csv is not edited`);
       }
-      if (!repoRemovedEarlier) {
+      if (!repoRemovedEarlier && !repoAbsentEarlier) {
         try {
           remote = await deps.repo(run.repo, seed);
           if (remote && !remote.seedPresent) throw new Error("repo history does not contain the recorded seed");
@@ -572,10 +576,14 @@ export async function cleanupBatch(
       }
       return type;
     });
-    const repoItem = add("repo", run.repo, remote || repoNotVisible ? "present" : "already gone",
+    const repoItem = add("repo", run.repo, remote ? "present" : repoNotVisible ? "unchecked" : "already gone",
       repoRemovedEarlier ? "Removed earlier (matching cleanup receipt; remote not rechecked in this dry run)"
-        : repoNotVisible ? "Not visible to the current gh login; --yes rechecks with the owner's login, then deletes the repo or reports it gone" : undefined);
+        : repoAbsentEarlier ? `Confirmed gone by --yes at ${repoAbsentEarlier.at}; remote not rechecked in this dry run`
+          : repoNotVisible ? "Not visible to the current gh login; --yes rechecks with the owner's login and deletes the repo or records that it is gone, so run --yes once even if everything else is done" : undefined);
     if (blocked) { repoItem.status = "blocked"; repoItem.reason = blocked; }
+    else if (options.yes && !remote && !receipt("repo", run.repo) && !receipt("repo", run.repo, "absent")) {
+      append({ action: "absent", identity, kind: "repo", target: run.repo });
+    }
     else if (options.yes && remote) {
       try {
         if (!options.force && deps.app.projectsForPath(run.repoDir).length) throw new Error("app project reappeared");
@@ -618,7 +626,7 @@ export function formatCleanup(report: CleanupReport): string {
   }
   for (const [reason, count] of blocks) steps.push(`- ${reason} (${count} item${count === 1 ? "" : "s"}; see inventory above).`);
   // Manual and LOST steps never hide archives or removals that --yes can still do.
-  if (report.dryRun && report.items.some(item => item.status === "present" && !item.checklist &&
+  if (report.dryRun && report.items.some(item => ["present", "unchecked"].includes(item.status) && !item.checklist &&
       item.kind !== "results" && item.kind !== "app-session")) steps.push("- Review the inventory, then rerun this batch with --yes when ready.");
   if (!steps.length) steps.push("- No cleanup actions remain.");
   return [
