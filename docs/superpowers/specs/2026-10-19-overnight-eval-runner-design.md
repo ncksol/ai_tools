@@ -1,6 +1,6 @@
 # Overnight runner for the orchestrator eval — design
 
-Date: 19 October 2026. Status: built, with pre-provisioning and user trust at batch start. A trusted local project's shell probe has run on the real app; the complete batch and trust on a `create_project`-origin project still need a real start.
+Date: 19 October 2026. Status: built, with pre-provisioning and user trust at batch start; registration uses `add_repository` on app 1.1.31. A trusted local project's shell probe has run on the real app; the complete batch and trust on a tool-registered repository still need a real start.
 
 ## How to read this
 
@@ -62,7 +62,7 @@ Two parts: a runner script that holds the plan, the state and every deterministi
   - A `create_session` that was issued but never recorded is uncertain: the runner looks for the session in the logs and `data.db` and adopts it. Otherwise it waits 5 minutes, then issues it once more, if the run may still start. The search always starts at the first issue, across every reissue; a separate last-issued time drives the 5-minute wait. If a session turns up later for a run given up as never started, no further run starts. **Decided by the user** (the first-issue window), **Design call** (the 5 minutes, the single reissue, the late-session stop).
 - Every subprocess (git, `gh`, `new-run`, `score`) has a time limit and runs in its own process group: 2 minutes for git, 10 for `new-run`, 30 for `score`. When the time runs out, the group gets SIGTERM, then SIGKILL after 5 seconds if anything in it is still alive, and the call returns only once the group is gone or SIGKILL has been sent and waited for; its timers keep the caller alive meanwhile. A process that leaves the group (`setsid`) is out of reach. A timeout is a failure under the stop rules. **Decided by the user** (the limits and the escalation), **Design call** (the values).
 - Clock: the runner uses wall-clock time, as the event logs do. A clock that goes back over a minute is flagged, and no duration goes negative. **Decided by the user**
-- The driver's `tools` allowlist is the shell tools, `view`, `grep`, `glob`, `create_project`, `create_session`, `archive_session`, `get_session`, `answer_session_input`, `send_session_message`, `report_intent` and `task_complete`: nothing that starts sub-agents and nothing that edits files. **Decided by the user** (the list), **Design call** (the last two). `archive_session` is limited to the driver's own idle trust sessions, never an eval run or its children.
+- The driver's `tools` allowlist is the shell tools, `view`, `grep`, `glob`, `add_repository`, `create_session`, `archive_session`, `get_session`, `answer_session_input`, `send_session_message`, `report_intent` and `task_complete`: nothing that starts sub-agents and nothing that edits files. **Decided by the user** (the list), **Design call** (the last two). `archive_session` is limited to the driver's own idle trust sessions, never an eval run or its children.
 
 ## Decisions
 
@@ -78,7 +78,8 @@ Two parts: a runner script that holds the plan, the state and every deterministi
 **Design call:**
 
 - Reserve pending calibrations plus the remaining scored targets, in planner order. For pinned variants, matching historical scored rows reduce those targets. When legacy calibration keeps Summary, calibration attempts count toward the targets and some reservations stay unused. No retry pool is added.
-- Provision each slot with `new-run` and the full seed spec. Before `create_project`, look up `projects.id` by `main_repo_path`, read-only. A failed or ambiguous lookup stops the batch rather than risking a duplicate. Reconcile a lost creation result through the same lookup.
+- Provision each slot with `new-run` and the full seed spec. Before `add_repository`, look up `projects.id` by `main_repo_path`, read-only. A failed or ambiguous lookup stops the batch rather than risking a duplicate. Reconcile a lost registration result through the same lookup. Pass only `{ path: <existing clone directory> }`, never `github_repo` or `clone_url`, and leave `show_in_sidebar` unset. The batch start authorises these registrations, so the driver does not ask again.
+- App 1.1.31 replaces `create_project` with `add_repository`, which registers a repository rather than creating a persistent Project. Its returned repository/container id is still recorded with `--project-id` and passed to `create_session` as `project_id`. A read-only check on 23 October 2026 found every runner and cleanup DB column still present, including `projects.main_repo_path`, `project_host_trust` and `workspaces`; existing registrations still resolve by path. A fresh path registration under the renamed tool was not exercised. The runner requires app 1.1.31 or later. Saved pending `create_project` actions map to `add_repository` on load without changing their ids or arguments; pin-drift checks remain in force, so this does not let an old batch cross an app or runner update.
 - Reuse `<runs-dir>/eval-runner-selftest` (normally `~/orch-evals/eval-runner-selftest`). Create a local git repo and one commit only if missing; an existing repo must be a clean git root, have a commit, and have no remote. Never delete or reset it.
 - The 30-minute trust window starts when the runner first issues `trust_projects`, after creating every idle trust session. Time spent creating those sessions does not shorten the window. Read `project_host_trust.trusted_config_sha256` and `trusted_config_accepted_at` for `(project_id, host_id='local')` in separate read-only queries. Both must be present. A failed lookup or an expired wait with trust still missing stops before any self-test or eval session starts. Once all projects are trusted, an expired deadline does not cancel pending archival.
 - Create one `Trust <project>` idle session per untrusted project, using `workspace_type: "branch"`, `coordinate_with_creator: true`, and no kickoff. Sessions are nested under the driver in the sidebar, not under their projects. The driver and notification list names, `ghapp://sessions/<id>` links and clone paths. `record --listed` acknowledges display only; it never substitutes for a trust row.
@@ -88,14 +89,14 @@ Two parts: a runner script that holds the plan, the state and every deterministi
 - Before pruning, require the clone's own `.git` directory, its real top-level path, the saved prepared HEAD, a clean tree and no linked worktrees. Bind every cleanup Git command with explicit `--git-dir` and `--work-tree`, remove inherited repository-location environment overrides, and check the common Git directory too. Verify remote main equals `preparedSha`, then reconcile a stale `refs/remotes/origin/main` from the original seed to that verified SHA with a compare-and-swap. An interrupted push may have updated the remote without updating this local cache. An unexpected tracking ref, a changed HEAD, dirty files or a failed check stop cleanup; no other refs are deleted.
 - Recheck local trust immediately before issuing or reissuing a self-test or eval `create_session`. The app still decides whether its current configuration is trusted; the shell proof and permission fail-fast checks stay in place.
 
-Observed on app 1.1.30 on 22 October 2026: after the user re-added the permanent project through the app and trusted it from an idle session's view, a new interactive probe logged `allowAllPermissions: true`, ran a compound shell command and logged no permission requests. Trust through a session view on a project made by `create_project` is not yet proven; the first real batch start confirms it, and missing trust stops safely.
+Observed on app 1.1.30 on 22 October 2026: after the user re-added the permanent project through the app and trusted it from an idle session's view, a new interactive probe logged `allowAllPermissions: true`, ran a compound shell command and logged no permission requests. At that point, trust through a session view on a project made by `create_project` had not been proven. End-to-end trust for a path registered by `add_repository` on app 1.1.31 is also unverified; missing trust or a failed shell proof stops safely.
 
 ### Starting a run
 
 **Decided by the user:**
 
 1. The runner runs `new-run` with an explicit `--n` during up-front provisioning.
-2. The driver calls `create_project` with the clone's path only when the read-only lookup finds no project, then follows the user-trust phase above.
+2. The driver calls `add_repository` with only the existing clone's path when the read-only lookup finds no registration, then follows the user-trust phase above.
 3. The driver calls `create_session` with `detached: true`, `coordinate_with_creator: false`, `workspace_type: "worktree"` and a kickoff of: the exact text of `kickoff.md`, the variant as agent, `claude-opus-5.5` at `max`, `context_tier: "long_context"`, `mode: "interactive"`.
 
 Never as a child session, and never with `send_session_message`.
@@ -222,7 +223,7 @@ Never as a child session, and never with `send_session_message`.
 
 **Decided by the user:** after provisioning and trust, and on demand as a self-test-only batch, the runner and driver check the whole path with a harmless agent or the default agent on a cheap model, in the permanent local git repo with no GitHub remote. It covers:
 
-- project lookup by path, with `create_project` only when absent;
+- project lookup by path, with `add_repository` only when absent;
 - a detached `create_session`;
 - an `ask_user` that the driver answers;
 - end detection;
@@ -328,7 +329,7 @@ A failed self-test stops the batch. It never uses an orchestrator agent.
 
 ## Limits and residual risks
 
-- **Tool permissions:** projects made by `create_project` start untrusted. The user must trust them through their idle sessions at batch start. The runner can read acceptance but cannot grant it or guarantee that the app still accepts the current configuration. Missing trust, a failed shell proof or a tool-permission prompt stops the batch. Session-view trust was verified only on the permanent project the user re-added through the app, not yet on a `create_project`-origin project.
+- **Tool permissions:** repositories registered by `add_repository` require the user's trust before the batch starts any work. The user trusts them through their idle sessions at batch start. The runner can read acceptance but cannot grant it or guarantee that the app still accepts the current configuration. Missing trust, a failed shell proof or a tool-permission prompt stops the batch. Session-view trust was verified on app 1.1.30 only on the permanent project the user re-added through the app; it has not been verified end to end with `add_repository` on 1.1.31.
 
 - **An app restart or update** stops every session, including the driver and the run in progress. The run is void, as above. Nothing notifies the user until the driver is resumed, because nothing is running; missing notifications are the sign. The app has no auto-resume, and resuming a run would need a message to it, which counts as a nudge.
 - **Plain-text questions:**

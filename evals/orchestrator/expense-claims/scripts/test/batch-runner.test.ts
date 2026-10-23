@@ -373,7 +373,7 @@ test("changed agent files stop the batch before the next run", async () => {
 test("a round start renews the keep-awake hold only when less than half of it is left", async () => {
   const h = await make({ scenarios: ["ask-final", "ask-final", "ask-final"], runsPerVariant: 3 });
   let projects = 0;
-  await h.until((action) => action.action === "create_project" && ++projects === 2);
+  await h.until((action) => action.action === "add_repository" && ++projects === 2);
   assert.deepEqual(h.awake, { started: 1, stopped: 0 }, "a hold with more than half of it left is kept");
   const state = h.state();
   state.caffeinate!.until = new Date(h.clock.now + 60_000).toISOString();

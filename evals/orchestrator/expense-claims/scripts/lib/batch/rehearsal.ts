@@ -58,8 +58,8 @@ export async function startNtfyStub(): Promise<{ url: string; received: { title:
   };
 }
 
-// allowAll: false starts every fake session without allow-all tool permissions, as app 1.1.30 does
-// for sessions in projects create_project made (untrusted), so the self-test fails at its shell command.
+// allowAll: false models untrusted registrations holding sessions at manual tool approval, observed
+// on app 1.1.30 before registration became add_repository in 1.1.31; the self-test fails at its shell command.
 export async function rehearse(opts: { scenarios?: Scenario[]; runsPerVariant?: number; parallel?: number; allowAll?: boolean; log?: (line: string) => void } = {}): Promise<RehearsalResult> {
   const dir = mkdtempSync(join(tmpdir(), "orch-eval-rehearsal-"));
   const runsDir = join(dir, "runs");
@@ -77,7 +77,7 @@ export async function rehearse(opts: { scenarios?: Scenario[]; runsPerVariant?: 
   await git(resultsRepo, ["add", "-A"]);
   await git(resultsRepo, ["commit", "-q", "-m", "Results before the rehearsal"]);
   const appPlist = join(dir, "Info.plist");
-  writeFileSync(appPlist, "<plist><dict><key>CFBundleShortVersionString</key>\n<string>1.1.30</string></dict></plist>\n");
+  writeFileSync(appPlist, "<plist><dict><key>CFBundleShortVersionString</key>\n<string>1.1.31</string></dict></plist>\n");
   const cliVersionFile = join(dir, "cliVersion.d.ts");
   writeFileSync(cliVersionFile, 'export declare const COPILOT_CLI_VERSION = "1.0.99-2";\n');
   const ntfy = await startNtfyStub();
@@ -209,8 +209,8 @@ export async function actAsDriver(ctx: Ctx, app: FakeApp, clock: { now: number }
       for (const project of action.details!.projects as { id: string }[]) app.trustedProjects.add(project.id);
       await act({ listed: true }, "user trusted listed projects (rehearsal only)");
       break;
-    case "create_project":
-      await act({ projectId: app.createProject(String(args.path)) }, "create_project");
+    case "add_repository":
+      await act({ projectId: app.createProject(String(args.path)) }, "add_repository");
       break;
     case "create_session":
       await act({ sessionId: app.createSession(args) }, `create_session (agent ${String((args.kickoff as Record<string, unknown>).agent ?? "default")})`);

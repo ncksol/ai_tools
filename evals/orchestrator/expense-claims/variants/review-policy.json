@@ -12,19 +12,19 @@
       "agent": "orchestrator-review-a",
       "revision": "a7e3fb04a697745a3cf1cc82137429913bbc0982",
       "file": "orchestrator-review-a.agent.md",
-      "sha256": "531d7f2c8e9546a552509f8bb877e8914196373f69df09c2023a5608ee7beeee"
+      "sha256": "7ea0ea8f96caa8e722fa62b8d2c04f70c1961af4660af0def606912fb97a3994"
     },
     "orchestrator-review-b": {
       "agent": "orchestrator-review-b",
       "revision": "c7b48ea1f78c702b48646019eb568220d27b74ef",
       "file": "orchestrator-review-b.agent.md",
-      "sha256": "56c3bc6549da0cdec849c1feb904fc072e1ff609993ea5ad66a4a07821c7cfeb"
+      "sha256": "f18a39405b3e9359321159cc8ce36d622dfd8ccde3a4815f32dce0510ecaed9d"
     },
     "orchestrator-review-c": {
       "agent": "orchestrator-review-c",
       "revision": "c7b48ea1f78c702b48646019eb568220d27b74ef",
       "file": "orchestrator-review-c.agent.md",
-      "sha256": "690a0add16b58a31065df000ae0f21fd1f3bc2870699cc2047a2147760561312"
+      "sha256": "6374d41303dffca84901000e88b3aa0fc4cfd002feb412c975e047fcf72688e9"
     }
   }
 }
