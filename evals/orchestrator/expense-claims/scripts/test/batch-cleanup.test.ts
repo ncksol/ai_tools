@@ -50,6 +50,7 @@ function fixture(t: { after(fn: () => void): void }) {
       workspaces: [{ id: "workspace-5", sessionId: rootSession, archived: true }, { id: "never-started", sessionId: null, archived: false }],
     }),
     projectsForPath: () => appState.project ? ["project-5"] : [],
+    workspacesForPath: () => [],
     sessionExists: () => appState.session,
     sessionRunning: () => false,
   };
@@ -64,6 +65,7 @@ function fixture(t: { after(fn: () => void): void }) {
       if (args.includes("remote")) return { code: 0, stdout: `https://github.com/${record.repo}.git\n`, stderr: "" };
       if (args.includes("--show-toplevel")) return { code: 0, stdout: `${opts?.cwd}\n`, stderr: "" };
       if (args.includes("merge-base")) return { code: 0, stdout: "", stderr: "" };
+      if (args[0] === "worktree" && args[1] === "list") return { code: 0, stdout: `worktree ${opts?.cwd}\0HEAD ${seed}\0branch refs/heads/main\0\0`, stderr: "" };
       throw new Error(`Unexpected command ${args.join(" ")}`);
     },
   };
@@ -750,4 +752,151 @@ test("explicit dry-run and yes cannot accidentally enable deletion", async (t) =
   assert.match(out.stderr, /--yes.*--dry-run/);
   assert.equal(existsSync(join(f.config.dir, "cleanup.jsonl")), false);
   assert.equal(existsSync(calls), false);
+});
+
+const nextSteps = (report: Awaited<ReturnType<typeof cleanupBatch>>) => formatCleanup(report).split("Next steps:\n")[1];
+const journalOf = (f: ReturnType<typeof fixture>) => readFileSync(join(f.dir, "cleanup.jsonl"), "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));
+const runFolder = (f: ReturnType<typeof fixture>) => join(f.home, "_src_/copilot-worktrees", f.record.name);
+
+test("a dry run after --yes archived every log reports verified archives and the remove instruction", async (t) => {
+  const f = fixture(t);
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  const journal = readFileSync(join(f.dir, "cleanup.jsonl"));
+  const report = await cleanupBatch(f.config, f.state, {}, f.deps);
+  const archives = report.items.filter(i => i.kind === "archive");
+  assert.equal(archives.length, 2);
+  assert.ok(archives.every(i => i.status === "archived"), JSON.stringify(archives));
+  assert.doesNotMatch(formatCleanup(report), /PRESENT archive/);
+  assert.match(nextSteps(report), /Available logs archived and verified; remove or retry removing project/);
+  assert.doesNotMatch(nextSteps(report), /KEEP project/);
+  assert.deepEqual(readFileSync(join(f.dir, "cleanup.jsonl")), journal);
+  assert.deepEqual(f.effects, ["authorize"]);
+});
+
+test("a dry run reports an archive of changed logs as out of date and keeps the project", async (t) => {
+  const f = fixture(t);
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  appendFileSync(join(f.config.stateDir, rootSession, "events.jsonl"), '{"later":true}\n');
+  const report = await cleanupBatch(f.config, f.state, {}, f.deps);
+  const changed = report.items.find(i => i.kind === "archive" && i.target.endsWith(rootSession));
+  assert.notEqual(changed?.status, "archived");
+  assert.match(changed?.reason ?? "", /out of date/);
+  assert.match(changed?.reason ?? "", /--yes/);
+  assert.ok(report.items.some(i => i.kind === "archive" && i.target.endsWith(childSession) && i.status === "archived"));
+  assert.match(nextSteps(report), /KEEP project/);
+  assert.doesNotMatch(nextSteps(report), /remove or retry/);
+});
+
+test("a dry run keeps the project when a session's verified archive is missing", async (t) => {
+  const f = fixture(t);
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  rmSync(join(f.dir, "sessions", f.record.name, childSession, "events.jsonl.gz"));
+  const report = await cleanupBatch(f.config, f.state, {}, f.deps);
+  const missing = report.items.find(i => i.kind === "archive" && i.target.endsWith(childSession));
+  assert.notEqual(missing?.status, "archived");
+  assert.match(missing?.reason ?? "", /missing or does not verify.*--yes/);
+  assert.match(nextSteps(report), /KEEP project/);
+  assert.doesNotMatch(nextSteps(report), /remove or retry/);
+});
+
+test("a dry run keeps the project while its live inventory has items --yes has not saved", async (t) => {
+  const f = fixture(t);
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  const inventory = f.deps.app.inventory;
+  f.deps.app.inventory = record => {
+    const live = inventory(record);
+    return { ...live, worktrees: [...live.worktrees, join(runFolder(f), "new-child")] };
+  };
+  const report = await cleanupBatch(f.config, f.state, {}, f.deps);
+  assert.match(nextSteps(report), /KEEP project/);
+  assert.doesNotMatch(nextSteps(report), /remove or retry/);
+});
+
+async function realClone(f: ReturnType<typeof fixture>) {
+  f.state.provisioned = [];
+  const git = (args: string[]) => run("git", args, { cwd: f.record.repoDir });
+  for (const args of [
+    ["init", "-q", "-b", "main"], ["config", "user.name", "Test"], ["config", "user.email", "test@example.invalid"],
+    ["add", "."], ["commit", "-qm", "Seed v1"], ["remote", "add", "origin", `https://github.com/${f.record.repo}.git`],
+  ]) assert.equal((await git(args)).code, 0);
+  f.record.seedSha = (await git(["rev-parse", "HEAD"])).stdout.trim();
+  const calls: string[] = [];
+  f.deps.exec = (cmd, args, opts) => { calls.push(`${opts?.cwd}: ${args.join(" ")}`); return run(cmd, args, opts); };
+  // The app removed the project before cleanup's first inventory, as for the -8 runs of batch 20261022-2121.
+  rmSync(f.worktree, { recursive: true });
+  f.appState.project = false;
+  f.appState.session = false;
+  return { git, calls };
+}
+
+test("an unrecorded linked worktree under the run folder is removed through git before the clone", async (t) => {
+  const f = fixture(t);
+  const { git, calls } = await realClone(f);
+  const prewarm = join(runFolder(f), "copilot-prewarm-curly-potato");
+  assert.equal((await git(["worktree", "add", "-q", "--detach", prewarm])).code, 0);
+  const preview = await cleanupBatch(f.config, f.state, {}, f.deps);
+  assert.ok(preview.items.some(i => i.kind === "worktree" && i.target === prewarm && i.status === "present" && /linked worktree/i.test(i.reason ?? "")), JSON.stringify(preview));
+  assert.equal(existsSync(join(f.dir, "cleanup.jsonl")), false);
+  const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  assert.ok(result.items.some(i => i.kind === "worktree" && i.target === prewarm && i.status === "removed"), JSON.stringify(result));
+  assert.ok(calls.includes(`${f.record.repoDir}: worktree remove --force ${prewarm}`), calls.join("\n"));
+  assert.equal(existsSync(prewarm), false);
+  assert.equal(existsSync(f.record.repoDir), false);
+  assert.ok(f.effects.includes("delete-repo"));
+  const journal = journalOf(f);
+  const worktreeRemoved = journal.findIndex(e => e.action === "removed" && e.kind === "worktree" && e.target === prewarm);
+  const cloneRemoving = journal.findIndex(e => e.action === "removing" && e.kind === "clone");
+  assert.ok(worktreeRemoved >= 0 && worktreeRemoved < cloneRemoving, JSON.stringify(journal));
+});
+
+for (const scenario of ["outside the run folder", "an app project reference", "an app session reference", "a .git file outside the clone", "a lock"] as const) {
+  test(`a linked worktree with ${scenario} blocks the clone and the repo`, async (t) => {
+    const f = fixture(t);
+    const { git } = await realClone(f);
+    const linked = scenario === "outside the run folder"
+      ? join(f.home, "_src_/copilot-worktrees/another-run/copilot-prewarm-x") : join(runFolder(f), "copilot-prewarm-x");
+    assert.equal((await git(["worktree", "add", "-q", "--detach", linked])).code, 0);
+    if (scenario === "an app project reference") f.deps.app.projectsForPath = path => path === linked ? ["project-5"] : [];
+    if (scenario === "an app session reference") f.deps.app.workspacesForPath = path => path === linked ? ["workspace-9"] : [];
+    if (scenario === "a .git file outside the clone") writeFileSync(join(linked, ".git"), `gitdir: ${join(f.home, "other/.git/worktrees/x")}\n`);
+    if (scenario === "a lock") assert.equal((await git(["worktree", "lock", linked])).code, 0);
+    const preview = await cleanupBatch(f.config, f.state, {}, f.deps);
+    assert.ok(preview.items.some(i => i.kind === "worktree" && i.target === linked && i.status === "blocked" && i.reason?.includes(linked)), JSON.stringify(preview));
+    const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+    assert.ok(result.items.some(i => i.kind === "worktree" && i.target === linked && i.status === "blocked" && i.reason?.includes(linked)), JSON.stringify(result));
+    assert.ok(result.items.some(i => i.kind === "clone" && i.status === "blocked"));
+    assert.ok(result.items.some(i => i.kind === "repo" && i.status === "blocked"));
+    assert.ok(existsSync(join(linked, "keep-until-authorized")));
+    assert.ok(existsSync(f.record.repoDir));
+    assert.ok(existsSync(`${f.record.repoDir}.kickoff.md`));
+    assert.ok(!f.effects.includes("delete-repo"));
+    assert.ok(!journalOf(f).some(e => e.action === "removing" && ["worktree", "clone", "kickoff", "repo"].includes(e.kind)));
+  });
+}
+
+test("an empty app worktree folder is removed once the run's worktrees are gone", async (t) => {
+  const f = fixture(t);
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  f.appState.project = false;
+  f.appState.session = false;
+  const preview = await cleanupBatch(f.config, f.state, {}, f.deps);
+  assert.ok(preview.items.some(i => i.kind === "worktree-parent" && i.target === runFolder(f) && i.status === "present"), JSON.stringify(preview));
+  const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  assert.ok(result.items.some(i => i.kind === "worktree-parent" && i.target === runFolder(f) && i.status === "removed"), JSON.stringify(result));
+  assert.equal(existsSync(runFolder(f)), false);
+  assert.ok(existsSync(join(f.home, "_src_/copilot-worktrees")));
+  assert.ok(journalOf(f).some(e => e.action === "removed" && e.kind === "worktree-parent" && e.target === runFolder(f)));
+});
+
+test("a non-empty app worktree folder is kept and named", async (t) => {
+  const f = fixture(t);
+  writeFileSync(join(runFolder(f), "notes.txt"), "not a recorded worktree");
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  f.appState.project = false;
+  f.appState.session = false;
+  const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  assert.equal(existsSync(f.worktree), false);
+  assert.ok(existsSync(join(runFolder(f), "notes.txt")));
+  assert.ok(result.items.some(i => i.kind === "worktree-parent" && i.target === runFolder(f) && i.status === "present" && /not empty/.test(i.reason ?? "")), JSON.stringify(result));
+  assert.match(nextSteps(result), new RegExp(`${runFolder(f)}: .*not empty`));
 });

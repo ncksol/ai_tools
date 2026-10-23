@@ -219,3 +219,21 @@ test("all selects done and stopped batches but never live or manual runs; latest
   assert.deepEqual(selectCleanupBatches("all", root), [join(root, "20261021-2153"), join(root, "20261021-2217")]);
   assert.deepEqual(selectCleanupBatches("latest", root), [join(root, "20261022-2121")]);
 });
+
+test("read-only app discovery finds workspaces that reference a folder", (t) => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "cleanup-db-")));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, "data.db");
+  const db = new DatabaseSync(path);
+  db.exec(`
+    CREATE TABLE workspaces(id TEXT, source_path TEXT);
+    CREATE TABLE workspace_checkout_bindings(workspace_id TEXT, checkout_path TEXT);
+    INSERT INTO workspaces VALUES('by-source','/wt/a'),('other',NULL);
+    INSERT INTO workspace_checkout_bindings VALUES('by-binding','/wt/b');
+  `);
+  db.close();
+  const app = openCleanupApp(path);
+  assert.deepEqual(app.workspacesForPath("/wt/a"), ["by-source"]);
+  assert.deepEqual(app.workspacesForPath("/wt/b"), ["by-binding"]);
+  assert.deepEqual(app.workspacesForPath("/wt/c"), []);
+});

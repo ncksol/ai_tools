@@ -81,6 +81,10 @@ export function openCleanupApp(path: string): CleanupApp {
       ...strings(db, "worktrees", "project_id", "path = ?", [path]),
       ...strings(db, "reusable_worktree_pool", "project_id", "path = ?", [path]),
     ])]),
+    workspacesForPath: path => read(db => [...new Set([
+      ...strings(db, "workspaces", "id", "source_path = ?", [path]),
+      ...strings(db, "workspace_checkout_bindings", "workspace_id", "checkout_path = ?", [path]),
+    ])]),
     sessionExists: id => read(db => linkedSession(db, id)),
     sessionRunning: id => read(db => {
       if (!linkedSession(db, id)) return false;

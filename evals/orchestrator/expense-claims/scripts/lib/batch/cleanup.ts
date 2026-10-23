@@ -17,6 +17,7 @@ export interface CleanupInventory {
 export interface CleanupApp {
   inventory(run: Pick<RunState, "projectId" | "appSessionId" | "sessionId">): CleanupInventory;
   projectsForPath(path: string): string[];
+  workspacesForPath(path: string): string[];
   sessionExists(id: string): boolean;
   sessionRunning(id: string): boolean;
 }
@@ -32,7 +33,7 @@ export interface CleanupDeps {
   fs?: typeof fs;
 }
 export interface CleanupItem {
-  kind: "batch" | "run" | "token" | "results" | "app-project" | "app-session" | "archive" | "session-state" | "worktree" | "clone" | "kickoff" | "repo";
+  kind: "batch" | "run" | "token" | "results" | "app-project" | "app-session" | "archive" | "session-state" | "worktree" | "worktree-parent" | "clone" | "kickoff" | "repo";
   target: string;
   status: "present" | "already gone" | "blocked" | "removed" | "archived";
   reason?: string;
@@ -205,7 +206,7 @@ export async function cleanupBatch(
       }
       const live = deps.app.inventory(run);
       if (run.projectId && live.projects.length === 0 && saved.length === 0) {
-        add("archive", run.name, "already gone", "LOST app discovery: project was removed before inventory was saved; unknown child logs/worktrees cannot be rediscovered. Cleaning only known items.");
+        add("archive", run.name, "already gone", "LOST app discovery: project was removed before inventory was saved; unknown child logs cannot be rediscovered; worktrees are found only through the clone's Git registry. Cleaning only known items.");
         if (options.yes && !blocked) append({ action: "lost", identity, kind: "archive", target: run.name });
       }
       for (const project of live.projects) {
@@ -227,13 +228,40 @@ export async function cleanupBatch(
         ? `Session ${workspace.sessionId}${workspace.archived ? " (archived)" : ""}; included in project removal, no separate action`
         : "Never started: no CLI session/log to copy; included in project removal");
     }
+    // A dry run counts present logs as archived only when a journaled archive of their current
+    // content still decompresses to the recorded hash.
+    const currentArchive = (source: string, dest: string): "verified" | "stale" | "damaged" | "missing" => {
+      let stale = false;
+      let damaged = false;
+      let missing = false;
+      for (const name of ["events.jsonl", "workspace.yaml"]) {
+        const input = join(source, name);
+        const type = pathKind(input, io);
+        if (type === "missing") continue;
+        if (type !== "file") throw new Error(`not a regular log file: ${input}`);
+        const hash = sha256(io.readFileSync(input));
+        const records = entries.filter(e => e.action === "archived" && e.identity === identity &&
+          (e.source === input || (!e.source && e.target === join(dest, `${name}.gz`))));
+        const verified = records.some(e => {
+          if (e.sha256 !== hash || !e.target || !beneath(dest, e.target) || pathKind(e.target, io) !== "file") return false;
+          try { return sha256(gunzipSync(io.readFileSync(e.target))) === hash; } catch { return false; }
+        });
+        if (verified) continue;
+        if (records.some(e => e.sha256 === hash)) damaged = true;
+        else if (records.length) stale = true;
+        else missing = true;
+      }
+      return damaged ? "damaged" : stale ? "stale" : missing ? "missing" : "verified";
+    };
     // Archive before app removal destroys histories. Missing originals and backups are reported
     // as lost; an existing but unverified backup blocks deletion.
     const archiveGate = blocked;
+    const archiveItems: CleanupItem[] = [];
     for (const id of inventory.sessions) {
       const source = join(sessionRoot, id);
       const dest = join(config.dir, "sessions", run.name, id);
       const archive = add("archive", source, "present", `Preserve compressed logs in ${dest}`);
+      archiveItems.push(archive);
       try {
         if (!safeId(id)) throw new Error("invalid session identity");
         if (archiveGate) throw new Error(archiveGate);
@@ -282,10 +310,26 @@ export async function cleanupBatch(
             append({ action: "archived", identity, kind: "archive", source: input, target: output, sha256: hash });
           }
           archive.status = "archived";
+        } else {
+          const current = currentArchive(source, dest);
+          if (current === "verified") {
+            archive.status = "archived";
+            archive.reason = `Verified archive of the current logs in ${dest}`;
+          } else if (current === "stale") {
+            archive.reason = `Archive is out of date: the logs changed after --yes archived them. Run --yes again to archive the current logs in ${dest}`;
+          } else if (current === "damaged") {
+            archive.reason = `Recorded archive is missing or does not verify. Run --yes again to archive the current logs in ${dest}`;
+          }
         }
       } catch (error) { archive.status = "blocked"; archive.reason = errorText(error); blocked ??= archive.reason; }
     }
-    if (options.yes && !blocked) {
+    // A dry run may give the remove instruction only when an earlier --yes saved everything the
+    // app knows now; removing the project erases those links.
+    const savedWorktrees = new Set(saved.flatMap(s => s.worktrees));
+    const savedSessions = new Set(saved.flatMap(s => s.sessions));
+    const discoverySaved = options.yes || (saved.length > 0 &&
+      inventory.worktrees.every(path => savedWorktrees.has(path)) && inventory.sessions.every(id => savedSessions.has(id)));
+    if (!blocked && discoverySaved && archiveItems.every(item => item.status === "archived" || item.status === "already gone")) {
       for (let i = 0; i < projectItems.length; i++) {
         const project = inventory.projects[i];
         projectItems[i].reason = `Available logs archived and verified; remove or retry removing project ${project.name} (${project.path}) in the app, then rerun cleanup. This removes its run/child/trust sessions too.`;
@@ -300,24 +344,27 @@ export async function cleanupBatch(
     } catch (error) { appBlock = errorText(error); }
     blocked ??= appBlock;
 
-    const remove = async (kind: CleanupItem["kind"], target: string, check: () => Promise<"directory" | "file" | "missing">) => {
-      const item = add(kind, target, "present");
+    const remove = async (kind: CleanupItem["kind"], target: string, check: () => Promise<"directory" | "file" | "missing">,
+      extra: { reason?: string; del?: () => Promise<void> } = {}) => {
+      const item = add(kind, target, "present", extra.reason);
       try {
         const type = await check();
         if (type === "missing") {
           item.status = "already gone";
           if (receipt(kind, target)) item.reason = "Removed earlier (matching cleanup receipt)";
-          return;
+          return item;
         }
         if (blocked) throw new Error(blocked);
-        if (!options.yes) return;
+        if (!options.yes) return item;
         if (!options.force && deps.app.projectsForPath(run.repoDir).length) throw new Error("app project reappeared; stop before deleting disk data");
         await check();
         append({ action: "removing", identity, kind, target });
-        io.rmSync(target, { recursive: type === "directory" });
+        if (extra.del) await extra.del();
+        else io.rmSync(target, { recursive: type === "directory" });
         append({ action: "removed", identity, kind, target });
         item.status = "removed";
       } catch (error) { item.status = "blocked"; item.reason = errorText(error); blocked ??= item.reason; }
+      return item;
     };
     for (const id of inventory.sessions) await remove("session-state", join(sessionRoot, id), async () => {
       if (!safeId(id)) throw new Error("invalid session identity");
@@ -372,7 +419,71 @@ export async function cleanupBatch(
       if (history.code) throw new Error("folder history does not contain the recorded seed");
       return type;
     };
-    for (const path of inventory.worktrees) await remove("worktree", path, () => gitFolder(path, true));
+    const worktreeItems: CleanupItem[] = [];
+    for (const path of inventory.worktrees) worktreeItems.push(await remove("worktree", path, () => gitFolder(path, true)));
+    // The app can leave worktrees registered in the clone without any app record (for example when
+    // its project was removed before cleanup's first inventory). Deleting the clone would strand them.
+    const runWorktrees = join(worktreeRoot, run.name);
+    const linked = new Map<string, boolean>();
+    try {
+      if (pathKind(run.repoDir, io) === "directory") {
+        const listed = await deps.exec("git", ["worktree", "list", "--porcelain", "-z"], { cwd: run.repoDir, timeoutMs: 60_000 });
+        if (listed.code) throw new Error("git worktree list failed");
+        const records = listed.stdout.split("\0\0").map(record => record.split("\0").filter(Boolean)).filter(record => record.length);
+        const paths = records.map(record => record[0].startsWith("worktree ") ? record[0].slice("worktree ".length) : "");
+        if (paths[0] !== run.repoDir) throw new Error("the clone is not its own main Git worktree");
+        for (let i = 1; i < records.length; i++) {
+          if (!paths[i]) throw new Error("unexpected git worktree list output");
+          if (inventory.worktrees.includes(paths[i]) || pathKind(paths[i], io) === "missing") continue;
+          linked.set(paths[i], records[i].some(field => field === "locked" || field.startsWith("locked ")));
+        }
+      }
+    } catch (error) { blocked ??= `cannot check the clone's linked worktrees: ${errorText(error)}`; }
+    for (const [path, locked] of linked) worktreeItems.push(await remove("worktree", path, async () => {
+      const name = `linked worktree ${path}`;
+      const byHand = "inspect it and remove it by hand, then rerun cleanup";
+      if (!beneath(runWorktrees, path)) throw new Error(`${name} is outside ${runWorktrees}; ${byHand}`);
+      const type = pathKind(path, io);
+      if (type === "missing") return type;
+      if (type !== "directory") throw new Error(`${name} is not a real folder; ${byHand}`);
+      const dotGit = join(path, ".git");
+      const pointer = pathKind(dotGit, io) === "file" ? /^gitdir: ([^\r\n]+)\r?\n?$/.exec(io.readFileSync(dotGit, "utf8"))?.[1] : undefined;
+      const gitdir = pointer ? resolve(path, pointer) : "";
+      const admin = join(run.repoDir, ".git", "worktrees");
+      if (!gitdir || !beneath(admin, gitdir) || pathKind(gitdir, io) !== "directory") throw new Error(`${name} does not point into ${admin}; ${byHand}`);
+      if (deps.app.projectsForPath(path).length || deps.app.workspacesForPath(path).length) throw new Error(`the app still references ${name}; ${byHand}`);
+      if (locked) throw new Error(`${name} is locked; ${byHand}`);
+      await gitFolder(run.repoDir, false);
+      return type;
+    }, {
+      reason: "Linked worktree of the clone with no app record; --yes removes it through git before the clone",
+      del: async () => {
+        const removed = await deps.exec("git", ["worktree", "remove", "--force", path], { cwd: run.repoDir, timeoutMs: 60_000 });
+        if (removed.code || pathKind(path, io) !== "missing") throw new Error(`git could not remove linked worktree ${path}; inspect it and remove it by hand, then rerun cleanup`);
+      },
+    }));
+    // Remove the run's app worktree folder only once nothing is left in it; never sweep contents.
+    if (!blocked) {
+      try {
+        const type = pathKind(runWorktrees, io);
+        if (type === "file") throw new Error(`${runWorktrees} is not a folder`);
+        if (type === "directory") {
+          const pending = new Set(worktreeItems.filter(item => item.status === "present").map(item => item.target));
+          const left = io.readdirSync(runWorktrees).filter(name => !pending.has(join(runWorktrees, name)));
+          if (left.length) {
+            add("worktree-parent", runWorktrees, "present",
+              `Kept: not empty after this run's worktrees were removed (contains ${left.slice(0, 3).join(", ")}${left.length > 3 ? ", ..." : ""}); inspect it by hand`).checklist = true;
+          } else if (!options.yes) {
+            add("worktree-parent", runWorktrees, "present", "Empty once this run's worktrees are removed; --yes removes this folder (not recursive)");
+          } else {
+            append({ action: "removing", identity, kind: "worktree-parent", target: runWorktrees });
+            io.rmdirSync(runWorktrees);
+            append({ action: "removed", identity, kind: "worktree-parent", target: runWorktrees });
+            add("worktree-parent", runWorktrees, "removed");
+          }
+        }
+      } catch (error) { add("worktree-parent", runWorktrees, "blocked", errorText(error)); }
+    }
     await remove("clone", run.repoDir, () => gitFolder(run.repoDir, false));
     await remove("kickoff", `${run.repoDir}.kickoff.md`, async () => {
       if (run.repoDir !== join(root, run.name) || !/^orch-eval-[a-z0-9-]+-\d+$/.test(run.name)) throw new Error("invalid kickoff identity");
