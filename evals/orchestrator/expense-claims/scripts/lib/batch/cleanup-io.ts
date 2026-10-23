@@ -95,19 +95,24 @@ export function cleanupGitHub(exec: typeof run = run, environment: NodeJS.Proces
   const readEnv: NodeJS.ProcessEnv = { ...environment, GH_PROMPT_DISABLED: "1", GH_PAGER: "cat" };
   delete readEnv.GH_DEBUG;
   delete readEnv.DEBUG;
-  let authorized: { owner: string; token: string } | null = null;
+  let authorized: { owner: string; token: string; privateRepoAccess: boolean } | null = null;
   // Never propagate a credential-bearing subprocess's output or exception: gh errors may echo
   // headers, and tests deliberately return a token in stderr.
   const command = async (args: string[], env: NodeJS.ProcessEnv = readEnv) => {
     try { return await exec("gh", args, { env, timeoutMs: 60_000 }); }
     catch { throw new Error("GitHub cleanup command could not run (details suppressed to protect credentials)"); }
   };
-  const api = (endpoint: string) => command(["api", "--hostname", "github.com", "--method", "GET", endpoint]);
+  const api = (endpoint: string) => command(["api", "--hostname", "github.com", "--method", "GET", endpoint],
+    authorized ? { ...readEnv, GH_TOKEN: authorized.token, GITHUB_TOKEN: undefined } : readEnv);
   const metadata = async (repo: string) => {
     if (!/^[a-zA-Z0-9-]+\/orch-eval-[a-z0-9-]+-\d+$/.test(repo)) throw new Error("invalid cleanup repo identity");
     const response = await api(`repos/${repo}`);
     if (response.code !== 0) {
-      if (/HTTP 404/.test(response.stderr)) return null;
+      if (/HTTP 404/.test(response.stderr)) {
+        if (authorized?.privateRepoAccess && repo.split("/")[0] === authorized.owner) return null;
+        throw new Error("repo not found or not visible; absence requires the verified owner's keyring identity with repo scope");
+      }
+      if (/HTTP (401|403)/.test(response.stderr)) throw new Error("GitHub access denied; cannot establish repo identity or absence");
       throw new Error("cannot read GitHub repo identity (authentication, network or API failure)");
     }
     let data: unknown;
@@ -146,7 +151,7 @@ export function cleanupGitHub(exec: typeof run = run, environment: NodeJS.Proces
       try { login = JSON.parse(body).login; } catch { throw new Error("cannot verify the token owner"); }
       if (typeof login !== "string" || login.toLowerCase() !== owner.toLowerCase()) throw new Error("keyring token is not the batch owner's");
       if (!scopes.includes("delete_repo")) throw new Error("owner keyring token lacks delete_repo scope");
-      authorized = { owner, token };
+      authorized = { owner, token, privateRepoAccess: scopes.includes("repo") };
     },
     deleteRepo: async (repo: string, id: number, seed: string) => {
       if (!authorized || repo.split("/")[0] !== authorized.owner) throw new Error("repo deletion has not been authorized for this owner");
@@ -162,7 +167,7 @@ export function cleanupGitHub(exec: typeof run = run, environment: NodeJS.Proces
 export async function pushedResults(config: BatchConfig, state: BatchState, branch: string | null, exec: typeof run = run): Promise<string | null> {
   const scored = state.runs.filter(r => r.scoredAt || r.row || r.committed);
   if (!scored.length) return null;
-  if (!branch || !/^[a-zA-Z0-9][a-zA-Z0-9/_.-]*$/.test(branch) || branch.includes("..")) return "results branch is not recorded in report.md; cannot prove results are on origin";
+  if (branch && (!/^[a-zA-Z0-9][a-zA-Z0-9/_.-]*$/.test(branch) || branch.includes(".."))) return "invalid results branch recorded in report.md";
   const origin = await exec("git", ["remote", "get-url", "origin"], { cwd: KIT_DIR, timeoutMs: 60_000 });
   const slug = origin.code === 0 ? githubSlug(origin.stdout) : null;
   if (!slug) return "cannot identify this kit's origin";
@@ -186,7 +191,7 @@ export async function pushedResults(config: BatchConfig, state: BatchState, bran
     }
     return null;
   };
-  const originalFailure = await checkBranch(branch);
+  const originalFailure = branch ? await checkBranch(branch) : "results branch is not recorded in report.md";
   if (!originalFailure) return null;
   const repository = await api(`repos/${slug}`);
   if (repository.code) return `${originalFailure}; cannot determine origin's default branch`;
@@ -214,7 +219,8 @@ export function selectCleanupBatches(value: string, root: string): string[] {
   return dirs.map(name => join(root, name)).filter(dir => ["done", "stopped"].includes(loadState(dir).phase));
 }
 
-export async function cleanupCommand(options: { batch: string; batchesDir: string; yes: boolean; force: boolean }, print: (line: string) => void = console.log): Promise<number> {
+export async function cleanupCommand(options: { batch: string; batchesDir: string; yes: boolean; force: boolean; dropped?: string[] }, print: (line: string) => void = console.log): Promise<number> {
+  if (options.batch === "all" && options.dropped?.length) throw new Error("--dropped requires one batch, not all");
   let exit = 0;
   for (const dir of selectCleanupBatches(options.batch, options.batchesDir)) {
     const execute = async () => {
@@ -224,11 +230,11 @@ export async function cleanupCommand(options: { batch: string; batchesDir: strin
       const gh = cleanupGitHub();
       const result = await cleanupBatch(config, state, options, {
         home: homedir(), app: openCleanupApp(config.appDb), now: () => new Date().toISOString(), exec: run, ...gh,
-        results: (config, state) => {
+        results: (config, state, record) => {
           const report = join(dir, "report.md");
           pathKind(report);
           const branch = existsSync(report) ? /^results\.csv rows are committed on branch `([^`]+)`/m.exec(readFileSync(report, "utf8"))?.[1] ?? null : null;
-          return pushedResults(config, state, branch);
+          return pushedResults(config, { ...state, runs: [record] }, branch);
         },
       });
       print(formatCleanup(result));

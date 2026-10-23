@@ -1,7 +1,7 @@
 // Manual, fail-closed cleanup. state.json (via loadState) authorizes runs; discovery is saved only
 // by --yes, before the user removes app projects and their database links disappear.
 import * as fs from "node:fs";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { pidAlive, readGuard } from "./lock.ts";
@@ -24,7 +24,7 @@ export interface CleanupDeps {
   home: string;
   app: CleanupApp;
   now(): string;
-  results(config: BatchConfig, state: BatchState): Promise<string | null>;
+  results(config: BatchConfig, state: BatchState, run: RunState): Promise<string | null>;
   authorize(owner: string): Promise<void>;
   repo(repo: string, seed: string): Promise<{ id: number; seedPresent: boolean } | null>;
   deleteRepo(repo: string, id: number, seed: string): Promise<void>;
@@ -32,7 +32,7 @@ export interface CleanupDeps {
   fs?: typeof fs;
 }
 export interface CleanupItem {
-  kind: "batch" | "token" | "results" | "app-project" | "app-session" | "archive" | "session-state" | "worktree" | "clone" | "kickoff" | "repo";
+  kind: "batch" | "run" | "token" | "results" | "app-project" | "app-session" | "archive" | "session-state" | "worktree" | "clone" | "kickoff" | "repo";
   target: string;
   status: "present" | "already gone" | "blocked" | "removed" | "archived";
   reason?: string;
@@ -41,11 +41,12 @@ export interface CleanupItem {
 export interface CleanupReport { batch: string; dryRun: boolean; items: CleanupItem[] }
 interface JournalEntry {
   at: string;
-  action: "inventory" | "archived" | "removed" | "removing" | "lost";
+  action: "inventory" | "archived" | "removed" | "removing" | "lost" | "dropped";
   identity: string;
   inventory?: CleanupInventory;
   kind?: CleanupItem["kind"];
   target?: string;
+  source?: string;
   sha256?: string;
 }
 const sha256 = (data: string | Buffer): string => createHash("sha256").update(data).digest("hex");
@@ -103,7 +104,7 @@ function recordedRuns(state: BatchState): RunState[] {
 }
 
 export async function cleanupBatch(
-  config: BatchConfig, state: BatchState, options: { yes?: boolean; force?: boolean }, deps: CleanupDeps,
+  config: BatchConfig, state: BatchState, options: { yes?: boolean; force?: boolean; dropped?: string[] }, deps: CleanupDeps,
 ): Promise<CleanupReport> {
   const io = deps.fs ?? fs;
   const report: CleanupReport = { batch: config.id, dryRun: !options.yes, items: [] };
@@ -139,15 +140,28 @@ export async function cleanupBatch(
     if (active) throw new Error(`active-batch guard still names ${active.id}; do not clean while a batch owns the machine`);
     if (pathKind(journal, io) === "file") entries = io.readFileSync(journal, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line) as JournalEntry);
     runs = recordedRuns(state);
+    for (const name of options.dropped ?? []) {
+      const run = runs.find(run => run.name === name);
+      if (!run) throw new Error(`unknown --dropped run: ${name}`);
+      if (!run.row && !run.scoredAt) throw new Error(`--dropped run has no recorded result: ${name}`);
+    }
   } catch (error) {
     add("batch", config.dir, "blocked", errorText(error));
     return report;
   }
-  let globalBlock: string | null;
-  try { globalBlock = await deps.results(config, state); }
-  catch (error) { globalBlock = errorText(error); }
-  if (globalBlock) add("results", "origin results.csv", "blocked", globalBlock);
-  if (options.yes && !globalBlock) {
+  const resultHash = (run: RunState) => sha256(JSON.stringify(run.row ?? null));
+  const confirmedDrop = (run: RunState) => entries.some(e => e.action === "dropped" &&
+    e.identity === runIdentity(run) && e.target === run.name && e.sha256 === resultHash(run));
+  const resultBlocks = new Map<string, string>();
+  for (const run of runs) {
+    if (confirmedDrop(run) || options.dropped?.includes(run.name)) continue;
+    let reason: string | null;
+    try { reason = await deps.results(config, state, run); }
+    catch (error) { reason = errorText(error); }
+    if (reason) resultBlocks.set(run.name, reason);
+  }
+  let globalBlock: string | null = null;
+  if (options.yes && runs.some(run => !resultBlocks.has(run.name))) {
     try { await deps.authorize(config.owner); }
     catch (error) { globalBlock = errorText(error); add("token", config.owner, "blocked", globalBlock); }
   }
@@ -155,18 +169,33 @@ export async function cleanupBatch(
   for (const run of runs) {
     const identity = runIdentity(run);
     const seed = run.preparedSha ?? run.seedSha;
-    const receipt = (kind: CleanupItem["kind"], target: string, action = "removed") =>
-      entries.some(e => e.identity === identity && e.kind === kind && e.target === target && e.action === action);
-    let blocked = globalBlock;
-    let remote: { id: number; seedPresent: boolean } | null = null;
-    let inventory: CleanupInventory = { projects: [], worktrees: [], sessions: [], workspaces: [] };
-    let discovered = false;
-    const saved = entries.filter(e => e.identity === identity && e.action === "inventory").flatMap(e => e.inventory ? [e.inventory] : []);
     try {
       if (!/^[a-z0-9][a-z0-9-]*$/.test(run.variant) || !Number.isSafeInteger(run.n) || run.n < 1 ||
           run.name !== `orch-eval-${run.variant}-${run.n}` || run.repo !== `${config.owner}/${run.name}` ||
           run.repoDir !== join(root, run.name)) throw new Error("recorded owner, run name or clone identity does not match");
       if (!seed || !/^[a-f0-9]{40}$/.test(seed)) throw new Error("missing recorded seed identity; never infer it from the current repo");
+    } catch (error) {
+      add("run", run.name, "blocked", `cannot be verified; nothing touched: ${errorText(error)}`);
+      continue;
+    }
+    const receipt = (kind: CleanupItem["kind"], target: string, action = "removed") =>
+      entries.some(e => e.identity === identity && e.kind === kind && e.target === target && e.action === action);
+    const archiveRecord = (source: string, dest: string, name: string) => entries.findLast(e =>
+      e.action === "archived" && e.identity === identity &&
+      (e.source === join(source, name) || (!e.source && e.target === join(dest, `${name}.gz`))));
+    let blocked = globalBlock ?? resultBlocks.get(run.name) ?? null;
+    if (resultBlocks.has(run.name)) add("results", run.name, "blocked", resultBlocks.get(run.name));
+    let remote: { id: number; seedPresent: boolean } | null = null;
+    let inventory: CleanupInventory = { projects: [], worktrees: [], sessions: [], workspaces: [] };
+    let discovered = false;
+    const saved = entries.filter(e => e.identity === identity && e.action === "inventory").flatMap(e => e.inventory ? [e.inventory] : []);
+    try {
+      if (options.dropped?.includes(run.name) || confirmedDrop(run)) {
+        if (options.yes && !blocked && !confirmedDrop(run)) {
+          append({ action: "dropped", identity, kind: "results", target: run.name, sha256: resultHash(run) });
+        }
+        add("results", run.name, "present", `${confirmedDrop(run) ? "Recorded" : "Preview"} deliberate result drop; results.csv is not edited`);
+      }
       remote = await deps.repo(run.repo, seed);
       if (remote && !remote.seedPresent) throw new Error("repo history does not contain the recorded seed");
       const live = deps.app.inventory(run);
@@ -193,8 +222,8 @@ export async function cleanupBatch(
         ? `Session ${workspace.sessionId}${workspace.archived ? " (archived)" : ""}; included in project removal, no separate action`
         : "Never started: no CLI session/log to copy; included in project removal");
     }
-    // Archive all logs before even considering app-side or disk deletion. Missing logs for an
-    // actual CLI session are a blocker unless a previous invocation preserved them.
+    // Archive before app removal destroys histories. Missing originals and backups are reported
+    // as lost; an existing but unverified backup blocks deletion.
     const archiveGate = blocked;
     for (const id of inventory.sessions) {
       const source = join(sessionRoot, id);
@@ -207,8 +236,9 @@ export async function cleanupBatch(
         pathKind(dest, io);
         const eventPath = join(source, "events.jsonl");
         if (pathKind(eventPath, io) === "missing") {
-          const copy = join(dest, "events.jsonl.gz");
-          const recorded = entries.findLast(e => e.action === "archived" && e.identity === identity && e.target === copy);
+          const recorded = archiveRecord(source, dest, "events.jsonl");
+          const copy = recorded?.target ?? join(dest, "events.jsonl.gz");
+          if (!beneath(dest, copy)) throw new Error("archive path is outside its session folder");
           if (sourceKind === "missing" && pathKind(copy, io) === "missing") {
             archive.status = "already gone";
             archive.reason = "LOST: session logs are gone and no archive exists; cannot recover them. Continuing known-item cleanup.";
@@ -228,11 +258,23 @@ export async function cleanupBatch(
             if (pathKind(input, io) === "missing") continue;
             if (pathKind(input, io) !== "file") throw new Error(`not a regular log file: ${input}`);
             const data = io.readFileSync(input);
-            const output = join(dest, `${name}.gz`);
-            pathKind(output, io);
-            io.writeFileSync(output, gzipSync(data), { mode: 0o600 });
-            if (sha256(gunzipSync(io.readFileSync(output))) !== sha256(data)) throw new Error("archive verification failed");
-            append({ action: "archived", identity, kind: "archive", target: output, sha256: sha256(data) });
+            const hash = sha256(data);
+            let output = join(dest, `${name}.gz`);
+            if (pathKind(output, io) === "file" && sha256(gunzipSync(io.readFileSync(output))) !== hash) {
+              output = join(dest, `${name}.${hash}.gz`);
+            }
+            if (pathKind(output, io) === "missing") {
+              const temporary = join(dest, `.${name}.${randomUUID()}.tmp`);
+              try {
+                io.writeFileSync(temporary, gzipSync(data), { mode: 0o600, flag: "wx" });
+                if (sha256(gunzipSync(io.readFileSync(temporary))) !== hash) throw new Error("archive verification failed");
+                io.renameSync(temporary, output);
+              } finally {
+                io.rmSync(temporary, { force: true });
+              }
+            }
+            if (pathKind(output, io) !== "file" || sha256(gunzipSync(io.readFileSync(output))) !== hash) throw new Error("archive verification failed");
+            append({ action: "archived", identity, kind: "archive", source: input, target: output, sha256: hash });
           }
           archive.status = "archived";
         }
@@ -283,8 +325,10 @@ export async function cleanupBatch(
           for (const name of ["events.jsonl", "workspace.yaml"]) {
             const input = join(source, name);
             if (pathKind(input, io) === "missing" && name !== "events.jsonl") continue;
-            const copy = join(config.dir, "sessions", run.name, id, `${name}.gz`);
-            const recorded = entries.findLast(e => e.action === "archived" && e.identity === identity && e.target === copy);
+            const dest = join(config.dir, "sessions", run.name, id);
+            const recorded = archiveRecord(source, dest, name);
+            const copy = recorded?.target ?? join(dest, `${name}.gz`);
+            if (!beneath(dest, copy)) throw new Error("archive path is outside its session folder");
             if (pathKind(input, io) !== "file" || pathKind(copy, io) !== "file" || !recorded ||
                 sha256(io.readFileSync(input)) !== recorded.sha256 || sha256(gunzipSync(io.readFileSync(copy))) !== recorded.sha256) {
               throw new Error("session log changed after archival or archive is not verified");
@@ -294,7 +338,7 @@ export async function cleanupBatch(
       }
       return type;
     });
-    const gitFolder = async (path: string, worktree: boolean) => {
+    const gitFolder = async (path: string, worktree: boolean): Promise<"directory" | "missing"> => {
       if (worktree ? !beneath(join(worktreeRoot, run.name), path) : path !== join(root, run.name)) throw new Error("folder is outside this run's allowed root");
       const type = pathKind(path, io);
       if (type === "missing") return type;
@@ -304,6 +348,13 @@ export async function cleanupBatch(
       if (projects.length && !options.force) throw new Error("app project still references this folder");
       const git = (args: string[]) => deps.exec("git", args, { cwd: path, timeoutMs: 60_000 });
       const top = await git(["rev-parse", "--show-toplevel"]);
+      if (top.code && worktree && saved.some(s => s.worktrees.includes(path)) && projects.length === 0 &&
+          pathKind(join(path, ".git"), io) === "file") {
+        const pointer = /^gitdir: ([^\r\n]+)\r?\n?$/.exec(io.readFileSync(join(path, ".git"), "utf8"))?.[1];
+        const gitdir = pointer ? resolve(path, pointer) : "";
+        if (gitdir && beneath(join(run.repoDir, ".git", "worktrees"), gitdir) && pathKind(gitdir, io) === "missing" &&
+            await gitFolder(run.repoDir, false) === "directory") return "directory";
+      }
       if (top.code || resolve(top.stdout.trim()) !== path) throw new Error("folder is not its own Git worktree");
       const origin = await git(["remote", "get-url", "origin"]);
       if (origin.code || githubSlug(origin.stdout) !== run.repo) throw new Error("folder origin does not match the recorded repo");
@@ -338,19 +389,42 @@ export async function cleanupBatch(
   // They are never disk/repo targets. Only their exact recorded sessions need a manual archive.
   for (const test of state.selftests) {
     if (!test.appSessionId && !test.sessionId) continue;
-    add("app-session", test.appSessionId ?? test.sessionId!, "present",
-      `Archive this self-test session in the app; KEEP project ${test.projectId ?? "(not recorded)"} at ${test.repoDir}`).checklist = true;
+    const target = test.appSessionId ?? test.sessionId!;
+    try {
+      const workspace = deps.app.inventory(test).workspaces.find(workspace =>
+        test.appSessionId ? workspace.id === test.appSessionId : workspace.sessionId === test.sessionId);
+      if (!workspace || workspace.archived) continue;
+      add("app-session", target, "present",
+        `Archive this self-test session in the app; KEEP project ${test.projectId ?? "(not recorded)"} at ${test.repoDir}`).checklist = true;
+    } catch (error) {
+      add("app-session", target, "blocked", `Cannot check self-test session: ${errorText(error)}`).checklist = true;
+    }
   }
   return report;
 }
 
 export function formatCleanup(report: CleanupReport): string {
+  const steps: string[] = [];
+  const blocks = new Map<string, number>();
+  for (const item of report.items) {
+    if (item.kind === "app-project" || item.checklist || item.kind === "run" || item.reason?.startsWith("LOST")) {
+      steps.push(`- ${item.target}: ${item.reason}`);
+    } else if (item.status === "blocked") {
+      const reason = item.reason ?? "blocked";
+      blocks.set(reason, (blocks.get(reason) ?? 0) + 1);
+    }
+  }
+  for (const [reason, count] of blocks) steps.push(`- ${reason} (${count} item${count === 1 ? "" : "s"}; see inventory above).`);
+  if (!steps.length) steps.push(report.dryRun
+    ? "- Review the inventory, then rerun this batch with --yes when ready."
+    : "- No cleanup actions remain.");
   return [
     `${report.dryRun ? "DRY RUN" : "CLEANUP"} batch ${report.batch}`,
     ...(report.dryRun ? ["Read-only: no archive, journal, app change or deletion. --yes archives evidence before deletion; run it before removing app projects."] : []),
-    ...report.items.filter(item => report.dryRun || item.kind !== "app-session" || item.checklist)
+    ...report.items.filter(item => item.kind !== "run" && (report.dryRun || (item.kind !== "app-session" && item.kind !== "app-project")))
       .map(item => `${item.status.toUpperCase()} ${item.kind} ${item.target}${item.reason ? `: ${item.reason}` : ""}`),
     "Kept: results.csv and its commits, batch folder, self-test projects, active-batch guard.",
     "Deleting a run repo prevents scoring it again. --force bypasses only the app-project-presence check.",
+    "", "Next steps:", ...steps,
   ].join("\n");
 }

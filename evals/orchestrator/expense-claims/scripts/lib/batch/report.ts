@@ -116,7 +116,7 @@ export function buildReport(config: BatchConfig, state: BatchState, appDb: AppDb
     out.push(`- ${runLabel(run)}:`);
     for (const flag of run.flags) out.push(`  - ${flag.code}: ${flag.detail}`);
   }
-  out.push("", "A flag doesn't change the row in results.csv. Check each flagged run before you trust its row; to drop a row, delete its line from results.csv and commit.", "");
+  out.push("", `A flag doesn't change the row in results.csv. Check each flagged run before you trust its row; to drop a row, delete its line from results.csv and commit. At cleanup, confirm that exact run with \`npm run batch -- cleanup --batch ${config.id} --dropped <run-name> --yes\`; the confirmation is journaled and waives only that run's row-preservation check.`, "");
 
   out.push("## Self-test", "");
   if (state.selftests.length === 0) out.push("Not run.");
@@ -160,9 +160,10 @@ export function buildReport(config: BatchConfig, state: BatchState, appDb: AppDb
 
   out.push("## Morning checklist", "");
   out.push("1. Turn Copilot Memory back on at https://github.com/settings/copilot/features.");
-  out.push("2. Archive the sessions listed above.");
+  out.push("2. Archive self-test sessions in kept projects. Run/child/trust sessions need no separate action when removing their projects through cleanup.");
   out.push(permissions.length > 0 ? "3. Review the flagged runs, and read \"Tool-permission prompts\" above before the next batch." : "3. Review the flagged runs.");
   out.push("4. Land the results.csv commits.");
+  out.push(`5. After reviewing results, run \`npm run batch -- cleanup --batch ${config.id}\`. Run with \`--yes\` to archive logs before removing projects; follow its Next steps and rerun. Never automatic.`);
   out.push("5. Re-enable macOS updates if you deferred them.");
   return out.join("\n") + "\n";
 }

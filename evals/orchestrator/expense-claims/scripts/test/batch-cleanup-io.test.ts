@@ -33,7 +33,7 @@ test("delete credential is owner-specific, absent from argv/output, and never us
     assert.equal(call.env?.GH_DEBUG, undefined);
   }
   assert.equal(calls.find(c => c.args.includes("DELETE"))?.env?.GH_TOKEN, token);
-  assert.equal(calls.find(c => c.args.some(a => a.includes("/compare/")))?.env?.GH_TOKEN, "ambient");
+  assert.equal(calls.find(c => c.args.some(a => a.includes("/compare/")))?.env?.GH_TOKEN, token);
 });
 
 for (const [login, scopes] of [["ncksol", "repo"], ["someone-else", "repo, delete_repo"]]) {
@@ -60,6 +60,56 @@ test("a replaced remote repo is not deleted after inventory", async () => {
   await assert.rejects(gh.deleteRepo("ncksol/orch-eval-a-1", 42, "a".repeat(40)));
   assert.equal(deletes, 0);
 });
+
+test("an ambient 404 is not absence; authorized owner reads can still find and delete the repo", async () => {
+  let deleted = 0;
+  const exec: typeof run = async (_cmd, args, opts) => {
+    if (args[0] === "auth") return { code: 0, stdout: "owner-secret", stderr: "" };
+    if (args.includes("user")) return { code: 0, stdout: 'HTTP/2.0 200 OK\nX-OAuth-Scopes: repo, delete_repo\n\n{"login":"ncksol"}', stderr: "" };
+    if (opts?.env?.GH_TOKEN !== "owner-secret") return { code: 1, stdout: "", stderr: "HTTP 404" };
+    if (args.includes("DELETE")) { deleted++; return { code: 0, stdout: "", stderr: "" }; }
+    return { code: 0, stdout: JSON.stringify(args.some(a => a.includes("/compare/"))
+      ? { status: "identical", merge_base_commit: { sha: "a".repeat(40) } }
+      : { id: 42, full_name: "ncksol/orch-eval-a-1", default_branch: "main" }), stderr: "" };
+  };
+  const gh = cleanupGitHub(exec, { GH_TOKEN: "unrelated-account" });
+  await assert.rejects(gh.repo("ncksol/orch-eval-a-1", "a".repeat(40)), /not found or not visible/);
+  await gh.authorize("ncksol");
+  assert.deepEqual(await gh.repo("ncksol/orch-eval-a-1", "a".repeat(40)), { id: 42, seedPresent: true });
+  await gh.deleteRepo("ncksol/orch-eval-a-1", 42, "a".repeat(40));
+  assert.equal(deleted, 1);
+});
+
+test("independent guard: GitHub full_name must match the recorded repo", async () => {
+  let deleted = false;
+  const exec: typeof run = async (_cmd, args) => {
+    if (args.includes("DELETE")) deleted = true;
+    return { code: 0, stdout: JSON.stringify({ id: 42, full_name: "ncksol/different", default_branch: "main" }), stderr: "" };
+  };
+  await assert.rejects(cleanupGitHub(exec, {}).repo("ncksol/orch-eval-a-1", "a".repeat(40)), /^Error: GitHub repo identity does not match$/);
+  assert.equal(deleted, false);
+});
+
+test("even the owner cannot establish private-repo absence without repo scope", async () => {
+  const exec: typeof run = async (_cmd, args) => args[0] === "auth" ? { code: 0, stdout: "secret", stderr: "" } :
+    args.includes("user") ? { code: 0, stdout: 'HTTP/2.0 200 OK\nX-OAuth-Scopes: delete_repo\n\n{"login":"ncksol"}', stderr: "" } :
+      { code: 1, stdout: "", stderr: "HTTP 404" };
+  const gh = cleanupGitHub(exec, {});
+  await gh.authorize("ncksol");
+  await assert.rejects(gh.repo("ncksol/orch-eval-a-1", "a".repeat(40)), /not found or not visible/);
+});
+
+for (const status of [401, 403, 404]) {
+  test(`owner HTTP ${status} distinguishes absent repos from access errors`, async () => {
+    const exec: typeof run = async (_cmd, args) => args[0] === "auth" ? { code: 0, stdout: "secret", stderr: "" } :
+      args.includes("user") ? { code: 0, stdout: 'HTTP/2.0 200 OK\nX-OAuth-Scopes: repo, delete_repo\n\n{"login":"ncksol"}', stderr: "" } :
+        { code: 1, stdout: "", stderr: `HTTP ${status}` };
+    const gh = cleanupGitHub(exec, {});
+    await gh.authorize("ncksol");
+    if (status === 404) assert.equal(await gh.repo("ncksol/orch-eval-a-1", "a".repeat(40)), null);
+    else await assert.rejects(gh.repo("ncksol/orch-eval-a-1", "a".repeat(40)), /access denied/);
+  });
+}
 
 test("read-only app discovery includes project worktrees, pooled paths, aliases and never-started workspaces", (t) => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "cleanup-db-")));
@@ -113,10 +163,11 @@ test("results gate checks the remote branch CSV, exact batch marker and every sc
   assert.match(await pushedResults(config, state, null, exec) ?? "", /branch/);
 });
 
-for (const [name, defaultRows, allowed] of [
-  ["deleted results branch and identical landed rows", "identical", true],
-  ["no remote ref preserves the rows", "missing", false],
-  ["landed rows differ from the recorded result", "mismatched", false],
+for (const [name, defaultRows, allowed, branch] of [
+  ["deleted results branch and identical landed rows", "identical", true, "driver-branch"],
+  ["no remote ref preserves the rows", "missing", false, "driver-branch"],
+  ["landed rows differ from the recorded result", "mismatched", false, "driver-branch"],
+  ["missing report branch and identical landed rows", "identical", true, null],
 ] as const) {
   test(`results gate: ${name}`, async () => {
     const row = { repo: "ncksol/orch-eval-a-1", run: "1", outcome: "passed", note: "batch=b1; driver=eval-runner" };
@@ -134,11 +185,11 @@ for (const [name, defaultRows, allowed] of [
         (defaultRows === "missing" ? "" : toCsvLine(RESULT_COLUMNS.map(k => remote[k as keyof typeof remote] ?? "")) + "\n");
       return { code: 0, stdout: JSON.stringify({ content: Buffer.from(csv).toString("base64"), encoding: "base64" }), stderr: "" };
     };
-    const result = await pushedResults({ id: "b1" } as BatchConfig, state, "driver-branch", exec);
+    const result = await pushedResults({ id: "b1" } as BatchConfig, state, branch, exec);
     if (allowed) assert.equal(result, null);
     else assert.match(result ?? "", /origin/);
     assert.deepEqual(requested, [
-      "repos/ncksol/ai_tools/contents/evals/orchestrator/expense-claims/results.csv?ref=driver-branch",
+      ...(branch ? ["repos/ncksol/ai_tools/contents/evals/orchestrator/expense-claims/results.csv?ref=driver-branch"] : []),
       "repos/ncksol/ai_tools",
       "repos/ncksol/ai_tools/contents/evals/orchestrator/expense-claims/results.csv?ref=trunk",
     ]);
