@@ -288,9 +288,32 @@ Repo memories don't carry over, because every run uses a new repo.
 
 ## Cleaning up
 
-Run repos stay on GitHub until you delete them. Deleting a repo needs a token with the `delete_repo` scope, or the GitHub web UI. The usual `GH_TOKEN` doesn't have that scope, and `gh auth refresh` can't add a scope to a token from the environment, so you need a new token.
+Cleanup is manual and never runs at the end of a batch. After reviewing and pushing the results, use any checkout of this kit:
 
-Local clones and kickoff files are in `~/orch-evals/`. Delete them when you no longer need them.
+```bash
+npm run batch -- cleanup --batch 20261022-2121       # read-only inventory
+npm run batch -- cleanup --batch 20261022-2121 --yes # archive evidence; remove eligible items
+```
+
+`--batch` accepts an id, an absolute batch path, `latest`, or `all` (every finished or stopped batch, including unused provisioned slots). It uses recorded batch identities, not a search for matching repo names. Runs created by hand outside a batch are out of scope.
+
+**Removing an app project deletes its sessions' histories and session-state folders, including detached sessions. Archive the logs first.** There is no supported script API for removing Copilot app projects. Cleanup prints one checklist line per project (name, path and ID); only after `--yes` verifies its available log archives does that line instruct you to remove it. Until then it says to keep the project. Removing the project also removes its run, child and trust sessions; they need no separate action. Per-session details appear in the dry-run inventory and `cleanup.jsonl`. Self-test sessions remain separate manual archive items because their projects are kept. Archiving a session keeps its history; removing a project does not. The script never writes the app database or calls internal IPC.
+
+While a run project exists, cleanup preserves its disk data and repo. The first `--yes` saves its discovered session/worktree identities in `cleanup.jsonl` and copies `events.jsonl` and, when present, `workspace.yaml` into verified gzip files under `<batch>/sessions/<run>/<session-id>/`. These are result evidence; the live SQLite session database is not copied. Backups can be taken while an idle session's CLI is still loaded, but deletion requires it to be stopped and the logs to match the verified backup. Remove the listed run projects in the app, then rerun the same command to finish. The app removes its worktrees too; cleanup removes recorded leftovers. If project removal fails with `untransferred_pool_cleanup` or the project otherwise remains, the checklist asks you to retry removal. Keep the clone until then: the app runs Git commands inside it during removal.
+
+If the app already removed a session folder, its verified archive is sufficient. If both are absent, cleanup explicitly reports the logs as **LOST** and continues cleaning known items; it cannot recover the evidence. Removing a project before the first inventory also loses the app's child/worktree links. Cleanup reports that loss and does not guess unknown paths. Orphan rows left in the app's `sessions` table do not mean the session still belongs to a project: the guard checks `workspaces` and `workspace_session_aliases`.
+
+Each item is printed as present, already gone, blocked (with a reason), or, with `--yes`, archived/removed. No files, logs, locks, archives or app state are written during a dry run. A blocked item stops that run's later deletion steps; other runs can proceed. Exit code 1 means something remains blocked. Re-running is safe.
+
+Deletion order is app checklist, original session folders, recorded app worktrees, clones and `.kickoff.md` files, then GitHub repos. Session originals stay until the app no longer records them. Empty worktree parent containers may remain; unknown contents are never swept by name. Cleanup keeps `results.csv` and its commits, the complete batch folder (report, state, runner/score logs and archived evidence), self-test projects, and the `active-batch` guard and lock.
+
+Safety checks refuse unfinished batches, any occupied active-batch guard, results not preserved on origin's results branch, missing identities, symlinks and paths outside the allowed home roots. Scored rows must match those recorded by the batch, including its exact `batch=<id>` note marker. The results branch comes from `report.md`; the current kit's origin is used, so the driver's checkout need not remain. Cleanup does not require the old pinned kit hashes to match. The repo's default-branch history and each folder's history must contain the recorded seed (`preparedSha` after the runner amended it for feature selection, otherwise `seedSha`). Folder origins must match the recorded owner/repo. Older batches without a recorded seed are blocked, especially when later batches reused their names.
+
+`--yes --force` bypasses **only** the app-project-presence gate. It does not bypass mismatched identities, results protection, live sessions, archive failures, unsafe paths, or an app database error. It can leave app projects pointing at removed disk data; prefer removing them through the app first.
+
+Before any archive or deletion with `--yes`, cleanup reads **only the batch owner's** saved `gh` login, verifies its owner and `delete_repo` scope, and keeps that token in memory. Environment tokens are excluded from the keyring lookup. The saved token is used for its `/user` verification and repo DELETE calls only, never logged or passed on the command line; read checks use the ordinary `gh` environment. Cleanup does not switch accounts or change credentials. If the owner's saved login lacks the scope, nothing is deleted. Authenticate that account with the required scope yourself.
+
+**Deleting a run repo prevents scoring it again:** `score` clones the repo. Retained results and compressed logs remain available for analysis. Manual runs still need manual repo, project and local-folder cleanup.
 
 ## Overnight batches
 
@@ -427,7 +450,7 @@ If a prompt appears during a batch anyway, the run is void and the batch stops (
 3. Archive the sessions the report lists. The driver can't archive detached sessions.
 4. Review the flagged runs.
 5. Land the results: the report lists the `results.csv` commits on the driver's branch, which the runner pushed. Open a pull request from that branch into `main`.
-6. Review "Unused provisioned projects" in the report and remove or keep those projects, repos and clones yourself. Later batches never reuse these slots. Keep the permanent self-test project. Clean up run repos and clones as in [Cleaning up](#cleaning-up).
+6. After reviewing the results, run `npm run batch -- cleanup --batch <id>` and follow [Cleaning up](#cleaning-up). It includes unused provisioned slots. Archive the logs with `--yes` before removing app projects; keep self-test projects. Cleanup is never automatic.
 
 ### Batch commands
 
@@ -441,6 +464,7 @@ If a prompt appears during a batch anyway, the run is void and the batch stops (
 | `npm run batch -- stop --batch <id>` | Starts no new run; the runs in progress finish. |
 | `npm run batch -- take-over --batch <id>` | For you only: releases a batch from a driver that is gone but that the runner can't confirm is gone. |
 | `npm run batch -- report --batch <id>` | Prints the report from the current state. |
+| `npm run batch -- cleanup --batch <id\|path\|latest\|all> [--yes] [--force]` | Inventories finished batches without changes; `--yes` archives evidence and deletes eligible items. App removal is a checklist. `--force` bypasses only project presence. See [Cleaning up](#cleaning-up). |
 | `npm run batch -- alert --batch <id> --message <text>` | Sends a problem notification; the driver uses it when the runner keeps failing. |
 | `npm run batch -- notify-test` | Sends a test notification. |
 | `npm run batch -- rehearse` | Runs a stubbed batch in a scratch folder. |
@@ -453,6 +477,7 @@ If a prompt appears during a batch anyway, the run is void and the batch stops (
 |---|---|
 | Copilot Memory can't be cleaned up between runs: there is no API, only the web settings. | Turn Memory off for the whole batch. The preflight asks you to confirm it, the self-test checks that no memories load, every run is checked for memory use, and the final notification reminds you to turn it back on. Batch results are "Memory off" runs; compare them with manual runs made the same way. |
 | The driver can't archive detached sessions (`archive_session` refuses them). | The report lists the sessions to archive. The app's auto-clean also archives them after its set number of days. |
+| There is no supported script API for deleting app projects or their sessions. | Manual `batch cleanup` first archives logs and records discovery, then prints an app checklist. Rerun after removing the listed run projects/sessions. It never edits `data.db` or uses internal IPC. |
 | Tool-permission prompts and MCP elicitations have no answering tool. | You trust the pre-provisioned projects through their idle sessions before leaving (see [Tool permissions](#tool-permissions)); the self-test then proves unattended shell access. A permission prompt during a batch voids the run and stops the batch. An MCP elicitation is flagged, and the stall rule ends the run. |
 | A question asked in plain text can only be answered with `send_session_message`, which the orchestrator sees as a message from another session. | The run is flagged. `score --answer-source` still counts the reply as a question and as blocked time. |
 | The driver starts the runs, so the app records them as created by an agent. | Nothing reads that in a way that changes the run. The kickoff is otherwise the same as a typed one, and the self-test checks it. |

@@ -142,12 +142,12 @@ export function buildReport(config: BatchConfig, state: BatchState, appDb: AppDb
     out.push(`- ${config.dryRun ? run.repo : `https://github.com/${run.repo}`} (local clone ${run.repoDir})`);
   }
   for (const test of state.selftests) out.push(`- Permanent self-test project ${test.projectId ?? "not registered"} at ${test.repoDir} (local only; keep for later batches)`);
-  out.push("", "Deleting run repos needs a token with the delete_repo scope, or the GitHub web UI (README \"Cleaning up\").", "");
+  out.push("", `After reviewing results: \`npm run batch -- cleanup --batch ${config.id}\` previews cleanup; \`--yes\` archives logs before app removal and deletes eligible items (README "Cleaning up"). Never automatic.`, "");
   out.push("## Unused provisioned projects", "");
   const unused = (state.provisioned ?? []).filter((slot) => !state.runs.some((run) => run.repo === slot.repo && run.startRequestedAt));
   if (unused.length === 0) out.push("None.");
   for (const slot of unused) out.push(`- ${slot.name}: project ${slot.projectId ?? "not registered"}; repo ${slot.repo}; clone ${slot.repoDir}; provisioning status ${slot.status}.`);
-  out.push("", "Remove or keep these yourself. Later batches do not reuse them or build a trusted-project pool.", "");
+  out.push("", "The manual cleanup command includes these slots. Later batches do not reuse them or build a trusted-project pool.", "");
 
   out.push("## Land the results", "");
   if (extras.branch) {

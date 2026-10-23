@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { parseArgs } from "node:util";
 import { openAppDb, noAppDb } from "./lib/batch/appdb.ts";
+import { cleanupCommand } from "./lib/batch/cleanup-io.ts";
 import { pidAlive, withLock } from "./lib/batch/lock.ts";
 import { notices, readNtfyUrl, sendNtfy } from "./lib/batch/notify.ts";
 import { describePlan, calibrationDecision } from "./lib/batch/plan.ts";
@@ -34,6 +35,7 @@ const USAGE = `Usage (from evals/orchestrator/expense-claims):
   npm run batch -- next --batch <id|path|latest> [--max-wait 420]
   npm run batch -- record --batch <id|path|latest> --action <id> <result flags>
   npm run batch -- status|stop|report --batch <id|path|latest>
+  npm run batch -- cleanup --batch <id|path|latest|all> [--yes] [--force]
   npm run batch -- take-over --batch <id|path|latest>   (you only: release a batch whose driver is gone)
   npm run batch -- alert --batch <id|path|latest> --message <text>
   npm run batch -- notify-test
@@ -51,6 +53,8 @@ const { values, positionals } = parseArgs({
   allowPositionals: true,
   options: {
     batch: { type: "string" },
+    yes: { type: "boolean", default: false },
+    force: { type: "boolean", default: false },
     "batches-dir": { type: "string", default: defaultPaths().batchesDir },
     "max-wait": { type: "string", default: "420" },
     // init
@@ -271,6 +275,10 @@ function recordInput(): RecordInput {
 async function main(): Promise<number> {
   const command = positionals[0];
   switch (command) {
+    case "cleanup":
+      if (!values.batch) throw new UsageError("--batch is required");
+      if (values.yes && values["dry-run"]) throw new UsageError("--yes cannot be combined with --dry-run");
+      return cleanupCommand({ batch: values.batch, batchesDir: values["batches-dir"], yes: values.yes, force: values.force });
     case "init":
       return init();
     case "selftest":
