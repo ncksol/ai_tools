@@ -23,8 +23,8 @@ export interface Host {
 
 const CHECK_TIMEOUT_MS = 60_000;
 
-// The app version on which detached top-level runs and answer_session_input were observed.
-export const MIN_APP_VERSION = "1.1.30";
+// App 1.1.31 renamed repository registration to add_repository.
+export const MIN_APP_VERSION = "1.1.31";
 const MIN_CORE_REMAINING = 2000;
 const MIN_GRAPHQL_REMAINING = 1000;
 

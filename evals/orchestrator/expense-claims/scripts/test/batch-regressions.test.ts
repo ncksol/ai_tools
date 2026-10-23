@@ -52,11 +52,11 @@ test("H1: a second batch can't run while another batch is active on the machine"
   const guard = join(guardDir, "active-batch");
   const first = await make({ scenarios: ["ask-final"], activeGuard: guard, id: "first" });
   const second = await make({ scenarios: ["ask-final"], activeGuard: guard, id: "second" });
-  assert.equal((await first.next()).action, "create_project");
+  assert.equal((await first.next()).action, "add_repository");
   await assert.rejects(second.next(), ActiveBatchError);
   await first.until(() => false);
   assert.equal(first.state().phase, "done");
-  assert.equal((await second.next()).action, "create_project", "the guard is free once the first batch is done");
+  assert.equal((await second.next()).action, "add_repository", "the guard is free once the first batch is done");
 });
 
 test("H1: only the owning driver may run next or record; another takes over only once the owner is gone", async () => {

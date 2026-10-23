@@ -214,11 +214,11 @@ export function render(ctx: Ctx, state: BatchState, pending: PendingAction, reis
         details: p,
         record: [recordCommand(ctx, pending.id, "--listed")],
       };
-    case "create_project":
+    case "add_repository":
       return {
         ...base,
-        what: `Call create_project with exactly these arguments. The user authorised creating this project for the batch.`,
-        tool: { name: "create_project", args: p.args as Record<string, unknown> },
+        what: "Call add_repository with exactly these arguments to register the existing clone. Starting the batch authorised this registration; do not ask for confirmation.",
+        tool: { name: "add_repository", args: p.args as Record<string, unknown> },
         record: [recordCommand(ctx, pending.id, "--project-id <id from the result>"), recordCommand(ctx, pending.id, '--failed "<error>"')],
       };
     case "create_session":
@@ -566,7 +566,7 @@ function registerProject(ctx: Ctx, state: BatchState, target: PendingAction["tar
     project.status = "project";
     return { progressed: true };
   }
-  return { action: issue(ctx, state, "create_project", target, { args: { path: project.repoDir } }) };
+  return { action: issue(ctx, state, "add_repository", target, { args: { path: project.repoDir } }) };
 }
 
 async function provisionStep(ctx: Ctx, state: BatchState): Promise<StepResult> {
@@ -1710,11 +1710,11 @@ function revalidate(ctx: Ctx, state: BatchState): Revalidated {
     return "cleared";
   }
   switch (pending.kind) {
-    case "create_project": {
+    case "add_repository": {
       const existing = projectAtPath(ctx, target.repoDir);
       if (existing === undefined) {
         state.pending = null;
-        stopBatch(ctx, state, `cannot uniquely look up project at ${target.repoDir}; refusing to repeat create_project`, true);
+        stopBatch(ctx, state, `cannot uniquely look up project at ${target.repoDir}; refusing to repeat add_repository`, true);
         return "cleared";
       }
       if (existing) {
@@ -2007,9 +2007,9 @@ function applyRecord(ctx: Ctx, state: BatchState, input: RecordInput): string {
       state.trustWait!.listed = true;
       message = "trust list displayed; waiting for the user's app trust records";
       break;
-    case "create_project":
+    case "add_repository":
       if (input.failed || !input.projectId) {
-        const why = `create_project failed: ${input.failed ?? "no project id"}`;
+        const why = `add_repository failed: ${input.failed ?? "no project id"}`;
         if (test) Object.assign(test, { status: "failed", failure: why });
         else voidRun(ctx, state, run!, why, true);
         message = why;

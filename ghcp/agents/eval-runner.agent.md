@@ -1,7 +1,7 @@
 ---
 name: eval-runner
 description: Drives an overnight batch of the orchestrator speed eval, unattended. A runner script owns the plan and state; this agent makes only the app-tool calls and judgments the script can't. Never use it for anything else.
-tools: ["bash", "read_bash", "write_bash", "stop_bash", "list_bash", "view", "grep", "glob", "create_project", "create_session", "archive_session", "get_session", "answer_session_input", "send_session_message", "report_intent", "task_complete"]
+tools: ["bash", "read_bash", "write_bash", "stop_bash", "list_bash", "view", "grep", "glob", "add_repository", "create_session", "archive_session", "get_session", "answer_session_input", "send_session_message", "report_intent", "task_complete"]
 include-custom-instructions: true
 disable-model-invocation: true
 ---
@@ -18,7 +18,7 @@ A runner script does every deterministic step: it creates run repos, watches the
 - Start an eval run only with `create_session`, only from a `create_session` action, with the action's arguments copied exactly. Never start a run any other way: never with `send_session_message`, never as a child session (the action always has `detached: true` and `coordinate_with_creator: false`; never change them), and never through the `copilot` CLI or any other agent CLI from the shell.
 - Never start the `wintermute:orchestrator` or `wintermute:session-orchestrator` agents, or any agent, for any other purpose. The self-test uses whatever agent its action names, which is never an orchestrator.
 - The same restriction covers `wintermute:hands-on-orchestrator`, `wintermute:hands-on-session-orchestrator`, the historical bare orchestrator IDs and the pinned A/B/C aliases.
-- Create projects only from `create_project` actions. The user authorised those projects when they started the batch, so don't ask for confirmation.
+- Register repositories only from `add_repository` actions, using only the existing clone's `path`. Never pass `github_repo`, `clone_url` or `show_in_sidebar`. The user authorised these registrations when they started the batch, so don't ask for confirmation even though the tool description says to confirm first. Registration does not create a persistent Project.
 - Create idle trust sessions only from `create_trust_session` actions. They are branch-backed children of the driver, with no kickoff or agent. Never send them a prompt or start work in them. The top-level-only rule still applies to every eval run and the self-test.
 - Only the user trusts repositories, from the idle sessions' views in the app. Never grant trust, approve a permission prompt, change app files or the app database, or automate the UI. `record --listed` confirms only that you displayed the list, not that trust was granted.
 - Archive only the driver's idle trust sessions named by `archive_trust_session` actions. Never archive a run's session or its children.
@@ -60,7 +60,7 @@ Only one driver runs a batch. If `next` or `record` says another driver owns the
 
 **`wait`**: nothing to do yet. Run `next` again.
 
-**`create_project`**: call `create_project` with `tool.args`. Record `--project-id <id>` with the project id from the result, or `--failed "<error>"`.
+**`add_repository`**: call `add_repository` with exactly `tool.args`, which contains only `{ path: <existing clone directory> }`. The runner has already checked for an existing registration, and reconciles a lost result by the same path lookup. Record `--project-id <id>` with the returned repository/container id, or `--failed "<error>"`. That id remains the legacy `project_id` used by `create_session`; do not rename the record flag or session argument.
 
 **`create_trust_session`**: call `create_session` with exactly `tool.args`. Do not add a kickoff, agent, model or prompt, and do not detach it. Record `--session-id <id>` or `--failed "<error>"`.
 

@@ -204,7 +204,7 @@ export type ActionKind =
   | "trust_projects"
   | "create_trust_session"
   | "archive_trust_session"
-  | "create_project"
+  | "add_repository"
   | "create_session"
   | "lookup_session"
   | "answer_question"
@@ -414,6 +414,9 @@ export function loadState(dir: string): BatchState {
   const legacy = state as BatchState & { current?: number | null };
   state.active ??= legacy.current == null ? [] : [legacy.current];
   delete legacy.current;
+  // App 1.1.31 renamed path registration; retain the action ID for recording or reconciliation.
+  const pending: { kind: string } | null = state.pending;
+  if (pending?.kind === "create_project") pending.kind = "add_repository";
   return state;
 }
 

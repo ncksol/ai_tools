@@ -23,12 +23,55 @@ after(() => { for (const h of made) rmSync(h.dir, { recursive: true, force: true
 const gitArgs = (args: string[]) => args[0] === "--git-dir" ? args.slice(4) : args;
 
 async function provision(h: Harness) {
-  return h.until((action) => !["create_project", "create_trust_session"].includes(action.action), 100);
+  return h.until((action) => !["add_repository", "create_trust_session"].includes(action.action), 100);
+}
+
+for (const selfTest of [false, true]) {
+  test(`registration uses add_repository with only the existing ${selfTest ? "self-test" : "run"} clone path`, async () => {
+    const h = await make({ scenarios: [], selfTest });
+    const action = await h.next();
+    assert.equal(action.action, "add_repository");
+    assert.deepEqual(action.tool, {
+      name: "add_repository",
+      args: { path: join(h.config.runsDir, selfTest ? "eval-runner-selftest" : "orch-eval-variant-a-1") },
+    });
+    assert.ok(action.record!.some((command) => command.includes("--project-id")));
+    await h.record({ action: action.id!, projectId: "registered-repository" });
+    const target = selfTest ? h.state().selftests[0] : h.state().provisioned![0];
+    assert.equal(target.projectId, "registered-repository");
+    assert.equal(target.status, "project");
+  });
+}
+
+for (const registered of [false, true]) {
+  test(`a saved create_project action ${registered ? "adopts a lost result" : "reissues as add_repository"}`, async () => {
+    const h = await make({ scenarios: [], selfTest: true });
+    h.config.selfTest.only = true;
+    const first = await h.next();
+    const state = h.state();
+    const pending = { ...state.pending!, kind: "create_project" };
+    writeFileSync(join(h.config.dir, "state", `${String(state.revision).padStart(9, "0")}.json`),
+      JSON.stringify({ ...state, pending }));
+    const id = registered ? h.app.createProject(String(first.tool!.args.path)) : undefined;
+    const restarted = makeCtx(h.config, h.ctx.deps);
+    const following = await next(restarted, { maxWaitMs: 0 });
+    if (registered) {
+      assert.equal(following.action, "create_trust_session");
+      assert.notEqual(following.id, first.id);
+      assert.equal(h.state().selftests[0].projectId, id);
+    } else {
+      assert.equal(following.action, "add_repository");
+      assert.equal(following.id, first.id);
+      assert.deepEqual(following.tool, { name: "add_repository", args: first.tool!.args });
+      await h.record({ action: following.id!, projectId: "registered-after-restart" });
+      assert.equal(h.state().selftests[0].projectId, "registered-after-restart");
+    }
+  });
 }
 
 test("idle trust sessions are nested with no kickoff and archived before the first run starts", async () => {
   const h = await make({ scenarios: ["silent"] });
-  const create = await h.until((a) => a.action !== "create_project");
+  const create = await h.until((a) => a.action !== "add_repository");
   assert.equal(create.action, "create_trust_session");
   assert.deepEqual(create.tool!.args, {
     project_id: h.state().provisioned![0].projectId,
@@ -160,7 +203,7 @@ test("revoked trust before a run's first launch voids it as not started and stop
 test("a stop during provisioning creates no additional project and starts no session", async () => {
   const h = await make({ scenarios: [], variants: ["a", "b"] });
   const action = await h.next();
-  assert.equal(action.action, "create_project");
+  assert.equal(action.action, "add_repository");
   await h.drive(action);
   await requestStop(h.ctx);
   assert.equal((await h.next()).action, "done");
@@ -540,17 +583,17 @@ test("a later batch reuses the self-test repository without replacing its commit
   saveState(h.config.dir, { ...initialState(currentPins(h.config), true, new Date(h.clock.now).toISOString()), revision: h.state().revision });
   const actions: string[] = [];
   const start = await h.until((a) => { actions.push(a.action); return a.action === "create_session"; });
-  assert.ok(!actions.includes("create_project"), "look up the existing path instead of calling create_project again");
+  assert.ok(!actions.includes("add_repository"), "look up the existing path instead of calling add_repository again");
   assert.equal(start.action, "create_session");
   assert.equal(h.state().selftests[0].projectId, id);
   assert.equal(h.app.projects.size, 1);
   assert.equal((await runProc("git", ["rev-parse", "HEAD"], { cwd: testRepo })).stdout, before.stdout);
 });
 
-test("a lost create_project result is adopted by clone path instead of creating a duplicate", async () => {
+test("a lost add_repository result is adopted by clone path instead of creating a duplicate", async () => {
   const h = await make({ scenarios: [], selfTest: true });
   const first = await h.next();
-  assert.equal(first.action, "create_project");
+  assert.equal(first.action, "add_repository");
   const id = h.app.createProject(String(first.tool!.args.path));
   const following = await h.next();
   assert.notEqual(following.id, first.id);

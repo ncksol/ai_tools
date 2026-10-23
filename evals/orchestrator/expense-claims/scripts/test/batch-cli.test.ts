@@ -138,19 +138,19 @@ test("init, next, record and status work from the command line", async () => {
   const next = await batch(["next", "--batch", "cli", "--max-wait", "0", ...common]);
   assert.equal(next.code, 0, next.stderr);
   const action = JSON.parse(next.stdout);
-  assert.equal(action.action, "create_project");
+  assert.equal(action.action, "add_repository");
   assert.equal(action.dryRun, true);
-  assert.equal(action.tool.args.path, join(dir, "runs", "eval-runner-selftest"));
+  assert.deepEqual(action.tool, { name: "add_repository", args: { path: join(dir, "runs", "eval-runner-selftest") } });
 
   const recorded = await batch(["record", "--batch", join(dir, "batches", "cli"), "--action", action.id, "--project-id", "p-1"]);
   assert.equal(recorded.stdout.trim(), "project p-1 recorded");
   const project = JSON.parse((await batch(["next", "--batch", "latest", "--max-wait", "0", ...common])).stdout);
-  assert.equal(project.action, "create_project", "all run projects are provisioned before the self-test starts");
+  assert.equal(project.action, "add_repository", "all run projects are provisioned before the self-test starts");
   assert.match(project.tool.args.path, /orch-eval-variant-a-\d+$/);
 
   const status = await batch(["status", "--batch", "cli", ...common]);
   assert.match(status.stdout, /Batch cli: phase provisioning/);
-  assert.match(status.stdout, /Pending action: a2 create_project/);
+  assert.match(status.stdout, /Pending action: a2 add_repository/);
   const stop = await batch(["stop", "--batch", "cli", ...common]);
   assert.match(stop.stdout, /stops after the runs in progress finish/);
   const released = await batch(["take-over", "--batch", "cli", ...common]);

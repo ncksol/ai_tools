@@ -17,8 +17,8 @@ before(() => {
   writeFileSync(join(dir, "agents", "orchestrator.agent.md"), "Starts wintermute:orchestrator-worker sub-agents.");
   writeFileSync(join(dir, "agents", "session-orchestrator.agent.md"), "Children run as wintermute:session-worker.");
   for (const name of ["orchestrator-worker", "session-worker"]) writeFileSync(join(dir, "agents", `${name}.agent.md`), name);
-  writeFileSync(join(dir, "Info.plist"), "<key>CFBundleShortVersionString</key><string>1.1.30</string>");
-  writeFileSync(join(dir, "old.plist"), "<key>CFBundleShortVersionString</key><string>1.1.29</string>");
+  writeFileSync(join(dir, "Info.plist"), "<key>CFBundleShortVersionString</key><string>1.1.31</string>");
+  writeFileSync(join(dir, "old.plist"), "<key>CFBundleShortVersionString</key><string>1.1.30</string>");
   writeFileSync(join(dir, "cli.d.ts"), 'COPILOT_CLI_VERSION = "1.0.99-2"');
   writeFileSync(join(dir, "old-score.ts"), 'options: { "outcome": {} }');
   writeFileSync(join(dir, "ntfy-url"), "https://ntfy.example/topic\n");
