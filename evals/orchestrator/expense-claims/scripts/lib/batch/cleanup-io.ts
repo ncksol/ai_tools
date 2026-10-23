@@ -1,21 +1,48 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { pathToFileURL } from "node:url";
-import { cleanupBatch, formatCleanup, githubSlug, pathKind, type CleanupApp, type CleanupInventory } from "./cleanup.ts";
+import { fileURLToPath } from "node:url";
+import { cleanupBatch, formatCleanup, githubSlug, pathKind, RepoNotVisible, type CleanupApp, type CleanupInventory } from "./cleanup.ts";
 import { loadConfig, loadState, type BatchConfig, type BatchState } from "./state.ts";
 import { withLock, withOsLock } from "./lock.ts";
 import { run } from "../proc.ts";
 import { parseCsvText, RESULT_COLUMNS, LEGACY_RESULT_COLUMNS } from "../results.ts";
 import { KIT_DIR } from "../suite.ts";
 
+export function openAppDatabase(path: string): DatabaseSync {
+  return new DatabaseSync(path, { readOnly: true });
+}
+
+// Two spellings can name one folder (case-insensitive volumes, symlinked parents), so app path
+// references are compared by filesystem identity. A spelling that differs only in case and cannot
+// be resolved fails closed rather than being treated as a different folder.
+export function sameFolder(reference: string, path: string): boolean {
+  let ref: string;
+  try { ref = reference.startsWith("file:") ? fileURLToPath(reference) : reference; }
+  catch { throw new Error(`cannot read app reference ${reference}`); }
+  if (ref === path) return true;
+  const identity = (p: string): string | null => {
+    try { const stat = statSync(p); return `${stat.dev}:${stat.ino}`; }
+    catch (error) {
+      if (["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) return null;
+      throw new Error(`cannot check app reference ${ref}`);
+    }
+  };
+  const a = isAbsolute(ref) ? identity(ref) : null;
+  const b = identity(path);
+  if (a && b) return a === b;
+  const fold = (p: string) => p.normalize("NFC").toLowerCase();
+  if (fold(isAbsolute(ref) ? resolve(ref) : ref) === fold(path)) throw new Error(`cannot safely compare app reference ${ref} with ${path}`);
+  return false;
+}
+
 // No app mutation seam is implemented: absence of a supported API must not become a database
 // write or an internal IPC call. Missing schema/ambiguous data throws and blocks the run.
 export function openCleanupApp(path: string): CleanupApp {
   const read = <T>(fn: (db: DatabaseSync) => T): T => {
     if (!existsSync(path)) throw new Error("app database is missing");
-    const db = new DatabaseSync(path, { readOnly: true });
+    const db = openAppDatabase(path);
     try { return fn(db); }
     finally { db.close(); }
   };
@@ -32,6 +59,11 @@ export function openCleanupApp(path: string): CleanupApp {
     if (values.length > 1) throw new Error(`ambiguous app DB ${table} identity`);
     return values[0] ?? null;
   };
+  const referencing = (db: DatabaseSync, table: string, id: string, field: string, path: string, where = "1") =>
+    db.prepare(`SELECT ${id} AS id, ${field} AS ref FROM ${table} WHERE ${where}`).all().flatMap(row => {
+      if (typeof row.id !== "string" || typeof row.ref !== "string" || !row.ref) return [];
+      return sameFolder(row.ref, path) ? [row.id] : [];
+    });
   const linkedSession = (db: DatabaseSync, id: string): boolean =>
     strings(db, "workspaces", "id", "session_id = ?", [id]).length > 0 ||
     strings(db, "workspace_session_aliases", "workspace_id", "session_id = ?", [id]).length > 0;
@@ -63,7 +95,8 @@ export function openCleanupApp(path: string): CleanupApp {
         if (cell(db, "workspaces", "id", id) === null) continue;
         const sessionId = cell(db, "workspaces", "session_id", id);
         if (sessionId !== null && typeof sessionId !== "string") throw new Error("invalid workspace session id");
-        out.workspaces.push({ id, sessionId, archived: cell(db, "workspaces", "archived_at", id) !== null });
+        const name = cell(db, "workspaces", "name", id);
+        out.workspaces.push({ id, sessionId, archived: cell(db, "workspaces", "archived_at", id) !== null, ...(typeof name === "string" && name ? { name } : {}) });
         const aliases = strings(db, "workspace_session_aliases", "session_id", "workspace_id = ?", [id]);
         if (sessionId) aliases.push(sessionId);
         out.sessions.push(...aliases);
@@ -76,10 +109,14 @@ export function openCleanupApp(path: string): CleanupApp {
       return out;
     }),
     projectsForPath: path => read(db => [...new Set([
-      ...strings(db, "projects", "id", "main_repo_path = ?", [path]),
-      ...strings(db, "project_checkouts", "project_id", "host_id = 'local' AND root_resource_uri IN (?, ?)", [path, pathToFileURL(path).href]),
-      ...strings(db, "worktrees", "project_id", "path = ?", [path]),
-      ...strings(db, "reusable_worktree_pool", "project_id", "path = ?", [path]),
+      ...referencing(db, "projects", "id", "main_repo_path", path),
+      ...referencing(db, "project_checkouts", "project_id", "root_resource_uri", path, "host_id = 'local'"),
+      ...referencing(db, "worktrees", "project_id", "path", path),
+      ...referencing(db, "reusable_worktree_pool", "project_id", "path", path),
+    ])]),
+    workspacesForPath: path => read(db => [...new Set([
+      ...referencing(db, "workspaces", "id", "source_path", path),
+      ...referencing(db, "workspace_checkout_bindings", "workspace_id", "checkout_path", path),
     ])]),
     sessionExists: id => read(db => linkedSession(db, id)),
     sessionRunning: id => read(db => {
@@ -110,7 +147,7 @@ export function cleanupGitHub(exec: typeof run = run, environment: NodeJS.Proces
     if (response.code !== 0) {
       if (/HTTP 404/.test(response.stderr)) {
         if (authorized?.privateRepoAccess && repo.split("/")[0] === authorized.owner) return null;
-        throw new Error("repo not found or not visible; absence requires the verified owner's keyring identity with repo scope");
+        throw new RepoNotVisible();
       }
       if (/HTTP (401|403)/.test(response.stderr)) throw new Error("GitHub access denied; cannot establish repo identity or absence");
       throw new Error("cannot read GitHub repo identity (authentication, network or API failure)");

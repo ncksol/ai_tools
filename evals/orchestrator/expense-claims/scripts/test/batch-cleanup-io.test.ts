@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { cleanupCommand, cleanupGitHub, openCleanupApp, pushedResults, selectCleanupBatches } from "../lib/batch/cleanup-io.ts";
+import { pathToFileURL } from "node:url";
+import { cleanupCommand, openAppDatabase, cleanupGitHub, openCleanupApp, pushedResults, selectCleanupBatches } from "../lib/batch/cleanup-io.ts";
 import type { run } from "../lib/proc.ts";
 import type { BatchConfig, BatchState } from "../lib/batch/state.ts";
+import { RepoNotVisible } from "../lib/batch/cleanup.ts";
 import { RESULT_COLUMNS, toCsvLine } from "../lib/results.ts";
 
 test("delete credential is owner-specific, absent from argv/output, and never used before scope verification", async () => {
@@ -121,14 +123,14 @@ test("read-only app discovery includes project worktrees, pooled paths, aliases 
     CREATE TABLE worktrees(id TEXT, project_id TEXT, path TEXT);
     CREATE TABLE reusable_worktree_pool(id TEXT, project_id TEXT, path TEXT);
     CREATE TABLE project_checkouts(project_id TEXT, host_id TEXT, root_resource_uri TEXT);
-    CREATE TABLE workspaces(id TEXT, project_id TEXT, session_id TEXT, archived_at TEXT, creator_session_id TEXT, coordinating_creator_session_id TEXT);
+    CREATE TABLE workspaces(id TEXT, project_id TEXT, session_id TEXT, archived_at TEXT, creator_session_id TEXT, coordinating_creator_session_id TEXT, name TEXT);
     CREATE TABLE workspace_session_aliases(workspace_id TEXT, session_id TEXT);
     CREATE TABLE sessions(id TEXT, is_running INTEGER);
     INSERT INTO projects VALUES('p','/clone','Run');
     INSERT INTO worktrees VALUES('w','p','/worktree');
     INSERT INTO reusable_worktree_pool VALUES('pool','p','/pooled');
     INSERT INTO project_checkouts VALUES('p','local','file:///clone');
-    INSERT INTO workspaces VALUES('root','p','cli',NULL,NULL,NULL),('never','p',NULL,NULL,'root',NULL);
+    INSERT INTO workspaces VALUES('root','p','cli',NULL,NULL,NULL,'Root session'),('never','p',NULL,NULL,'root',NULL,'Never started');
     INSERT INTO workspace_session_aliases VALUES('root','old-cli');
     INSERT INTO sessions VALUES('cli',0),('orphan',1);
   `);
@@ -138,6 +140,7 @@ test("read-only app discovery includes project worktrees, pooled paths, aliases 
   assert.deepEqual(data.worktrees.sort(), ["/pooled", "/worktree"]);
   assert.deepEqual(data.sessions.sort(), ["cli", "old-cli"]);
   assert.ok(data.workspaces.some(w => w.id === "never" && w.sessionId === null));
+  assert.equal(data.workspaces.find(w => w.id === "root")?.name, "Root session");
   assert.deepEqual(app.projectsForPath("/clone"), ["p"]);
   assert.equal(app.sessionExists("old-cli"), true, "alias references also protect original logs");
   assert.equal(app.sessionExists("absent"), false);
@@ -218,4 +221,92 @@ test("all selects done and stopped batches but never live or manual runs; latest
   mkdirSync(join(root, "orch-eval-manual-1"));
   assert.deepEqual(selectCleanupBatches("all", root), [join(root, "20261021-2153"), join(root, "20261021-2217")]);
   assert.deepEqual(selectCleanupBatches("latest", root), [join(root, "20261022-2121")]);
+});
+
+test("read-only app discovery finds workspaces that reference a folder", (t) => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "cleanup-db-")));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, "data.db");
+  const db = new DatabaseSync(path);
+  db.exec(`
+    CREATE TABLE workspaces(id TEXT, source_path TEXT);
+    CREATE TABLE workspace_checkout_bindings(workspace_id TEXT, checkout_path TEXT);
+    INSERT INTO workspaces VALUES('by-source','/wt/a'),('other',NULL);
+    INSERT INTO workspace_checkout_bindings VALUES('by-binding','/wt/b');
+  `);
+  db.close();
+  const app = openCleanupApp(path);
+  assert.deepEqual(app.workspacesForPath("/wt/a"), ["by-source"]);
+  assert.deepEqual(app.workspacesForPath("/wt/b"), ["by-binding"]);
+  assert.deepEqual(app.workspacesForPath("/wt/c"), []);
+});
+
+test("app path references match by filesystem identity, not spelling", (t) => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "cleanup-identity-")));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const folder = join(dir, "MixedCase");
+  mkdirSync(folder);
+  const caseAlias = join(dir, "mixedcase");
+  const caseInsensitive = existsSync(caseAlias);
+  // tmpdir() on macOS is /var/..., a symlink alias of the real /private/var/... path.
+  const linkAlias = join(tmpdir(), relative(realpathSync(tmpdir()), folder));
+  const path = join(dir, "data.db");
+  const db = new DatabaseSync(path);
+  db.exec(`
+    CREATE TABLE projects(id TEXT, main_repo_path TEXT, name TEXT);
+    CREATE TABLE project_checkouts(project_id TEXT, host_id TEXT, root_resource_uri TEXT);
+    CREATE TABLE worktrees(id TEXT, project_id TEXT, path TEXT);
+    CREATE TABLE reusable_worktree_pool(id TEXT, project_id TEXT, path TEXT);
+    CREATE TABLE workspaces(id TEXT, source_path TEXT);
+    CREATE TABLE workspace_checkout_bindings(workspace_id TEXT, checkout_path TEXT);
+  `);
+  const insert = (alias: string, suffix: string) => {
+    db.prepare("INSERT INTO projects VALUES(?, ?, 'p')").run(`project-${suffix}`, alias);
+    db.prepare("INSERT INTO project_checkouts VALUES(?, 'local', ?)").run(`checkout-${suffix}`, pathToFileURL(alias).href);
+    db.prepare("INSERT INTO worktrees VALUES('w', ?, ?)").run(`worktree-${suffix}`, alias);
+    db.prepare("INSERT INTO reusable_worktree_pool VALUES('p', ?, ?)").run(`pool-${suffix}`, alias);
+    db.prepare("INSERT INTO workspaces VALUES(?, ?)").run(`source-${suffix}`, alias);
+    db.prepare("INSERT INTO workspace_checkout_bindings VALUES(?, ?)").run(`binding-${suffix}`, alias);
+  };
+  insert(linkAlias, "link");
+  if (caseInsensitive) insert(caseAlias, "case");
+  insert(join(dir, "Unrelated"), "other");
+  mkdirSync(join(dir, "Unrelated"));
+  db.close();
+  const app = openCleanupApp(path);
+  const suffixes = caseInsensitive ? ["link", "case"] : ["link"];
+  assert.deepEqual(app.projectsForPath(folder).sort(), suffixes.flatMap(s => [`project-${s}`, `checkout-${s}`, `worktree-${s}`, `pool-${s}`]).sort());
+  assert.deepEqual(app.workspacesForPath(folder).sort(), suffixes.flatMap(s => [`source-${s}`, `binding-${s}`]).sort());
+});
+
+test("an app reference that only differs in case from a missing folder fails closed", (t) => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "cleanup-identity-")));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, "data.db");
+  const db = new DatabaseSync(path);
+  db.exec(`
+    CREATE TABLE workspaces(id TEXT, source_path TEXT);
+    CREATE TABLE workspace_checkout_bindings(workspace_id TEXT, checkout_path TEXT);
+    INSERT INTO workspaces VALUES('w', '${join(dir, "gone")}');
+  `);
+  db.close();
+  assert.throws(() => openCleanupApp(path).workspacesForPath(join(dir, "Gone")), /cannot safely compare/);
+  assert.deepEqual(openCleanupApp(path).workspacesForPath(join(dir, "elsewhere")), []);
+});
+
+test("the app database connection cannot write", (t) => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "cleanup-db-")));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, "data.db");
+  const setup = new DatabaseSync(path);
+  setup.exec("CREATE TABLE projects(id TEXT)");
+  setup.close();
+  const db = openAppDatabase(path);
+  try { assert.throws(() => db.exec("INSERT INTO projects VALUES('x')"), /readonly/i); }
+  finally { db.close(); }
+});
+
+test("an ambient 404 is reported as a repo that is not visible, never as absence", async () => {
+  const exec: typeof run = async () => ({ code: 1, stdout: "", stderr: "gh: Not Found (HTTP 404)" });
+  await assert.rejects(cleanupGitHub(exec, {}).repo("ncksol/orch-eval-a-1", "a".repeat(40)), RepoNotVisible);
 });
