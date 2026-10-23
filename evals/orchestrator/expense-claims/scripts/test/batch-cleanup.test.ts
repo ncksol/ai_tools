@@ -1528,3 +1528,51 @@ test("Opus M1: a workspace of the run that still references a worktree after its
   assert.ok(result.items.some(i => i.kind === "worktree" && i.status === "blocked" && /^an app workspace still references .*by hand/.test(i.reason ?? "")), JSON.stringify(result));
   assert.ok(existsSync(f.worktree));
 });
+
+// Final round on 2faa2fe.
+test("T1: --yes never creates folders through a symlinked archive folder", async (t) => {
+  const f = fixture(t);
+  const outside = join(f.home, "outside-archives");
+  mkdirSync(outside);
+  symlinkSync(outside, join(f.dir, "sessions"));
+  const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  assert.ok(result.items.some(i => i.kind === "archive" && i.status === "blocked" && /symlink/.test(i.reason ?? "")), JSON.stringify(result));
+  assert.deepEqual(readdirSync(outside), []);
+  assert.ok(existsSync(f.record.repoDir));
+  assert.ok(!f.effects.includes("delete-repo"));
+});
+
+async function absentReceipt(f: ReturnType<typeof fixture>) {
+  f.appState.project = false;
+  f.appState.session = false;
+  f.deps.repo = async () => null;
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  assert.ok(journalOf(f).some(e => e.action === "absent"));
+}
+for (const [name, change] of [
+  ["another run identity", (e: Record<string, unknown>) => ({ ...e, identity: "another-run" })],
+  ["another repo", (e: Record<string, unknown>) => ({ ...e, target: "ncksol/orch-eval-orchestrator-6" })],
+] as const) {
+  test(`T2: an absence receipt for ${name} does not stand in for this repo in a dry run`, async (t) => {
+    const f = fixture(t);
+    await absentReceipt(f);
+    rewriteJournal(f, e => e.action === "absent" ? change(e) : e);
+    let reads = 0;
+    f.deps.repo = async () => { reads++; throw new RepoNotVisible(); };
+    const report = await cleanupBatch(f.config, f.state, {}, f.deps);
+    assert.equal(reads, 1);
+    assert.equal(report.items.find(i => i.kind === "repo")?.status, "unchecked");
+    assert.match(nextSteps(report), /rerun this batch with --yes/);
+  });
+}
+
+test("T2: --yes rechecks the remote even after recording the repo as gone", async (t) => {
+  const f = fixture(t);
+  await absentReceipt(f);
+  let reads = 0;
+  f.deps.repo = async () => { reads++; return { id: 50, seedPresent: true }; };
+  const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  assert.equal(reads, 1);
+  assert.equal(result.items.find(i => i.kind === "repo")?.status, "removed");
+  assert.ok(f.effects.includes("delete-repo"));
+});

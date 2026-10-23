@@ -312,6 +312,10 @@ export async function cleanupBatch(
     // file without its WAL is not a reliable backup, and events.jsonl is the raw evidence.
     const writeArchives = (source: string, dest: string) => {
       if (pathKind(source, io) !== "directory") return;
+      // Check every existing component of the archive folder (no symlinks, all real folders inside
+      // the batch folder) before creating anything.
+      if (!beneath(config.dir, dest)) throw new Error(`archive folder is outside the batch folder: ${dest}`);
+      if (pathKind(dest, io) === "file") throw new Error(`archive folder is not a folder: ${dest}`);
       io.mkdirSync(dest, { recursive: true, mode: 0o700 });
       for (const name of LOG_NAMES) {
         const input = join(source, name);
