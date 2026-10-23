@@ -38,6 +38,7 @@ export interface CleanupItem {
   status: "present" | "already gone" | "blocked" | "removed" | "archived";
   reason?: string;
   checklist?: boolean;
+  action?: boolean;
 }
 export interface CleanupReport { batch: string; dryRun: boolean; items: CleanupItem[] }
 interface JournalEntry {
@@ -49,6 +50,10 @@ interface JournalEntry {
   target?: string;
   source?: string;
   sha256?: string;
+}
+// The current gh login got a 404: the repo may be gone or just invisible to that login.
+export class RepoNotVisible extends Error {
+  constructor() { super("repo not found or not visible; absence requires the verified owner's keyring identity with repo scope"); }
 }
 const sha256 = (data: string | Buffer): string => createHash("sha256").update(data).digest("hex");
 const safeId = (value: string): boolean => /^[a-zA-Z0-9][a-zA-Z0-9-]*$/.test(value);
@@ -188,6 +193,7 @@ export async function cleanupBatch(
     let blocked = globalBlock ?? resultBlocks.get(run.name) ?? null;
     if (resultBlocks.has(run.name)) add("results", run.name, "blocked", resultBlocks.get(run.name));
     let remote: { id: number; seedPresent: boolean } | null = null;
+    let repoNotVisible = false;
     let inventory: CleanupInventory = { projects: [], worktrees: [], sessions: [], workspaces: [] };
     let discovered = false;
     const saved = entries.filter(e => e.identity === identity && e.action === "inventory").flatMap(e => e.inventory ? [e.inventory] : []);
@@ -202,7 +208,12 @@ export async function cleanupBatch(
         try {
           remote = await deps.repo(run.repo, seed);
           if (remote && !remote.seedPresent) throw new Error("repo history does not contain the recorded seed");
-        } catch (error) { blocked ??= errorText(error); }
+        } catch (error) {
+          // A dry run reads GitHub with the ambient gh login, so its 404 proves nothing either way;
+          // --yes rechecks with the owner's verified login.
+          if (error instanceof RepoNotVisible && !options.yes) repoNotVisible = true;
+          else blocked ??= errorText(error);
+        }
       }
       const live = deps.app.inventory(run);
       if (run.projectId && live.projects.length === 0 && saved.length === 0) {
@@ -354,8 +365,12 @@ export async function cleanupBatch(
     // Decided last, after every other check of this run: a project may be removed only when no run
     // session is running and the final look at its logs still matches the verified archives.
     const projectInstruction = () => {
-      if (!projectItems.length || archiveBlocked || !discoverySaved ||
-          !archives.every(a => a.item.status === "archived" || a.item.status === "already gone")) return;
+      if (!projectItems.length || archiveBlocked || !archives.every(a => a.item.status === "archived" || a.item.status === "already gone")) return;
+      if (!discoverySaved) {
+        if (saved.length) projectItems.forEach((item, i) => { item.reason =
+          `KEEP project ${inventory.projects[i].name} (${inventory.projects[i].path}): the app now lists worktrees or sessions that --yes has not saved; run --yes again before removing it.`; });
+        return;
+      }
       try {
         const running = inventory.sessions.filter(sessionLive);
         const changed = archives.filter(a => a.item.status === "archived" && !currentArchive(a.source, a.dest, a.names).verified);
@@ -365,6 +380,7 @@ export async function cleanupBatch(
         }
         for (let i = 0; i < projectItems.length; i++) {
           const project = `project ${inventory.projects[i].name} (${inventory.projects[i].path})`;
+          projectItems[i].action = !running.length && !changed.length;
           projectItems[i].reason = running.length
             ? `KEEP ${project}: session ${running.join(", ")} is still running. Stop it, then run --yes again to archive its latest logs before you remove the project.`
             : changed.length
@@ -518,9 +534,11 @@ export async function cleanupBatch(
           const left = io.readdirSync(runWorktrees).filter(name => !pending.has(join(runWorktrees, name)));
           if (left.length) {
             add("worktree-parent", runWorktrees, "present",
-              `Kept: not empty after this run's worktrees were removed (contains ${left.slice(0, 3).join(", ")}${left.length > 3 ? ", ..." : ""}); inspect it by hand`).checklist = true;
+              `Kept: not empty after this run's worktrees were removed (contains ${left.slice(0, 3).join(", ")}${left.length > 3 ? ", ..." : ""}); inspect it, delete it by hand if you don't need it, then rerun cleanup`).checklist = true;
           } else if (!options.yes) {
-            add("worktree-parent", runWorktrees, "present", "Empty once this run's worktrees are removed; --yes removes this folder (not recursive)");
+            add("worktree-parent", runWorktrees, "present", pending.size && io.readdirSync(runWorktrees).length
+              ? "Empty once this run's worktrees are removed; --yes removes this folder (not recursive)"
+              : "Empty; --yes removes this folder (not recursive)");
           } else {
             append({ action: "removing", identity, kind: "worktree-parent", target: runWorktrees });
             io.rmdirSync(runWorktrees);
@@ -531,7 +549,7 @@ export async function cleanupBatch(
       } catch (error) { add("worktree-parent", runWorktrees, "blocked", errorText(error)); }
     }
     // Read the registry again right before the clone goes: a worktree added since must not be stranded.
-    await remove("clone", run.repoDir, async () => {
+    const cloneItem = await remove("clone", run.repoDir, async () => {
       const type = await cloneFolder();
       if (type === "directory") {
         const pending = new Set(worktreeItems.filter(item => item.status === "present").map(item => item.target));
@@ -548,11 +566,15 @@ export async function cleanupBatch(
       const type = pathKind(`${run.repoDir}.kickoff.md`, io);
       if (type !== "file" && type !== "missing") throw new Error("kickoff is not a regular file");
       // The repo/seed check above and exact generated path bind this file to the recorded run.
-      if (!remote && !receipt("clone", run.repoDir) && type !== "missing") throw new Error("cannot establish kickoff identity without repo or clone removal receipt");
+      // In a dry run, a clone that --yes will remove first gives the same receipt.
+      if (!remote && !receipt("clone", run.repoDir) && !(report.dryRun && cloneItem.status === "present") && type !== "missing") {
+        throw new Error("cannot establish kickoff identity without repo or clone removal receipt");
+      }
       return type;
     });
-    const repoItem = add("repo", run.repo, remote ? "present" : "already gone",
-      repoRemovedEarlier ? "Removed earlier (matching cleanup receipt; remote not rechecked in this dry run)" : undefined);
+    const repoItem = add("repo", run.repo, remote || repoNotVisible ? "present" : "already gone",
+      repoRemovedEarlier ? "Removed earlier (matching cleanup receipt; remote not rechecked in this dry run)"
+        : repoNotVisible ? "Not visible to the current gh login; --yes rechecks with the owner's login, then deletes the repo or reports it gone" : undefined);
     if (blocked) { repoItem.status = "blocked"; repoItem.reason = blocked; }
     else if (options.yes && remote) {
       try {
@@ -603,7 +625,7 @@ export function formatCleanup(report: CleanupReport): string {
     `${report.dryRun ? "DRY RUN" : "CLEANUP"} batch ${report.batch}`,
     ...(report.dryRun ? ["Read-only: no archive, journal, app change or deletion. --yes archives evidence before deletion; run it before removing app projects."] : []),
     ...report.items.filter(item => item.kind !== "run" && (report.dryRun || (item.kind !== "app-session" && item.kind !== "app-project")))
-      .map(item => `${item.status.toUpperCase()} ${item.kind} ${item.target}${item.reason ? `: ${item.reason}` : ""}`),
+      .map(item => `${report.dryRun && item.action ? "ACTION" : item.status.toUpperCase()} ${item.kind} ${item.target}${item.reason ? `: ${item.reason}` : ""}`),
     "Kept: results.csv and its commits, batch folder, self-test projects, active-batch guard.",
     "Deleting a run repo prevents scoring it again. --force bypasses only the app-project-presence check.",
     "", "Next steps:", ...steps,

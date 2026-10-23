@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
-import { cleanupBatch, formatCleanup, githubSlug, pathKind, type CleanupApp, type CleanupInventory } from "./cleanup.ts";
+import { cleanupBatch, formatCleanup, githubSlug, pathKind, RepoNotVisible, type CleanupApp, type CleanupInventory } from "./cleanup.ts";
 import { loadConfig, loadState, type BatchConfig, type BatchState } from "./state.ts";
 import { withLock, withOsLock } from "./lock.ts";
 import { run } from "../proc.ts";
@@ -144,7 +144,7 @@ export function cleanupGitHub(exec: typeof run = run, environment: NodeJS.Proces
     if (response.code !== 0) {
       if (/HTTP 404/.test(response.stderr)) {
         if (authorized?.privateRepoAccess && repo.split("/")[0] === authorized.owner) return null;
-        throw new Error("repo not found or not visible; absence requires the verified owner's keyring identity with repo scope");
+        throw new RepoNotVisible();
       }
       if (/HTTP (401|403)/.test(response.stderr)) throw new Error("GitHub access denied; cannot establish repo identity or absence");
       throw new Error("cannot read GitHub repo identity (authentication, network or API failure)");

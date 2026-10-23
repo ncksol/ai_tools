@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 import { APP_DB_OPTIONS, cleanupCommand, cleanupGitHub, openCleanupApp, pushedResults, selectCleanupBatches } from "../lib/batch/cleanup-io.ts";
 import type { run } from "../lib/proc.ts";
 import type { BatchConfig, BatchState } from "../lib/batch/state.ts";
+import { RepoNotVisible } from "../lib/batch/cleanup.ts";
 import { RESULT_COLUMNS, toCsvLine } from "../lib/results.ts";
 
 test("delete credential is owner-specific, absent from argv/output, and never used before scope verification", async () => {
@@ -294,4 +295,9 @@ test("an app reference that only differs in case from a missing folder fails clo
 
 test("the app database is always opened read-only", () => {
   assert.deepEqual(APP_DB_OPTIONS, { readOnly: true });
+});
+
+test("an ambient 404 is reported as a repo that is not visible, never as absence", async () => {
+  const exec: typeof run = async () => ({ code: 1, stdout: "", stderr: "gh: Not Found (HTTP 404)" });
+  await assert.rejects(cleanupGitHub(exec, {}).repo("ncksol/orch-eval-a-1", "a".repeat(40)), RepoNotVisible);
 });

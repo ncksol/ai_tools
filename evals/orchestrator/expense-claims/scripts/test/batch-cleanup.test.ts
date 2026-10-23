@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { gunzipSync, gzipSync } from "node:zlib";
-import { cleanupBatch, formatCleanup, type CleanupDeps, type CleanupApp } from "../lib/batch/cleanup.ts";
+import { cleanupBatch, formatCleanup, RepoNotVisible, type CleanupDeps, type CleanupApp } from "../lib/batch/cleanup.ts";
 import { openCleanupApp } from "../lib/batch/cleanup-io.ts";
 import { openAppDb } from "../lib/batch/appdb.ts";
 import { buildReport } from "../lib/batch/report.ts";
@@ -1303,4 +1303,74 @@ test("S3: a file that appears in the run folder after the emptiness check is nev
   const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
   assert.equal(readFileSync(late, "utf8"), "arrived late");
   assert.ok(result.items.some(i => i.kind === "worktree-parent" && i.status === "blocked"), JSON.stringify(result));
+});
+
+// Opus panel nits and the batch 20261022-2041 repo 404 case.
+test("N1: the KEEP line names worktrees or sessions that the app lists but --yes has not saved", async (t) => {
+  const f = fixture(t);
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  const inventory = f.deps.app.inventory;
+  f.deps.app.inventory = record => { const live = inventory(record); return { ...live, worktrees: [...live.worktrees, join(runFolder(f), "copilot-prewarm-b")] }; };
+  const report = await cleanupBatch(f.config, f.state, {}, f.deps);
+  assert.ok(report.items.filter(i => i.kind === "archive").every(i => i.status === "archived"));
+  assert.match(nextSteps(report), /KEEP project .*: the app now lists worktrees or sessions that --yes has not saved; run --yes again before removing it/);
+});
+
+test("N3: an already empty run folder says --yes removes it; a non-empty one says what to do", async (t) => {
+  const f = fixture(t);
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  f.appState.project = false;
+  f.appState.session = false;
+  const pending = (await cleanupBatch(f.config, f.state, {}, f.deps)).items.find(i => i.kind === "worktree-parent");
+  assert.match(pending?.reason ?? "", /^Empty once this run's worktrees are removed/);
+  rmSync(f.worktree, { recursive: true });
+  rmSync(join(f.record.repoDir, ".git/worktrees/branch"), { recursive: true });
+  const empty = (await cleanupBatch(f.config, f.state, {}, f.deps)).items.find(i => i.kind === "worktree-parent");
+  assert.match(empty?.reason ?? "", /^Empty; --yes removes this folder \(not recursive\)/);
+  writeFileSync(join(runFolder(f), "notes.txt"), "x");
+  const kept = (await cleanupBatch(f.config, f.state, {}, f.deps)).items.find(i => i.kind === "worktree-parent");
+  assert.match(kept?.reason ?? "", /inspect it, delete it by hand if you don't need it, then rerun cleanup/);
+});
+
+test("N4: a project that is safe to remove is labelled ACTION, and the exit status still counts it", async (t) => {
+  const f = fixture(t);
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  const report = await cleanupBatch(f.config, f.state, {}, f.deps);
+  const output = formatCleanup(report);
+  assert.match(output, /^ACTION app-project project-5: Available logs archived and verified/m);
+  assert.doesNotMatch(output, /^BLOCKED app-project/m);
+  assert.equal(report.items.find(i => i.kind === "app-project")?.status, "blocked");
+  const keep = formatCleanup(await cleanupBatch(f.config, f.state, {}, { ...f.deps, app: { ...f.deps.app, sessionRunning: () => true } }));
+  assert.match(keep, /^BLOCKED app-project project-5: KEEP/m);
+});
+
+test("a repo the current gh login cannot see does not block a dry run, and --yes with the owner's login finishes", async (t) => {
+  const f = fixture(t);
+  f.appState.project = false;
+  f.appState.session = false;
+  f.deps.repo = async () => { throw new RepoNotVisible(); };
+  const preview = await cleanupBatch(f.config, f.state, {}, f.deps);
+  assert.ok(!preview.items.some(i => i.status === "blocked"), JSON.stringify(preview.items.filter(i => i.status === "blocked")));
+  for (const kind of ["clone", "kickoff"]) assert.ok(preview.items.some(i => i.kind === kind && i.status === "present"), kind);
+  const repo = preview.items.find(i => i.kind === "repo");
+  assert.equal(repo?.status, "present");
+  assert.match(repo?.reason ?? "", /not visible to the current gh login; --yes rechecks with the owner's login/i);
+  assert.match(nextSteps(preview), /rerun this batch with --yes/);
+  // --yes: under the verified owner's login with repo scope, a 404 is absence.
+  f.deps.repo = async () => null;
+  const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  assert.equal(existsSync(f.record.repoDir), false);
+  assert.equal(existsSync(`${f.record.repoDir}.kickoff.md`), false);
+  assert.equal(result.items.find(i => i.kind === "repo")?.status, "already gone");
+});
+
+test("a repo the owner's login cannot see still blocks --yes", async (t) => {
+  const f = fixture(t);
+  f.appState.project = false;
+  f.appState.session = false;
+  f.deps.repo = async () => { throw new RepoNotVisible(); };
+  const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  assert.ok(result.items.some(i => i.kind === "repo" && i.status === "blocked" && /not found or not visible/.test(i.reason ?? "")));
+  assert.ok(existsSync(f.record.repoDir));
+  assert.ok(existsSync(`${f.record.repoDir}.kickoff.md`));
 });
