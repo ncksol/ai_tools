@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -794,7 +795,7 @@ test("a dry run keeps the project when a session's verified archive is missing",
   const report = await cleanupBatch(f.config, f.state, {}, f.deps);
   const missing = report.items.find(i => i.kind === "archive" && i.target.endsWith(childSession));
   assert.notEqual(missing?.status, "archived");
-  assert.match(missing?.reason ?? "", /missing or does not verify.*--yes/);
+  assert.match(missing?.reason ?? "", /events.jsonl.gz of events.jsonl is missing. --yes archives the current log again/);
   assert.match(nextSteps(report), /KEEP project/);
   assert.doesNotMatch(nextSteps(report), /remove or retry/);
 });
@@ -899,4 +900,77 @@ test("a non-empty app worktree folder is kept and named", async (t) => {
   assert.ok(existsSync(join(runFolder(f), "notes.txt")));
   assert.ok(result.items.some(i => i.kind === "worktree-parent" && i.target === runFolder(f) && i.status === "present" && /not empty/.test(i.reason ?? "")), JSON.stringify(result));
   assert.match(nextSteps(result), new RegExp(`${runFolder(f)}: .*not empty`));
+});
+
+for (const extra of ["a LOST log", "a LOST log and a kept non-empty run folder"] as const) {
+  test(`Next steps still asks for --yes when removals remain beside ${extra}`, async (t) => {
+    const f = fixture(t);
+    rmSync(join(f.config.stateDir, childSession), { recursive: true });
+    await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+    f.appState.project = false;
+    f.appState.session = false;
+    if (extra !== "a LOST log") writeFileSync(join(runFolder(f), "notes.txt"), "not a recorded worktree");
+    const report = await cleanupBatch(f.config, f.state, {}, f.deps);
+    assert.ok(report.items.some(i => i.kind === "clone" && i.status === "present"));
+    if (extra === "a LOST log") assert.ok(report.items.some(i => i.kind === "worktree-parent" && i.status === "present" && !i.checklist));
+    const steps = nextSteps(report);
+    assert.match(steps, /LOST: session logs are gone/);
+    assert.match(steps, /rerun this batch with --yes/);
+  });
+}
+
+test("Next steps does not ask for --yes when only a kept folder and app details remain", async (t) => {
+  const f = fixture(t);
+  writeFileSync(join(runFolder(f), "notes.txt"), "not a recorded worktree");
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  f.appState.project = false;
+  f.appState.session = false;
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  const steps = nextSteps(await cleanupBatch(f.config, f.state, {}, f.deps));
+  assert.match(steps, /not empty/);
+  assert.doesNotMatch(steps, /--yes/);
+});
+
+test("a corrupt archive is kept unchanged and --yes writes a new verified version beside it", async (t) => {
+  const f = fixture(t);
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  const dest = join(f.dir, "sessions", f.record.name, rootSession);
+  const archive = join(dest, "events.jsonl.gz");
+  const corrupt = readFileSync(archive).subarray(0, 10);
+  writeFileSync(archive, corrupt);
+  const original = readFileSync(join(f.config.stateDir, rootSession, "events.jsonl"));
+  const versioned = join(dest, `events.jsonl.${createHash("sha256").update(original).digest("hex")}.gz`);
+  const preview = await cleanupBatch(f.config, f.state, {}, f.deps);
+  const item = preview.items.find(i => i.kind === "archive" && i.target.endsWith(rootSession));
+  assert.equal(item?.status, "present", JSON.stringify(item));
+  assert.ok(item?.reason?.includes(`${archive} of events.jsonl does not verify`), item?.reason);
+  assert.ok(item?.reason?.includes(versioned), item?.reason);
+  assert.match(nextSteps(preview), /KEEP project/);
+  const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  assert.equal(result.items.find(i => i.kind === "archive" && i.target.endsWith(rootSession))?.status, "archived", JSON.stringify(result));
+  assert.deepEqual(readFileSync(archive), corrupt);
+  assert.deepEqual(gunzipSync(readFileSync(versioned)), original);
+  const after = await cleanupBatch(f.config, f.state, {}, f.deps);
+  assert.ok(after.items.filter(i => i.kind === "archive").every(i => i.status === "archived"), JSON.stringify(after));
+  assert.match(nextSteps(after), /remove or retry removing project/);
+});
+
+test("when every archive name is taken by a file that does not verify, the dry run and --yes both block with manual steps", async (t) => {
+  const f = fixture(t);
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  const dest = join(f.dir, "sessions", f.record.name, rootSession);
+  const original = readFileSync(join(f.config.stateDir, rootSession, "events.jsonl"));
+  const names = [join(dest, "events.jsonl.gz"), join(dest, `events.jsonl.${createHash("sha256").update(original).digest("hex")}.gz`)];
+  for (const path of names) writeFileSync(path, "not gzip");
+  for (const yes of [false, true]) {
+    const report = await cleanupBatch(f.config, f.state, { yes }, f.deps);
+    const item = report.items.find(i => i.kind === "archive" && i.target.endsWith(rootSession));
+    assert.equal(item?.status, "blocked", JSON.stringify(item));
+    for (const path of names) assert.ok(item?.reason?.includes(path), item?.reason);
+    assert.doesNotMatch(item?.reason ?? "", /--yes/);
+    assert.match(nextSteps(report), /KEEP project/);
+  }
+  for (const path of names) assert.equal(readFileSync(path, "utf8"), "not gzip");
+  assert.ok(existsSync(f.record.repoDir));
+  assert.ok(!f.effects.includes("delete-repo"));
 });

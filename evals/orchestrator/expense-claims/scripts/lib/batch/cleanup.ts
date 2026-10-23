@@ -228,12 +228,24 @@ export async function cleanupBatch(
         ? `Session ${workspace.sessionId}${workspace.archived ? " (archived)" : ""}; included in project removal, no separate action`
         : "Never started: no CLI session/log to copy; included in project removal");
     }
+    const unpackedHash = (path: string): string | null => {
+      try { return sha256(gunzipSync(io.readFileSync(path))); } catch { return null; }
+    };
+    // Never overwrite an existing archive file, even one that does not verify: reuse the name that
+    // already holds these logs, otherwise take the first free name.
+    const archiveSlot = (dest: string, name: string, hash: string): string => {
+      const names = [join(dest, `${name}.gz`), join(dest, `${name}.${hash}.gz`)];
+      for (const path of names) {
+        const type = pathKind(path, io);
+        if (type === "missing" || (type === "file" && unpackedHash(path) === hash)) return path;
+      }
+      throw new Error(`${names.join(" and ")} already exist and neither holds the current ${name}; cleanup never overwrites an archive. Keep them and the session originals, inspect these files by hand, and keep the project until the logs are archived`);
+    };
     // A dry run counts present logs as archived only when a journaled archive of their current
-    // content still decompresses to the recorded hash.
-    const currentArchive = (source: string, dest: string): "verified" | "stale" | "damaged" | "missing" => {
-      let stale = false;
-      let damaged = false;
-      let missing = false;
+    // content still decompresses to the recorded hash. Otherwise it says what --yes will write.
+    const currentArchive = (source: string, dest: string): { verified: boolean; notes: string[] } => {
+      const notes: string[] = [];
+      let verified = true;
       for (const name of ["events.jsonl", "workspace.yaml"]) {
         const input = join(source, name);
         const type = pathKind(input, io);
@@ -242,16 +254,20 @@ export async function cleanupBatch(
         const hash = sha256(io.readFileSync(input));
         const records = entries.filter(e => e.action === "archived" && e.identity === identity &&
           (e.source === input || (!e.source && e.target === join(dest, `${name}.gz`))));
-        const verified = records.some(e => {
-          if (e.sha256 !== hash || !e.target || !beneath(dest, e.target) || pathKind(e.target, io) !== "file") return false;
-          try { return sha256(gunzipSync(io.readFileSync(e.target))) === hash; } catch { return false; }
-        });
-        if (verified) continue;
-        if (records.some(e => e.sha256 === hash)) damaged = true;
-        else if (records.length) stale = true;
-        else missing = true;
+        if (records.some(e => e.sha256 === hash && e.target && beneath(dest, e.target) &&
+            pathKind(e.target, io) === "file" && unpackedHash(e.target) === hash)) continue;
+        verified = false;
+        const slot = archiveSlot(dest, name, hash);
+        const target = records.findLast(e => e.sha256 === hash)?.target;
+        if (target) {
+          notes.push(beneath(dest, target) && pathKind(target, io) === "file"
+            ? `recorded archive ${target} of ${name} does not verify; it is kept unchanged. --yes writes a new verified archive at ${slot}`
+            : `recorded archive ${target} of ${name} is missing. --yes archives the current log again at ${slot}`);
+        } else if (records.length) {
+          notes.push(`archive of ${name} is out of date: the log changed after --yes archived it. Run --yes again to write a new verified archive at ${slot}`);
+        }
       }
-      return damaged ? "damaged" : stale ? "stale" : missing ? "missing" : "verified";
+      return { verified, notes };
     };
     // Archive before app removal destroys histories. Missing originals and backups are reported
     // as lost; an existing but unverified backup blocks deletion.
@@ -292,10 +308,7 @@ export async function cleanupBatch(
             if (pathKind(input, io) !== "file") throw new Error(`not a regular log file: ${input}`);
             const data = io.readFileSync(input);
             const hash = sha256(data);
-            let output = join(dest, `${name}.gz`);
-            if (pathKind(output, io) === "file" && sha256(gunzipSync(io.readFileSync(output))) !== hash) {
-              output = join(dest, `${name}.${hash}.gz`);
-            }
+            const output = archiveSlot(dest, name, hash);
             if (pathKind(output, io) === "missing") {
               const temporary = join(dest, `.${name}.${randomUUID()}.tmp`);
               try {
@@ -312,13 +325,11 @@ export async function cleanupBatch(
           archive.status = "archived";
         } else {
           const current = currentArchive(source, dest);
-          if (current === "verified") {
+          if (current.verified) {
             archive.status = "archived";
             archive.reason = `Verified archive of the current logs in ${dest}`;
-          } else if (current === "stale") {
-            archive.reason = `Archive is out of date: the logs changed after --yes archived them. Run --yes again to archive the current logs in ${dest}`;
-          } else if (current === "damaged") {
-            archive.reason = `Recorded archive is missing or does not verify. Run --yes again to archive the current logs in ${dest}`;
+          } else if (current.notes.length) {
+            archive.reason = `Archive not current: ${current.notes.join("; ")}`;
           }
         }
       } catch (error) { archive.status = "blocked"; archive.reason = errorText(error); blocked ??= archive.reason; }
@@ -536,9 +547,10 @@ export function formatCleanup(report: CleanupReport): string {
     }
   }
   for (const [reason, count] of blocks) steps.push(`- ${reason} (${count} item${count === 1 ? "" : "s"}; see inventory above).`);
-  if (!steps.length) steps.push(report.dryRun && report.items.some(item => item.status === "present" && item.kind !== "results")
-    ? "- Review the inventory, then rerun this batch with --yes when ready."
-    : "- No cleanup actions remain.");
+  // Manual and LOST steps never hide archives or removals that --yes can still do.
+  if (report.dryRun && report.items.some(item => item.status === "present" && !item.checklist &&
+      item.kind !== "results" && item.kind !== "app-session")) steps.push("- Review the inventory, then rerun this batch with --yes when ready.");
+  if (!steps.length) steps.push("- No cleanup actions remain.");
   return [
     `${report.dryRun ? "DRY RUN" : "CLEANUP"} batch ${report.batch}`,
     ...(report.dryRun ? ["Read-only: no archive, journal, app change or deletion. --yes archives evidence before deletion; run it before removing app projects."] : []),
