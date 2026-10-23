@@ -180,6 +180,7 @@ export async function cleanupBatch(
     }
     const receipt = (kind: CleanupItem["kind"], target: string, action = "removed") =>
       entries.some(e => e.identity === identity && e.kind === kind && e.target === target && e.action === action);
+    const repoRemovedEarlier = !options.yes && receipt("repo", run.repo);
     const archiveRecord = (source: string, dest: string, name: string) => entries.findLast(e =>
       e.action === "archived" && e.identity === identity &&
       (e.source === join(source, name) || (!e.source && e.target === join(dest, `${name}.gz`))));
@@ -196,8 +197,12 @@ export async function cleanupBatch(
         }
         add("results", run.name, "present", `${confirmedDrop(run) ? "Recorded" : "Preview"} deliberate result drop; results.csv is not edited`);
       }
-      remote = await deps.repo(run.repo, seed);
-      if (remote && !remote.seedPresent) throw new Error("repo history does not contain the recorded seed");
+      if (!repoRemovedEarlier) {
+        try {
+          remote = await deps.repo(run.repo, seed);
+          if (remote && !remote.seedPresent) throw new Error("repo history does not contain the recorded seed");
+        } catch (error) { blocked ??= errorText(error); }
+      }
       const live = deps.app.inventory(run);
       if (run.projectId && live.projects.length === 0 && saved.length === 0) {
         add("archive", run.name, "already gone", "LOST app discovery: project was removed before inventory was saved; unknown child logs/worktrees cannot be rediscovered. Cleaning only known items.");
@@ -290,7 +295,7 @@ export async function cleanupBatch(
     try {
       if (!discovered) throw new Error(blocked ?? "app inventory could not be read");
       const projects = deps.app.projectsForPath(run.repoDir);
-      if (!options.force && (inventory.projects.length || projects.length)) appBlock = "app project still exists; remove it in the app first (--force overrides only project presence)";
+      if (!options.force && (inventory.projects.length || projects.length)) appBlock = "app project still exists; follow its archive-first project checklist (--force overrides only project presence)";
       if (projects.some(id => id !== run.projectId)) throw new Error("another app project uses this clone; identity mismatch");
     } catch (error) { appBlock = errorText(error); }
     blocked ??= appBlock;
@@ -299,7 +304,11 @@ export async function cleanupBatch(
       const item = add(kind, target, "present");
       try {
         const type = await check();
-        if (type === "missing") { item.status = "already gone"; return; }
+        if (type === "missing") {
+          item.status = "already gone";
+          if (receipt(kind, target)) item.reason = "Removed earlier (matching cleanup receipt)";
+          return;
+        }
         if (blocked) throw new Error(blocked);
         if (!options.yes) return;
         if (!options.force && deps.app.projectsForPath(run.repoDir).length) throw new Error("app project reappeared; stop before deleting disk data");
@@ -373,7 +382,8 @@ export async function cleanupBatch(
       if (!remote && !receipt("clone", run.repoDir) && type !== "missing") throw new Error("cannot establish kickoff identity without repo or clone removal receipt");
       return type;
     });
-    const repoItem = add("repo", run.repo, remote ? "present" : "already gone");
+    const repoItem = add("repo", run.repo, remote ? "present" : "already gone",
+      repoRemovedEarlier ? "Removed earlier (matching cleanup receipt; remote not rechecked in this dry run)" : undefined);
     if (blocked) { repoItem.status = "blocked"; repoItem.reason = blocked; }
     else if (options.yes && remote) {
       try {
@@ -415,7 +425,7 @@ export function formatCleanup(report: CleanupReport): string {
     }
   }
   for (const [reason, count] of blocks) steps.push(`- ${reason} (${count} item${count === 1 ? "" : "s"}; see inventory above).`);
-  if (!steps.length) steps.push(report.dryRun
+  if (!steps.length) steps.push(report.dryRun && report.items.some(item => item.status === "present" && item.kind !== "results")
     ? "- Review the inventory, then rerun this batch with --yes when ready."
     : "- No cleanup actions remain.");
   return [

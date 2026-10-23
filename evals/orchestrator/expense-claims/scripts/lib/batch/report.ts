@@ -164,6 +164,6 @@ export function buildReport(config: BatchConfig, state: BatchState, appDb: AppDb
   out.push(permissions.length > 0 ? "3. Review the flagged runs, and read \"Tool-permission prompts\" above before the next batch." : "3. Review the flagged runs.");
   out.push("4. Land the results.csv commits.");
   out.push(`5. After reviewing results, run \`npm run batch -- cleanup --batch ${config.id}\`. Run with \`--yes\` to archive logs before removing projects; follow its Next steps and rerun. Never automatic.`);
-  out.push("5. Re-enable macOS updates if you deferred them.");
+  out.push("6. Re-enable macOS updates if you deferred them.");
   return out.join("\n") + "\n";
 }

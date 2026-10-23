@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { gunzipSync } from "node:zlib";
 import { cleanupBatch, formatCleanup, type CleanupDeps, type CleanupApp } from "../lib/batch/cleanup.ts";
+import { openAppDb } from "../lib/batch/appdb.ts";
+import { buildReport } from "../lib/batch/report.ts";
 import { initialState, saveConfig, saveState, type BatchConfig, type RunState } from "../lib/batch/state.ts";
 import { run } from "../lib/proc.ts";
 
@@ -112,9 +114,18 @@ test("yes archives logs before checklist; persisted discovery survives removal o
   assert.ok(result.items.some(i => i.kind === "repo" && i.status === "already gone"));
 });
 
+test("Next steps requires archival before project removal and changes only after verification", async (t) => {
+  const f = fixture(t);
+  const dryRun = formatCleanup(await cleanupBatch(f.config, f.state, {}, f.deps)).split("Next steps:\n")[1];
+  assert.match(dryRun, /KEEP project.*--yes has archived and verified/);
+  assert.doesNotMatch(dryRun, /remove it in the app first|remove or retry removing project/);
+  const archived = formatCleanup(await cleanupBatch(f.config, f.state, { yes: true }, f.deps)).split("Next steps:\n")[1];
+  assert.match(archived, /Available logs archived and verified; remove or retry removing project/);
+  assert.doesNotMatch(archived, /KEEP project/);
+});
+
 const gates: [string, (f: ReturnType<typeof fixture>) => void, RegExp][] = [
   ["unfinished", (f) => { f.state.phase = "runs"; }, /finished/],
-  ["unpushed results", (f) => { f.deps.results = async () => "results rows are not on origin"; }, /origin/],
   ["missing seed", (f) => { delete f.record.seedSha; f.state.provisioned = []; }, /identity|seed/i],
   ["owner mismatch", (f) => { f.record.repo = "other/orch-eval-orchestrator-5"; f.state.provisioned = []; }, /owner|identity/i],
   ["name mismatch", (f) => { f.record.name = "unrelated"; f.state.provisioned = []; }, /name|identity/i],
@@ -129,6 +140,22 @@ for (const [name, change, reason] of gates) {
     assert.ok(result.items.some(i => i.status === "blocked" && reason.test(i.reason ?? "")), JSON.stringify(result));
     assert.ok(existsSync(f.record.repoDir));
     assert.ok(!f.effects.includes("delete-repo"));
+  });
+}
+
+for (const state of ["missing", "changed"]) {
+  test(`force preserves a ${state} results row with no app or session guard masking it`, async (t) => {
+    const f = fixture(t);
+    f.appState.project = false;
+    f.appState.session = false;
+    const reason = `recorded row ${state} on origin`;
+    f.deps.results = async () => reason;
+    const result = await cleanupBatch(f.config, f.state, { yes: true, force: true }, f.deps);
+    assert.ok(result.items.some(i => i.kind === "results" && i.target === f.record.name && i.status === "blocked" && i.reason === reason));
+    for (const path of [f.record.repoDir, f.worktree, `${f.record.repoDir}.kickoff.md`,
+      join(f.config.stateDir, rootSession), join(f.config.stateDir, childSession)]) assert.ok(existsSync(path), path);
+    assert.deepEqual(f.effects, []);
+    assert.equal(existsSync(join(f.dir, "cleanup.jsonl")), false);
   });
 }
 
@@ -497,8 +524,6 @@ test("an exact per-run deliberate-drop confirmation is journaled and survives a 
   const f = fixture(t);
   f.record.row = { repo: f.record.repo, run: "5", outcome: "passed", note: `batch=${f.config.id}` };
   f.deps.results = async () => "recorded row missing on origin";
-  await cleanupBatch(f.config, f.state, { yes: true, force: true }, f.deps);
-  assert.ok(existsSync(f.record.repoDir), "--force does not waive results protection");
   const accepted = await cleanupBatch(f.config, f.state, { yes: true, dropped: [f.record.name] }, f.deps);
   assert.ok(accepted.items.some(i => i.kind === "archive" && i.status === "archived"));
   assert.ok(readFileSync(join(f.dir, "cleanup.jsonl"), "utf8").split("\n").filter(Boolean)
@@ -514,6 +539,41 @@ test("unknown deliberate-drop names cannot authorize cleanup", async (t) => {
   const result = await cleanupBatch(f.config, f.state, { yes: true, dropped: ["orch-eval-other-5"] }, f.deps);
   assert.ok(result.items.some(i => i.kind === "batch" && /unknown --dropped/.test(i.reason ?? "")));
   assert.equal(existsSync(join(f.dir, "cleanup.jsonl")), false);
+});
+
+test("an unscored deliberate-drop name is rejected before any write", async (t) => {
+  const f = fixture(t);
+  const result = await cleanupBatch(f.config, f.state, { yes: true, dropped: [f.record.name] }, f.deps);
+  assert.ok(result.items.some(i => i.kind === "batch" && i.reason === `--dropped run has no recorded result: ${f.record.name}`));
+  assert.deepEqual(f.effects, []);
+  assert.equal(existsSync(join(f.dir, "cleanup.jsonl")), false);
+});
+
+test("a deliberate-drop receipt never covers a different run identity with the same name and row", async (t) => {
+  const f = fixture(t);
+  f.state.provisioned = [];
+  f.record.row = { outcome: "passed" };
+  f.deps.results = async () => "recorded row missing on origin";
+  await cleanupBatch(f.config, f.state, { yes: true, dropped: [f.record.name] }, f.deps);
+  const journal = readFileSync(join(f.dir, "cleanup.jsonl"));
+  f.record.seedSha = "b".repeat(40);
+  f.appState.project = false;
+  f.appState.session = false;
+  const result = await cleanupBatch(f.config, f.state, { yes: true, force: true }, f.deps);
+  assert.ok(result.items.some(i => i.kind === "results" && i.reason === "recorded row missing on origin"));
+  assert.ok(existsSync(f.record.repoDir));
+  assert.ok(!f.effects.includes("delete-repo"));
+  assert.deepEqual(readFileSync(join(f.dir, "cleanup.jsonl")), journal);
+});
+
+test("a repo lookup failure still shows the project KEEP action and archive inventory", async (t) => {
+  const f = fixture(t);
+  f.deps.repo = async () => { throw new Error("repo not found or not visible"); };
+  const result = await cleanupBatch(f.config, f.state, {}, f.deps);
+  assert.match(formatCleanup(result).split("Next steps:\n")[1], /KEEP project/);
+  assert.equal(result.items.filter(i => i.kind === "archive").length, 2);
+  assert.ok(result.items.some(i => i.kind === "repo" && i.status === "blocked"));
+  assert.deepEqual(f.effects, []);
 });
 
 test("a deliberate-drop receipt never covers an edited recorded row", async (t) => {
@@ -601,7 +661,7 @@ function isolatedCli(t: { after(fn: () => void): void }) {
   const bin = join(f.home, "bin");
   const calls = join(f.home, "gh-calls");
   mkdirSync(bin);
-  writeFileSync(join(bin, "gh"), '#!/bin/sh\nprintf "called\\n" >> "$GH_CALLS"\nexit 99\n');
+  writeFileSync(join(bin, "gh"), '#!/bin/sh\nprintf "called\\n" >> "$GH_CALLS"\nprintf "gh: Not Found (HTTP 404)\\n" >&2\nexit 99\n');
   chmodSync(join(bin, "gh"), 0o700);
   return {
     f, calls,
@@ -611,12 +671,74 @@ function isolatedCli(t: { after(fn: () => void): void }) {
   };
 }
 
+for (const dropped of [false, true]) test(`a completed cleanup dry run uses removal receipts, shows verified archives and exits zero (dropped=${dropped})`, async (t) => {
+  const { f, calls, args, options } = isolatedCli(t);
+  f.state.runs = [f.record];
+  if (dropped) {
+    f.record.row = { outcome: "passed" };
+    f.deps.results = async () => "recorded row missing on origin";
+  }
+  await cleanupBatch(f.config, f.state, { yes: true, dropped: dropped ? [f.record.name] : [] }, f.deps);
+  f.appState.project = false;
+  f.appState.session = false;
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  saveState(f.config.dir, f.state);
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(f.config.appDb);
+  db.exec(`
+    CREATE TABLE projects (id TEXT, main_repo_path TEXT, name TEXT);
+    CREATE TABLE workspaces (id TEXT, project_id TEXT, session_id TEXT, archived_at TEXT, creator_session_id TEXT, coordinating_creator_session_id TEXT);
+    CREATE TABLE worktrees (project_id TEXT, path TEXT);
+    CREATE TABLE reusable_worktree_pool (project_id TEXT, path TEXT);
+    CREATE TABLE workspace_session_aliases (workspace_id TEXT, session_id TEXT);
+    CREATE TABLE project_checkouts (project_id TEXT, host_id TEXT, root_resource_uri TEXT);
+  `);
+  db.close();
+  const journal = readFileSync(join(f.config.dir, "cleanup.jsonl"));
+  const out = await run(process.execPath, args, options);
+  assert.equal(out.code, 0, out.stderr + out.stdout);
+  assert.match(out.stdout, /ARCHIVED archive/);
+  assert.match(out.stdout, /repo .*removed earlier/i);
+  assert.doesNotMatch(out.stdout, /BLOCKED|--yes when ready/);
+  assert.equal(existsSync(calls), false);
+  assert.deepEqual(readFileSync(join(f.config.dir, "cleanup.jsonl")), journal);
+});
+
+for (const scenario of ["different identity", "yes recheck"]) {
+  test(`repo removal receipts do not bypass verification for ${scenario}`, async (t) => {
+    const f = fixture(t);
+    await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+    f.appState.project = false;
+    f.appState.session = false;
+    await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+    f.state.provisioned = [];
+    if (scenario === "different identity") f.record.seedSha = "b".repeat(40);
+    let reads = 0;
+    f.deps.repo = async () => { reads++; throw new Error("repo not found or not visible"); };
+    const result = await cleanupBatch(f.config, f.state, { yes: scenario === "yes recheck" }, f.deps);
+    assert.equal(reads, 1);
+    assert.ok(result.items.some(i => i.kind === "repo" && i.status === "blocked" && i.reason === "repo not found or not visible"));
+  });
+}
+
+test("the morning checklist numbers the cleanup and macOS steps once each", (t) => {
+  const f = fixture(t);
+  f.state.runs = [];
+  f.state.provisioned = [];
+  f.config.variants = [];
+  f.config.resultsPath = join(f.home, "results.csv");
+  const report = buildReport(f.config, f.state, openAppDb(f.config.appDb), { branch: null, commits: [], pushed: null });
+  const checklist = report.split("## Morning checklist\n")[1];
+  assert.deepEqual([...checklist.matchAll(/^(\d+)\. /gm)].map(match => Number(match[1])), [1, 2, 3, 4, 5, 6]);
+});
+
 test("cleanup CLI defaults to dry run for a finished empty batch", async (t) => {
   const { f, calls, args, options } = isolatedCli(t);
   const out = await run(process.execPath, args, options);
   assert.equal(out.code, 0, out.stderr + out.stdout);
   assert.match(out.stdout, /DRY RUN/);
   assert.doesNotMatch(out.stdout, /BLOCKED/);
+  assert.match(out.stdout, /No cleanup actions remain/);
   assert.equal(existsSync(join(f.config.dir, "cleanup.jsonl")), false);
   assert.equal(existsSync(calls), false);
 });

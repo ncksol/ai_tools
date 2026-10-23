@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { cleanupGitHub, openCleanupApp, pushedResults, selectCleanupBatches } from "../lib/batch/cleanup-io.ts";
+import { cleanupCommand, cleanupGitHub, openCleanupApp, pushedResults, selectCleanupBatches } from "../lib/batch/cleanup-io.ts";
 import type { run } from "../lib/proc.ts";
 import type { BatchConfig, BatchState } from "../lib/batch/state.ts";
 import { RESULT_COLUMNS, toCsvLine } from "../lib/results.ts";
@@ -171,7 +171,7 @@ for (const [name, defaultRows, allowed, branch] of [
 ] as const) {
   test(`results gate: ${name}`, async () => {
     const row = { repo: "ncksol/orch-eval-a-1", run: "1", outcome: "passed", note: "batch=b1; driver=eval-runner" };
-    const state = { runs: [{ scoredAt: "now", repo: row.repo, n: 1, row }] } as BatchState;
+    const state = { runs: [{ scoredAt: "now", name: "orch-eval-a-1", repo: row.repo, n: 1, row }] } as BatchState;
     const requested: string[] = [];
     const exec: typeof run = async (cmd, args) => {
       if (cmd === "git") return { code: 0, stdout: "https://github.com/ncksol/ai_tools.git\n", stderr: "" };
@@ -187,7 +187,10 @@ for (const [name, defaultRows, allowed, branch] of [
     };
     const result = await pushedResults({ id: "b1" } as BatchConfig, state, branch, exec);
     if (allowed) assert.equal(result, null);
-    else assert.match(result ?? "", /origin/);
+    else {
+      assert.match(result ?? "", /origin/);
+      assert.match(result ?? "", /dropped or edited.*--dropped orch-eval-a-1/);
+    }
     assert.deepEqual(requested, [
       ...(branch ? ["repos/ncksol/ai_tools/contents/evals/orchestrator/expense-claims/results.csv?ref=driver-branch"] : []),
       "repos/ncksol/ai_tools",
@@ -195,6 +198,13 @@ for (const [name, defaultRows, allowed, branch] of [
     ]);
   });
 }
+
+test("deliberate-drop flags cannot target all batches", async (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "cleanup-drop-all-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  await assert.rejects(cleanupCommand({ batch: "all", batchesDir: root, yes: false, force: false, dropped: ["orch-eval-a-1"] }),
+    /^Error: --dropped requires one batch, not all$/);
+});
 
 test("all selects done and stopped batches but never live or manual runs; latest is stable by id", (t) => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "cleanup-select-")));

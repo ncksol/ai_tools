@@ -187,7 +187,7 @@ export async function pushedResults(config: BatchConfig, state: BatchState, bran
       const found = objects.some(row => row.repo === run.repo && row.run === String(run.n) &&
         row.note?.split(";").some(part => part.trim() === `batch=${config.id}`) &&
         Object.entries(run.row!).every(([key, value]) => (row[key] ?? "") === value));
-      if (!found) return `origin results.csv does not preserve the recorded row for ${run.name}`;
+      if (!found) return `origin results.csv does not preserve the recorded row for ${run.name}; if you deliberately dropped or edited it, confirm with --dropped ${run.name}`;
     }
     return null;
   };
