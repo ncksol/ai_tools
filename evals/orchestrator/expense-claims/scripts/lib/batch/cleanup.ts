@@ -12,7 +12,7 @@ export interface CleanupInventory {
   projects: { id: string; path: string; name: string }[];
   worktrees: string[];
   sessions: string[];
-  workspaces: { id: string; sessionId: string | null; archived: boolean }[];
+  workspaces: { id: string; sessionId: string | null; archived: boolean; name?: string }[];
 }
 export interface CleanupApp {
   inventory(run: Pick<RunState, "projectId" | "appSessionId" | "sessionId">): CleanupInventory;
@@ -55,6 +55,8 @@ interface JournalEntry {
 export class RepoNotVisible extends Error {
   constructor() { super("repo not found or not visible; absence requires the verified owner's keyring identity with repo scope"); }
 }
+const LOG_NAMES = ["events.jsonl", "workspace.yaml"];
+const PROJECT_PRESENCE = "app project still exists; follow its archive-first project checklist (--force overrides only project presence)";
 const sha256 = (data: string | Buffer): string => createHash("sha256").update(data).digest("hex");
 const safeId = (value: string): boolean => /^[a-zA-Z0-9][a-zA-Z0-9-]*$/.test(value);
 const beneath = (root: string, path: string): boolean => {
@@ -256,22 +258,44 @@ export async function cleanupBatch(
       }
       throw new Error(`${names.join(" and ")} already exist and neither holds the current ${name}; cleanup never overwrites an archive. Keep them and the session originals, inspect these files by hand, and keep the project until the logs are archived`);
     };
-    // A dry run counts present logs as archived only when a journaled archive of their current
-    // content still decompresses to the recorded hash. Otherwise it says what --yes will write.
-    const currentArchive = (source: string, dest: string, names: string[]): { verified: boolean; notes: string[] } => {
+    // Every check of a session's logs uses logState: the first pass, the final check before the
+    // project line, and the deletion of the session's original folder. For each supported log file:
+    // - original present as a regular file: "verified" when a journaled archive of this run has the
+    //   current hash, lies inside the session's archive folder, is a regular file and decompresses to
+    //   that hash; otherwise out of date (only other contents archived), damaged (the archive of this
+    //   content is missing or corrupt) or unarchived, all of which --yes can still fix. A symlink or
+    //   other non-regular file is invalid.
+    // - original missing: workspace.yaml needs nothing; events.jsonl needs a verified backup (its
+    //   latest journaled archive still decompresses to the recorded hash). If the session folder and
+    //   that backup are both gone, the logs are LOST.
+    // The session is "archived" only when every file is verified or legitimately missing, "pending"
+    // when --yes can still write what is missing, "lost" as above; anything else throws and blocks.
+    type LogState = { status: "archived" | "lost"; notes?: undefined } | { status: "pending"; notes: string[] };
+    const logState = (source: string, dest: string): LogState => {
+      const folder = pathKind(source, io);
+      if (folder === "file") throw new Error("session state is not a folder");
+      pathKind(dest, io);
       const notes: string[] = [];
-      let verified = true;
-      for (const name of names) {
+      let pending = false;
+      for (const name of LOG_NAMES) {
         const input = join(source, name);
-        const type = pathKind(input, io);
-        if (type === "missing") continue;
+        const type = folder === "missing" ? "missing" : pathKind(input, io);
+        if (type === "missing") {
+          if (name !== "events.jsonl") continue;
+          const recorded = archiveRecord(source, dest, name);
+          const copy = recorded?.target ?? join(dest, `${name}.gz`);
+          if (!beneath(dest, copy)) throw new Error("archive path is outside its session folder");
+          if (folder === "missing" && pathKind(copy, io) === "missing") return { status: "lost" };
+          if (!recorded || pathKind(copy, io) !== "file" || unpackedHash(copy) !== recorded.sha256) throw new Error("session event log is missing and no verified archive exists");
+          continue;
+        }
         if (type !== "file") throw new Error(`not a regular log file: ${input}`);
         const hash = sha256(io.readFileSync(input));
         const records = entries.filter(e => e.action === "archived" && e.identity === identity &&
           (e.source === input || (!e.source && e.target === join(dest, `${name}.gz`))));
         if (records.some(e => e.sha256 === hash && e.target && beneath(dest, e.target) &&
             pathKind(e.target, io) === "file" && unpackedHash(e.target) === hash)) continue;
-        verified = false;
+        pending = true;
         const slot = archiveSlot(dest, name, hash);
         const target = records.findLast(e => e.sha256 === hash)?.target;
         if (target) {
@@ -282,71 +306,60 @@ export async function cleanupBatch(
           notes.push(`archive of ${name} is out of date: the log changed after --yes archived it. Run --yes again to write a new verified archive at ${slot}`);
         }
       }
-      return { verified, notes };
+      return pending ? { status: "pending", notes } : { status: "archived" };
+    };
+    // workspace.yaml is useful provenance. session.db is a live SQLite database; copying its main
+    // file without its WAL is not a reliable backup, and events.jsonl is the raw evidence.
+    const writeArchives = (source: string, dest: string) => {
+      if (pathKind(source, io) !== "directory") return;
+      io.mkdirSync(dest, { recursive: true, mode: 0o700 });
+      for (const name of LOG_NAMES) {
+        const input = join(source, name);
+        const type = pathKind(input, io);
+        if (type === "missing") continue;
+        if (type !== "file") throw new Error(`not a regular log file: ${input}`);
+        const data = io.readFileSync(input);
+        const hash = sha256(data);
+        const output = archiveSlot(dest, name, hash);
+        if (pathKind(output, io) === "missing") {
+          const temporary = join(dest, `.${name}.${randomUUID()}.tmp`);
+          try {
+            io.writeFileSync(temporary, gzipSync(data), { mode: 0o600, flag: "wx" });
+            if (sha256(gunzipSync(io.readFileSync(temporary))) !== hash) throw new Error("archive verification failed");
+            io.renameSync(temporary, output);
+          } finally {
+            io.rmSync(temporary, { force: true });
+          }
+        }
+        if (pathKind(output, io) !== "file" || unpackedHash(output) !== hash) throw new Error("archive verification failed");
+        append({ action: "archived", identity, kind: "archive", source: input, target: output, sha256: hash });
+      }
     };
     // Archive before app removal destroys histories. Missing originals and backups are reported
     // as lost; an existing but unverified backup blocks deletion.
     const archiveGate = blocked;
-    const archives: { item: CleanupItem; source: string; dest: string; names: string[] }[] = [];
+    const archives: { item: CleanupItem; source: string; dest: string }[] = [];
     for (const id of inventory.sessions) {
       const source = join(sessionRoot, id);
       const dest = join(config.dir, "sessions", run.name, id);
       const archive = add("archive", source, "present", `Preserve compressed logs in ${dest}`);
-      const logs = { item: archive, source, dest, names: ["events.jsonl", "workspace.yaml"] };
-      archives.push(logs);
+      archives.push({ item: archive, source, dest });
       try {
         if (!safeId(id)) throw new Error("invalid session identity");
         if (archiveGate) throw new Error(archiveGate);
-        const sourceKind = pathKind(source, io);
-        pathKind(dest, io);
-        const eventPath = join(source, "events.jsonl");
-        if (pathKind(eventPath, io) === "missing") {
-          const recorded = archiveRecord(source, dest, "events.jsonl");
-          const copy = recorded?.target ?? join(dest, "events.jsonl.gz");
-          if (!beneath(dest, copy)) throw new Error("archive path is outside its session folder");
-          if (sourceKind === "missing" && pathKind(copy, io) === "missing") {
-            archive.status = "already gone";
-            archive.reason = "LOST: session logs are gone and no archive exists; cannot recover them. Continuing known-item cleanup.";
-            if (options.yes) append({ action: "lost", identity, kind: "archive", target: source });
-            continue;
-          }
-          if (!recorded || pathKind(copy, io) !== "file" || sha256(gunzipSync(io.readFileSync(copy))) !== recorded.sha256) throw new Error("session event log is missing and no verified archive exists");
-          // The verified event archive covers only the missing events.jsonl; other logs still present need their own.
-          logs.names = ["workspace.yaml"];
-        }
-        if (options.yes) {
-          io.mkdirSync(dest, { recursive: true, mode: 0o700 });
-          // workspace.yaml is useful provenance. session.db is a live SQLite database; copying its
-          // main file without its WAL is not a reliable backup, and events.jsonl is the raw evidence.
-          for (const name of logs.names) {
-            const input = join(source, name);
-            if (pathKind(input, io) === "missing") continue;
-            if (pathKind(input, io) !== "file") throw new Error(`not a regular log file: ${input}`);
-            const data = io.readFileSync(input);
-            const hash = sha256(data);
-            const output = archiveSlot(dest, name, hash);
-            if (pathKind(output, io) === "missing") {
-              const temporary = join(dest, `.${name}.${randomUUID()}.tmp`);
-              try {
-                io.writeFileSync(temporary, gzipSync(data), { mode: 0o600, flag: "wx" });
-                if (sha256(gunzipSync(io.readFileSync(temporary))) !== hash) throw new Error("archive verification failed");
-                io.renameSync(temporary, output);
-              } finally {
-                io.rmSync(temporary, { force: true });
-              }
-            }
-            if (pathKind(output, io) !== "file" || sha256(gunzipSync(io.readFileSync(output))) !== hash) throw new Error("archive verification failed");
-            append({ action: "archived", identity, kind: "archive", source: input, target: output, sha256: hash });
-          }
+        if (options.yes) writeArchives(source, dest);
+        const state = logState(source, dest);
+        if (state.status === "lost") {
+          archive.status = "already gone";
+          archive.reason = "LOST: session logs are gone and no archive exists; cannot recover them. Continuing known-item cleanup.";
+          if (options.yes) append({ action: "lost", identity, kind: "archive", target: source });
+        } else if (state.status === "archived") {
           archive.status = "archived";
-        } else {
-          const current = currentArchive(source, dest, logs.names);
-          if (current.verified) {
-            archive.status = "archived";
-            archive.reason = `Verified archive of the current logs in ${dest}`;
-          } else if (current.notes.length) {
-            archive.reason = `Archive not current: ${current.notes.join("; ")}`;
-          }
+          if (!options.yes) archive.reason = `Verified archive of the current logs in ${dest}`;
+        } else if (options.yes) {
+          throw new Error("archive verification failed");
+        } else if (state.notes.length) {
+          archive.reason = `Archive not current: ${state.notes.join("; ")}`;
         }
       } catch (error) { archive.status = "blocked"; archive.reason = errorText(error); blocked ??= archive.reason; }
     }
@@ -357,9 +370,16 @@ export async function cleanupBatch(
     const discoverySaved = options.yes || (saved.length > 0 &&
       inventory.worktrees.every(path => savedWorktrees.has(path)) && inventory.sessions.every(id => savedSessions.has(id)));
     const archiveBlocked = blocked;
-    const sessionLive = (id: string): boolean => {
+    // Busy means the app reports the session running. A session that is only loaded (its CLI holds
+    // an inuse lock but is idle) does not keep the project: removing the project stops that CLI,
+    // and the final log check plus the later-writes warning cover it.
+    const sessionBusy = (id: string): boolean => {
       if (!safeId(id)) throw new Error("invalid session identity");
-      if (deps.app.sessionRunning(id)) return true;
+      return deps.app.sessionRunning(id);
+    };
+    // Original session folders are deleted only once the CLI has stopped as well.
+    const sessionLive = (id: string): boolean => {
+      if (sessionBusy(id)) return true;
       const source = join(sessionRoot, id);
       return pathKind(source, io) === "directory" && io.readdirSync(source).some(name => {
         const pid = /^inuse\.(\d+)\.lock$/.exec(name)?.[1];
@@ -376,17 +396,26 @@ export async function cleanupBatch(
         return;
       }
       try {
-        const running = inventory.sessions.filter(sessionLive);
-        const changed = archives.filter(a => a.item.status === "archived" && !currentArchive(a.source, a.dest, a.names).verified);
-        for (const a of changed) {
-          a.item.status = "present";
-          a.item.reason = `Logs changed during this check; run --yes again to archive them in ${a.dest}`;
-        }
+        const running = inventory.sessions.filter(sessionBusy).map(id => {
+          const name = inventory.workspaces.find(w => w.sessionId === id)?.name;
+          return name ? `"${name}"` : id;
+        });
+        const changed = archives.filter(a => {
+          let state: LogState | null = null;
+          let problem = "";
+          try { state = logState(a.source, a.dest); } catch (error) { problem = errorText(error); }
+          const unchanged = state?.status === "archived" || (state?.status === "lost" && a.item.status === "already gone");
+          if (!unchanged) {
+            a.item.status = "present";
+            a.item.reason = `Logs changed during this check${problem ? ` (${problem})` : ""}; run --yes again to archive them in ${a.dest}`;
+          }
+          return !unchanged;
+        });
         for (let i = 0; i < projectItems.length; i++) {
           const project = `project ${inventory.projects[i].name} (${inventory.projects[i].path})`;
           projectItems[i].action = !running.length && !changed.length;
           projectItems[i].reason = running.length
-            ? `KEEP ${project}: session ${running.join(", ")} is still running. Stop it, then run --yes again to archive its latest logs before you remove the project.`
+            ? `KEEP ${project}: session ${running.join(", ")} in project ${inventory.projects[i].name} is still busy in the app. Wait for it to finish or stop it there, then run --yes again to archive its latest logs before you remove the project.`
             : changed.length
               ? `KEEP ${project}: logs changed during this check. Run --yes again to archive them before you remove the project.`
               : `Available logs archived and verified; remove or retry removing ${project} in the app, then rerun cleanup. This removes its run/child/trust sessions too. This check cannot see later writes: if any of its sessions runs again before you remove the project, run --yes again first.`;
@@ -397,7 +426,7 @@ export async function cleanupBatch(
     try {
       if (!discovered) throw new Error(blocked ?? "app inventory could not be read");
       const projects = deps.app.projectsForPath(run.repoDir);
-      if (!options.force && (inventory.projects.length || projects.length)) appBlock = "app project still exists; follow its archive-first project checklist (--force overrides only project presence)";
+      if (!options.force && (inventory.projects.length || projects.length)) appBlock = PROJECT_PRESENCE;
       if (projects.some(id => id !== run.projectId)) throw new Error("another app project uses this clone; identity mismatch");
     } catch (error) { appBlock = errorText(error); }
     blocked ??= appBlock;
@@ -433,18 +462,9 @@ export async function cleanupBatch(
         if (sessionLive(id)) throw new Error("session is still running");
         if (deps.app.sessionExists(id)) throw new Error("app still records this session; keep originals (archiving a session does not delete it)");
         if (options.yes && !blocked) {
-          for (const name of ["events.jsonl", "workspace.yaml"]) {
-            const input = join(source, name);
-            if (pathKind(input, io) === "missing" && name !== "events.jsonl") continue;
-            const dest = join(config.dir, "sessions", run.name, id);
-            const recorded = archiveRecord(source, dest, name);
-            const copy = recorded?.target ?? join(dest, `${name}.gz`);
-            if (!beneath(dest, copy)) throw new Error("archive path is outside its session folder");
-            if (pathKind(input, io) !== "file" || pathKind(copy, io) !== "file" || !recorded ||
-                sha256(io.readFileSync(input)) !== recorded.sha256 || sha256(gunzipSync(io.readFileSync(copy))) !== recorded.sha256) {
-              throw new Error("session log changed after archival or archive is not verified");
-            }
-          }
+          let state: LogState | null = null;
+          try { state = logState(source, join(config.dir, "sessions", run.name, id)); } catch { /* reported below */ }
+          if (state?.status !== "archived") throw new Error("session log changed after archival or archive is not verified");
         }
       }
       return type;
@@ -458,6 +478,12 @@ export async function cleanupBatch(
       const projects = deps.app.projectsForPath(path);
       if (projects.some(id => id !== run.projectId)) throw new Error("another app project references this folder; identity mismatch");
       if (projects.length && !options.force) throw new Error("app project still references this folder");
+      await gitIdentity(path);
+      return type;
+    };
+    // The folder is its own Git working tree, its origin is the recorded repo and its HEAD
+    // contains the recorded seed. Applied to the clone and to every usable linked worktree.
+    const gitIdentity = async (path: string) => {
       const git = (args: string[]) => deps.exec("git", args, { cwd: path, timeoutMs: 60_000 });
       const top = await git(["rev-parse", "--show-toplevel"]);
       if (top.code || resolve(top.stdout.trim()) !== path) throw new Error("folder is not its own Git worktree");
@@ -466,7 +492,6 @@ export async function cleanupBatch(
       if (!seed || !/^[a-f0-9]{40}$/.test(seed)) throw new Error("missing recorded seed identity");
       const history = await git(["merge-base", "--is-ancestor", seed, "HEAD"]);
       if (history.code) throw new Error("folder history does not contain the recorded seed");
-      return type;
     };
     // Read the clone's Git registry before touching any worktree, so every linked worktree, recorded
     // by the app or not, goes through the same checks. The app can leave worktrees registered in the
@@ -499,13 +524,23 @@ export async function cleanupBatch(
       if (type !== "directory") throw new Error(`${name} is not a real folder; ${byHand}`);
       const projects = deps.app.projectsForPath(path);
       if (projects.some(id => id !== run.projectId)) throw new Error(`another app project references ${name}; identity mismatch`);
-      if (deps.app.workspacesForPath(path).length) throw new Error(`an app workspace still references ${name}; ${byHand}`);
+      // Every live session worktree of the run's own project is referenced by one of its workspaces.
+      // While that project exists this is the project-presence step, not a by-hand one.
+      const workspaces = deps.app.workspacesForPath(path);
+      const own = new Set(inventory.workspaces.map(w => w.id));
+      const projectLive = inventory.projects.length > 0 || (!!run.projectId && projects.includes(run.projectId));
+      if (workspaces.some(id => !own.has(id))) throw new Error(`an app workspace outside this run still references ${name}; ${byHand}`);
+      if (workspaces.length && !projectLive) throw new Error(`an app workspace still references ${name}; ${byHand}`);
+      if (workspaces.length) throw new Error(options.force
+        ? `a workspace of this run's project still references ${name}; remove the project in the app first (--force does not waive workspace references)`
+        : PROJECT_PRESENCE);
       const dotGit = join(path, ".git");
       const pointer = pathKind(dotGit, io) === "file" ? /^gitdir: ([^\r\n]+)\r?\n?$/.exec(io.readFileSync(dotGit, "utf8"))?.[1] : undefined;
       const gitdir = pointer ? resolve(path, pointer) : "";
       if (!gitdir || !beneath(admins, gitdir)) throw new Error(`${name} does not point into ${admins}; ${byHand}`);
       if (registry.has(path)) {
-        if (projects.length && !options.force) throw new Error(`app project still references ${name}`);
+        if (projects.length && !options.force) throw new Error(inventory.projects.length ? PROJECT_PRESENCE
+          : `app project ${run.projectId} still references ${name}; remove the project in the app, then rerun cleanup (--force overrides only project presence)`);
         if (pathKind(gitdir, io) !== "directory") throw new Error(`${name} points to a missing Git admin folder ${gitdir}; ${byHand}`);
         if (registry.get(path)) throw new Error(`${name} is locked; ${byHand}`);
       } else {
@@ -514,10 +549,14 @@ export async function cleanupBatch(
         if (!saved.some(s => s.worktrees.includes(path)) || pathKind(gitdir, io) !== "missing") throw new Error(`${name} is not a linked worktree of the clone; ${byHand}`);
       }
       if (await cloneFolder() !== "directory") throw new Error(`the clone is gone, so ${name} cannot be verified; ${byHand}`);
+      if (registry.has(path)) await gitIdentity(path);
       return type;
     };
     const worktreeItems: CleanupItem[] = [];
-    const unrecorded = [...registry.keys()].filter(path => !inventory.worktrees.includes(path) && pathKind(path, io) !== "missing");
+    // A path that cannot be inspected safely (a symlink, an I/O error) is kept as a candidate, so the
+    // guarded check reports it by name instead of aborting the whole report.
+    const present = (path: string) => { try { return pathKind(path, io) !== "missing"; } catch { return true; } };
+    const unrecorded = [...registry.keys()].filter(path => !inventory.worktrees.includes(path) && present(path));
     for (const path of [...inventory.worktrees, ...unrecorded]) {
       const registered = registry.has(path);
       worktreeItems.push(await remove("worktree", path, () => worktreeCheck(path), registered ? {

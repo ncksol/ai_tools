@@ -54,10 +54,11 @@ function fixture(t: { after(fn: () => void): void }) {
       projects: appState.project ? [{ id: "project-5", path: repoDir, name: record.name }] : [],
       worktrees: appState.project ? [worktree] : [],
       sessions: [rootSession, childSession],
-      workspaces: [{ id: "workspace-5", sessionId: rootSession, archived: true }, { id: "never-started", sessionId: null, archived: false }],
+      workspaces: [{ id: "workspace-5", sessionId: rootSession, archived: true, name: "Run session" }, { id: "never-started", sessionId: null, archived: false, name: "Never started" }],
     }),
     projectsForPath: () => appState.project ? ["project-5"] : [],
-    workspacesForPath: () => [],
+    // As in the real app, every live worktree workspace has a checkout binding on its worktree.
+    workspacesForPath: path => appState.project && path === worktree ? ["workspace-5"] : [],
     sessionExists: () => appState.session,
     sessionRunning: () => false,
   };
@@ -1032,13 +1033,15 @@ for (const change of ["changed", "unarchived"] as const) {
   });
 }
 
-test("S1: a dry run keeps the project and says to stop a running session", async (t) => {
+test("S1: a dry run keeps the project while a session is busy in the app, and names it as the app does", async (t) => {
   const f = fixture(t);
   await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
-  f.deps.app.sessionRunning = id => id === childSession;
+  f.deps.app.sessionRunning = id => id === rootSession;
   const report = await cleanupBatch(f.config, f.state, {}, f.deps);
   assertKeep(report);
-  assert.match(nextSteps(report), new RegExp(`${childSession}.*still running.*stop.*--yes`, "i"));
+  assert.match(nextSteps(report), /session "Run session" in project orch-eval-orchestrator-5 is still busy in the app\. Wait for it to finish or stop it there, then run --yes again/);
+  f.deps.app.sessionRunning = id => id === childSession;
+  assert.match(nextSteps(await cleanupBatch(f.config, f.state, {}, f.deps)), new RegExp(`session ${childSession} in project orch-eval-orchestrator-5 is still busy`));
 });
 
 test("S1: a dry run keeps the project when a log changes during the check", async (t) => {
@@ -1259,7 +1262,9 @@ for (const scenario of ["an existing admin folder of another clone", "a missing 
     if (scenario === "a missing admin folder in this clone") writeFileSync(join(linked, ".git"), `gitdir: ${join(f.record.repoDir, ".git/worktrees/missing")}\n`);
     if (scenario === "an invalid clone") assert.equal((await git(["remote", "set-url", "origin", "https://github.com/ncksol/other.git"])).code, 0);
     const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
-    assert.ok(result.items.some(i => i.kind === "worktree" && i.target === linked && i.status === "blocked"), JSON.stringify(result));
+    const reason = { "an existing admin folder of another clone": /does not point into/, "a missing admin folder in this clone": /points to a missing Git admin folder/,
+      "an invalid clone": /origin does not match/ }[scenario];
+    assert.ok(result.items.some(i => i.kind === "worktree" && i.target === linked && i.status === "blocked" && reason.test(i.reason ?? "")), JSON.stringify(result));
     assert.ok(existsSync(linked));
     assert.ok(!calls.some(call => call.includes("worktree remove")));
   });
@@ -1416,4 +1421,110 @@ test("a batch finished by older code asks for one --yes to record the repo's abs
   await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
   f.deps.repo = async () => { throw new RepoNotVisible(); };
   assert.equal(nextSteps(await cleanupBatch(f.config, f.state, {}, f.deps)), "- No cleanup actions remain.");
+});
+
+// Round 3: Opus M1/S2 and critical review R1-R3 on a9ae5c0.
+test("Opus M1: a live project's own session worktree is a project-presence step, never a by-hand one", async (t) => {
+  const f = fixture(t);
+  const projectStep = /app project still exists; follow its archive-first project checklist/;
+  const dry = await cleanupBatch(f.config, f.state, {}, f.deps);
+  assert.match(dry.items.find(i => i.kind === "worktree")?.reason ?? "", projectStep);
+  assert.doesNotMatch(nextSteps(dry), /by hand/);
+  const first = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  assert.doesNotMatch(nextSteps(first), /by hand/);
+  assert.ok(existsSync(f.worktree));
+  const forced = await cleanupBatch(f.config, f.state, { yes: true, force: true }, f.deps);
+  assert.ok(forced.items.some(i => i.kind === "worktree" && i.status === "blocked" && /workspace of this run's project still references/.test(i.reason ?? "")), JSON.stringify(forced));
+  assert.ok(existsSync(f.worktree), "--force does not waive workspace references");
+  f.appState.project = false;
+  f.appState.session = false;
+  const second = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  assert.ok(second.items.some(i => i.kind === "worktree" && i.status === "removed"), JSON.stringify(second));
+  assert.ok(f.effects.includes(`git-worktree-remove ${f.worktree}`));
+});
+
+test("Opus M1: a workspace outside the run that references its worktree still needs a by-hand step", async (t) => {
+  const f = fixture(t);
+  f.deps.app.workspacesForPath = path => path === f.worktree ? ["workspace-9"] : [];
+  const dry = await cleanupBatch(f.config, f.state, {}, f.deps);
+  assert.match(dry.items.find(i => i.kind === "worktree")?.reason ?? "", /an app workspace outside this run still references .*by hand/);
+});
+
+test("Opus S2: a session that is only loaded in the app does not keep the project", async (t) => {
+  const f = fixture(t);
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  writeFileSync(join(sessionDir(f), `inuse.${process.pid}.lock`), "");
+  const report = await cleanupBatch(f.config, f.state, {}, f.deps);
+  assert.match(nextSteps(report), /remove or retry removing project/);
+  f.appState.project = false;
+  f.appState.session = false;
+  const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  assert.ok(result.items.some(i => i.kind === "session-state" && i.target === sessionDir(f) && i.reason === "session is still running"), "its CLI must stop before the original folder is deleted");
+});
+
+test("R1: a recorded worktree whose HEAD lacks the seed blocks, even with --force", async (t) => {
+  const f = fixture(t);
+  const { git, calls } = await recordedRealWorktree(f);
+  assert.equal((await git(["checkout", "-q", "--orphan", "unrelated"], f.worktree)).code, 0);
+  assert.equal((await git(["-c", "user.name=T", "-c", "user.email=t@example.invalid", "commit", "-qm", "unrelated"], f.worktree)).code, 0);
+  const result = await cleanupBatch(f.config, f.state, { yes: true, force: true }, f.deps);
+  assert.ok(result.items.some(i => i.kind === "worktree" && i.status === "blocked" && /seed/.test(i.reason ?? "")), JSON.stringify(result));
+  assert.ok(result.items.some(i => i.kind === "clone" && i.status === "blocked"));
+  assert.ok(result.items.some(i => i.kind === "repo" && i.status === "blocked"));
+  assert.ok(existsSync(f.worktree));
+  assert.ok(!calls.some(call => call.includes("worktree remove")));
+  assert.ok(!journalOf(f).some(e => e.action === "removing" && ["worktree", "clone", "repo"].includes(e.kind)));
+});
+
+for (const change of ["events.jsonl reappears with new content", "the events.jsonl.gz backup disappears", "the session folder and its backup disappear"] as const) {
+  test(`R2: the final check keeps the project when ${change} during the check`, async (t) => {
+    const f = fixture(t);
+    await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+    rmSync(join(sessionDir(f), "events.jsonl"));
+    const projectsForPath = f.deps.app.projectsForPath;
+    let done = false;
+    f.deps.app.projectsForPath = path => {
+      if (!done) {
+        done = true;
+        if (change === "events.jsonl reappears with new content") writeFileSync(join(sessionDir(f), "events.jsonl"), '{"new":"not archived"}\n');
+        else rmSync(join(archiveDir(f), "events.jsonl.gz"));
+        if (change === "the session folder and its backup disappear") rmSync(sessionDir(f), { recursive: true });
+      }
+      return projectsForPath(path);
+    };
+    const report = await cleanupBatch(f.config, f.state, {}, f.deps);
+    assert.ok(done);
+    assertKeep(report);
+    assert.doesNotMatch(formatCleanup(report), /^ACTION/m);
+  });
+}
+
+test("R3: a symlink in the clone's registry is reported as a blocked worktree, not an aborted run", async (t) => {
+  const f = fixture(t);
+  const { git } = await realClone(f);
+  const linked = join(runFolder(f), "copilot-prewarm-x");
+  assert.equal((await git(["worktree", "add", "-q", "--detach", linked])).code, 0);
+  const moved = join(f.home, "moved-worktree");
+  renameSync(linked, moved);
+  symlinkSync(moved, linked);
+  for (const yes of [false, true]) {
+    const report = await cleanupBatch(f.config, f.state, { yes }, f.deps);
+    assert.ok(report.items.some(i => i.kind === "worktree" && i.target === linked && i.status === "blocked" && i.reason?.includes(linked)), JSON.stringify(report));
+    assert.ok(report.items.some(i => i.kind === "clone" && i.status === "blocked"));
+    assert.ok(report.items.some(i => i.kind === "repo"));
+  }
+  assert.ok(existsSync(f.record.repoDir));
+  assert.ok(existsSync(moved));
+  assert.ok(!f.effects.includes("delete-repo"));
+});
+
+test("Opus M1: a workspace of the run that still references a worktree after its project is gone needs a by-hand step", async (t) => {
+  const f = fixture(t);
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  f.appState.project = false;
+  f.appState.session = false;
+  f.deps.app.workspacesForPath = path => path === f.worktree ? ["workspace-5"] : [];
+  const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  assert.ok(result.items.some(i => i.kind === "worktree" && i.status === "blocked" && /^an app workspace still references .*by hand/.test(i.reason ?? "")), JSON.stringify(result));
+  assert.ok(existsSync(f.worktree));
 });

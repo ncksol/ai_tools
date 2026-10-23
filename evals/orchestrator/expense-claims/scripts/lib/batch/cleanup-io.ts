@@ -10,7 +10,9 @@ import { run } from "../proc.ts";
 import { parseCsvText, RESULT_COLUMNS, LEGACY_RESULT_COLUMNS } from "../results.ts";
 import { KIT_DIR } from "../suite.ts";
 
-export const APP_DB_OPTIONS = { readOnly: true } as const;
+export function openAppDatabase(path: string): DatabaseSync {
+  return new DatabaseSync(path, { readOnly: true });
+}
 
 // Two spellings can name one folder (case-insensitive volumes, symlinked parents), so app path
 // references are compared by filesystem identity. A spelling that differs only in case and cannot
@@ -40,7 +42,7 @@ export function sameFolder(reference: string, path: string): boolean {
 export function openCleanupApp(path: string): CleanupApp {
   const read = <T>(fn: (db: DatabaseSync) => T): T => {
     if (!existsSync(path)) throw new Error("app database is missing");
-    const db = new DatabaseSync(path, { ...APP_DB_OPTIONS });
+    const db = openAppDatabase(path);
     try { return fn(db); }
     finally { db.close(); }
   };
@@ -93,7 +95,8 @@ export function openCleanupApp(path: string): CleanupApp {
         if (cell(db, "workspaces", "id", id) === null) continue;
         const sessionId = cell(db, "workspaces", "session_id", id);
         if (sessionId !== null && typeof sessionId !== "string") throw new Error("invalid workspace session id");
-        out.workspaces.push({ id, sessionId, archived: cell(db, "workspaces", "archived_at", id) !== null });
+        const name = cell(db, "workspaces", "name", id);
+        out.workspaces.push({ id, sessionId, archived: cell(db, "workspaces", "archived_at", id) !== null, ...(typeof name === "string" && name ? { name } : {}) });
         const aliases = strings(db, "workspace_session_aliases", "session_id", "workspace_id = ?", [id]);
         if (sessionId) aliases.push(sessionId);
         out.sessions.push(...aliases);

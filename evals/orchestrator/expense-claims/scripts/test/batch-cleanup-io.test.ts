@@ -5,7 +5,7 @@ import { join, relative } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
-import { APP_DB_OPTIONS, cleanupCommand, cleanupGitHub, openCleanupApp, pushedResults, selectCleanupBatches } from "../lib/batch/cleanup-io.ts";
+import { cleanupCommand, openAppDatabase, cleanupGitHub, openCleanupApp, pushedResults, selectCleanupBatches } from "../lib/batch/cleanup-io.ts";
 import type { run } from "../lib/proc.ts";
 import type { BatchConfig, BatchState } from "../lib/batch/state.ts";
 import { RepoNotVisible } from "../lib/batch/cleanup.ts";
@@ -123,14 +123,14 @@ test("read-only app discovery includes project worktrees, pooled paths, aliases 
     CREATE TABLE worktrees(id TEXT, project_id TEXT, path TEXT);
     CREATE TABLE reusable_worktree_pool(id TEXT, project_id TEXT, path TEXT);
     CREATE TABLE project_checkouts(project_id TEXT, host_id TEXT, root_resource_uri TEXT);
-    CREATE TABLE workspaces(id TEXT, project_id TEXT, session_id TEXT, archived_at TEXT, creator_session_id TEXT, coordinating_creator_session_id TEXT);
+    CREATE TABLE workspaces(id TEXT, project_id TEXT, session_id TEXT, archived_at TEXT, creator_session_id TEXT, coordinating_creator_session_id TEXT, name TEXT);
     CREATE TABLE workspace_session_aliases(workspace_id TEXT, session_id TEXT);
     CREATE TABLE sessions(id TEXT, is_running INTEGER);
     INSERT INTO projects VALUES('p','/clone','Run');
     INSERT INTO worktrees VALUES('w','p','/worktree');
     INSERT INTO reusable_worktree_pool VALUES('pool','p','/pooled');
     INSERT INTO project_checkouts VALUES('p','local','file:///clone');
-    INSERT INTO workspaces VALUES('root','p','cli',NULL,NULL,NULL),('never','p',NULL,NULL,'root',NULL);
+    INSERT INTO workspaces VALUES('root','p','cli',NULL,NULL,NULL,'Root session'),('never','p',NULL,NULL,'root',NULL,'Never started');
     INSERT INTO workspace_session_aliases VALUES('root','old-cli');
     INSERT INTO sessions VALUES('cli',0),('orphan',1);
   `);
@@ -140,6 +140,7 @@ test("read-only app discovery includes project worktrees, pooled paths, aliases 
   assert.deepEqual(data.worktrees.sort(), ["/pooled", "/worktree"]);
   assert.deepEqual(data.sessions.sort(), ["cli", "old-cli"]);
   assert.ok(data.workspaces.some(w => w.id === "never" && w.sessionId === null));
+  assert.equal(data.workspaces.find(w => w.id === "root")?.name, "Root session");
   assert.deepEqual(app.projectsForPath("/clone"), ["p"]);
   assert.equal(app.sessionExists("old-cli"), true, "alias references also protect original logs");
   assert.equal(app.sessionExists("absent"), false);
@@ -293,8 +294,16 @@ test("an app reference that only differs in case from a missing folder fails clo
   assert.deepEqual(openCleanupApp(path).workspacesForPath(join(dir, "elsewhere")), []);
 });
 
-test("the app database is always opened read-only", () => {
-  assert.deepEqual(APP_DB_OPTIONS, { readOnly: true });
+test("the app database connection cannot write", (t) => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "cleanup-db-")));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, "data.db");
+  const setup = new DatabaseSync(path);
+  setup.exec("CREATE TABLE projects(id TEXT)");
+  setup.close();
+  const db = openAppDatabase(path);
+  try { assert.throws(() => db.exec("INSERT INTO projects VALUES('x')"), /readonly/i); }
+  finally { db.close(); }
 });
 
 test("an ambient 404 is reported as a repo that is not visible, never as absence", async () => {
