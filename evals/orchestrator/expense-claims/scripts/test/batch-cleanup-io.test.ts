@@ -113,6 +113,38 @@ test("results gate checks the remote branch CSV, exact batch marker and every sc
   assert.match(await pushedResults(config, state, null, exec) ?? "", /branch/);
 });
 
+for (const [name, defaultRows, allowed] of [
+  ["deleted results branch and identical landed rows", "identical", true],
+  ["no remote ref preserves the rows", "missing", false],
+  ["landed rows differ from the recorded result", "mismatched", false],
+] as const) {
+  test(`results gate: ${name}`, async () => {
+    const row = { repo: "ncksol/orch-eval-a-1", run: "1", outcome: "passed", note: "batch=b1; driver=eval-runner" };
+    const state = { runs: [{ scoredAt: "now", repo: row.repo, n: 1, row }] } as BatchState;
+    const requested: string[] = [];
+    const exec: typeof run = async (cmd, args) => {
+      if (cmd === "git") return { code: 0, stdout: "https://github.com/ncksol/ai_tools.git\n", stderr: "" };
+      const endpoint = args.at(-1)!;
+      requested.push(endpoint);
+      if (endpoint.endsWith("?ref=driver-branch")) return { code: 1, stdout: "", stderr: "HTTP 404" };
+      if (endpoint === "repos/ncksol/ai_tools") return { code: 0, stdout: '{"full_name":"ncksol/ai_tools","default_branch":"trunk"}', stderr: "" };
+      assert.equal(endpoint, "repos/ncksol/ai_tools/contents/evals/orchestrator/expense-claims/results.csv?ref=trunk", "use GitHub's actual default, not a guessed main");
+      const remote = { ...row, outcome: defaultRows === "mismatched" ? "failed" : row.outcome };
+      const csv = RESULT_COLUMNS.join(",") + "\n" +
+        (defaultRows === "missing" ? "" : toCsvLine(RESULT_COLUMNS.map(k => remote[k as keyof typeof remote] ?? "")) + "\n");
+      return { code: 0, stdout: JSON.stringify({ content: Buffer.from(csv).toString("base64"), encoding: "base64" }), stderr: "" };
+    };
+    const result = await pushedResults({ id: "b1" } as BatchConfig, state, "driver-branch", exec);
+    if (allowed) assert.equal(result, null);
+    else assert.match(result ?? "", /origin/);
+    assert.deepEqual(requested, [
+      "repos/ncksol/ai_tools/contents/evals/orchestrator/expense-claims/results.csv?ref=driver-branch",
+      "repos/ncksol/ai_tools",
+      "repos/ncksol/ai_tools/contents/evals/orchestrator/expense-claims/results.csv?ref=trunk",
+    ]);
+  });
+}
+
 test("all selects done and stopped batches but never live or manual runs; latest is stable by id", (t) => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "cleanup-select-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));

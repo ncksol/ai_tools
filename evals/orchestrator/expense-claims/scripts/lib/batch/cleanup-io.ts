@@ -166,24 +166,40 @@ export async function pushedResults(config: BatchConfig, state: BatchState, bran
   const origin = await exec("git", ["remote", "get-url", "origin"], { cwd: KIT_DIR, timeoutMs: 60_000 });
   const slug = origin.code === 0 ? githubSlug(origin.stdout) : null;
   if (!slug) return "cannot identify this kit's origin";
-  const response = await exec("gh", ["api", "--hostname", "github.com", "--method", "GET",
-    `repos/${slug}/contents/evals/orchestrator/expense-claims/results.csv?ref=${encodeURIComponent(branch)}`], { timeoutMs: 60_000 });
-  if (response.code) return "cannot read results.csv on origin's results branch";
-  let file: unknown;
-  try { file = JSON.parse(response.stdout); } catch { return "invalid origin results.csv response"; }
-  if (!file || typeof file !== "object" || !("encoding" in file) || file.encoding !== "base64" ||
-      !("content" in file) || typeof file.content !== "string") return "invalid origin results.csv response";
-  const [header, ...rows] = parseCsvText(Buffer.from(file.content, "base64").toString("utf8"));
-  if (!header || ![RESULT_COLUMNS.join(","), LEGACY_RESULT_COLUMNS.join(",")].includes(header.join(","))) return "unexpected origin results.csv header";
-  const objects = rows.map(row => Object.fromEntries(header.map((key, i) => [key, row[i] ?? ""])));
-  for (const run of scored) {
-    if (!run.row) return `no recorded result row for ${run.name}; cannot verify origin`;
-    const found = objects.some(row => row.repo === run.repo && row.run === String(run.n) &&
-      row.note?.split(";").some(part => part.trim() === `batch=${config.id}`) &&
-      Object.entries(run.row!).every(([key, value]) => (row[key] ?? "") === value));
-    if (!found) return `origin results.csv does not preserve the recorded row for ${run.name}`;
+  const api = (endpoint: string) => exec("gh", ["api", "--hostname", "github.com", "--method", "GET", endpoint], { timeoutMs: 60_000 });
+  const checkBranch = async (ref: string): Promise<string | null> => {
+    const response = await api(`repos/${slug}/contents/evals/orchestrator/expense-claims/results.csv?ref=${encodeURIComponent(ref)}`);
+    if (response.code) return "cannot read results.csv on origin's results branch";
+    let file: unknown;
+    try { file = JSON.parse(response.stdout); } catch { return "invalid origin results.csv response"; }
+    if (!file || typeof file !== "object" || !("encoding" in file) || file.encoding !== "base64" ||
+        !("content" in file) || typeof file.content !== "string") return "invalid origin results.csv response";
+    const [header, ...rows] = parseCsvText(Buffer.from(file.content, "base64").toString("utf8"));
+    if (!header || ![RESULT_COLUMNS.join(","), LEGACY_RESULT_COLUMNS.join(",")].includes(header.join(","))) return "unexpected origin results.csv header";
+    const objects = rows.map(row => Object.fromEntries(header.map((key, i) => [key, row[i] ?? ""])));
+    for (const run of scored) {
+      if (!run.row) return `no recorded result row for ${run.name}; cannot verify origin`;
+      const found = objects.some(row => row.repo === run.repo && row.run === String(run.n) &&
+        row.note?.split(";").some(part => part.trim() === `batch=${config.id}`) &&
+        Object.entries(run.row!).every(([key, value]) => (row[key] ?? "") === value));
+      if (!found) return `origin results.csv does not preserve the recorded row for ${run.name}`;
+    }
+    return null;
+  };
+  const originalFailure = await checkBranch(branch);
+  if (!originalFailure) return null;
+  const repository = await api(`repos/${slug}`);
+  if (repository.code) return `${originalFailure}; cannot determine origin's default branch`;
+  let metadata: unknown;
+  try { metadata = JSON.parse(repository.stdout); } catch { return `${originalFailure}; invalid origin repository response`; }
+  if (!metadata || typeof metadata !== "object" || !("full_name" in metadata) || metadata.full_name !== slug ||
+      !("default_branch" in metadata) || typeof metadata.default_branch !== "string" ||
+      !/^[a-zA-Z0-9][a-zA-Z0-9/_.-]*$/.test(metadata.default_branch) || metadata.default_branch.includes("..")) {
+    return `${originalFailure}; cannot verify origin's default branch`;
   }
-  return null;
+  if (metadata.default_branch === branch) return originalFailure;
+  const landedFailure = await checkBranch(metadata.default_branch);
+  return landedFailure ? `${originalFailure}; origin default branch: ${landedFailure}` : null;
 }
 
 export function selectCleanupBatches(value: string, root: string): string[] {
