@@ -130,11 +130,11 @@ test('a package.json version that differs from plugin.json is reported', async (
 
 test('a CHANGELOG with no entry for the current version, or no CHANGELOG, is reported', async () => {
   const { repo, root } = sandbox();
-  for (const file of ['plugin.json', 'package.json']) editJson(path.join(root, file), value => { value.version = '0.2.1'; });
-  editJson(path.join(repo, '.github/plugin/marketplace.json'), marketplace => { marketplace.plugins.find(plugin => plugin.name === 'wintermute').version = '0.2.1'; });
+  for (const file of ['plugin.json', 'package.json']) editJson(path.join(root, file), value => { value.version = '9.9.9'; });
+  editJson(path.join(repo, '.github/plugin/marketplace.json'), marketplace => { marketplace.plugins.find(plugin => plugin.name === 'wintermute').version = '9.9.9'; });
   let errors = await validatePlugin(root, repo);
-  assert.deepEqual(errors, ['CHANGELOG.md must have a "## 0.2.1" entry for the current version']);
-  writeFileSync(path.join(root, 'CHANGELOG.md'), `${readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8')}\n## [0.2.1]\n\n- A fix.\n`);
+  assert.deepEqual(errors, ['CHANGELOG.md must have a "## 9.9.9" entry for the current version']);
+  writeFileSync(path.join(root, 'CHANGELOG.md'), `${readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8')}\n## [9.9.9]\n\n- A fix.\n`);
   assert.deepEqual(await validatePlugin(root, repo), []);
   rmSync(path.join(root, 'CHANGELOG.md'));
   errors = await validatePlugin(root, repo);

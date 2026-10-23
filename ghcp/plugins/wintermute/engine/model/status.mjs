@@ -36,7 +36,7 @@ export function displayOf(detail) {
 const QUICK_TOOLS = new Set([
   'create_session', 'send_session_message', 'get_session', 'get_sessions_status', 'list_sessions_and_chats', 'archive_session',
   'answer_session_input', 'respond_to_session_plan_v2', 'navigate_to', 'open_canvas', 'invoke_canvas_action', 'list_canvas_capabilities',
-  'rename_session', 'rename_branch', 'save_session_automation', 'get_session_automation', 'list_projects', 'publish_chat_update',
+  'rename_session', 'rename_branch', 'save_session_automation', 'get_session_automation', 'list_repositories', 'add_repository', 'await_repository_creation', 'publish_chat_update',
   'view', 'create', 'edit', 'apply_patch', 'str_replace_editor', 'grep', 'glob', 'rg', 'tool_search_tool', 'sql', 'store_memory', 'vote_memory', 'skill',
 ]);
 const POLLING_TOOLS = new Set(['read_bash', 'read_agent', 'list_agents', 'list_bash', 'get_session', 'get_sessions_status', 'list_sessions_and_chats', 'get_session_automation']);
