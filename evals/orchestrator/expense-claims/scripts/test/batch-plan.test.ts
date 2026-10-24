@@ -17,6 +17,8 @@ after(() => rmSync(dir, { recursive: true, force: true }));
 
 const FULL = "policy+reports+import+summary";
 const THREE = "policy+reports+import";
+// results.csv as it was before any batch: run 1 alone. The live file grows with every batch.
+const RUN1_RESULTS = join(KIT_DIR, "scripts", "test", "fixtures", "results-run1.csv");
 
 test("batch numbering retains run and provisioned names even without clones or local results rows", () => {
   const runsDir = join(dir, "retained-runs");
@@ -37,8 +39,8 @@ function run(variant: string, n: number): RunState {
   return { key: `${variant}#${n}`, variant, n, features: ALL_FEATURES, calibration: false, name: `orch-eval-${variant}-${n}`, repoDir: "", repo: `ncksol/orch-eval-${variant}-${n}`, status: "done", createdAt: "", judged: [], answers: [], askAttempts: {}, requestIds: {}, flags: [] };
 }
 
-test("today's results.csv: run 1 at 65.7 minutes forces dropping Summary for two variants, with no calibration run", () => {
-  const rows = readResults(join(KIT_DIR, "results.csv"));
+test("a history of run 1 at 65.7 minutes forces dropping Summary for two variants, with no calibration run", () => {
+  const rows = readResults(RUN1_RESULTS);
   const decision = calibrationDecision(rows, ["orchestrator", "session-orchestrator"]);
   assert.equal(decision.state, "drop");
   assert.deepEqual(decision.features, WITHOUT_SUMMARY);
@@ -87,7 +89,7 @@ test("after the calibration runs, the decision is made and calibration runs coun
 });
 
 test("variants alternate A1, B1, A2, B2 and a run without a row doesn't count", () => {
-  const rows = readResults(join(KIT_DIR, "results.csv"));
+  const rows = readResults(RUN1_RESULTS);
   const variants = ["orchestrator", "session-orchestrator"];
   const runs: RunState[] = [];
   const order: string[] = [];

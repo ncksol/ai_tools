@@ -4,6 +4,7 @@ import { after, test } from "node:test";
 import { rehearse, REHEARSAL_VARIANTS, type RehearsalResult } from "../lib/batch/rehearsal.ts";
 import { run as runProc } from "../lib/proc.ts";
 import { readResults } from "../lib/results.ts";
+import { RUN1_RESULTS } from "./fixtures/batch.ts";
 
 // The whole batch, stubbed only where the app and the driver agent would act: real new-run
 // --dry-run, real score with its acceptance suite, real git commits, real curl to a local stub.
@@ -14,7 +15,7 @@ after(() => {
 });
 
 test("a rehearsal of a whole batch runs the self-test and four runs, scores each, and reports", { timeout: 600_000 }, async () => {
-  result = await rehearse();
+  result = await rehearse({ results: RUN1_RESULTS });
   const { config, transcript, notifications, final, app } = result;
   assert.equal(final.details?.phase, "done");
 
@@ -71,7 +72,7 @@ test("a rehearsal of a whole batch runs the self-test and four runs, scores each
 });
 
 test("a rehearsal without allow-all permissions stops at the self-test, leaving provisioned repos unused", { timeout: 120_000 }, async () => {
-  const r = await rehearse({ allowAll: false });
+  const r = await rehearse({ allowAll: false, results: RUN1_RESULTS });
   others.push(r);
   assert.equal(r.final.details?.phase, "stopped");
   assert.match(String(r.final.details?.reason), /^the self-test failed: no tool-permission prompt .*"Tool permissions" under "Overnight batches"/);
@@ -83,7 +84,7 @@ test("a rehearsal without allow-all permissions stops at the self-test, leaving 
 // Both runs hit prompts, so nothing is scored: the case stays cheap beside the suite's timing tests.
 // A blocked run beside one that finishes is covered in batch-permissions.test.ts.
 test("a rehearsal whose runs hit permission prompts voids them, sends each the stop message, and stops early", { timeout: 120_000 }, async () => {
-  const r = await rehearse({ scenarios: ["permission-prompt", "permission-denied"] });
+  const r = await rehearse({ scenarios: ["permission-prompt", "permission-denied"], results: RUN1_RESULTS });
   others.push(r);
   assert.equal(r.final.details?.phase, "stopped");
   assert.match(String(r.final.details?.reason), /^variant-[ab]#1 was blocked by a tool-permission prompt/);
