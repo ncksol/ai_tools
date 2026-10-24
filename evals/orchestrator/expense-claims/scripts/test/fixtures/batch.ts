@@ -216,3 +216,5 @@ export async function harness(opts: {
 }
 
 export const FIXTURE_HEADER = HEADER;
+// results.csv as it was before any batch: run 1 alone. The live file grows with every batch.
+export const RUN1_RESULTS = join(KIT_DIR, "scripts", "test", "fixtures", "results-run1.csv");

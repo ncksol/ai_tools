@@ -10,7 +10,7 @@ import { eventsPath } from "../lib/batch/swarm.ts";
 import { run as runProc } from "../lib/proc.ts";
 import { readResults, replaceResult, summarize } from "../lib/results.ts";
 import { calibrationDecision } from "../lib/batch/plan.ts";
-import { FIXTURE_HEADER, harness, type Harness } from "./fixtures/batch.ts";
+import { FIXTURE_HEADER, harness, RUN1_RESULTS, type Harness } from "./fixtures/batch.ts";
 
 const made: Harness[] = [];
 async function make(opts: Parameters<typeof harness>[0]): Promise<Harness> {
@@ -450,8 +450,8 @@ test("score warnings become flags; the cross-session kickoff warning flags the k
   assert.ok(flags.includes("score-warning: gh pr list failed: offline"));
 });
 
-test("today's results.csv puts every scored run on the three-feature set", async () => {
-  const h = await make({ scenarios: ["ask-final", "ask-final"], variants: ["orchestrator", "session-orchestrator"], results: readFileSync(join(process.cwd(), "results.csv"), "utf8") });
+test("a history of run 1 at 65.7 minutes puts every scored run on the three-feature set", async () => {
+  const h = await make({ scenarios: ["ask-final", "ask-final"], variants: ["orchestrator", "session-orchestrator"], results: readFileSync(RUN1_RESULTS, "utf8") });
   await h.until(() => false);
   const rows = readResults(h.config.resultsPath).slice(1);
   assert.deepEqual(rows.map((r) => [r.variant, r.run, r.features, r.calibration]), [

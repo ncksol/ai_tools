@@ -60,7 +60,8 @@ export async function startNtfyStub(): Promise<{ url: string; received: { title:
 
 // allowAll: false models untrusted registrations holding sessions at manual tool approval, observed
 // on app 1.1.30 before registration became add_repository in 1.1.31; the self-test fails at its shell command.
-export async function rehearse(opts: { scenarios?: Scenario[]; runsPerVariant?: number; parallel?: number; allowAll?: boolean; log?: (line: string) => void } = {}): Promise<RehearsalResult> {
+// results: the results.csv to start from; by default the real one.
+export async function rehearse(opts: { scenarios?: Scenario[]; runsPerVariant?: number; parallel?: number; allowAll?: boolean; results?: string; log?: (line: string) => void } = {}): Promise<RehearsalResult> {
   const dir = mkdtempSync(join(tmpdir(), "orch-eval-rehearsal-"));
   const runsDir = join(dir, "runs");
   const stateDir = join(dir, "session-state");
@@ -69,8 +70,8 @@ export async function rehearse(opts: { scenarios?: Scenario[]; runsPerVariant?: 
   for (const path of [runsDir, stateDir, agentsDir, resultsRepo]) mkdirSync(path, { recursive: true });
   for (const variant of REHEARSAL_VARIANTS) writeFileSync(join(agentsDir, `${variant}.agent.md`), `---\ndescription: rehearsal stand-in\n---\nUses ${variant}-worker.\n`);
   for (const variant of REHEARSAL_VARIANTS) writeFileSync(join(agentsDir, `${variant}-worker.agent.md`), "---\ndescription: rehearsal worker\n---\n");
-  // The real results.csv, so the calibration rule sees the real history.
-  copyFileSync(join(KIT_DIR, "results.csv"), join(resultsRepo, "results.csv"));
+  // The real results.csv by default, so the calibration rule sees the real history.
+  copyFileSync(opts.results ?? join(KIT_DIR, "results.csv"), join(resultsRepo, "results.csv"));
   await git(resultsRepo, ["init", "-q", "-b", "driver-branch"]);
   await git(resultsRepo, ["config", "user.name", "Rehearsal"]);
   await git(resultsRepo, ["config", "user.email", "rehearsal@example.invalid"]);
