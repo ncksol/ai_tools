@@ -1,6 +1,6 @@
 // A batch in a scratch folder for the runner tests: FakeApp for the app, a simulated clock, real
 // new-run --dry-run and git, and a fake score that records its arguments and appends a row.
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { FakeApp, type Scenario } from "../../lib/batch/fake-app.ts";
@@ -58,7 +58,7 @@ export async function harness(opts: {
   id?: string;
   runsDir?: string;
 }): Promise<Harness> {
-  const dir = mkdtempSync(join(tmpdir(), "orch-eval-runner-"));
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "orch-eval-runner-")));
   const variants = opts.variants ?? ["variant-a"];
   const runsDir = opts.runsDir ?? join(dir, "runs");
   const stateDir = join(dir, "session-state");
@@ -175,6 +175,7 @@ export async function harness(opts: {
       return { ok: true };
     },
     appDb: app,
+    archiveInventory: record => app.archiveInventory(record),
     awake: {
       start: () => {
         awake.started++;

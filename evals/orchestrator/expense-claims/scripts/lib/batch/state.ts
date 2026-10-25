@@ -30,6 +30,8 @@ export interface BatchConfig {
   appPlist: string;
   cliVersionFile: string;
   resultsPath: string;
+  // Explicitly reviewed missing results from a named, deliberately abandoned batch.
+  ignoredResultsBatches?: string[];
   kitDir: string;
   scoreScript: string;
   newRunScript: string;
@@ -130,8 +132,11 @@ export interface RunState {
   projectId?: string;
   appSessionId?: string;
   sessionId?: string;
+  agentRevision?: string;
   agentSha256?: string;
   agentBundleSha256?: string;
+  // Live launch closure; absent on older runs whose bundle covered all batch pins.
+  agentBundleNames?: string[];
   // When create_session was first issued (the window for finding the session) and last issued.
   startRequestedAt?: string;
   lastStartAt?: string;
@@ -226,6 +231,7 @@ export interface PendingAction {
 
 export interface Pins {
   agents: Record<string, { path: string; sha256: string }>;
+  agentRevision?: string | null;
   files: Record<string, string>;
   appVersion: string | null;
   cliVersion: string | null;

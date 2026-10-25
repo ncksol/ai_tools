@@ -16,10 +16,12 @@ import { readResults } from "../results.ts";
 import { liveAgent, variantAgents, variantBundle, variantFiles, verifyVariants } from "../variants.ts";
 import { readAnswerSheet, replyFor, rowForQuestion, settleRow, type AnswerRow } from "./answers.ts";
 import type { AppDb } from "./appdb.ts";
+import { archiveRun, type SessionInventory } from "./archive.ts";
+import { openCleanupApp } from "./cleanup-io.ts";
 import { scanSession, scanSwarm } from "./hygiene.ts";
 import { claimActive, releaseActive } from "./lock.ts";
 import { notices, type Notice } from "./notify.ts";
-import { computePins, diffPins } from "./pins.ts";
+import { agentBundleSha256, agentsToPin, computePins, diffPins, readAgentRevision } from "./pins.ts";
 import { calibrationDecision, describePlan, nextRunNumber, planRound, provisionPlan, runRowFor, scoredCount } from "./plan.ts";
 import { buildReport } from "./report.ts";
 import {
@@ -88,6 +90,7 @@ export interface Deps {
   exec(cmd: string, args: string[], opts?: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number }): Promise<ProcResult>;
   notify(notice: Notice): Promise<{ ok: boolean; error?: string }>;
   appDb: AppDb;
+  archiveInventory?: (run: RunState) => SessionInventory;
   awake: { start(untilMs: number): number | null; alive(pid: number): boolean; stop(pid: number): void };
   // The calling driver ("session:<id>" for an app session) and whether a driver is still alive
   // (null when that can't be told).
@@ -1334,16 +1337,43 @@ function scanHygiene(ctx: Ctx, run: RunState): void {
   for (const finding of scanSwarm(readLogs(ctx, runSessionIds(ctx, run)))) addFlag(run, finding.code, finding.detail, iso(ctx.deps.now()));
 }
 
+function archiveRunLogs(ctx: Ctx, run: RunState): void {
+  const failures: string[] = [];
+  let inventory: SessionInventory | null = null;
+  try {
+    inventory = ctx.deps.archiveInventory
+      ? ctx.deps.archiveInventory(run) : openCleanupApp(ctx.config.appDb).inventory(run);
+    if (run.projectId && !inventory.projects.length) throw new Error("app project is missing; descendant discovery may be incomplete");
+    for (const project of inventory.projects) {
+      if (project.id !== run.projectId || project.path !== run.repoDir) throw new Error("app project identity/path mismatch");
+    }
+  } catch (error) {
+    inventory = null;
+    failures.push(`discovery: ${error instanceof Error ? error.message : "app inventory failed"}`);
+  }
+  try {
+    failures.push(...archiveRun(ctx.config, run, inventory, runSessionIds(ctx, run), () => iso(ctx.deps.now())));
+  } catch (error) {
+    failures.push(error instanceof Error ? error.message : "archive failed");
+  }
+  if (failures.length) {
+    for (const failure of failures) addFlag(run, "archive-failed", failure, iso(ctx.deps.now()));
+    log(ctx, `${run.key} archive failed: ${failures.join("; ")}`);
+  } else log(ctx, `${run.key} logs archived in ${join(ctx.config.dir, "sessions", run.name)}`);
+}
+
 async function scoreRun(ctx: Ctx, state: BatchState, run: RunState): Promise<void> {
   const { config, deps } = ctx;
   findAnswerSource(ctx, run);
-  if (config.variantSet) {
-    const variant = config.variantSet.variants[run.variant];
+  {
+    const variant = config.variantSet?.variants[run.variant];
+    const primary = variant ? variant.agent : liveAgent(run.variant);
+    const watched = variant ? [variant.agent, ...Object.keys(variant.workers)] : run.agentBundleNames ?? Object.keys(state.pins.agents);
     const now = currentPins(config);
     if (!run.agentSha256 || !run.agentBundleSha256) addFlag(run, "agent-drift", "registered launch hashes were not recorded; provenance is unavailable", iso(deps.now()));
     else {
-      const changed = [variant.agent, ...Object.keys(variant.workers)].filter((name) =>
-        now.agents[name]?.sha256 !== (name === variant.agent ? run.agentSha256 : state.pins.agents[name]?.sha256));
+      const changed = watched.filter((name) =>
+        now.agents[name]?.sha256 !== (name === primary ? run.agentSha256 : state.pins.agents[name]?.sha256));
       if (changed.length > 0) addFlag(run, "agent-drift", `registered files changed between launch and scoring: ${changed.join(", ")}`, iso(deps.now()));
     }
   }
@@ -1353,9 +1383,10 @@ async function scoreRun(ctx: Ctx, state: BatchState, run: RunState): Promise<voi
   run.note = noteFor(config, run);
   const args = [config.scoreScript, "--repo-dir", run.repoDir, "--session", run.sessionId ?? "", "--state-dir", config.stateDir, "--results", config.resultsPath, "--note", run.note];
   args.push("--app-db", config.appDb, "--calibration", run.calibration ? "yes" : "no");
-  if (config.variantSet && run.agentSha256 && run.agentBundleSha256) {
-    const variant = config.variantSet.variants[run.variant];
-    args.push("--agent-revision", variant.revision, "--agent-sha256", run.agentSha256, "--agent-bundle-sha256", run.agentBundleSha256);
+  if (run.agentSha256 && run.agentBundleSha256) {
+    const revision = config.variantSet ? config.variantSet.variants[run.variant].revision : run.agentRevision;
+    if (revision) args.push("--agent-revision", revision);
+    args.push("--agent-sha256", run.agentSha256, "--agent-bundle-sha256", run.agentBundleSha256);
   }
   if (config.dryRun) args.push("--no-github");
   if (run.endReason === "final" && run.final) args.push("--end-at", run.final.timestamp);
@@ -1529,8 +1560,18 @@ async function runStep(ctx: Ctx, state: BatchState, index: number): Promise<Step
       run.startRequestedAt = iso(now);
       if (config.variantSet) {
         const variant = config.variantSet.variants[run.variant];
+        run.agentRevision = variant.revision;
         run.agentSha256 = state.pins.agents[variant.agent].sha256;
         run.agentBundleSha256 = variantBundle(variant);
+      } else {
+        const agent = liveAgent(run.variant);
+        const revision = state.pins.agentRevision === undefined ? readAgentRevision(config.agentsDir, state.pins.agents) : state.pins.agentRevision;
+        if (revision) run.agentRevision = revision;
+        run.agentSha256 = state.pins.agents[agent]?.sha256;
+        run.agentBundleNames = agentsToPin(config.agentsDir, [agent]).names;
+        run.agentBundleSha256 = agentBundleSha256(Object.fromEntries(
+          run.agentBundleNames.map((name) => [name, state.pins.agents[name]]),
+        ));
       }
       run.status = "starting";
       return { action: issue(ctx, state, "create_session", index, { args: runCreateArgs(ctx, run) }) };
@@ -1553,6 +1594,7 @@ async function runStep(ctx: Ctx, state: BatchState, index: number): Promise<Step
       const row = rowOf(ctx, run);
       if (row) adoptRow(ctx, state, run, row);
       else await scoreRun(ctx, state, run);
+      archiveRunLogs(ctx, run);
       return { progressed: true };
     }
     case "scored": {
@@ -1644,6 +1686,7 @@ async function runStep(ctx: Ctx, state: BatchState, index: number): Promise<Step
     }
     case "done":
     case "void":
+      if (run.sessionId && !run.scoredAt) archiveRunLogs(ctx, run);
       if (run.status === "done") {
         scanHygiene(ctx, run);
         // Flags found after the outcome notification (cleanup, memory use after scoring) go out as a

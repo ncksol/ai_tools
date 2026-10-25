@@ -35,7 +35,7 @@ const USAGE = `Usage (from evals/orchestrator/expense-claims):
   npm run batch -- next --batch <id|path|latest> [--max-wait 420]
   npm run batch -- record --batch <id|path|latest> --action <id> <result flags>
   npm run batch -- status|stop|report --batch <id|path|latest>
-  npm run batch -- cleanup --batch <id|path|latest|all> [--yes] [--force] [--dropped <run-name> ...]
+  npm run batch -- cleanup --batch <id|path|latest|all> [--yes] [--force] [--dropped <run-name> ...] [--accept-lost <run-name> ...]
   npm run batch -- take-over --batch <id|path|latest>   (you only: release a batch whose driver is gone)
   npm run batch -- alert --batch <id|path|latest> --message <text>
   npm run batch -- notify-test
@@ -46,6 +46,7 @@ init options: --model claude-opus-5.5 --effort max --context-tier long_context -
   --self-test-model claude-sonnet-5.5 --self-test-effort low --self-test-agent <name>
   --agents-dir <dir> (default: installed Wintermute agents; --variants-file uses ~/.copilot/agents)
   --runs-dir <dir> --batches-dir <dir> --no-push --dry-run (tests only; never drive it with app tools)
+  --ignore-results-batch <id> (explicitly skip missing results from a deliberately abandoned batch)
 record flags: --project-id <id> | --session-id <id> | --answered | --row <n> [--request-id <id>] [--choice <text>] | --not-pending
   | --final <messageId> | --question <messageId> [--row <n>] | --neither | --sent | --failed <error>`;
 
@@ -56,6 +57,7 @@ const { values, positionals } = parseArgs({
     yes: { type: "boolean", default: false },
     force: { type: "boolean", default: false },
     dropped: { type: "string", multiple: true, default: [] },
+    "accept-lost": { type: "string", multiple: true, default: [] },
     "batches-dir": { type: "string", default: defaultPaths().batchesDir },
     "max-wait": { type: "string", default: "420" },
     // init
@@ -72,6 +74,7 @@ const { values, positionals } = parseArgs({
     "agents-dir": { type: "string" },
     "app-db": { type: "string", default: defaultPaths().appDb },
     results: { type: "string", default: defaultPaths().resultsPath },
+    "ignore-results-batch": { type: "string", multiple: true, default: [] },
     "ntfy-url-file": { type: "string", default: defaultPaths().ntfyUrlFile },
     "self-test-only": { type: "boolean", default: false },
     "self-test-model": { type: "string", default: "claude-sonnet-5.5" },
@@ -199,6 +202,7 @@ async function init(): Promise<number> {
     appPlist: paths.appPlist,
     cliVersionFile: paths.cliVersionFile,
     resultsPath: resolve(values.results),
+    ignoredResultsBatches: values["ignore-results-batch"],
     kitDir: KIT_DIR,
     scoreScript: join(KIT_DIR, "scripts", "score.ts"),
     newRunScript: join(KIT_DIR, "scripts", "new-run.ts"),
@@ -279,7 +283,7 @@ async function main(): Promise<number> {
     case "cleanup":
       if (!values.batch) throw new UsageError("--batch is required");
       if (values.yes && values["dry-run"]) throw new UsageError("--yes cannot be combined with --dry-run");
-      return cleanupCommand({ batch: values.batch, batchesDir: values["batches-dir"], yes: values.yes, force: values.force, dropped: values.dropped });
+      return cleanupCommand({ batch: values.batch, batchesDir: values["batches-dir"], yes: values.yes, force: values.force, dropped: values.dropped, acceptLost: values["accept-lost"] });
     case "init":
       return init();
     case "selftest":

@@ -20,7 +20,7 @@ function makeDb(name: string, drop: string[] = []): string {
   const extra: Record<string, string[]> = { sessions: ["title", "model"], workspaces: ["branch"], projects: ["name"] };
   for (const [table, columns] of Object.entries(APP_DB_COLUMNS)) {
     const keep = [...new Set([...columns, ...(extra[table] ?? [])])].filter((column) => !drop.includes(`${table}.${column}`));
-    const type = (column: string) => (["auto_approve", "was_interrupted", "is_default"].includes(column) ? "INTEGER" : "TEXT");
+    const type = (column: string) => (["auto_approve", "was_interrupted", "is_default", "is_initialized"].includes(column) ? "INTEGER" : "TEXT");
     db.exec(`CREATE TABLE ${table} (${keep.map((column) => `${column} ${type(column)}`).join(", ")})`);
   }
   const insert = (table: string, values: Record<string, string | number>) => {
@@ -97,6 +97,26 @@ test("child discovery follows both parent id forms and retains archived children
   assert.deepEqual(db.childSessions("s2"), []);
   assert.deepEqual(db.takeErrors(), []);
   assert.equal(sha(path), before);
+});
+
+test("a workspace never started only when it has no CLI session and never finished initializing", () => {
+  const path = makeDb("started.db");
+  const fixture = new DatabaseSync(path);
+  fixture.exec("UPDATE workspaces SET is_initialized = 1 WHERE id = 'w1'");
+  fixture.exec("INSERT INTO workspaces (id,session_id,is_initialized) VALUES ('failed',NULL,0), ('idle',NULL,1), ('starting','s9',0);");
+  fixture.close();
+  const before = sha(path);
+  const db = openAppDb(path);
+  assert.equal(db.workspaceNeverStarted("failed"), true);
+  assert.equal(db.workspaceNeverStarted("idle"), false);
+  assert.equal(db.workspaceNeverStarted("starting"), false);
+  assert.equal(db.workspaceNeverStarted("w1"), false);
+  assert.equal(db.workspaceNeverStarted("absent"), false);
+  assert.deepEqual(db.takeErrors(), []);
+  assert.equal(sha(path), before);
+  const drifted = openAppDb(makeDb("no-init.db", ["workspaces.is_initialized"]));
+  assert.equal(drifted.workspaceNeverStarted("w1"), null);
+  assert.match(drifted.takeErrors().join(), /is_initialized/);
 });
 
 test("workspace aliases retain old CLI logs and children linked to those logs", () => {

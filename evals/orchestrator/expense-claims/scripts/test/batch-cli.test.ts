@@ -31,6 +31,12 @@ function batch(args: string[], extraEnv: NodeJS.ProcessEnv = {}) {
   return run(process.execPath, ["scripts/batch.ts", ...args], { cwd: KIT_DIR, env });
 }
 
+test("cleanup accepts the per-run lost-evidence flag but refuses it across all batches", async () => {
+  const result = await batch(["cleanup", "--batch", "all", "--accept-lost", "orch-eval-orchestrator-1"]);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /--accept-lost requires one batch, not all/);
+});
+
 test("init refuses a self-test agent that is an orchestrator", async () => {
   for (const agent of ["session-orchestrator", "wintermute:session-orchestrator", "wintermute:hands-on-orchestrator"]) {
     const result = await batch(["init", "--dry-run", "--memory-off", "--variants", "variant-a", "--self-test-agent", agent, ...common]);
@@ -72,6 +78,14 @@ test("init without the Memory confirmation fails the preflight and creates nothi
   assert.match(result.stdout, /FAIL Copilot Memory is off/);
   assert.match(result.stdout, /Turn Copilot Memory off at https:\/\/github\.com\/settings\/copilot\/features/);
   assert.match(result.stdout, /no batch was created/);
+});
+
+test("init records each explicit batch-history override in its config", async () => {
+  const result = await batch(["init", "--dry-run", "--memory-off", "--variants", "variant-a", "--id", "history-overrides",
+    "--ignore-results-batch", "abandoned", "--ignore-results-batch", "dropped", ...common]);
+  assert.equal(result.code, 0, result.stdout + result.stderr);
+  const config = JSON.parse(readFileSync(join(dir, "batches", "history-overrides", "config.json"), "utf8"));
+  assert.deepEqual(config.ignoredResultsBatches, ["abandoned", "dropped"]);
 });
 
 test("init runs the four orchestrators in parallel by default and refuses more runs at once than variants", async () => {

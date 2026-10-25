@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { readVariants, verifyVariants, variantBundle } from "../lib/variants.ts";
+import { POLICY_VARIANTS, readVariants, verifyVariants, variantBundle } from "../lib/variants.ts";
 import { calibrationDecision, planNext, scoredCount } from "../lib/batch/plan.ts";
 import type { RunState } from "../lib/batch/state.ts";
 import { RESULT_COLUMNS, type ResultRow } from "../lib/results.ts";
@@ -66,6 +66,19 @@ test("manifest labels equal file IDs and logged names so session selection can b
     assert.throws(() => readVariants(f.path), /Invalid variant/);
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
 });
+test("summaries classify exactly the shipped manifest's labels, and a manifest with any other label is rejected", () => {
+  const shipped = readVariants(join(import.meta.dirname, "..", "..", "variants", "review-policy.json"));
+  assert.deepEqual(new Set(Object.keys(shipped.variants)), POLICY_VARIANTS);
+  const f = fixture();
+  try {
+    const manifest = JSON.parse(readFileSync(f.path, "utf8"));
+    manifest.variants["orchestrator-review-d"] = { ...manifest.variants["orchestrator-review-a"], agent: "orchestrator-review-d" };
+    delete manifest.variants["orchestrator-review-a"];
+    writeFileSync(f.path, JSON.stringify(manifest));
+    assert.throws(() => readVariants(f.path), /Invalid variant orchestrator-review-d/);
+  } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
 test("missing aliases, stale snapshot hashes and malformed manifests stop selection", () => {
   const f = fixture();
   try {

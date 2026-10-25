@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -87,6 +87,60 @@ test("archived database descendants are included and missing child logs make the
     assert.equal(incomplete.status, "incomplete");
     assert.equal(incomplete.usd, null);
     assert.match(incomplete.warnings.join("; "), /missing/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a descendant whose creation failed before it got a session costs nothing, but a missing log of a started one is incomplete", () => {
+  const dir = mkdtempSync(join(tmpdir(), "orch-usage-"));
+  try {
+    writeSession(dir, "root", "test/repo", at, [
+      ev("session.usage_record", 2, { usage: usage() }),
+      ev("tool.execution_start", 3, { toolName: "create_session", toolCallId: "failed" }),
+      ev("tool.execution_complete", 4, { toolCallId: "failed", success: false, error: {
+        message: "Created session 'Reports' (id: failed-ws) but workspace initialization failed: Base branch 'x' has not been pushed to origin",
+        code: "failure",
+      } }),
+    ]);
+    const options = { stateDir: dir, rootId: "root", start: "2026-01-01T10:01:00Z", capturedAt: "2026-01-01T10:05:00Z", pricing: pricing() };
+
+    const fromLog = collectUsage({ ...options, children: (id) => id === "root" ? ["failed-ws"] : [], resolveSession: () => null });
+    assert.equal(fromLog.status, "complete", fromLog.warnings.join("; "));
+    assert.equal(fromLog.usd, 0.00392);
+    assert.deepEqual(fromLog.notes, ["failed-ws never started"]);
+
+    const fromDb = collectUsage({
+      ...options, children: (id) => id === "root" ? ["db-ws"] : [], resolveSession: () => null,
+      neverStarted: (id) => id === "db-ws",
+    });
+    assert.equal(fromDb.status, "complete", fromDb.warnings.join("; "));
+    assert.deepEqual(fromDb.notes, ["db-ws never started"]);
+
+    // Started (the app resolves a CLI session) but its log is gone: still incomplete.
+    const lost = collectUsage({
+      ...options, children: (id) => id === "root" ? ["failed-ws"] : [], resolveSession: (id) => id === "failed-ws" ? "gone" : null,
+    });
+    assert.equal(lost.status, "incomplete");
+    assert.match(lost.warnings.join("; "), /gone: No event log/);
+
+    // Neither the log nor the app says it never started.
+    const unknown = collectUsage({ ...options, children: (id) => id === "root" ? ["other"] : [], neverStarted: () => false });
+    assert.equal(unknown.status, "incomplete");
+    assert.deepEqual(unknown.notes, []);
+
+    // A failed start lookup is not evidence that the session never ran.
+    const failedLookup = collectUsage({
+      ...options, children: (id) => id === "root" ? ["db-ws"] : [], neverStarted: () => { throw new Error("schema changed"); },
+    });
+    assert.equal(failedLookup.status, "incomplete");
+    assert.match(failedLookup.warnings.join("; "), /start check failed: schema changed/);
+
+    // A state folder without a log is a log that should exist.
+    mkdirSync(join(dir, "db-ws"));
+    const folder = collectUsage({ ...options, children: (id) => id === "root" ? ["db-ws"] : [], neverStarted: () => true });
+    assert.equal(folder.status, "incomplete");
+    assert.deepEqual(folder.notes, []);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -104,11 +104,11 @@ test("old result files migrate without fabricating missing cost or changing hist
 
 test("pinned policy calibrations stay excluded and different agent bundles are never pooled", () => {
   const summary = summarize([
-    row({ variant: "a", agent: "a", calibration: "yes", agent_bundle_sha256: "first", minutes: "10" }),
-    row({ variant: "a", agent: "a", features: THREE, agent_bundle_sha256: "first", minutes: "15", robustness_status: "failed" }),
-    row({ variant: "a", agent: "a", features: THREE, agent_bundle_sha256: "second", minutes: "25" }),
-    row({ variant: "a", agent: "orchestrator", calibration: "yes", agent_bundle_sha256: "first", minutes: "99" }),
-    row({ variant: "a", features: THREE, agent_bundle_sha256: "first", minutes: "99" }),
+    row({ variant: "orchestrator-review-a", agent: "orchestrator-review-a", calibration: "yes", agent_bundle_sha256: "first", minutes: "10" }),
+    row({ variant: "orchestrator-review-a", agent: "orchestrator-review-a", features: THREE, agent_bundle_sha256: "first", minutes: "15", robustness_status: "failed" }),
+    row({ variant: "orchestrator-review-a", agent: "orchestrator-review-a", features: THREE, agent_bundle_sha256: "second", minutes: "25" }),
+    row({ variant: "orchestrator-review-a", agent: "orchestrator", calibration: "yes", agent_bundle_sha256: "first", minutes: "99" }),
+    row({ variant: "orchestrator-review-a", features: THREE, agent_bundle_sha256: "first", minutes: "99" }),
   ]);
   assert.equal(summary.groups.find((g) => g.features === FULL)!.runs, 0);
   assert.deepEqual(summary.groups.filter((g) => g.features === THREE).map((g) => g.medianMinutes), [15, 25]);
@@ -118,6 +118,22 @@ test("pinned policy calibrations stay excluded and different agent bundles are n
   assert.doesNotMatch(formatSummary(summary), /Calibration runs count as scored/);
   assert.doesNotMatch(formatSummary(summary), /The median is over 30 minutes/);
   assert.match(formatSummary(summary), /Excluded 2 pinned row\(s\).*logged agent/);
+});
+
+test("live variant rows with agent_bundle_sha256 match namespaced agents and split summary groups by bundle", () => {
+  const summary = summarize([
+    row({ variant: "orchestrator", agent: "wintermute:orchestrator", features: THREE, agent_bundle_sha256: "bundle1111", minutes: "30" }),
+    row({ variant: "orchestrator", agent: "wintermute:orchestrator", features: THREE, agent_bundle_sha256: "bundle1111", minutes: "40" }),
+    row({ variant: "orchestrator", agent: "wintermute:orchestrator", features: THREE, agent_bundle_sha256: "bundle2222", minutes: "50" }),
+  ]);
+  assert.equal(summary.excludedAgentRuns, 0);
+  assert.deepEqual(summary.groups.map((g) => [g.variant, g.agentBundle, g.runs, g.medianMinutes]), [
+    ["orchestrator", "bundle1111", 2, 35],
+    ["orchestrator", "bundle2222", 1, 50],
+  ]);
+  const formatted = formatSummary(summary);
+  assert.match(formatted, /orchestrator@bundle11/);
+  assert.match(formatted, /orchestrator@bundle22/);
 });
 
 test("median handles odd, even and empty lists", () => {
