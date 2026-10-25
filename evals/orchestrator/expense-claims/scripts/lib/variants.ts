@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const LIVE_VARIANTS = ["orchestrator", "session-orchestrator", "hands-on-orchestrator", "hands-on-session-orchestrator"];
+const DEFAULT_MANIFEST = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "variants", "review-policy.json");
 
 export function variantLabel(agent: string): string {
   const bare = agent.replace(/^wintermute:/, "");
@@ -35,6 +37,14 @@ const sha = (text: string | Buffer): string => createHash("sha256").update(text)
 const object = (v: unknown): Record<string, unknown> | null =>
   v !== null && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : null;
 const name = (v: unknown): v is string => typeof v === "string" && /^[a-z0-9][a-z0-9-]*$/.test(v);
+
+export function readPolicyLabels(path = DEFAULT_MANIFEST): ReadonlySet<string> {
+  const data = object(JSON.parse(readFileSync(path, "utf8")));
+  const entries = object(data?.variants);
+  return new Set(entries ? Object.keys(entries) : []);
+}
+
+export const POLICY_VARIANTS = readPolicyLabels();
 
 export function readVariants(path: string): VariantSet {
   path = resolve(path);

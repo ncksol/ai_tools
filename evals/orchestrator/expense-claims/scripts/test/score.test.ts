@@ -8,6 +8,7 @@ import { ALL_FEATURES, stripFeatures } from "../lib/features.ts";
 import { run } from "../lib/proc.ts";
 import { readResults, summarize } from "../lib/results.ts";
 import { KIT_DIR, robustnessFiles, robustnessSha256 } from "../lib/suite.ts";
+import { readVariants, variantBundle } from "../lib/variants.ts";
 import { basic, childLog, ev, withEvents, writeSession } from "./fixtures/events.ts";
 import { PERMISSIVE_CSV } from "./fixtures/permissive-csv.ts";
 
@@ -321,6 +322,22 @@ test("explicit live runtime IDs keep manual scoring in the historical calibratio
   ]);
   assert.equal(summarize(rows).groups.length, 2);
   assert.deepEqual(summarize(rows).groups.map((g) => [g.agentBundle, g.runs]), [["", 2], ["b".repeat(64), 1]]);
+
+  const set = readVariants(join(KIT_DIR, "variants", "review-policy.json"));
+  const variantA = set.variants["orchestrator-review-a"];
+  writeSession(stateDir, "policy", "local/orch-eval-orchestrator-1", "2026-01-01T10:00:00Z",
+    basic().map((event) => event.type === "subagent.selected" ? { ...event, data: { agentName: variantA.agent } } : event));
+  const policyResults = join(dir, "policy-results.csv");
+  const policyScore = await score([
+    "--repo-dir", repoDir, "--no-github", "--results", policyResults, "--state-dir", stateDir, "--session", "policy",
+    "--n", "1", "--variant", variantA.agent,
+    "--agent-revision", variantA.revision, "--agent-sha256", variantA.sha256, "--agent-bundle-sha256", variantBundle(variantA),
+  ]);
+  assert.equal(policyScore.code, 0, policyScore.stdout + policyScore.stderr);
+  const policySummary = summarize(readResults(policyResults));
+  assert.equal(policySummary.pinnedCalibrations, 1);
+  assert.equal(policySummary.groups.length, 1);
+  assert.equal(policySummary.groups[0].runs, 0);
 });
 
 test("robustness failures do not change a passing gate outcome or the timed score", { timeout: 180_000 }, async () => {

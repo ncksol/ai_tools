@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { ALL_FEATURES, featureSetName } from "./features.ts";
-import { variantLabel } from "./variants.ts";
+import { POLICY_VARIANTS, variantLabel } from "./variants.ts";
 
 export const LEGACY_RESULT_COLUMNS = [
   "date", "variant", "run", "repo", "session", "agent", "features", "calibration", "outcome",
@@ -98,8 +98,7 @@ export const matchesPinnedAgent = (row: ResultRow): boolean =>
   !row.agent_bundle_sha256 || (Boolean(row.agent) && variantLabel(row.agent) === row.variant);
 
 const isPinnedPolicy = (row: ResultRow): boolean =>
-  Boolean(row.agent_bundle_sha256) &&
-  row.note.split(";").some((part) => /^variant-set=\S+$/.test(part.trim()));
+  Boolean(row.agent_bundle_sha256) && POLICY_VARIANTS.has(row.variant);
 
 export interface VariantSummary {
   features: string;

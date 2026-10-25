@@ -135,7 +135,6 @@ test("custom live --variants labels outside LIVE_VARIANTS keep the normal calibr
   assert.equal(rows[0].agent, "custom-orchestrator");
   assert.equal(rows[0].calibration, "yes");
   assert.equal(rows[0].agent_bundle_sha256.length, 64);
-  assert.doesNotMatch(rows[0].note, /variant-set=/);
   assert.equal(scoredCount(h.state().runs, rows, "custom-orchestrator", ["policy", "reports", "import", "summary"]), 1);
   const summary = summarize(rows);
   assert.deepEqual(summary.calibration, { runs: 1, median: 20, counted: true });
