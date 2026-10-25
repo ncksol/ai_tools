@@ -97,6 +97,15 @@ export interface UsageSummary {
   records: number;
   tokens: Tokens;
   warnings: string[];
+  // Descendants that never started a CLI session, so cost nothing; they don't make the total incomplete.
+  notes: string[];
+}
+
+// A create_session that the app reports as failed after it made the session's workspace.
+function failedCreation(event: LogEvent): string | null {
+  const error = object(event.data?.error);
+  const message = typeof error?.message === "string" ? error.message : "";
+  return /^Created session [\s\S]*?\(id: ([a-zA-Z0-9-]+)\) but workspace initialization failed/.exec(message)?.[1] ?? null;
 }
 
 // Results have used both CLI session ids and app workspace ids across app releases.
@@ -118,11 +127,15 @@ export function collectUsage(opts: {
   children?: (sessionId: string) => string[];
   aliases?: (sessionId: string) => string[];
   resolveSession?: (reference: string) => string | null;
+  // True when the app's records show the workspace never got a CLI session.
+  neverStarted?: (reference: string) => boolean;
 }): UsageSummary {
   const start = Date.parse(opts.start);
   const end = Date.parse(opts.capturedAt);
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) throw new Error("Invalid usage snapshot window");
   const warnings: string[] = [];
+  const notes = new Set<string>();
+  const failedCreations = new Set<string>();
   const seenSessions = new Set<string>();
   const seenUsage = new Set<string>();
   const queue = [opts.rootId];
@@ -137,7 +150,22 @@ export function collectUsage(opts: {
     }
     let id = reference;
     if (!existsSync(join(opts.stateDir, id, "events.jsonl"))) {
-      id = opts.resolveSession?.(reference) ?? reference;
+      const resolved = opts.resolveSession?.(reference) ?? null;
+      if (resolved) id = resolved;
+      else if (!existsSync(join(opts.stateDir, reference))) {
+        let neverStarted = failedCreations.has(reference);
+        if (!neverStarted && opts.neverStarted) {
+          try {
+            neverStarted = opts.neverStarted(reference);
+          } catch (error) {
+            warnings.push(`${reference}: start check failed: ${(error as Error).message}`);
+          }
+        }
+        if (neverStarted) {
+          notes.add(`${reference} never started`);
+          continue;
+        }
+      }
     }
     if (!/^[a-zA-Z0-9-]+$/.test(id)) {
       warnings.push(`Invalid resolved session id for ${reference}`);
@@ -180,10 +208,15 @@ export function collectUsage(opts: {
     let localRecords = 0;
     for (const event of events) {
       const data = event.data ?? {};
-      if (event.type === "tool.execution_complete" && typeof data.toolCallId === "string" && creations.delete(data.toolCallId) && data.success !== false) {
-        const child = createdSession(event);
-        if (child) queue.push(child);
-        else warnings.push(`${id}: cannot resolve created session for ${data.toolCallId}`);
+      if (event.type === "tool.execution_complete" && typeof data.toolCallId === "string" && creations.delete(data.toolCallId)) {
+        if (data.success !== false) {
+          const child = createdSession(event);
+          if (child) queue.push(child);
+          else warnings.push(`${id}: cannot resolve created session for ${data.toolCallId}`);
+        } else {
+          const failed = failedCreation(event);
+          if (failed) failedCreations.add(failed);
+        }
       }
       if (event.type !== "session.usage_record") continue;
       const usage = object(data.usage);
@@ -209,5 +242,5 @@ export function collectUsage(opts: {
     if (localRecords === 0) warnings.push(`${id}: no usage records in the snapshot`);
   }
   const status = records === 0 ? "unavailable" : warnings.length > 0 ? "incomplete" : "complete";
-  return { status, usd: status === "complete" ? Math.round(usd * 1e9) / 1e9 : null, sessions: seenSessions.size, records, tokens, warnings };
+  return { status, usd: status === "complete" ? Math.round(usd * 1e9) / 1e9 : null, sessions: seenSessions.size, records, tokens, warnings, notes: [...notes] };
 }

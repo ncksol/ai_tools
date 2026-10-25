@@ -52,6 +52,7 @@ export class FakeApp implements AppDb {
     return [...this.sessions.values()].find((session) => session.id === sessionId)?.children ?? [];
   }
   sessionAliases(): string[] { return []; }
+  workspaceNeverStarted(): boolean { return false; }
   // Every project uses the app's default account.
   account = "ncksol";
   defaultAccount(): string | null { return this.account; }

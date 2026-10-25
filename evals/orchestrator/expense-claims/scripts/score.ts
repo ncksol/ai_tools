@@ -278,6 +278,7 @@ async function main(): Promise<number> {
   let usage: UsageSummary | null = null;
   let pricingVersion = "";
   const costWarnings: string[] = [];
+  const costNotes: string[] = [];
   if (timing.session !== "manual") {
     try {
       const pricing = readPricing(resolve(values.pricing));
@@ -298,13 +299,21 @@ async function main(): Promise<number> {
           if (aliases === null || errors.length > 0) throw new Error(errors.join("; ") || "Cannot discover session aliases");
           return aliases;
         },
+        neverStarted: (id: string) => {
+          const never = db.workspaceNeverStarted(id);
+          const errors = db.takeErrors();
+          if (never === null || errors.length > 0) throw new Error(errors.join("; ") || "Cannot read the workspace's start state");
+          return never;
+        },
       });
       costWarnings.push(...usage.warnings.map((warning) => `cost: ${warning}`));
+      costNotes.push(...usage.notes.map((note) => `cost: ${note}`));
     } catch (error) {
       costWarnings.push(`cost unavailable: ${(error as Error).message}`);
     }
   }
   for (const warning of costWarnings) console.log(`Warning: ${warning}`);
+  for (const note of costNotes) console.log(`Note: ${note}`);
 
   const tmp = mkdtempSync(join(tmpdir(), "orch-eval-score-"));
   const cleanup = () => rmSync(tmp, { recursive: true, force: true });
@@ -389,7 +398,7 @@ async function main(): Promise<number> {
       cache_read_tokens_all_models: usage?.records ? String(usage.tokens.cacheReadTokens) : "",
       cache_write_tokens_all_models: usage?.records ? String(usage.tokens.cacheWriteTokens) : "",
       output_tokens_all_models: usage?.records ? String(usage.tokens.outputTokens) : "",
-      note: [values.note, ...warnings, ...(files.length ? ["robustness has not completed"] : [])].filter(Boolean).join("; "),
+      note: [values.note, ...costNotes, ...warnings, ...(files.length ? ["robustness has not completed"] : [])].filter(Boolean).join("; "),
     };
     // Persist the gate first: even an outer score timeout during diagnostics must leave a scored row.
     if (replaced.length > 0) replaceResult(resultsPath, repo, runId, row);
@@ -417,7 +426,7 @@ async function main(): Promise<number> {
         warnings.push(warning);
         console.log(`Warning: ${warning}`);
       }
-      row.note = [values.note, ...warnings].filter(Boolean).join("; ");
+      row.note = [values.note, ...costNotes, ...warnings].filter(Boolean).join("; ");
       replaceResult(resultsPath, repo, runId, row);
     }
 

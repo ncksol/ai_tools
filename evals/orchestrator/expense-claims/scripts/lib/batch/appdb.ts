@@ -26,6 +26,8 @@ export interface AppDb {
   creatorLinks(appSessionId: string): { creator: string | null; coordinator: string | null; createdBy: string | null } | null;
   childSessions(sessionId: string): string[] | null;
   sessionAliases(sessionId: string): string[] | null;
+  // True when the workspace exists but never got a CLI session (initialization failed). Null: lookup failed.
+  workspaceNeverStarted(appSessionId: string): boolean | null;
   // The login of the app's default account, which projects with no account of their own use.
   defaultAccount(): string | null;
   // The login a project's sessions run as.
@@ -42,7 +44,7 @@ export interface AppDb {
 
 // The columns the runner reads. probe() checks each one exists.
 export const APP_DB_COLUMNS: Record<string, string[]> = {
-  workspaces: ["id", "session_id", "project_id", "name", "archived_at", "created_by", "created_at", "creator_session_id", "coordinating_creator_session_id"],
+  workspaces: ["id", "session_id", "project_id", "name", "archived_at", "created_by", "created_at", "creator_session_id", "coordinating_creator_session_id", "is_initialized"],
   projects: ["id", "main_repo_path", "copilot_account_id", "github_account_id"],
   accounts: ["id", "login", "is_default"],
   sessions: ["id", "was_interrupted", "interruption_reason"],
@@ -138,6 +140,12 @@ export function openAppDb(path: string): AppDb {
       const current = text(cell("workspaces", "session_id", "id", workspace));
       return [...new Set([...aliases, ...(current ? [current] : [])])].filter((alias) => alias !== id);
     },
+    workspaceNeverStarted: (id) => {
+      const initialized = cell("workspaces", "is_initialized", "id", id);
+      const session = cell("workspaces", "session_id", "id", id);
+      if (initialized === undefined || session === undefined) return null;
+      return initialized !== null && Number(initialized) === 0 && session === null;
+    },
     defaultAccount,
     // As observed in the app: the project's Copilot account, else its GitHub account, else the default.
     projectAccount: (id) => {
@@ -188,6 +196,7 @@ export const noAppDb: AppDb = {
   creatorLinks: () => null,
   childSessions: () => null,
   sessionAliases: () => null,
+  workspaceNeverStarted: () => null,
   defaultAccount: () => null,
   projectAccount: () => null,
   projectTrusted: () => null,
