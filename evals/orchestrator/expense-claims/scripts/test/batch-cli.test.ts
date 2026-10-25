@@ -74,6 +74,14 @@ test("init without the Memory confirmation fails the preflight and creates nothi
   assert.match(result.stdout, /no batch was created/);
 });
 
+test("init records each explicit batch-history override in its config", async () => {
+  const result = await batch(["init", "--dry-run", "--memory-off", "--variants", "variant-a", "--id", "history-overrides",
+    "--ignore-results-batch", "abandoned", "--ignore-results-batch", "dropped", ...common]);
+  assert.equal(result.code, 0, result.stdout + result.stderr);
+  const config = JSON.parse(readFileSync(join(dir, "batches", "history-overrides", "config.json"), "utf8"));
+  assert.deepEqual(config.ignoredResultsBatches, ["abandoned", "dropped"]);
+});
+
 test("init runs the four orchestrators in parallel by default and refuses more runs at once than variants", async () => {
   const four = ["orchestrator", "session-orchestrator", "hands-on-orchestrator", "hands-on-session-orchestrator"];
   for (const agent of four) writeFileSync(join(dir, "agents", `${agent}.agent.md`), `${agent}\n`);

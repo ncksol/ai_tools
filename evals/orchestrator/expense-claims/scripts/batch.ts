@@ -46,6 +46,7 @@ init options: --model claude-opus-5.5 --effort max --context-tier long_context -
   --self-test-model claude-sonnet-5.5 --self-test-effort low --self-test-agent <name>
   --agents-dir <dir> (default: installed Wintermute agents; --variants-file uses ~/.copilot/agents)
   --runs-dir <dir> --batches-dir <dir> --no-push --dry-run (tests only; never drive it with app tools)
+  --ignore-results-batch <id> (explicitly skip missing results from a deliberately abandoned batch)
 record flags: --project-id <id> | --session-id <id> | --answered | --row <n> [--request-id <id>] [--choice <text>] | --not-pending
   | --final <messageId> | --question <messageId> [--row <n>] | --neither | --sent | --failed <error>`;
 
@@ -72,6 +73,7 @@ const { values, positionals } = parseArgs({
     "agents-dir": { type: "string" },
     "app-db": { type: "string", default: defaultPaths().appDb },
     results: { type: "string", default: defaultPaths().resultsPath },
+    "ignore-results-batch": { type: "string", multiple: true, default: [] },
     "ntfy-url-file": { type: "string", default: defaultPaths().ntfyUrlFile },
     "self-test-only": { type: "boolean", default: false },
     "self-test-model": { type: "string", default: "claude-sonnet-5.5" },
@@ -199,6 +201,7 @@ async function init(): Promise<number> {
     appPlist: paths.appPlist,
     cliVersionFile: paths.cliVersionFile,
     resultsPath: resolve(values.results),
+    ignoredResultsBatches: values["ignore-results-batch"],
     kitDir: KIT_DIR,
     scoreScript: join(KIT_DIR, "scripts", "score.ts"),
     newRunScript: join(KIT_DIR, "scripts", "new-run.ts"),

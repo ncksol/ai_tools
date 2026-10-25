@@ -6,8 +6,9 @@ import { after, before, test } from "node:test";
 import { noAppDb } from "../lib/batch/appdb.ts";
 import { claimActive } from "../lib/batch/lock.ts";
 import { compareVersions, runPreflight, scoreSupportsRunner, type Host } from "../lib/batch/preflight.ts";
-import type { BatchConfig } from "../lib/batch/state.ts";
+import { initialState, saveConfig, saveState, type BatchConfig, type RunState } from "../lib/batch/state.ts";
 import type { ProcResult } from "../lib/proc.ts";
+import { appendResult, RESULT_COLUMNS, type ResultRow } from "../lib/results.ts";
 import { KIT_DIR } from "../lib/suite.ts";
 
 let dir: string;
@@ -95,6 +96,108 @@ function host(overrides: Record<string, ProcResult> = {}, probe: string[] = [], 
 
 const failing = (checks: { name: string; status: string }[]) => checks.filter((c) => c.status === "FAIL").map((c) => c.name);
 
+function historyConfig(): BatchConfig {
+  const root = mkdtempSync(join(dir, "history-"));
+  return config({ dir: join(root, "batches", "next"), resultsPath: join(root, "results.csv") });
+}
+
+function historyRun(n: number, calibration = false): RunState {
+  const repo = `ncksol/orch-eval-orchestrator-${n}`;
+  const row = Object.fromEntries(RESULT_COLUMNS.map((column) => [column, ""])) as ResultRow;
+  Object.assign(row, { repo, run: String(n), variant: "orchestrator", calibration: calibration ? "yes" : "no", minutes: "50" });
+  return {
+    key: `orchestrator-${n}`, variant: "orchestrator", n, features: ["policy", "reports", "import"],
+    calibration, name: `orch-eval-orchestrator-${n}`, repo, repoDir: join(dir, `run-${n}`),
+    status: "done", createdAt: "", judged: [], answers: [], askAttempts: {}, requestIds: {}, flags: [], row,
+  };
+}
+
+function saveHistory(current: BatchConfig, id: string, runs: RunState[], overrides: Partial<BatchConfig> = {}): string {
+  const previous = { ...current, id, dir: join(current.dir, "..", id), ...overrides };
+  saveConfig(previous);
+  const state = initialState({ agents: {}, files: {}, appVersion: null, cliVersion: null }, true, "");
+  state.phase = "done";
+  state.runs = runs;
+  saveState(previous.dir, state);
+  writeFileSync(join(previous.dir, "report.md"), `results.csv rows are committed on branch \`driver-${id}\` of the ai_tools checkout.\n`);
+  return previous.dir;
+}
+
+test("preflight stops on missing calibration and scored rows until both run identities are landed", async () => {
+  const current = historyConfig();
+  const calibration = historyRun(1, true);
+  const scored = historyRun(2);
+  saveHistory(current, "earlier", [calibration, scored]);
+  appendResult(current.resultsPath, { ...calibration.row, repo: "someone/other-repo" } as ResultRow);
+  const missing = (await runPreflight(current, host())).find((c) => c.name === "earlier batch results landed");
+  assert.equal(missing?.status, "FAIL");
+  assert.match(missing.detail, /earlier.*driver-earlier/);
+  assert.match(missing.detail, /orch-eval-orchestrator-1/);
+  assert.match(missing.detail, /orch-eval-orchestrator-2/);
+  assert.match(missing.detail, /[Ll]and.*results.csv/);
+
+  appendResult(current.resultsPath, { ...calibration.row, minutes: "49" } as ResultRow);
+  appendResult(current.resultsPath, scored.row as ResultRow);
+  const landed = await runPreflight(current, host());
+  assert.deepEqual(failing(landed), []);
+  assert.equal(landed.find((c) => c.name === "earlier batch results landed")?.status, "PASS");
+});
+
+test("history uses the latest saved state rather than a stale state.json copy", async () => {
+  const current = historyConfig();
+  const previous = saveHistory(current, "revisions", [historyRun(3)]);
+  writeFileSync(join(previous, "state.json"), JSON.stringify({ runs: [] }));
+  assert.ok(failing(await runPreflight(current, host())).includes("earlier batch results landed"));
+});
+
+test("history excludes rehearsals, other batch roots, the current batch and runs without rows", async () => {
+  const current = historyConfig();
+  saveHistory(current, "rehearsal", [historyRun(4)], { dryRun: true });
+  const voidRun = historyRun(5);
+  delete voidRun.row;
+  voidRun.status = "void";
+  saveHistory(current, "unscored", [voidRun]);
+  saveHistory(current, "next", [historyRun(6)]);
+  saveHistory(historyConfig(), "other-root", [historyRun(7)]);
+  assert.deepEqual(failing(await runPreflight(current, host())), []);
+});
+
+test("only the latest earlier batch with rows must be landed; empty later batches cannot hide it", async () => {
+  const current = historyConfig();
+  saveHistory(current, "old-unlanded", [historyRun(11)], { createdAt: "2026-10-21T12:00:00Z" });
+  const latest = historyRun(12);
+  saveHistory(current, "latest-scored", [latest], { createdAt: "2026-10-22T12:00:00Z" });
+  saveHistory(current, "latest-empty", [], { createdAt: "2026-10-23T12:00:00Z" });
+  const beforeLanding = (await runPreflight(current, host())).find((c) => c.name === "earlier batch results landed");
+  assert.equal(beforeLanding?.status, "FAIL");
+  assert.match(beforeLanding.detail, /latest-scored/);
+  assert.doesNotMatch(beforeLanding.detail, /old-unlanded/);
+  appendResult(current.resultsPath, latest.row as ResultRow);
+  assert.deepEqual(failing(await runPreflight(current, host())), []);
+});
+
+test("a named history override warns and cannot hide another batch's missing rows", async () => {
+  const current = historyConfig();
+  current.ignoredResultsBatches = ["abandoned"];
+  saveHistory(current, "abandoned", [historyRun(8)]);
+  const overridden = (await runPreflight(current, host())).find((c) => c.name === "earlier batch results landed");
+  assert.equal(overridden?.status, "WARN");
+  assert.match(overridden.detail, /abandoned.*orch-eval-orchestrator-8/);
+  saveHistory(current, "unlanded", [historyRun(9)]);
+  const blocked = (await runPreflight(current, host())).find((c) => c.name === "earlier batch results landed");
+  assert.equal(blocked?.status, "FAIL");
+  assert.match(blocked.detail, /unlanded.*orch-eval-orchestrator-9/);
+});
+
+test("unreadable batch history fails explicitly instead of looking like landed results", async () => {
+  const current = historyConfig();
+  const previous = saveHistory(current, "broken", []);
+  writeFileSync(join(previous, "config.json"), "{broken");
+  const check = (await runPreflight(current, host())).find((c) => c.name === "earlier batch results landed");
+  assert.equal(check?.status, "FAIL");
+  assert.match(check.detail, /broken/);
+});
+
 test("a healthy machine passes every check", async () => {
   const checks = await runPreflight(config(), host());
   assert.deepEqual(failing(checks), [], JSON.stringify(checks, null, 1));
@@ -158,22 +261,27 @@ test("the app's default account must be the owner, because new projects run as i
 });
 
 test("a dry run skips the checks that touch GitHub, power and the app", async () => {
-  const checks = await runPreflight(config({ dryRun: true, keepAwake: false }), host({ "pmset -g batt": ok("Battery Power") }));
-  assert.deepEqual(checks.filter((c) => c.status === "SKIP").map((c) => c.name), ["AC power", "gh account", "gh token scopes", "GitHub API rate limits", "Copilot app version", "app database"]);
+  const current = historyConfig();
+  saveHistory(current, "not-landed", [historyRun(10)]);
+  const checks = await runPreflight({ ...current, dryRun: true, keepAwake: false }, host({ "pmset -g batt": ok("Battery Power") }));
+  assert.deepEqual(checks.filter((c) => c.status === "SKIP").map((c) => c.name), ["AC power", "gh account", "gh token scopes", "GitHub API rate limits", "Copilot app version", "earlier batch results landed", "app database"]);
   assert.deepEqual(failing(checks), []);
+  const selftest = await runPreflight({ ...current, selfTest: { ...current.selfTest, only: true } }, host());
+  assert.equal(selftest.find((c) => c.name === "earlier batch results landed")?.status, "SKIP");
+  assert.deepEqual(failing(selftest), []);
 });
 
 test("another live batch on the machine and a changed app database fail the preflight", async () => {
   const other = join(dir, "other-batch");
   mkdirSync(other, { recursive: true });
-  writeFileSync(join(other, "config.json"), "{}");
-  writeFileSync(join(other, "state.json"), JSON.stringify({ phase: "runs" }));
+  writeFileSync(join(other, "config.json"), JSON.stringify(config({ id: "other", dir: other })));
+  writeFileSync(join(other, "state.json"), JSON.stringify({ phase: "runs", runs: [] }));
   await claimActive(join(dir, "active-batch"), "other", other, "2026-10-19T21:00:00Z");
   const checks = await runPreflight(config(), host({}, ["column sessions.was_interrupted is missing"]));
   assert.deepEqual(failing(checks).sort(), ["app database", "no other batch active"]);
   assert.match(checks.find((c) => c.name === "app database")!.detail, /was_interrupted is missing/);
   // A finished batch no longer blocks.
-  writeFileSync(join(other, "state.json"), JSON.stringify({ phase: "done" }));
+  writeFileSync(join(other, "state.json"), JSON.stringify({ phase: "done", runs: [] }));
   assert.deepEqual(failing(await runPreflight(config(), host())), []);
   rmSync(join(dir, "active-batch"), { recursive: true });
 });
