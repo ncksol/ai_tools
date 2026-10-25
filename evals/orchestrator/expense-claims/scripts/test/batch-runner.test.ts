@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { appendFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import type { LogEvent } from "../lib/events.ts";
@@ -123,6 +123,70 @@ test("live runs pass --agent-revision when the plugin source is a clean git chec
   assert.equal(row.agent_revision, head);
   assert.equal(row.agent_sha256, expectedSha);
   assert.equal(row.agent_bundle_sha256, expectedBundle);
+  assert.ok(h.state().runs[0].flags.some((flag) => flag.code === "agent-drift"));
+});
+
+test("a live bundle depends only on its variant's closure, not the batch's other variants or their bytes", async () => {
+  const hash = (text: string) => createHash("sha256").update(text).digest("hex");
+  const expected = hash(JSON.stringify([
+    ["wintermute:orchestrator", hash("Uses wintermute:orchestrator-worker.\n")],
+    ["wintermute:orchestrator-worker", hash("worker\n")],
+  ]));
+  for (const variants of [
+    ["orchestrator"],
+    ["orchestrator", "session-orchestrator"],
+    ["orchestrator", "session-orchestrator", "hands-on-orchestrator", "hands-on-session-orchestrator"],
+  ]) {
+    for (const changeOtherAgents of [false, true]) {
+      if (changeOtherAgents && variants.length === 1) continue;
+      const h = await make({ scenarios: ["ask-final"], variants });
+      if (changeOtherAgents) {
+        appendFileSync(join(h.config.agentsDir, "session-orchestrator-worker.agent.md"), "different worker\n");
+        if (variants.includes("hands-on-orchestrator")) {
+          appendFileSync(join(h.config.agentsDir, "hands-on-orchestrator.agent.md"), "different quick jobs\n");
+        }
+        saveState(h.config.dir, { ...h.state(), pins: currentPins(h.config) });
+      }
+      const action = await h.until((a) => a.action === "create_session");
+      assert.equal(action.action, "create_session");
+      assert.equal(h.state().runs[0].agentBundleSha256, expected, `${variants.join(", ")}; other agents changed=${changeOtherAgents}`);
+    }
+  }
+});
+
+test("score-time drift ignores agents outside the live run's launch closure", async () => {
+  const h = await make({ scenarios: ["ask-final"], variants: ["orchestrator", "session-orchestrator"] });
+  await h.until((_, state) => state.runs[0]?.status === "running");
+  const bundle = h.state().runs[0].agentBundleSha256;
+  appendFileSync(join(h.config.agentsDir, "session-orchestrator-worker.agent.md"), "changed mid-run\n");
+  await h.until(() => false);
+  const [row] = readResults(h.config.resultsPath);
+  assert.equal(row.agent_bundle_sha256, bundle);
+  assert.ok(!h.state().runs[0].flags.some((flag) => flag.code === "agent-drift"));
+});
+
+test("score-time drift retains a removed worker from the live run's launch closure", async () => {
+  const h = await make({ scenarios: ["ask-final"], variants: ["orchestrator", "session-orchestrator"] });
+  await h.until((_, state) => state.runs[0]?.status === "running");
+  writeFileSync(join(h.config.agentsDir, "orchestrator.agent.md"), "No helpers.\n");
+  unlinkSync(join(h.config.agentsDir, "orchestrator-worker.agent.md"));
+  await h.until(() => false);
+  const drift = h.state().runs[0].flags.find((flag) => flag.code === "agent-drift");
+  assert.match(drift?.detail ?? "", /wintermute:orchestrator-worker/);
+});
+
+test("a legacy live run without a saved closure still scores its recorded batch-wide bundle", async () => {
+  const h = await make({ scenarios: ["ask-final"], variants: ["orchestrator", "session-orchestrator"] });
+  await h.until((_, state) => state.runs[0]?.status === "running");
+  const legacy = h.state();
+  delete legacy.runs[0].agentBundleNames;
+  const bundle = agentBundleSha256(legacy.pins.agents);
+  legacy.runs[0].agentBundleSha256 = bundle;
+  saveState(h.config.dir, legacy);
+  appendFileSync(join(h.config.agentsDir, "session-orchestrator-worker.agent.md"), "changed mid-run\n");
+  await h.until(() => false);
+  const [row] = readResults(h.config.resultsPath);
+  assert.equal(row.agent_bundle_sha256, bundle);
   assert.ok(h.state().runs[0].flags.some((flag) => flag.code === "agent-drift"));
 });
 

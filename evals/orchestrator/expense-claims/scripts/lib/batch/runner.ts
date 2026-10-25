@@ -21,7 +21,7 @@ import { openCleanupApp } from "./cleanup-io.ts";
 import { scanSession, scanSwarm } from "./hygiene.ts";
 import { claimActive, releaseActive } from "./lock.ts";
 import { notices, type Notice } from "./notify.ts";
-import { agentBundleSha256, computePins, diffPins, readAgentRevision } from "./pins.ts";
+import { agentBundleSha256, agentsToPin, computePins, diffPins, readAgentRevision } from "./pins.ts";
 import { calibrationDecision, describePlan, nextRunNumber, planRound, provisionPlan, runRowFor, scoredCount } from "./plan.ts";
 import { buildReport } from "./report.ts";
 import {
@@ -1368,7 +1368,7 @@ async function scoreRun(ctx: Ctx, state: BatchState, run: RunState): Promise<voi
   {
     const variant = config.variantSet?.variants[run.variant];
     const primary = variant ? variant.agent : liveAgent(run.variant);
-    const watched = variant ? [variant.agent, ...Object.keys(variant.workers)] : Object.keys(state.pins.agents);
+    const watched = variant ? [variant.agent, ...Object.keys(variant.workers)] : run.agentBundleNames ?? Object.keys(state.pins.agents);
     const now = currentPins(config);
     if (!run.agentSha256 || !run.agentBundleSha256) addFlag(run, "agent-drift", "registered launch hashes were not recorded; provenance is unavailable", iso(deps.now()));
     else {
@@ -1568,7 +1568,10 @@ async function runStep(ctx: Ctx, state: BatchState, index: number): Promise<Step
         const revision = state.pins.agentRevision === undefined ? readAgentRevision(config.agentsDir, state.pins.agents) : state.pins.agentRevision;
         if (revision) run.agentRevision = revision;
         run.agentSha256 = state.pins.agents[agent]?.sha256;
-        run.agentBundleSha256 = agentBundleSha256(state.pins.agents);
+        run.agentBundleNames = agentsToPin(config.agentsDir, [agent]).names;
+        run.agentBundleSha256 = agentBundleSha256(Object.fromEntries(
+          run.agentBundleNames.map((name) => [name, state.pins.agents[name]]),
+        ));
       }
       run.status = "starting";
       return { action: issue(ctx, state, "create_session", index, { args: runCreateArgs(ctx, run) }) };

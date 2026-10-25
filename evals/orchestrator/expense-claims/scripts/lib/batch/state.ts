@@ -135,6 +135,8 @@ export interface RunState {
   agentRevision?: string;
   agentSha256?: string;
   agentBundleSha256?: string;
+  // Live launch closure; absent on older runs whose bundle covered all batch pins.
+  agentBundleNames?: string[];
   // When create_session was first issued (the window for finding the session) and last issued.
   startRequestedAt?: string;
   lastStartAt?: string;
