@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { bindLiterals } from '../../engine/sqlite.mjs';
 import { execSql } from './sqlite-writer.mjs';
@@ -25,14 +25,6 @@ CREATE TABLE settings (id INTEGER PRIMARY KEY, github_token TEXT);
 INSERT INTO settings (github_token) VALUES ('fixture-secret-must-never-be-read');
 `;
 
-const STORE_SCHEMA = `
-PRAGMA journal_mode = WAL;
-CREATE TABLE assistant_usage_events (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, turn_index INTEGER, agent_id TEXT,
-  parent_tool_call_id TEXT, model TEXT NOT NULL, input_tokens INTEGER, output_tokens INTEGER, total_nano_aiu INTEGER, duration_ms INTEGER,
-  initiator TEXT, created_at TEXT);
-CREATE INDEX idx_assistant_usage_events_session ON assistant_usage_events (session_id, id);
-`;
-
 const SESSION_SCHEMA = `
 CREATE TABLE IF NOT EXISTS todos (id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT,
   status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'in_progress', 'done', 'blocked')),
@@ -54,11 +46,9 @@ export class CopilotHome {
   constructor(root = tempDir('swarm-home-')) {
     this.root = root;
     this.dataDb = path.join(root, 'data.db');
-    this.storeDb = path.join(root, 'session-store.db');
     this.stateDir = path.join(root, 'session-state');
     mkdirSync(this.stateDir, { recursive: true });
     execSql(this.dataDb, APP_SCHEMA);
-    execSql(this.storeDb, STORE_SCHEMA);
   }
 
   insert(file, table, row) {
@@ -124,13 +114,29 @@ export class CopilotHome {
     });
   }
 
+  /**
+   * Appends a `session.usage_record` per row to its session's log, as the CLI writes one per model call. A row's usageId
+   * defaults to a fresh one; give the same one twice to write a repeated record, as a resumed session can. The log's mtime moves
+   * only forward, to the latest record's time.
+   */
   usage(rows) {
     for (const row of rows) {
-      this.insert(this.storeDb, 'assistant_usage_events', {
-        session_id: row.sessionId, turn_index: 0, agent_id: row.agentId ?? null, parent_tool_call_id: row.parentToolCallId ?? null,
-        model: row.model ?? 'claude-sonnet-5', input_tokens: 1000, output_tokens: 100, total_nano_aiu: row.nanoAiu,
-        duration_ms: row.durationMs ?? 1000, initiator: row.initiator ?? 'agent', created_at: iso(row.createdAt),
-      });
+      this.usageCount = (this.usageCount ?? 0) + 1;
+      const usage = {
+        model: row.model ?? 'claude-sonnet-5', inputTokens: 1000, outputTokens: 100, duration: row.durationMs ?? 1000,
+        accounting: { sourceSessionId: row.sourceSessionId ?? row.sessionId, usageId: row.usageId ?? `usage-${this.usageCount}` },
+        copilotUsage: { totalNanoAiu: row.nanoAiu },
+        ...(row.parentToolCallId ? { parentToolCallId: row.parentToolCallId } : {}),
+      };
+      const event = {
+        type: 'session.usage_record', data: { usage }, ...(row.agentId ? { agentId: row.agentId } : {}),
+        id: `usage-event-${this.usageCount}`, timestamp: iso(row.createdAt), parentId: null,
+      };
+      const file = path.join(this.dir(row.sessionId), 'events.jsonl');
+      const before = existsSync(file) ? statSync(file).mtimeMs : 0;
+      appendFileSync(file, `${JSON.stringify(event)}\n`);
+      const mtime = Math.max(before, row.createdAt ?? 0);
+      if (mtime) utimesSync(file, mtime / 1000, mtime / 1000);
     }
   }
 

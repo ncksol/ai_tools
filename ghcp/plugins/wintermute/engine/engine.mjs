@@ -6,7 +6,7 @@ import { CREDIT_USD, NANO_AIU_PER_CREDIT } from './schema.mjs';
 import { SqliteUnavailableError, createSqliteReader, loadNodeSqlite } from './sqlite.mjs';
 import { readAppDb } from './readers/app-db.mjs';
 import { createTail, fileStamp, lastWorkTime, readNewLines } from './readers/events.mjs';
-import { createLedger, pullLedger } from './readers/ledger.mjs';
+import { createLedger, readUsage } from './readers/ledger.mjs';
 import { createProcessProbe } from './readers/process-probe.mjs';
 import { createSessionDbCache, listLocks, readWorkspaceYaml } from './readers/session-files.mjs';
 import { buildForest, resolveNodeId, treeNodes } from './model/forest.mjs';
@@ -97,6 +97,8 @@ export function createSwarmEngine(options = {}) {
     : options.prLookup && typeof options.prLookup === 'object' ? options.prLookup : createPrLookup({ now });
   const history = options.historyStore ?? createHistoryStore(options.historyDir ?? paths.historyDir);
   const ledger = createLedger();
+  // Per CLI session of a swarm: the tail of its log that feeds the ledger (see readCosts).
+  const usageTails = new Map();
   const readDb = createSessionDbCache();
   const sessions = new Map();
   const liveness = new Map();
@@ -311,6 +313,32 @@ export function createSwarmEngine(options = {}) {
   }
 
   /**
+   * Feeds the ledger from the logs of `cliIds`, the CLI sessions of every swarm, reading only bytes appended since the last
+   * refresh (see readUsage). Sessions that are no longer in a swarm are forgotten. Resolves the CLI sessions whose log could not
+   * be read: their totals are the last good ones.
+   */
+  async function readCosts(cliIds, diag) {
+    for (const cliId of [...usageTails.keys()]) if (!cliIds.has(cliId)) usageTails.delete(cliId);
+    ledger.retain(cliIds);
+    const failed = new Set();
+    for (const cliId of cliIds) {
+      let tail = usageTails.get(cliId);
+      if (!tail) {
+        tail = createTail(path.join(paths.stateDir, cliId, 'events.jsonl'));
+        usageTails.set(cliId, tail);
+      }
+      try {
+        const result = await readUsage(tail, ledger, cliId);
+        if (result.failed) diag.push({ level: 'warn', source: 'events', message: `${shortId(cliId)}: ${result.failed} usage line${result.failed === 1 ? '' : 's'} could not be read (last error: ${result.lastError}).` });
+      } catch (error) {
+        failed.add(cliId);
+        diag.push({ level: 'warn', source: 'events', message: `${shortId(cliId)}: ${error.message}` });
+      }
+    }
+    return failed;
+  }
+
+  /**
    * `subagentUnits` is true for the CLI sessions of the swarm's root orchestrator. A cached entry that was built with the other
    * value is read again from the start of its log, so its state has the right shape.
    * Resolves `{ state, read }`: `state` is null while the log is missing; `read` is false when reading the log failed, so `state`
@@ -377,20 +405,20 @@ export function createSwarmEngine(options = {}) {
    * Builds a tracked root's snapshot. Resolves `{ snapshot, complete }`: `complete` is true only when this refresh read every
    * source the snapshot uses, so a summary of it may be marked checked (see persistFinished). It is false when a session's log
    * or session.db could not be read (the last good value was used), when a PR's first lookup has not finished (its outcome is
-   * not known yet), or `globalsRead` is false (data.db or the ledger failed).
+   * not known yet), or `globalsRead` is false (data.db failed). `costsFailed` holds the CLI sessions whose cost could not be read.
    * The snapshot's diagnostics are the engine-wide ones (`shared`) and the notes about this root's own sessions; those notes
    * are also added to `diag`, the engine's list.
    */
-  async function buildTracked(rootId, at, diag, shared, dbFiles, globalsRead) {
+  async function buildTracked(rootId, at, diag, shared, dbFiles, globalsRead, costsFailed) {
     const own = [];
     try {
-      return await buildTrackedSnapshot(rootId, at, own, shared, dbFiles, globalsRead);
+      return await buildTrackedSnapshot(rootId, at, own, shared, dbFiles, globalsRead, costsFailed);
     } finally {
       diag.push(...own);
     }
   }
 
-  async function buildTrackedSnapshot(rootId, at, diag, shared, dbFiles, globalsRead) {
+  async function buildTrackedSnapshot(rootId, at, diag, shared, dbFiles, globalsRead, costsFailed) {
     const nodes = treeNodes(forest, rootId);
     const states = new Map();
     const alive = new Map();
@@ -399,7 +427,7 @@ export function createSwarmEngine(options = {}) {
     let complete = globalsRead;
     for (const cliId of new Set(nodes.flatMap(node => node.cliSessionIds))) {
       const { state, read } = await tailSession(cliId, diag, rootCliIds.has(cliId));
-      if (!read) complete = false;
+      if (!read || costsFailed.has(cliId)) complete = false;
       if (state) states.set(cliId, state);
       alive.set(cliId, await livenessOf(cliId, at));
       workspaceFiles.set(cliId, readWorkspaceYaml(path.join(paths.stateDir, cliId)));
@@ -491,7 +519,7 @@ export function createSwarmEngine(options = {}) {
     const sequence = ++refreshes;
     const at = now();
     const diag = [];
-    // False once data.db or the ledger (session-store.db) fails to read; a database that is not found is not a failure.
+    // False once data.db fails to read; a database that is not found is not a failure.
     let globalsRead = true;
     if (sqlite.backend === 'auto') {
       diag.push({ level: 'info', source: 'sqlite', message: (await loadNodeSqlite()) ? 'Reading SQLite through node:sqlite.' : 'Reading SQLite through the sqlite3 command-line tool.' });
@@ -510,21 +538,13 @@ export function createSwarmEngine(options = {}) {
       app = app ?? emptyApp();
       diag.push(sqliteProblem('data.db', error));
     }
-    // Read before the forest is built: a sub-agent's model calls can make an orchestrator with no child a swarm (see buildForest).
-    try {
-      const pulled = await reader.read(paths.storeDb, db => pullLedger(db, ledger));
-      if (pulled === null) diag.push({ level: 'warn', source: 'session-store.db', message: 'The Copilot session store was not found, so costs are unknown.' });
-    } catch (error) {
-      globalsRead = false;
-      diag.push(sqliteProblem('session-store.db', error));
-    }
     // The CLI sessions of top sessions that may be swarms before their first child (see waitingOrchestrators).
     const candidateCliIds = new Set();
     // Roots before this refresh: a root that leaves the forest is reported as changed, so a page that shows it learns it has gone.
     const before = forest ? forest.roots.map(root => root.id) : [];
     try {
-      // A CLI session started a sub-agent when the ledger has a sub-agent's model call, or its log has a sub-agent start
-      // (see scanTaskStarts; the log can be ahead of the ledger, or a sub-agent can end before its first model call).
+      // A CLI session started a sub-agent when its log has a sub-agent start (see scanTaskStarts), or the ledger has a
+      // sub-agent's model call from an earlier refresh (the ledger reads only the sessions of swarms, after the forest is built).
       const hasSubagents = cliId => taskStarted.has(cliId) || ledger.hasSubagentWork(cliId);
       forest = buildForest(app, { hasSubagents });
       const found = await scanTaskStarts(forest.taskCandidates, diag);
@@ -536,6 +556,8 @@ export function createSwarmEngine(options = {}) {
     }
     for (const failure of lookup?.errors() ?? []) diag.push({ level: 'info', source: 'pr-lookup', message: `${failure.key}: ${failure.error}` });
 
+    const costIds = new Set(forest.roots.flatMap(root => treeNodes(forest, root.id).flatMap(node => node.cliSessionIds)));
+    const costsFailed = await readCosts(costIds, diag);
     swarms = await listRoots(at, diag);
     const rootIds = new Set(forest.roots.map(root => root.id));
     const tracked = new Set([
@@ -550,7 +572,7 @@ export function createSwarmEngine(options = {}) {
     const shared = [...diag];
     for (const rootId of tracked) {
       try {
-        const { snapshot, complete } = await buildTracked(rootId, at, diag, shared, dbFiles, globalsRead);
+        const { snapshot, complete } = await buildTracked(rootId, at, diag, shared, dbFiles, globalsRead, costsFailed);
         const hash = digest(snapshot);
         const entry = snapshots.get(rootId);
         if (entry && entry.hash === hash) {
@@ -594,7 +616,7 @@ export function createSwarmEngine(options = {}) {
     for (const [cliId, entry] of [...liveness]) if (at - entry.checkedAt > 4 * LIVENESS_TTL_MS) liveness.delete(cliId);
     for (const [cliId, entry] of [...workTimes]) if (at - entry.checkedAt > 4 * LIVENESS_TTL_MS) workTimes.delete(cliId);
     readDb.retain(dbFiles);
-    reader.retain(new Set([...dbFiles, paths.dataDb, paths.storeDb]));
+    reader.retain(new Set([...dbFiles, paths.dataDb]));
     swarms = swarms.map(item => {
       const entry = snapshots.get(item.id);
       return entry ? { ...item, lifecycle: entry.snapshot.run.lifecycle, lastActivityAt: entry.snapshot.run.lastActivityAt } : item;
