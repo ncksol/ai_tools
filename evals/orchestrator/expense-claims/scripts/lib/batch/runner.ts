@@ -1330,7 +1330,7 @@ function findAnswerSource(ctx: Ctx, run: RunState, events?: LogEvent[]): void {
 
 export function noteFor(config: BatchConfig, run: RunState): string {
   const codes = [...new Set(run.flags.map((flag) => flag.code))];
-  return [`batch=${config.id}`, "driver=eval-runner", `memory=${config.memoryOffConfirmed ? "off" : "unconfirmed"}`, ...(config.dryRun ? ["dry-run"] : []), `flags=${codes.join(",") || "none"}`].join("; ");
+  return [`batch=${config.id}`, "driver=eval-runner", ...(config.variantSet ? [`variant-set=${config.variantSet.id}`] : []), `memory=${config.memoryOffConfirmed ? "off" : "unconfirmed"}`, ...(config.dryRun ? ["dry-run"] : []), `flags=${codes.join(",") || "none"}`].join("; ");
 }
 
 function scanHygiene(ctx: Ctx, run: RunState): void {

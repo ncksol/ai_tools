@@ -9,8 +9,8 @@ import { agentBundleSha256 } from "../lib/batch/pins.ts";
 import { currentPins, requestStop, STOP_MESSAGE } from "../lib/batch/runner.ts";
 import { eventsPath } from "../lib/batch/swarm.ts";
 import { run as runProc } from "../lib/proc.ts";
-import { readResults, replaceResult, summarize } from "../lib/results.ts";
-import { calibrationDecision } from "../lib/batch/plan.ts";
+import { readResults, replaceResult, summarize, formatSummary } from "../lib/results.ts";
+import { calibrationDecision, scoredCount } from "../lib/batch/plan.ts";
 import { FIXTURE_HEADER, harness, RUN1_RESULTS, type Harness } from "./fixtures/batch.ts";
 
 const made: Harness[] = [];
@@ -126,6 +126,28 @@ test("live runs pass --agent-revision when the plugin source is a clean git chec
   assert.ok(h.state().runs[0].flags.some((flag) => flag.code === "agent-drift"));
 });
 
+test("custom live --variants labels outside LIVE_VARIANTS keep the normal calibration rule in summarize", async () => {
+  const h = await make({ scenarios: ["ask-final"], variants: ["custom-orchestrator"] });
+  await h.until(() => false);
+  const rows = readResults(h.config.resultsPath);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].variant, "custom-orchestrator");
+  assert.equal(rows[0].agent, "custom-orchestrator");
+  assert.equal(rows[0].calibration, "yes");
+  assert.equal(rows[0].agent_bundle_sha256.length, 64);
+  assert.doesNotMatch(rows[0].note, /variant-set=/);
+  assert.equal(scoredCount(h.state().runs, rows, "custom-orchestrator", ["policy", "reports", "import", "summary"]), 1);
+  const summary = summarize(rows);
+  assert.deepEqual(summary.calibration, { runs: 1, median: 20, counted: true });
+  assert.equal(summary.pinnedCalibrations, 0);
+  assert.equal(summary.groups.length, 1);
+  assert.equal(summary.groups[0].runs, 1);
+  assert.equal(summary.groups[0].passed, 1);
+  assert.equal(summary.groups[0].medianMinutes, 20);
+  assert.match(formatSummary(summary), /Calibration runs count as scored runs\./);
+  assert.doesNotMatch(formatSummary(summary), /Pinned policy calibrations/);
+});
+
 test("an interrupted diagnostic step preserves and commits the already-saved gate result", async () => {
   const h = await make({ scenarios: ["ask-final"] });
   const exec = h.ctx.deps.exec;
@@ -223,6 +245,9 @@ test("a contradictory calibration decision stops through the usual notification 
   assert.match(h.state().stopReason!, /conflicts.*no-Summary.*user approval/);
   assert.match(readFileSync(h.state().reportPath!, "utf8"), /conflicts.*no-Summary/);
   assert.ok(h.notices.some((notice) => notice.key === "batch-stopped"));
+  const summary = summarize(readResults(h.config.resultsPath));
+  assert.equal(summary.pinnedCalibrations, 3);
+  assert.ok(summary.groups.every((group) => group.runs === 0));
 });
 
 test("a registered alias changed during a run is flagged while the launch hash remains recorded", async () => {

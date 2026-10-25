@@ -104,10 +104,10 @@ test("old result files migrate without fabricating missing cost or changing hist
 
 test("pinned policy calibrations stay excluded and different agent bundles are never pooled", () => {
   const summary = summarize([
-    row({ variant: "a", agent: "a", calibration: "yes", agent_bundle_sha256: "first", minutes: "10" }),
+    row({ variant: "a", agent: "a", calibration: "yes", agent_bundle_sha256: "first", note: "variant-set=review-policy", minutes: "10" }),
     row({ variant: "a", agent: "a", features: THREE, agent_bundle_sha256: "first", minutes: "15", robustness_status: "failed" }),
     row({ variant: "a", agent: "a", features: THREE, agent_bundle_sha256: "second", minutes: "25" }),
-    row({ variant: "a", agent: "orchestrator", calibration: "yes", agent_bundle_sha256: "first", minutes: "99" }),
+    row({ variant: "a", agent: "orchestrator", calibration: "yes", agent_bundle_sha256: "first", note: "variant-set=review-policy", minutes: "99" }),
     row({ variant: "a", features: THREE, agent_bundle_sha256: "first", minutes: "99" }),
   ]);
   assert.equal(summary.groups.find((g) => g.features === FULL)!.runs, 0);
