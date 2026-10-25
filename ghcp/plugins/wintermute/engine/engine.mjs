@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { copilotPaths, resolveThresholds } from './config.mjs';
-import { CREDIT_USD, NANO_AIU_PER_CREDIT } from './schema.mjs';
+import { COST_SOURCE, CREDIT_USD, NANO_AIU_PER_CREDIT } from './schema.mjs';
 import { SqliteUnavailableError, createSqliteReader, loadNodeSqlite } from './sqlite.mjs';
 import { readAppDb } from './readers/app-db.mjs';
 import { createTail, fileStamp, lastWorkTime, readNewLines } from './readers/events.mjs';
@@ -45,17 +45,21 @@ function summaryDigest(summary) {
 
 /**
  * True when the run's listing item shows newer activity or more cost than its stored summary, for example when the run
- * resumed and finished again while no engine ran. Both credit values are rounded to 0.1. Lower cost is never stale: a ledger
- * can lose rows when logs are cleaned up, and the stored summary is then kept. A run that is not listed (its logs are gone)
- * keeps its stored summary.
+ * resumed and finished again while no engine ran. Both credit values are rounded to 0.1. Lower cost alone is not stale: logs
+ * can be cleaned up, and the stored summary is then kept. A run that is not listed (its logs are gone) keeps its stored summary.
+ *
+ * The one exception is a summary from an older cost source (no `costSource`, see COST_SOURCE): session-store.db counted a
+ * resumed session's calls again. It is stale whenever `costsComplete` is true, meaning every session of the run had its log
+ * read in full for cost on the listing's refresh, so it is rebuilt even when the corrected cost is lower.
  *
  * `verified` is the stamp of the last check that rebuilt the run (see the engine's `verified` map). When the listing still
  * shows that check's activity time and cost, and the stored summary is the one that check confirmed, nothing is newer: the
  * summary is not stale even if the listing's file times run more than the slack after its last parsed event.
  */
-function isStale(stored, swarm, verified = null) {
+function isStale(stored, swarm, verified = null, costsComplete = false) {
   if (!swarm) return false;
-  if (!(swarm.credits > stored.credits || swarm.lastActivityAt > stored.finishedAt + STALE_SLACK_MS)) return false;
+  const oldSource = stored.costSource !== COST_SOURCE && costsComplete;
+  if (!(oldSource || swarm.credits > stored.credits || swarm.lastActivityAt > stored.finishedAt + STALE_SLACK_MS)) return false;
   return !(verified && swarm.lastActivityAt === verified.lastActivityAt && swarm.credits === verified.credits
     && summaryDigest(stored) === verified.digest);
 }
@@ -97,8 +101,11 @@ export function createSwarmEngine(options = {}) {
     : options.prLookup && typeof options.prLookup === 'object' ? options.prLookup : createPrLookup({ now });
   const history = options.historyStore ?? createHistoryStore(options.historyDir ?? paths.historyDir);
   const ledger = createLedger();
-  // Per CLI session of a swarm: the tail of its log that feeds the ledger (see readCosts).
+  // Per CLI session of a swarm: { tail, failed, lastError }, the tail of its log that feeds the ledger and its usage lines that
+  // could not be applied since the log was last read from the start (see readCosts).
   const usageTails = new Map();
+  // Per root id: true when the last refresh read every one of its sessions' logs in full for cost (see readCosts).
+  const costsComplete = new Map();
   const readDb = createSessionDbCache();
   const sessions = new Map();
   const liveness = new Map();
@@ -134,6 +141,8 @@ export function createSwarmEngine(options = {}) {
   // so a caller can tell a snapshot that its own refresh built from one kept after that refresh failed to rebuild it. Its
   // `complete` says whether that refresh read every source the snapshot uses (see buildTracked).
   let refreshes = 0;
+  // The CLI sessions whose cost the latest refresh could not read in full (see readCosts).
+  let costsIncomplete = new Set();
 
   const projectOf = node => {
     const project = node.projectId ? app.projects.get(node.projectId) : null;
@@ -211,6 +220,7 @@ export function createSwarmEngine(options = {}) {
     const totals = ledger.sumFor(cliIds);
     last = Math.max(last, totals.lastAt ?? 0);
     cheapLast.set(root.id, last);
+    costsComplete.set(root.id, cliIds.every(cliId => !costsIncomplete.has(cliId)));
     const recent = at - last < thresholds.runFinishedAfterMs;
     const entry = snapshots.get(root.id);
     const tracked = entry && entry.last === last ? entry.snapshot : null;
@@ -314,28 +324,46 @@ export function createSwarmEngine(options = {}) {
 
   /**
    * Feeds the ledger from the logs of `cliIds`, the CLI sessions of every swarm, reading only bytes appended since the last
-   * refresh (see readUsage). Sessions that are no longer in a swarm are forgotten. Resolves the CLI sessions whose log could not
-   * be read: their totals are the last good ones.
+   * refresh (see readUsage). Sessions that are no longer in a swarm are forgotten. Resolves the CLI sessions whose cost is not
+   * complete: their log is missing (its cost is unknown, or the last good one), could not be read (the last good totals stay),
+   * or has usage lines that could not be applied. Such a line is skipped for good, so its session stays incomplete, with a
+   * warning on every refresh, until its log is read again from the start.
    */
   async function readCosts(cliIds, diag) {
     for (const cliId of [...usageTails.keys()]) if (!cliIds.has(cliId)) usageTails.delete(cliId);
     ledger.retain(cliIds);
-    const failed = new Set();
+    const incomplete = new Set();
     for (const cliId of cliIds) {
-      let tail = usageTails.get(cliId);
-      if (!tail) {
-        tail = createTail(path.join(paths.stateDir, cliId, 'events.jsonl'));
-        usageTails.set(cliId, tail);
+      let entry = usageTails.get(cliId);
+      if (!entry) {
+        entry = { tail: createTail(path.join(paths.stateDir, cliId, 'events.jsonl')), failed: 0, lastError: '' };
+        usageTails.set(cliId, entry);
       }
       try {
-        const result = await readUsage(tail, ledger, cliId);
-        if (result.failed) diag.push({ level: 'warn', source: 'events', message: `${shortId(cliId)}: ${result.failed} usage line${result.failed === 1 ? '' : 's'} could not be read (last error: ${result.lastError}).` });
+        const result = await readUsage(entry.tail, ledger, cliId);
+        if (result.reset) entry.failed = 0;
+        if (result.failed) {
+          entry.failed += result.failed;
+          entry.lastError = result.lastError;
+        }
+        if (result.missing) {
+          incomplete.add(cliId);
+          diag.push({ level: 'warn', source: 'events', message: `${shortId(cliId)}: the session's log is missing, so its cost is unknown.` });
+        }
       } catch (error) {
-        failed.add(cliId);
+        incomplete.add(cliId);
         diag.push({ level: 'warn', source: 'events', message: `${shortId(cliId)}: ${error.message}` });
       }
+      if (entry.failed) {
+        incomplete.add(cliId);
+        const { failed, lastError } = entry;
+        diag.push({
+          level: 'warn', source: 'events',
+          message: `${shortId(cliId)}: ${failed} usage line${failed === 1 ? '' : 's'} could not be read, so the cost is incomplete (last error: ${lastError}).`,
+        });
+      }
     }
-    return failed;
+    return incomplete;
   }
 
   /**
@@ -405,20 +433,21 @@ export function createSwarmEngine(options = {}) {
    * Builds a tracked root's snapshot. Resolves `{ snapshot, complete }`: `complete` is true only when this refresh read every
    * source the snapshot uses, so a summary of it may be marked checked (see persistFinished). It is false when a session's log
    * or session.db could not be read (the last good value was used), when a PR's first lookup has not finished (its outcome is
-   * not known yet), or `globalsRead` is false (data.db failed). `costsFailed` holds the CLI sessions whose cost could not be read.
+   * not known yet), or `globalsRead` is false (data.db failed). `costsIncomplete` holds the CLI sessions whose cost is not
+   * complete (see readCosts), so a summary built from them never replaces the last good one.
    * The snapshot's diagnostics are the engine-wide ones (`shared`) and the notes about this root's own sessions; those notes
    * are also added to `diag`, the engine's list.
    */
-  async function buildTracked(rootId, at, diag, shared, dbFiles, globalsRead, costsFailed) {
+  async function buildTracked(rootId, at, diag, shared, dbFiles, globalsRead) {
     const own = [];
     try {
-      return await buildTrackedSnapshot(rootId, at, own, shared, dbFiles, globalsRead, costsFailed);
+      return await buildTrackedSnapshot(rootId, at, own, shared, dbFiles, globalsRead);
     } finally {
       diag.push(...own);
     }
   }
 
-  async function buildTrackedSnapshot(rootId, at, diag, shared, dbFiles, globalsRead, costsFailed) {
+  async function buildTrackedSnapshot(rootId, at, diag, shared, dbFiles, globalsRead) {
     const nodes = treeNodes(forest, rootId);
     const states = new Map();
     const alive = new Map();
@@ -427,7 +456,7 @@ export function createSwarmEngine(options = {}) {
     let complete = globalsRead;
     for (const cliId of new Set(nodes.flatMap(node => node.cliSessionIds))) {
       const { state, read } = await tailSession(cliId, diag, rootCliIds.has(cliId));
-      if (!read || costsFailed.has(cliId)) complete = false;
+      if (!read || costsIncomplete.has(cliId)) complete = false;
       if (state) states.set(cliId, state);
       alive.set(cliId, await livenessOf(cliId, at));
       workspaceFiles.set(cliId, readWorkspaceYaml(path.join(paths.stateDir, cliId)));
@@ -557,7 +586,7 @@ export function createSwarmEngine(options = {}) {
     for (const failure of lookup?.errors() ?? []) diag.push({ level: 'info', source: 'pr-lookup', message: `${failure.key}: ${failure.error}` });
 
     const costIds = new Set(forest.roots.flatMap(root => treeNodes(forest, root.id).flatMap(node => node.cliSessionIds)));
-    const costsFailed = await readCosts(costIds, diag);
+    costsIncomplete = await readCosts(costIds, diag);
     swarms = await listRoots(at, diag);
     const rootIds = new Set(forest.roots.map(root => root.id));
     const tracked = new Set([
@@ -572,7 +601,7 @@ export function createSwarmEngine(options = {}) {
     const shared = [...diag];
     for (const rootId of tracked) {
       try {
-        const { snapshot, complete } = await buildTracked(rootId, at, diag, shared, dbFiles, globalsRead, costsFailed);
+        const { snapshot, complete } = await buildTracked(rootId, at, diag, shared, dbFiles, globalsRead);
         const hash = digest(snapshot);
         const entry = snapshots.get(rootId);
         if (entry && entry.hash === hash) {
@@ -609,6 +638,7 @@ export function createSwarmEngine(options = {}) {
     const removed = before.filter(rootId => !current.has(rootId));
     for (const rootId of [...revisions.keys()]) if (!current.has(rootId)) revisions.delete(rootId);
     for (const rootId of [...cheapLast.keys()]) if (!current.has(rootId)) cheapLast.delete(rootId);
+    for (const rootId of [...costsComplete.keys()]) if (!current.has(rootId)) costsComplete.delete(rootId);
     for (const rootId of [...knownFinished.keys()]) if (!current.has(rootId)) knownFinished.delete(rootId);
     for (const rootId of [...summaryDigests.keys()]) if (!current.has(rootId)) summaryDigests.delete(rootId);
     for (const rootId of [...verified.keys()]) if (!current.has(rootId)) verified.delete(rootId);
@@ -689,7 +719,7 @@ export function createSwarmEngine(options = {}) {
     const listed = new Map(swarms.map(swarm => [swarm.id, swarm]));
     // A stale stored summary is left out, so the run is listed below from the listing with summarized: false; getRunSummary rebuilds it.
     for (const summary of await history.list()) {
-      if (!live.has(summary.id) && !isStale(summary, listed.get(summary.id), verified.get(summary.id))) items.set(summary.id, listItemOf(summary));
+      if (!live.has(summary.id) && !isStale(summary, listed.get(summary.id), verified.get(summary.id), costsComplete.get(summary.id))) items.set(summary.id, listItemOf(summary));
     }
     // A snapshot built while a source could not be read (see buildTracked) is never listed as summarised: on a cold start it can
     // even be built from empty state. Its run is listed from the stored summary above, or from the listing below.
@@ -697,7 +727,7 @@ export function createSwarmEngine(options = {}) {
       if (complete && snapshot.run.lifecycle === 'finished' && !live.has(snapshot.run.id) && !items.has(snapshot.run.id)) {
         const summary = summarizeRun(snapshot, { computedAt: now() });
         // A cached snapshot can be older than the listing (a refresh lists before it rebuilds); the listing item is used then.
-        if (!isStale(summary, listed.get(snapshot.run.id), verified.get(snapshot.run.id))) items.set(snapshot.run.id, listItemOf(summary));
+        if (!isStale(summary, listed.get(snapshot.run.id), verified.get(snapshot.run.id), costsComplete.get(snapshot.run.id))) items.set(snapshot.run.id, listItemOf(summary));
       }
     }
     for (const swarm of swarms) {
@@ -719,7 +749,7 @@ export function createSwarmEngine(options = {}) {
     }
     const stored = await history.get(runId);
     // A stored summary stands unless the listing shows newer activity or cost for the run (see isStale).
-    if (stored && !isStale(stored, swarms.find(swarm => swarm.id === runId), verified.get(runId))) {
+    if (stored && !isStale(stored, swarms.find(swarm => swarm.id === runId), verified.get(runId), costsComplete.get(runId))) {
       summaryDigests.set(runId, summaryDigest(stored));
       return stored;
     }

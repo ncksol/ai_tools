@@ -34,6 +34,10 @@ export function scenario() {
   const old = new EventLog(T0 - 30 * DAY);
   old.start(); old.turnStart(); old.wait(MINUTE); old.turnEnd();
   home.writeEvents('cli-old', old.events);
+  // Every session of a run has a log: a missing one leaves the run's cost incomplete, so its summary is never stored.
+  const oldChild = new EventLog(T0 - 30 * DAY + MINUTE);
+  oldChild.start();
+  home.writeEvents('cli-old-child', oldChild.events);
 
   home.usage([{ sessionId: 'cli-root', nanoAiu: 3e9, createdAt: at(1) }, { sessionId: 'cli-api', nanoAiu: 4e9, createdAt: at(20) }]);
   home.lock('cli-root', NO_SUCH_PID + 1, T0);

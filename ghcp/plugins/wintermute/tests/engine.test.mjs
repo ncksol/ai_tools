@@ -486,6 +486,95 @@ test('a resumed session that writes an earlier usage record again counts it once
   engine.stop();
 });
 
+/** Rewrites the stored summary as session-store.db made it: no costSource, and `credits` from a resumed session's repeated rows. */
+function writeOldSourceSummary(stored, credits) {
+  const old = readSummary(stored);
+  delete old.costSource;
+  old.credits = credits;
+  old.usd = Math.round(credits * 100) / 10000;
+  old.units[0].credits = credits;
+  old.models = old.models.map(entry => ({ ...entry, credits, calls: entry.calls * 2 }));
+  writeFileSync(stored, `${JSON.stringify(old, null, 2)}\n`);
+}
+
+test('a summary from session-store.db is rebuilt from complete logs, even when the corrected cost is lower', async () => {
+  const { stored, reopen } = await storedOldRun();
+  writeOldSourceSummary(stored, 2);
+  const engine = reopen();
+  await engine.refresh();
+  assert.deepEqual(await oldItem(engine), [OLD_LAST, 1, false], 'History lists the deduped event total from the listing');
+  const summary = await engine.getRunSummary('ws-old');
+  assert.deepEqual([summary.credits, summary.costSource], [1, 'events']);
+  assert.deepEqual([readSummary(stored).credits, readSummary(stored).costSource], [1, 'events'], 'the stored summary is replaced');
+  assert.deepEqual(await oldItem(engine), [OLD_LAST, 1, true]);
+  engine.stop();
+});
+
+test('a summary from session-store.db is kept while a log of its run is missing', async () => {
+  const { home, stored, reopen } = await storedOldRun();
+  writeOldSourceSummary(stored, 2);
+  rmSync(path.join(home.stateDir, 'cli-old-child', 'events.jsonl'));
+  const before = stat(stored);
+  const engine = reopen();
+  await engine.refresh();
+  assert.ok(engine.diagnostics().some(item => item.source === 'events' && item.message === 'cli-old-: the session\'s log is missing, so its cost is unknown.'));
+  assert.deepEqual(await oldItem(engine), [OLD_LAST, 2, true]);
+  assert.equal((await engine.getRunSummary('ws-old')).credits, 2);
+  assert.deepEqual(stat(stored), before);
+  engine.stop();
+});
+
+test('a cold refresh with a child\'s log missing never replaces the stored summary with the partial cost', async () => {
+  const home = scenario();
+  home.usage([
+    { sessionId: 'cli-old', nanoAiu: 1e9, createdAt: OLD_LAST - 30_000 },
+    { sessionId: 'cli-old-child', nanoAiu: 4e9, createdAt: OLD_LAST - 20_000 },
+  ]);
+  const historyDir = path.join(tempDir('swarm-engine-'), 'history');
+  const stored = path.join(historyDir, 'runs', 'ws-old.json');
+  const reopen = () => createSwarmEngine({ copilotHome: home.root, historyDir, now: () => at(0), processProbe: alwaysAlive, prLookup: 'off' });
+  const first = reopen();
+  assert.equal((await first.getRunSummary('ws-old')).credits, 5);
+  first.stop();
+  assert.equal(readSummary(stored).credits, 5);
+
+  rmSync(path.join(home.stateDir, 'cli-old-child', 'events.jsonl'));
+  const resumeAt = OLD_LAST + 10 * MINUTE;
+  const later = new EventLog(resumeAt);
+  later.resume(); later.turnStart();
+  home.writeEvents('cli-old', later.events, { append: true });
+  home.usage([{ sessionId: 'cli-old', nanoAiu: 2e9, createdAt: resumeAt + MINUTE }]);
+  const done = new EventLog(resumeAt + 2 * MINUTE);
+  done.turnEnd();
+  home.writeEvents('cli-old', done.events, { append: true });
+
+  const engine = reopen();
+  await engine.refresh();
+  assert.ok(engine.diagnostics().some(item => item.source === 'events' && item.message.includes('log is missing')), 'the missing log is reported');
+  assert.equal((await engine.getRunSummary('ws-old')).credits, 5, 'the last good summary is returned');
+  await engine.refresh();
+  assert.equal(readSummary(stored).credits, 5, 'and is not overwritten');
+  engine.stop();
+});
+
+test('a usage line that cannot be read keeps the run\'s cost incomplete, with a warning, on later refreshes too', async () => {
+  const home = scenario();
+  home.usage([{ sessionId: 'cli-old', nanoAiu: 1e9, createdAt: OLD_LAST - 30_000 }]);
+  appendFileSync(path.join(home.stateDir, 'cli-old', 'events.jsonl'), '{"type":"session.usage_record","data":{"usage":\n');
+  const historyDir = path.join(tempDir('swarm-engine-'), 'history');
+  const stored = path.join(historyDir, 'runs', 'ws-old.json');
+  const engine = createSwarmEngine({ copilotHome: home.root, historyDir, now: () => at(0), processProbe: alwaysAlive, prLookup: 'off' });
+  const warned = () => engine.diagnostics().some(item => item.source === 'events' && item.message.startsWith('cli-old: 1 usage line could not be read, so the cost is incomplete'));
+  assert.ok(await engine.getSnapshot('ws-old'));
+  assert.ok(warned());
+  await engine.refresh();
+  assert.ok(warned(), 'the warning stays on a refresh with no new bytes');
+  assert.equal((await engine.getRunSummary('ws-old')).credits, 1);
+  assert.equal(existsSync(stored), false, 'no summary is stored from an incomplete cost read');
+  assert.deepEqual((await engine.listHistory()).find(entry => entry.id === 'ws-old').summarized, false);
+  engine.stop();
+});
+
 test('a stored summary with nothing newer is returned as stored, and lower cost does not replace it', async () => {
   const { home, stored, reopen } = await storedOldRun();
   const before = stat(stored);

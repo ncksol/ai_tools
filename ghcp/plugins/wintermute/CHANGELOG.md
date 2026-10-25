@@ -11,12 +11,14 @@ After merging, run `npm run release:publish -- --dry-run`, then `npm run release
 ### Fixed
 
 - Costs were 0 for every session started since the Copilot app moved its sessions to the native runtime (app 1.1.31), which no longer writes `~/.copilot/session-store.db` ([#71](https://github.com/ncksol/ai_tools/issues/71)). The dashboard now reads cost from each session's `events.jsonl`: one `session.usage_record` per model call (`copilotUsage.totalNanoAiu`, model, duration and time), plus the compaction calls in `session.compaction_complete` (`compactionTokensUsed`), which have no usage record. A session's total now equals its last `session.usage_checkpoint` where that checkpoint is correct.
-- Resumed sessions were over-counted: the session store wrote a session's usage rows again on resume. Each model call is now counted once, by its `accounting.sourceSessionId` and `usageId`.
+- Resumed sessions were over-counted: the session store wrote a session's usage rows again on resume. Each model call is now counted once, by its `accounting.sourceSessionId` and `usageId`. Run summaries now record their cost source (`costSource: "events"`). A History summary written from the session store is rebuilt from the logs once every log of its run reads in full, even when the corrected cost is lower; while a log is missing it is kept as it is.
 - A sub-agent's cost is attributed to its `task` call from the record's `parentToolCallId`, or from its envelope `agentId` through `subagent.started` (which is how a compaction inside a sub-agent is attributed). A nested sub-agent's cost goes to its own `task` call and rolls up to the sub-agents above it, as before.
+
+- A run's summary is never stored from an incomplete cost read: a session log that is missing, or a usage line that can't be read. Each shows a warning on every refresh, and the last good summary stays.
 
 ### Removed
 
-- The session-store reader, its path and its "session store was not found" warning. Sessions from CLI versions before 1.0.93 (and other runs without `session.usage_record` events) show no cost.
+- The session-store reader, its path and its "session store was not found" warning. Sessions from CLI versions before 1.0.93 (and other runs without `session.usage_record` events) show only the cost of their compactions.
 
 ## 0.2.1 — 2026-10-23
 

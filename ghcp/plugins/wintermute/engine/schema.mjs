@@ -10,6 +10,11 @@
 export const SCHEMA_VERSION = 1;
 export const CREDIT_USD = 0.01;
 export const NANO_AIU_PER_CREDIT = 1e9;
+/**
+ * Where a run summary's cost came from: 'events' is the session logs' usage records (0.2.2 on). A summary without it was
+ * written from session-store.db, which counted a resumed session's calls again, so the engine rebuilds it (see isStale).
+ */
+export const COST_SOURCE = 'events';
 
 export const DISPLAY_STATES = Object.freeze(['busy', 'idle', 'plan', 'question', 'stuck', 'blocked', 'merged', 'archived', 'done']);
 export const STATUS_DETAILS = Object.freeze([
@@ -206,6 +211,7 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  * @property {RunUnit[]} units           Orchestrator first
  * @property {{ model: string, credits: number, calls: number, apiMs: number }[]} models
  * @property {{ type: string, runs: number, durationMs: number, credits: number }[]} subagentTypes
+ * @property {'events'} [costSource]   Absent in summaries written before 0.2.2, from session-store.db
  * @property {EpochMs} computedAt
  *
  * @typedef {object} EngineOptions
@@ -240,6 +246,8 @@ const nullable = spec => ({ [KIND]: 'nullable', spec });
 const arrayOf = spec => ({ [KIND]: 'array', spec });
 const oneOf = values => ({ [KIND]: 'enum', values });
 const literal = value => ({ [KIND]: 'literal', value });
+/** A field that may be left out; when present it must match `spec`. */
+const optional = spec => ({ [KIND]: 'optional', spec });
 const is = {
   text: value => typeof value === 'string',
   id: value => typeof value === 'string' && value.length > 0,
@@ -277,6 +285,9 @@ function check(value, spec, path, errors) {
     case 'literal':
       if (value !== spec.value) errors.push(`${path}: expected ${preview(spec.value)}, got ${preview(value)}`);
       return;
+    case 'optional':
+      check(value, spec.spec, path, errors);
+      return;
     default:
       break;
   }
@@ -285,7 +296,9 @@ function check(value, spec, path, errors) {
     return;
   }
   for (const key of Object.keys(spec)) {
-    if (!own(value, key)) errors.push(`${path}.${key}: missing`);
+    if (!own(value, key)) {
+      if (spec[key]?.[KIND] !== 'optional') errors.push(`${path}.${key}: missing`);
+    }
     else check(value[key], spec[key], `${path}.${key}`, errors);
   }
   for (const key of Object.keys(value)) if (!own(spec, key)) errors.push(`${path}.${key}: unexpected field`);
@@ -375,6 +388,7 @@ export const RUN_SUMMARY_SPEC = Object.freeze({
   }),
   models: arrayOf(MODEL_COST),
   subagentTypes: arrayOf({ type: is.id, runs: is.count, durationMs: is.count, credits: is.number }),
+  costSource: optional(literal(COST_SOURCE)),
   computedAt: TIME,
 });
 
