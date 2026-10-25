@@ -167,6 +167,7 @@ export async function cleanupBatch(
     let repoNotVisible = false;
     let inventory: CleanupInventory = { projects: [], worktrees: [], sessions: [], workspaces: [] };
     let discovered = false;
+    let discoveryLost = false;
     const saved = entries.filter(e => e.identity === identity && e.action === "inventory").flatMap(e => e.inventory ? [e.inventory] : []);
     try {
       if (options.dropped?.includes(run.name) || confirmedDrop(run)) {
@@ -187,10 +188,9 @@ export async function cleanupBatch(
         }
       }
       const live = deps.app.inventory(run);
-      if (run.projectId && live.projects.length === 0 && saved.length === 0) {
-        add("archive", run.name, "already gone", "LOST app discovery: project was removed before inventory was saved; unknown child logs cannot be rediscovered; worktrees are found only through the clone's Git registry. Cleaning only known items.");
-        if (options.yes && !blocked) append({ action: "lost", identity, kind: "archive", target: run.name });
-      }
+      // Only an inventory read while the project existed is discovery. Older cleanup saved a
+      // project-less inventory after a loss, which must not hide that loss on a later pass.
+      discoveryLost = !!run.projectId && live.projects.length === 0 && !saved.some(s => s.projects.length > 0);
       for (const project of live.projects) {
         if (project.id !== run.projectId || project.path !== run.repoDir) throw new Error("app project identity/path mismatch");
       }
@@ -201,7 +201,7 @@ export async function cleanupBatch(
         workspaces: live.workspaces,
       };
       discovered = true;
-      if (options.yes && !blocked) append({ action: "inventory", identity, inventory });
+      if (options.yes && !blocked && !discoveryLost) append({ action: "inventory", identity, inventory });
     } catch (error) { blocked ??= errorText(error); }
     const projectItems = inventory.projects.map(project => add("app-project", project.id, "blocked",
       `KEEP project ${project.name} (${project.path}): do not remove it until --yes has archived and verified its logs. App removal deletes session histories.`));
@@ -264,6 +264,26 @@ export async function cleanupBatch(
           archive.reason = `Archive not current: ${state.notes.join("; ")}`;
         }
       } catch (error) { archive.status = "blocked"; archive.reason = errorText(error); blocked ??= archive.reason; }
+    }
+    // Known logs are archived above first; the lost discovery then blocks deletion like lost logs.
+    if (discoveryLost) {
+      hasLoss = true;
+      const reason = "LOST app discovery: project was removed before inventory was saved; unknown child logs and worktrees cannot be rediscovered";
+      const item = add("archive", run.name, "already gone", reason);
+      if (options.yes && !archiveGate) append({ action: "lost", identity, kind: "archive", target: run.name });
+      if (lossAccepted()) {
+        if (options.yes && !archiveGate && !receipt("run", run.name, "accepted-lost")) {
+          append({ action: "accepted-lost", identity, kind: "run", target: run.name });
+        }
+        item.reason = `${reason}; ${receipt("run", run.name, "accepted-lost") ? "Recorded" : "Preview"} loss accepted for ${run.name}; cleaning only known items and keeping remaining session originals`;
+      } else if (previouslyCleaned()) {
+        historicalLoss = true;
+        item.reason = `${reason}; this run was already cleaned (matching removal receipts and no remaining artifacts)`;
+      } else {
+        item.status = "blocked";
+        item.reason = `${reason}; keep the run's remaining evidence. If the loss is acceptable, run cleanup --batch ${config.id} --accept-lost ${run.name} --yes; this permits other artifact deletions but keeps session originals`;
+        blocked ??= item.reason;
+      }
     }
     // A dry run may give the remove instruction only when an earlier --yes saved everything the
     // app knows now; removing the project erases those links.

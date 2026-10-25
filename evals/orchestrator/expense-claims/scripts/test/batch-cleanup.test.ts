@@ -98,6 +98,11 @@ function fixture(t: { after(fn: () => void): void }) {
   return { home, dir, config, state, record, worktree, appState, deps, effects, save };
 }
 
+// The runner's post-score archive saves app discovery before the project can be removed.
+function saveDiscovery(f: ReturnType<typeof fixture>) {
+  assert.deepEqual(archiveRun(f.config, f.record, f.deps.app.inventory(f.record), [], f.deps.now), []);
+}
+
 test("dry run inventories deduplicated slots, app children and archives without writing anything", async (t) => {
   const f = fixture(t);
   const before = readFileSync(join(f.dir, "state.json"));
@@ -285,6 +290,7 @@ for (const field of ["id", "path"] as const) {
 
 test("independent guard: another project using the clone", async (t) => {
   const f = fixture(t);
+  saveDiscovery(f);
   f.appState.project = false;
   f.appState.session = false;
   f.deps.app.projectsForPath = path => path === f.record.repoDir ? ["different-project"] : [];
@@ -318,6 +324,7 @@ test("independent guard: live inuse PID lock", async (t) => {
 
 test("independent guard: repo deletion rechecks app membership after disk removal", async (t) => {
   const f = fixture(t);
+  saveDiscovery(f);
   f.appState.project = false;
   f.appState.session = false;
   const io = await import("node:fs");
@@ -331,17 +338,92 @@ test("independent guard: repo deletion rechecks app membership after disk remova
   assert.ok(!f.effects.includes("delete-repo"));
 });
 
-test("premature project removal reports lost discovery and cleans only still-known items", async (t) => {
+test("premature project removal reports lost discovery and blocks deletion even with force", async (t) => {
   const f = fixture(t);
   f.appState.project = false;
   f.appState.session = false;
   const result = await cleanupBatch(f.config, f.state, { yes: true, force: true }, f.deps);
-  assert.ok(result.items.some(i => /LOST.*discovery/.test(i.reason ?? "")));
+  assert.ok(result.items.some(i => i.kind === "archive" && i.status === "blocked" && /LOST app discovery.*--accept-lost/.test(i.reason ?? "")));
+  assert.ok(existsSync(f.worktree));
+  assert.ok(existsSync(f.record.repoDir));
+  assert.ok(!f.effects.includes("delete-repo"));
+  const accepted = await cleanupBatch(f.config, f.state, { yes: true, force: true, acceptLost: [f.record.name] }, f.deps);
+  assert.ok(!accepted.items.some(i => i.status === "blocked"), JSON.stringify(accepted));
   assert.ok(f.effects.includes(`git-worktree-remove ${f.worktree}`), "the clone's registry still finds the worktree");
   assert.equal(existsSync(f.worktree), false);
   assert.equal(existsSync(f.record.repoDir), false);
   assert.ok(f.effects.includes("delete-repo"));
 });
+
+test("a partial post-score archive does not let cleanup delete after the project is removed", async (t) => {
+  const f = fixture(t);
+  assert.deepEqual(archiveRun(f.config, f.record, null, [rootSession], f.deps.now), []);
+  f.appState.project = false;
+  f.appState.session = false;
+  f.deps.app.inventory = () => ({ projects: [], worktrees: [], sessions: [], workspaces: [] });
+  for (const id of [rootSession, childSession]) rmSync(join(f.config.stateDir, id), { recursive: true });
+  for (let pass = 0; pass < 2; pass++) {
+    const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+    assert.ok(result.items.some(i => i.kind === "archive" && i.target === f.record.name && i.status === "blocked" &&
+      /LOST app discovery/.test(i.reason ?? "")), `pass ${pass}: ${JSON.stringify(result)}`);
+    assert.equal(result.items.find(i => i.kind === "archive" && i.target.endsWith(rootSession))?.status, "archived");
+    assert.ok(!f.effects.includes("delete-repo"), `pass ${pass}`);
+    assert.ok(existsSync(f.record.repoDir));
+    assert.ok(existsSync(f.worktree));
+  }
+  const journal = readFileSync(join(f.dir, "cleanup.jsonl"), "utf8");
+  assert.doesNotMatch(journal, /"action":"inventory"/, "a project-less pass never saves its partial inventory as discovery");
+  const preview = await cleanupBatch(f.config, f.state, { acceptLost: [f.record.name] }, f.deps);
+  assert.ok(preview.items.some(i => i.target === f.record.name && /Preview loss accepted/.test(i.reason ?? "")));
+  assert.ok(!f.effects.includes("delete-repo"));
+  const accepted = await cleanupBatch(f.config, f.state, { yes: true, acceptLost: [f.record.name] }, f.deps);
+  assert.ok(!accepted.items.some(i => i.status === "blocked"), JSON.stringify(accepted));
+  assert.match(readFileSync(join(f.dir, "cleanup.jsonl"), "utf8"), /"action":"accepted-lost"/);
+  assert.ok(f.effects.includes("delete-repo"));
+  assert.equal(existsSync(f.record.repoDir), false);
+});
+
+test("a later successful discovery repairs a partial post-score archive", async (t) => {
+  const f = fixture(t);
+  assert.deepEqual(archiveRun(f.config, f.record, null, [rootSession], f.deps.now), []);
+  await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  f.appState.project = false;
+  f.appState.session = false;
+  f.deps.app.inventory = () => ({ projects: [], worktrees: [], sessions: [], workspaces: [] });
+  for (const id of [rootSession, childSession]) rmSync(join(f.config.stateDir, id), { recursive: true });
+  const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  assert.ok(!result.items.some(i => /LOST/.test(i.reason ?? "")), JSON.stringify(result));
+  assert.equal(result.items.filter(i => i.status === "blocked").length, 0, JSON.stringify(result));
+  assert.equal(result.items.filter(i => i.kind === "archive" && i.status === "archived").length, 2);
+  assert.ok(f.effects.includes("delete-repo"));
+});
+
+for (const change of ["none", "reappeared clone"] as const) {
+  test(`historical LOST discovery on an already cleaned run: ${change}`, async (t) => {
+    const f = fixture(t);
+    f.appState.project = false;
+    f.appState.session = false;
+    f.deps.app.inventory = () => ({ projects: [], worktrees: [], sessions: [], workspaces: [] });
+    await cleanupBatch(f.config, f.state, { yes: true, acceptLost: [f.record.name] }, f.deps);
+    assert.ok(f.effects.includes("delete-repo"));
+    // Rewrite the journal as older cleanup left it: no acceptance, and a project-less inventory saved after the loss.
+    const path = join(f.dir, "cleanup.jsonl");
+    const entries = readFileSync(path, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));
+    const lost = entries.findIndex(e => e.action === "lost" && e.target === f.record.name);
+    entries.splice(lost + 1, 0, { at: entries[lost].at, action: "inventory", identity: entries[lost].identity,
+      inventory: { projects: [], worktrees: [], sessions: [rootSession, childSession], workspaces: [] } });
+    writeFileSync(path, entries.filter(e => e.action !== "accepted-lost").map(e => JSON.stringify(e) + "\n").join(""));
+    for (const id of [rootSession, childSession]) rmSync(join(f.config.stateDir, id), { recursive: true });
+    if (change === "reappeared clone") mkdirSync(f.record.repoDir);
+    const result = await cleanupBatch(f.config, f.state, {}, f.deps);
+    const discovery = result.items.find(i => i.kind === "archive" && i.target === f.record.name);
+    assert.match(discovery?.reason ?? "", /LOST app discovery/);
+    if (change === "none") {
+      assert.equal(discovery?.status, "already gone", JSON.stringify(result));
+      assert.ok(!result.items.some(i => i.status === "blocked"), JSON.stringify(result));
+    } else assert.ok(result.items.some(i => i.status === "blocked"));
+  });
+}
 
 test("another project referencing a worktree blocks its removal even with force", async (t) => {
   const f = fixture(t);
@@ -976,7 +1058,8 @@ async function realClone(f: ReturnType<typeof fixture>) {
   f.record.seedSha = (await git(["rev-parse", "HEAD"])).stdout.trim();
   const calls: string[] = [];
   f.deps.exec = (cmd, args, opts) => { calls.push(`${opts?.cwd}: ${args.join(" ")}`); return run(cmd, args, opts); };
-  // The app removed the project before cleanup's first inventory, as for the -8 runs of batch 20261022-2121.
+  // The app removed the project and its worktree after the runner's post-score archive.
+  saveDiscovery(f);
   rmSync(f.worktree, { recursive: true });
   f.appState.project = false;
   f.appState.session = false;
@@ -1474,6 +1557,7 @@ test("N4: a project that is safe to remove is labelled ACTION, and the exit stat
 
 test("a repo the current gh login cannot see does not block a dry run, and --yes with the owner's login finishes", async (t) => {
   const f = fixture(t);
+  saveDiscovery(f);
   f.appState.project = false;
   f.appState.session = false;
   f.deps.repo = async () => { throw new RepoNotVisible(); };
@@ -1508,6 +1592,7 @@ test("a repo the owner's login cannot see still blocks --yes", async (t) => {
 
 test("a repo --yes confirmed gone with the owner's login stays gone in later dry runs, with no --yes step", async (t) => {
   const f = fixture(t);
+  saveDiscovery(f);
   f.appState.project = false;
   f.appState.session = false;
   f.deps.repo = async () => null;
@@ -1529,6 +1614,7 @@ test("a repo --yes confirmed gone with the owner's login stays gone in later dry
 
 test("a batch finished by older code asks for one --yes to record the repo's absence, then reads as finished", async (t) => {
   const f = fixture(t);
+  saveDiscovery(f);
   f.appState.project = false;
   f.appState.session = false;
   f.deps.repo = async () => null;
@@ -1666,6 +1752,7 @@ test("T1: --yes never creates folders through a symlinked archive folder", async
 });
 
 async function absentReceipt(f: ReturnType<typeof fixture>) {
+  saveDiscovery(f);
   f.appState.project = false;
   f.appState.session = false;
   f.deps.repo = async () => null;
