@@ -16,6 +16,8 @@ import { readResults } from "../results.ts";
 import { liveAgent, variantAgents, variantBundle, variantFiles, verifyVariants } from "../variants.ts";
 import { readAnswerSheet, replyFor, rowForQuestion, settleRow, type AnswerRow } from "./answers.ts";
 import type { AppDb } from "./appdb.ts";
+import { archiveRun, type SessionInventory } from "./archive.ts";
+import { openCleanupApp } from "./cleanup-io.ts";
 import { scanSession, scanSwarm } from "./hygiene.ts";
 import { claimActive, releaseActive } from "./lock.ts";
 import { notices, type Notice } from "./notify.ts";
@@ -88,6 +90,7 @@ export interface Deps {
   exec(cmd: string, args: string[], opts?: { cwd?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number }): Promise<ProcResult>;
   notify(notice: Notice): Promise<{ ok: boolean; error?: string }>;
   appDb: AppDb;
+  archiveInventory?: (run: RunState) => SessionInventory;
   awake: { start(untilMs: number): number | null; alive(pid: number): boolean; stop(pid: number): void };
   // The calling driver ("session:<id>" for an app session) and whether a driver is still alive
   // (null when that can't be told).
@@ -1334,6 +1337,31 @@ function scanHygiene(ctx: Ctx, run: RunState): void {
   for (const finding of scanSwarm(readLogs(ctx, runSessionIds(ctx, run)))) addFlag(run, finding.code, finding.detail, iso(ctx.deps.now()));
 }
 
+function archiveScoredRun(ctx: Ctx, run: RunState): void {
+  const failures: string[] = [];
+  let inventory: SessionInventory | null = null;
+  try {
+    inventory = ctx.deps.archiveInventory
+      ? ctx.deps.archiveInventory(run) : openCleanupApp(ctx.config.appDb).inventory(run);
+    if (run.projectId && !inventory.projects.length) throw new Error("app project is missing; descendant discovery may be incomplete");
+    for (const project of inventory.projects) {
+      if (project.id !== run.projectId || project.path !== run.repoDir) throw new Error("app project identity/path mismatch");
+    }
+  } catch (error) {
+    inventory = null;
+    failures.push(`discovery: ${error instanceof Error ? error.message : "app inventory failed"}`);
+  }
+  try {
+    failures.push(...archiveRun(ctx.config, run, inventory, runSessionIds(ctx, run), () => iso(ctx.deps.now())));
+  } catch (error) {
+    failures.push(error instanceof Error ? error.message : "archive failed");
+  }
+  if (failures.length) {
+    for (const failure of failures) addFlag(run, "archive-failed", failure, iso(ctx.deps.now()));
+    log(ctx, `${run.key} archive failed: ${failures.join("; ")}`);
+  } else log(ctx, `${run.key} logs archived in ${join(ctx.config.dir, "sessions", run.name)}`);
+}
+
 async function scoreRun(ctx: Ctx, state: BatchState, run: RunState): Promise<void> {
   const { config, deps } = ctx;
   findAnswerSource(ctx, run);
@@ -1553,6 +1581,7 @@ async function runStep(ctx: Ctx, state: BatchState, index: number): Promise<Step
       const row = rowOf(ctx, run);
       if (row) adoptRow(ctx, state, run, row);
       else await scoreRun(ctx, state, run);
+      archiveScoredRun(ctx, run);
       return { progressed: true };
     }
     case "scored": {
