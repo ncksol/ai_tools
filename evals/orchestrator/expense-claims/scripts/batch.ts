@@ -35,7 +35,7 @@ const USAGE = `Usage (from evals/orchestrator/expense-claims):
   npm run batch -- next --batch <id|path|latest> [--max-wait 420]
   npm run batch -- record --batch <id|path|latest> --action <id> <result flags>
   npm run batch -- status|stop|report --batch <id|path|latest>
-  npm run batch -- cleanup --batch <id|path|latest|all> [--yes] [--force] [--dropped <run-name> ...]
+  npm run batch -- cleanup --batch <id|path|latest|all> [--yes] [--force] [--dropped <run-name> ...] [--accept-lost <run-name> ...]
   npm run batch -- take-over --batch <id|path|latest>   (you only: release a batch whose driver is gone)
   npm run batch -- alert --batch <id|path|latest> --message <text>
   npm run batch -- notify-test
@@ -57,6 +57,7 @@ const { values, positionals } = parseArgs({
     yes: { type: "boolean", default: false },
     force: { type: "boolean", default: false },
     dropped: { type: "string", multiple: true, default: [] },
+    "accept-lost": { type: "string", multiple: true, default: [] },
     "batches-dir": { type: "string", default: defaultPaths().batchesDir },
     "max-wait": { type: "string", default: "420" },
     // init
@@ -282,7 +283,7 @@ async function main(): Promise<number> {
     case "cleanup":
       if (!values.batch) throw new UsageError("--batch is required");
       if (values.yes && values["dry-run"]) throw new UsageError("--yes cannot be combined with --dry-run");
-      return cleanupCommand({ batch: values.batch, batchesDir: values["batches-dir"], yes: values.yes, force: values.force, dropped: values.dropped });
+      return cleanupCommand({ batch: values.batch, batchesDir: values["batches-dir"], yes: values.yes, force: values.force, dropped: values.dropped, acceptLost: values["accept-lost"] });
     case "init":
       return init();
     case "selftest":
