@@ -5,6 +5,8 @@ import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { LogEvent } from "../events.ts";
 import type { AppDb, Interruption, WorkspaceRow } from "./appdb.ts";
+import type { SessionInventory } from "./archive.ts";
+import type { RunState } from "./state.ts";
 
 export type Scenario =
   | "selftest"
@@ -53,6 +55,16 @@ export class FakeApp implements AppDb {
   }
   sessionAliases(): string[] { return []; }
   workspaceNeverStarted(): boolean { return false; }
+  archiveInventory(record: RunState): SessionInventory {
+    return {
+      projects: [{ id: record.projectId!, path: record.repoDir, name: record.name }],
+      worktrees: [],
+      sessions: [...this.sessions.values()].filter(s => s.projectId === record.projectId).flatMap(s => [s.id, ...s.children]),
+      workspaces: (this.workspaces(record.projectId!) ?? []).map(w => ({
+        id: w.id, sessionId: w.sessionId, archived: w.archivedAt !== null,
+      })),
+    };
+  }
   // Every project uses the app's default account.
   account = "ncksol";
   defaultAccount(): string | null { return this.account; }

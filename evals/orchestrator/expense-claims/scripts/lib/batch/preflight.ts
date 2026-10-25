@@ -1,12 +1,13 @@
 // Checks before a batch starts, and the one-time manual steps only the user can do.
-import { accessSync, constants, existsSync, readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { accessSync, constants, existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import type { ProcResult } from "../proc.ts";
+import { readResults, sameRun } from "../results.ts";
 import type { AppDb } from "./appdb.ts";
 import { otherActiveBatch } from "./lock.ts";
 import { readNtfyUrl } from "./notify.ts";
 import { agentsToPin, readAppVersion, readCliVersion } from "./pins.ts";
-import type { BatchConfig } from "./state.ts";
+import { loadConfig, loadState, type BatchConfig } from "./state.ts";
 import { liveAgent, variantAgents, verifyVariants } from "../variants.ts";
 
 export interface Check {
@@ -51,6 +52,50 @@ function nearestExisting(path: string): string {
   let current = path;
   while (!existsSync(current) && dirname(current) !== current) current = dirname(current);
   return current;
+}
+
+export function checkResultsHistory(config: BatchConfig): Check {
+  const check = (status: Check["status"], detail: string): Check => ({ name: "earlier batch results landed", status, detail });
+  if (config.dryRun || config.selfTest.only) return check("SKIP", config.dryRun ? "dry run" : "self-test only");
+  const root = dirname(resolve(config.dir));
+  let source = root;
+  try {
+    let entries: string[];
+    try {
+      entries = readdirSync(source);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return check("PASS", "no earlier batches");
+      throw error;
+    }
+    const earlier = entries
+      .map((entry) => join(root, entry))
+      .filter((dir) => dir !== resolve(config.dir) && existsSync(join(dir, "config.json")))
+      .map((dir) => {
+        source = dir;
+        return { dir, config: loadConfig(dir) };
+      })
+      .filter((batch) => !batch.config.dryRun)
+      .sort((a, b) => b.config.createdAt.localeCompare(a.config.createdAt) || b.dir.localeCompare(a.dir));
+    for (const batch of earlier) {
+      source = batch.dir;
+      const recorded = loadState(batch.dir).runs.filter((run) => run.row);
+      if (recorded.length === 0) continue;
+      const rows = readResults(config.resultsPath);
+      const missing = recorded.filter(({ row }) => row && !rows.some((result) => sameRun(result, row.repo, row.run)));
+      if (missing.length === 0) return check("PASS", `batch ${batch.config.id}: all ${recorded.length} recorded rows are in ${config.resultsPath}`);
+
+      const reportPath = join(batch.dir, "report.md");
+      const report = existsSync(reportPath) ? readFileSync(reportPath, "utf8") : "";
+      const branch = /results\.csv rows are committed on branch `([^`]+)`/.exec(report)?.[1];
+      const driver = branch ? `driver branch ${branch}` : `driver branch unknown; results checkout ${dirname(batch.config.resultsPath)}`;
+      const detail = `batch ${batch.config.id} (${driver}): missing ${missing.map((run) => run.name).join(", ")} from results.csv`;
+      if (config.ignoredResultsBatches?.includes(batch.config.id)) return check("WARN", `${detail}; explicitly ignored with --ignore-results-batch ${batch.config.id}`);
+      return check("FAIL", `${detail}. Land that batch's results.csv commits and update this checkout before init; for a deliberately abandoned batch only, pass --ignore-results-batch ${batch.config.id}.`);
+    }
+    return check("PASS", "no earlier live batch has recorded rows");
+  } catch (error) {
+    return check("FAIL", `cannot verify batch results at ${source}: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 export async function runPreflight(config: BatchConfig, host: Host): Promise<Check[]> {
@@ -142,6 +187,7 @@ export async function runPreflight(config: BatchConfig, host: Host): Promise<Che
   add("results branch", branch && !["main", "master", "HEAD"].includes(branch) ? "PASS" : "FAIL", branch ? `on ${branch}; results.csv commits go here, never to main` : "not a git checkout");
   const dirty = await exec("git", ["status", "--porcelain", "--", config.resultsPath], { cwd: kitRepo });
   add("results.csv committed", dirty.code === 0 && dirty.stdout.trim() === "" ? "PASS" : "FAIL", dirty.stdout.trim() === "" ? "no uncommitted changes" : "commit or discard the changes to results.csv first");
+  checks.push(checkResultsHistory(config));
   const name = (await exec("git", ["config", "user.name"], { cwd: kitRepo })).stdout.trim();
   const email = (await exec("git", ["config", "user.email"], { cwd: kitRepo })).stdout.trim();
   add("git identity", name && email ? "PASS" : "FAIL", name && email ? `${name} <${email}>` : "set git user.name and user.email");

@@ -30,6 +30,8 @@ export interface BatchConfig {
   appPlist: string;
   cliVersionFile: string;
   resultsPath: string;
+  // Explicitly reviewed missing results from a named, deliberately abandoned batch.
+  ignoredResultsBatches?: string[];
   kitDir: string;
   scoreScript: string;
   newRunScript: string;

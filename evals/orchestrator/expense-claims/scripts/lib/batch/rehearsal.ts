@@ -1,7 +1,7 @@
 // The stubbed rehearsal of a whole batch: the real runner, new-run --dry-run, score and git, with
 // the app and the driver agent replaced by FakeApp and a scripted driver on a simulated clock.
 // Notifications go to a local HTTP stub, never to ntfy. Nothing reaches GitHub or the real app.
-import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -62,7 +62,7 @@ export async function startNtfyStub(): Promise<{ url: string; received: { title:
 // on app 1.1.30 before registration became add_repository in 1.1.31; the self-test fails at its shell command.
 // results: the results.csv to start from; by default the real one.
 export async function rehearse(opts: { scenarios?: Scenario[]; runsPerVariant?: number; parallel?: number; allowAll?: boolean; results?: string; log?: (line: string) => void } = {}): Promise<RehearsalResult> {
-  const dir = mkdtempSync(join(tmpdir(), "orch-eval-rehearsal-"));
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "orch-eval-rehearsal-")));
   const runsDir = join(dir, "runs");
   const stateDir = join(dir, "session-state");
   const agentsDir = join(dir, "agents");
@@ -156,6 +156,7 @@ export async function rehearse(opts: { scenarios?: Scenario[]; runsPerVariant?: 
       return url ? sendNtfy(url, notice) : { ok: false, error: "no topic" };
     },
     appDb: app,
+    archiveInventory: record => app.archiveInventory(record),
     awake: {
       start: () => {
         awake.started++;
