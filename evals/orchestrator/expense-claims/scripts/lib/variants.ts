@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
 export const LIVE_VARIANTS = ["orchestrator", "session-orchestrator", "hands-on-orchestrator", "hands-on-session-orchestrator"];
-const DEFAULT_MANIFEST = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "variants", "review-policy.json");
+// The labels of the shipped A/B/C manifest, variants/review-policy.json. readVariants rejects any other
+// label, so summaries tell pinned-policy rows from live rows without reading that file.
+export const POLICY_VARIANTS: ReadonlySet<string> = new Set(["orchestrator-review-a", "orchestrator-review-b", "orchestrator-review-c"]);
 
 export function variantLabel(agent: string): string {
   const bare = agent.replace(/^wintermute:/, "");
@@ -38,14 +39,6 @@ const object = (v: unknown): Record<string, unknown> | null =>
   v !== null && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : null;
 const name = (v: unknown): v is string => typeof v === "string" && /^[a-z0-9][a-z0-9-]*$/.test(v);
 
-export function readPolicyLabels(path = DEFAULT_MANIFEST): ReadonlySet<string> {
-  const data = object(JSON.parse(readFileSync(path, "utf8")));
-  const entries = object(data?.variants);
-  return new Set(entries ? Object.keys(entries) : []);
-}
-
-export const POLICY_VARIANTS = readPolicyLabels();
-
 export function readVariants(path: string): VariantSet {
   path = resolve(path);
   const data = object(JSON.parse(readFileSync(path, "utf8")));
@@ -71,7 +64,7 @@ export function readVariants(path: string): VariantSet {
   const aliases = new Set<string>();
   for (const [label, value] of Object.entries(entries)) {
     const variant = object(value);
-    if (!name(label) || !variant || !name(variant.agent) || label !== variant.agent || ["orchestrator", "session-orchestrator"].includes(variant.agent) ||
+    if (!name(label) || !POLICY_VARIANTS.has(label) || !variant || !name(variant.agent) || label !== variant.agent || ["orchestrator", "session-orchestrator"].includes(variant.agent) ||
         typeof variant.revision !== "string" || !/^[a-f0-9]{40}$/.test(variant.revision) || aliases.has(variant.agent)) {
       throw new Error(`Invalid variant ${label} in manifest ${path}`);
     }
