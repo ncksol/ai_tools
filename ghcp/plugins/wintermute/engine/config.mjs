@@ -37,7 +37,6 @@ export function copilotPaths(home = path.join(os.homedir(), '.copilot')) {
   return {
     home,
     dataDb: path.join(home, 'data.db'),
-    storeDb: path.join(home, 'session-store.db'),
     stateDir: path.join(home, 'session-state'),
     historyDir: path.join(home, 'swarm-dashboard', 'history'),
   };

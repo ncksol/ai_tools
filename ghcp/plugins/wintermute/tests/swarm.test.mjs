@@ -88,11 +88,22 @@ function logs(contract) {
   return { root, api, ui, docs, reviewer };
 }
 
+/** Feeds the ledger one session.usage_record per row: { id, session_id, model, total_nano_aiu, duration_ms, created_at, parent_tool_call_id?, agent_id? }. */
+function applyRows(ledger, rows) {
+  for (const row of rows) {
+    const usage = {
+      model: row.model, duration: row.duration_ms, accounting: { sourceSessionId: row.session_id, usageId: `usage-${row.id}` },
+      copilotUsage: { totalNanoAiu: row.total_nano_aiu }, ...(row.parent_tool_call_id ? { parentToolCallId: row.parent_tool_call_id } : {}),
+    };
+    ledger.apply(row.session_id, { type: 'session.usage_record', data: { usage }, ...(row.agent_id ? { agentId: row.agent_id } : {}), id: `usage-event-${row.id}`, timestamp: row.created_at });
+  }
+}
+
 function input(contract = true) {
   const app = appData();
   const { root, api, ui, docs, reviewer } = logs(contract);
   const ledger = createLedger();
-  ledger.apply([
+  applyRows(ledger, [
     { id: 1, session_id: 'cli-root', model: 'claude-opus-5.5', total_nano_aiu: 10e9, duration_ms: 1000, created_at: iso(1) },
     { id: 2, session_id: 'cli-api', model: 'gpt-5.5', total_nano_aiu: 20e9, duration_ms: 2000, created_at: iso(20) },
     { id: 3, session_id: 'cli-api', model: 'gpt-5.5', parent_tool_call_id: reviewer, agent_id: 'agent-r', total_nano_aiu: 5e9, duration_ms: 500, created_at: iso(22) },
@@ -600,7 +611,7 @@ function withSubagents(build, { alive = true, now = at(120), ledger = [], contra
   data.states.set('cli-root', fold(root, 'cli-root', ROOT_STATE));
   data.alive.set('cli-root', alive);
   data.now = now;
-  data.ledger.apply(ledger);
+  applyRows(data.ledger, ledger);
   return { data, ids };
 }
 
@@ -905,7 +916,7 @@ test('a sub-agent unit costs what it and its own sub-agents cost, while the orch
     root.sub(ids.lead, 'assistant.message', { content: 'busy' });
     root.sub(ids.grand, 'assistant.message', { content: 'busy' });
   });
-  data.ledger.apply(costRows(ids, [
+  applyRows(data.ledger, costRows(ids, [
     [10, 'lead', 20e9], [11, 'kid', 10e9], [12, 'grand', 15e9], [13, 'other', 1e9], [14, null, 4e9],
   ]));
   const snapshot = buildSnapshot(data);
@@ -1129,7 +1140,7 @@ test('the run summary leaves sub-agent units out of its children, units and busy
     root.at(at(118));
     root.sub(ids.grand, 'assistant.message', { content: 'busy' });
   });
-  data.ledger.apply(costRows(ids, [[10, 'lead', 20e9], [11, 'kid', 10e9], [12, 'grand', 15e9]]));
+  applyRows(data.ledger, costRows(ids, [[10, 'lead', 20e9], [11, 'kid', 10e9], [12, 'grand', 15e9]]));
   const snapshot = buildSnapshot(data);
   assert.deepEqual(subUnits(snapshot).map(unit => unit.id), [ids.lead], 'the unit exists, and the summary still leaves it out');
   const summary = summarizeRun(snapshot, { computedAt: at(120) });

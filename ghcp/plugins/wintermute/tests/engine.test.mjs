@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, utimesSync } from 'node:fs';
+import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createSwarmEngine } from '../engine/engine.mjs';
 import { createHistoryStore } from '../engine/model/history.mjs';
@@ -293,9 +293,7 @@ test('a tracked run that finished shows Live after one refresh when work resumes
 
 test('a throwing log callback cannot break polling', async () => {
   const home = scenario();
-  rmSync(home.storeDb, { force: true });
-  rmSync(`${home.storeDb}-wal`, { force: true });
-  rmSync(`${home.storeDb}-shm`, { force: true });
+  for (const suffix of ['', '-wal', '-shm']) rmSync(`${home.dataDb}${suffix}`, { force: true });
   let calls = 0;
   const engine = createSwarmEngine({
     copilotHome: home.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => at(60), processProbe: alwaysAlive, prLookup: 'off',
@@ -304,7 +302,7 @@ test('a throwing log callback cannot break polling', async () => {
   await engine.refresh();
   await engine.refresh();
   assert.ok(calls > 0);
-  assert.ok(engine.diagnostics().some(item => item.source === 'session-store.db' && item.level === 'warn'));
+  assert.ok(engine.diagnostics().some(item => item.source === 'data.db' && item.level === 'warn'));
 });
 
 test('a missing data.db keeps the last good app data and its revisions', async () => {
@@ -416,7 +414,7 @@ const OLD_LAST = T0 - 30 * DAY + MINUTE;
 /** ws-old from scenario() with 1 credit, its summary stored by an engine that then stops. reopen() makes a new engine, 30 days on. */
 async function storedOldRun() {
   const home = scenario();
-  home.usage([{ sessionId: 'cli-old', nanoAiu: 1e9, createdAt: OLD_LAST - 30_000 }]);
+  home.usage([{ sessionId: 'cli-old', nanoAiu: 1e9, createdAt: OLD_LAST - 30_000, usageId: 'old-call-1' }]);
   const historyDir = path.join(tempDir('swarm-engine-'), 'history');
   const stored = path.join(historyDir, 'runs', 'ws-old.json');
   const reopen = () => createSwarmEngine({ copilotHome: home.root, historyDir, now: () => at(0), processProbe: alwaysAlive, prLookup: 'off' });
@@ -466,6 +464,117 @@ test('a stored summary is rebuilt when cost for the time it covers arrives later
   engine.stop();
 });
 
+test('a resumed session that writes an earlier usage record again counts it once, and its one new call adds only its own cost', async () => {
+  const { home, stored, reopen } = await storedOldRun();
+  const resumeAt = OLD_LAST + 10 * MINUTE;
+  const later = new EventLog(resumeAt);
+  later.resume(); later.turnStart();
+  home.writeEvents('cli-old', later.events, { append: true });
+  home.usage([
+    { sessionId: 'cli-old', nanoAiu: 1e9, createdAt: OLD_LAST - 30_000, usageId: 'old-call-1' },
+    { sessionId: 'cli-old', nanoAiu: 2e9, createdAt: resumeAt + MINUTE, usageId: 'new-call' },
+  ]);
+  const done = new EventLog(resumeAt + 2 * MINUTE);
+  done.turnEnd();
+  home.writeEvents('cli-old', done.events, { append: true });
+  const engine = reopen();
+  await engine.refresh();
+  assert.equal(engine.listSwarms().find(swarm => swarm.id === 'ws-old').credits, 3, '1 before the resume, plus 2 for the new call');
+  const summary = await engine.getRunSummary('ws-old');
+  assert.equal(summary.credits, 3);
+  assert.equal(readSummary(stored).credits, 3);
+  engine.stop();
+});
+
+/** Rewrites the stored summary as session-store.db made it: no costSource, and `credits` from a resumed session's repeated rows. */
+function writeOldSourceSummary(stored, credits) {
+  const old = readSummary(stored);
+  delete old.costSource;
+  old.credits = credits;
+  old.usd = Math.round(credits * 100) / 10000;
+  old.units[0].credits = credits;
+  old.models = old.models.map(entry => ({ ...entry, credits, calls: entry.calls * 2 }));
+  writeFileSync(stored, `${JSON.stringify(old, null, 2)}\n`);
+}
+
+test('a summary from session-store.db is rebuilt from complete logs, even when the corrected cost is lower', async () => {
+  const { stored, reopen } = await storedOldRun();
+  writeOldSourceSummary(stored, 2);
+  const engine = reopen();
+  await engine.refresh();
+  assert.deepEqual(await oldItem(engine), [OLD_LAST, 1, false], 'History lists the deduped event total from the listing');
+  const summary = await engine.getRunSummary('ws-old');
+  assert.deepEqual([summary.credits, summary.costSource], [1, 'events']);
+  assert.deepEqual([readSummary(stored).credits, readSummary(stored).costSource], [1, 'events'], 'the stored summary is replaced');
+  assert.deepEqual(await oldItem(engine), [OLD_LAST, 1, true]);
+  engine.stop();
+});
+
+test('a summary from session-store.db is kept while a log of its run is missing', async () => {
+  const { home, stored, reopen } = await storedOldRun();
+  writeOldSourceSummary(stored, 2);
+  rmSync(path.join(home.stateDir, 'cli-old-child', 'events.jsonl'));
+  const before = stat(stored);
+  const engine = reopen();
+  await engine.refresh();
+  assert.ok(engine.diagnostics().some(item => item.source === 'events' && item.message === 'cli-old-: the session\'s log is missing, so its cost is unknown.'));
+  assert.deepEqual(await oldItem(engine), [OLD_LAST, 2, true]);
+  assert.equal((await engine.getRunSummary('ws-old')).credits, 2);
+  assert.deepEqual(stat(stored), before);
+  engine.stop();
+});
+
+test('a cold refresh with a child\'s log missing never replaces the stored summary with the partial cost', async () => {
+  const home = scenario();
+  home.usage([
+    { sessionId: 'cli-old', nanoAiu: 1e9, createdAt: OLD_LAST - 30_000 },
+    { sessionId: 'cli-old-child', nanoAiu: 4e9, createdAt: OLD_LAST - 20_000 },
+  ]);
+  const historyDir = path.join(tempDir('swarm-engine-'), 'history');
+  const stored = path.join(historyDir, 'runs', 'ws-old.json');
+  const reopen = () => createSwarmEngine({ copilotHome: home.root, historyDir, now: () => at(0), processProbe: alwaysAlive, prLookup: 'off' });
+  const first = reopen();
+  assert.equal((await first.getRunSummary('ws-old')).credits, 5);
+  first.stop();
+  assert.equal(readSummary(stored).credits, 5);
+
+  rmSync(path.join(home.stateDir, 'cli-old-child', 'events.jsonl'));
+  const resumeAt = OLD_LAST + 10 * MINUTE;
+  const later = new EventLog(resumeAt);
+  later.resume(); later.turnStart();
+  home.writeEvents('cli-old', later.events, { append: true });
+  home.usage([{ sessionId: 'cli-old', nanoAiu: 2e9, createdAt: resumeAt + MINUTE }]);
+  const done = new EventLog(resumeAt + 2 * MINUTE);
+  done.turnEnd();
+  home.writeEvents('cli-old', done.events, { append: true });
+
+  const engine = reopen();
+  await engine.refresh();
+  assert.ok(engine.diagnostics().some(item => item.source === 'events' && item.message.includes('log is missing')), 'the missing log is reported');
+  assert.equal((await engine.getRunSummary('ws-old')).credits, 5, 'the last good summary is returned');
+  await engine.refresh();
+  assert.equal(readSummary(stored).credits, 5, 'and is not overwritten');
+  engine.stop();
+});
+
+test('a usage line that cannot be read keeps the run\'s cost incomplete, with a warning, on later refreshes too', async () => {
+  const home = scenario();
+  home.usage([{ sessionId: 'cli-old', nanoAiu: 1e9, createdAt: OLD_LAST - 30_000 }]);
+  appendFileSync(path.join(home.stateDir, 'cli-old', 'events.jsonl'), '{"type":"session.usage_record","data":{"usage":\n');
+  const historyDir = path.join(tempDir('swarm-engine-'), 'history');
+  const stored = path.join(historyDir, 'runs', 'ws-old.json');
+  const engine = createSwarmEngine({ copilotHome: home.root, historyDir, now: () => at(0), processProbe: alwaysAlive, prLookup: 'off' });
+  const warned = () => engine.diagnostics().some(item => item.source === 'events' && item.message.startsWith('cli-old: 1 usage line could not be read, so the cost is incomplete'));
+  assert.ok(await engine.getSnapshot('ws-old'));
+  assert.ok(warned());
+  await engine.refresh();
+  assert.ok(warned(), 'the warning stays on a refresh with no new bytes');
+  assert.equal((await engine.getRunSummary('ws-old')).credits, 1);
+  assert.equal(existsSync(stored), false, 'no summary is stored from an incomplete cost read');
+  assert.deepEqual((await engine.listHistory()).find(entry => entry.id === 'ws-old').summarized, false);
+  engine.stop();
+});
+
 test('a stored summary with nothing newer is returned as stored, and lower cost does not replace it', async () => {
   const { home, stored, reopen } = await storedOldRun();
   const before = stat(stored);
@@ -475,8 +584,12 @@ test('a stored summary with nothing newer is returned as stored, and lower cost 
   assert.deepEqual(stat(stored), before);
   engine.stop();
 
-  // Cleaning up logs can drop ledger rows; the stored cost then stays.
-  execSql(home.storeDb, "DELETE FROM assistant_usage_events WHERE session_id = 'cli-old'");
+  // A log rewritten without its usage records drops their cost; the stored cost then stays.
+  const log = path.join(home.stateDir, 'cli-old', 'events.jsonl');
+  const kept = readFileSync(log, 'utf8').split('\n').filter(line => !line.includes('session.usage_record')).join('\n');
+  rmSync(log);
+  writeFileSync(log, kept);
+  utimesSync(log, OLD_LAST / 1000, OLD_LAST / 1000);
   const cleaned = reopen();
   await cleaned.refresh();
   assert.equal(cleaned.listSwarms().find(swarm => swarm.id === 'ws-old').credits, 0);
@@ -798,16 +911,20 @@ test('a new engine that cannot read a run\'s events leaves its stored summary as
 for (const start of ['warm', 'cold']) {
   test(`History never lists a summary of an incomplete build as summarised (${start} engine)`, async t => {
     const { home, stored, reopen } = await storedOldRun();
+    const child = new EventLog(OLD_LAST - 50_000);
+    child.start(); child.turnStart(); child.wait(10_000); child.turnEnd();
+    home.writeEvents('cli-old-child', child.events);
     let engine = start === 'warm' ? reopen() : null;
     if (engine) assert.ok(await engine.getSnapshot('ws-old'), 'the run is tracked, built while every source read');
     // The run works again and finishes later, and cost for it arrives, so the stored summary (1 credit) is stale against the
-    // listing (3 credits). Its events cannot be read.
+    // listing (3 credits). Its child's events cannot be read.
     const finishedAt = OLD_LAST + 19 * MINUTE;
     const later = new EventLog(OLD_LAST + 10 * MINUTE);
     later.turnStart(); later.at(finishedAt); later.turnEnd();
-    const file = home.writeEvents('cli-old', later.events, { append: true });
+    home.writeEvents('cli-old', later.events, { append: true });
     home.usage([{ sessionId: 'cli-old', nanoAiu: 2e9, createdAt: OLD_LAST - 10_000 }]);
-    const restore = makeUnreadable(file);
+    child.at(OLD_LAST - 20_000); child.message('more');
+    const restore = makeUnreadable(home.writeEvents('cli-old-child', child.events.slice(-1), { append: true }));
     if (!restore) {
       engine?.stop();
       t.skip('this user can read a file with no permissions (root, or a file system without modes)');
@@ -884,7 +1001,7 @@ test('a session.db that cannot be stat\'ed keeps its last good registry: the sto
   engine.stop();
 });
 
-for (const source of ['data.db', 'session-store.db']) {
+for (const source of ['data.db']) {
   test(`a refresh whose ${source} read fails neither stores nor marks checked a finished run's summary`, async t => {
     const { home, stored, reopen } = await storedOldRun();
     for (const n of [1, 2, 3]) {
@@ -902,7 +1019,7 @@ for (const source of ['data.db', 'session-store.db']) {
     const later = new EventLog(OLD_LAST + 10 * MINUTE);
     later.turnStart(); later.at(finishedAt); later.turnEnd();
     home.writeEvents('cli-old', later.events, { append: true });
-    const db = source === 'data.db' ? home.dataDb : home.storeDb;
+    const db = home.dataDb;
     const saved = `${db}.saved`;
     renameSync(db, saved);
     copyFileSync(saved, db);

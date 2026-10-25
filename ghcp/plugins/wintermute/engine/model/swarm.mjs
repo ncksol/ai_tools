@@ -511,7 +511,7 @@ function assignSubagentLabels(subs, taken, memory, number) {
   return labels;
 }
 
-/** What each task call in the root's ledger rows cost, with the cost of everything it started added to it and to each task above it. */
+/** What each task call in the root's ledger cost, with the cost of everything it started added to it and to each task above it. */
 function rollupCost(byParentToolCall, nested) {
   const totals = new Map();
   for (const [taskId, spent] of byParentToolCall) {
