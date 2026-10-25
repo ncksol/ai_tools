@@ -31,6 +31,12 @@ function batch(args: string[], extraEnv: NodeJS.ProcessEnv = {}) {
   return run(process.execPath, ["scripts/batch.ts", ...args], { cwd: KIT_DIR, env });
 }
 
+test("cleanup accepts the per-run lost-evidence flag but refuses it across all batches", async () => {
+  const result = await batch(["cleanup", "--batch", "all", "--accept-lost", "orch-eval-orchestrator-1"]);
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /--accept-lost requires one batch, not all/);
+});
+
 test("init refuses a self-test agent that is an orchestrator", async () => {
   for (const agent of ["session-orchestrator", "wintermute:session-orchestrator", "wintermute:hands-on-orchestrator"]) {
     const result = await batch(["init", "--dry-run", "--memory-off", "--variants", "variant-a", "--self-test-agent", agent, ...common]);

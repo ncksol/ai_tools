@@ -256,8 +256,9 @@ export function selectCleanupBatches(value: string, root: string): string[] {
   return dirs.map(name => join(root, name)).filter(dir => ["done", "stopped"].includes(loadState(dir).phase));
 }
 
-export async function cleanupCommand(options: { batch: string; batchesDir: string; yes: boolean; force: boolean; dropped?: string[] }, print: (line: string) => void = console.log): Promise<number> {
+export async function cleanupCommand(options: { batch: string; batchesDir: string; yes: boolean; force: boolean; dropped?: string[]; acceptLost?: string[] }, print: (line: string) => void = console.log): Promise<number> {
   if (options.batch === "all" && options.dropped?.length) throw new Error("--dropped requires one batch, not all");
+  if (options.batch === "all" && options.acceptLost?.length) throw new Error("--accept-lost requires one batch, not all");
   let exit = 0;
   for (const dir of selectCleanupBatches(options.batch, options.batchesDir)) {
     const execute = async () => {

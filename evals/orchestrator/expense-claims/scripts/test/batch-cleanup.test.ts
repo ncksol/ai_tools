@@ -580,6 +580,80 @@ test("missing originals with no archive block deletion even with force", async (
   assert.ok(existsSync(f.worktree));
 });
 
+test("accept-lost is explicit, per-run, journaled and preserves remaining session originals", async (t) => {
+  const f = fixture(t);
+  rmSync(join(f.config.stateDir, rootSession), { recursive: true });
+  const before = readFileSync(join(f.config.stateDir, childSession, "events.jsonl"));
+  const preview = await cleanupBatch(f.config, f.state, { acceptLost: [f.record.name] }, f.deps);
+  assert.ok(preview.items.some(i => i.kind === "archive" && /Preview.*accepted/i.test(i.reason ?? "")));
+  assert.equal(existsSync(join(f.dir, "cleanup.jsonl")), false);
+  const accepted = await cleanupBatch(f.config, f.state, { yes: true, acceptLost: [f.record.name] }, f.deps);
+  assert.ok(accepted.items.some(i => i.kind === "app-project" && i.action && /loss.*accepted/i.test(i.reason ?? "")));
+  const journal = readFileSync(join(f.dir, "cleanup.jsonl"), "utf8");
+  assert.match(journal, /"action":"accepted-lost"/);
+  f.appState.project = false;
+  f.appState.session = false;
+  const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  assert.ok(f.effects.includes("delete-repo"));
+  assert.ok(!result.items.some(i => i.status === "blocked"), JSON.stringify(result));
+  assert.deepEqual(readFileSync(join(f.config.stateDir, childSession, "events.jsonl")), before);
+  assert.ok(result.items.some(i => i.kind === "session-state" && i.target.endsWith(childSession) && /kept/i.test(i.reason ?? "")));
+});
+
+test("accept-lost never waives an unknown run or another run identity", async (t) => {
+  const f = fixture(t);
+  const unknown = await cleanupBatch(f.config, f.state, { yes: true, acceptLost: ["unknown-run"] }, f.deps);
+  assert.ok(unknown.items.some(i => i.kind === "batch" && /unknown --accept-lost/.test(i.reason ?? "")));
+  assert.deepEqual(f.effects, []);
+  rmSync(join(f.config.stateDir, rootSession), { recursive: true });
+  await cleanupBatch(f.config, f.state, { yes: true, acceptLost: [f.record.name] }, f.deps);
+  f.record.preparedSha = "b".repeat(40);
+  const result = await cleanupBatch(f.config, f.state, { yes: true, force: true }, f.deps);
+  assert.ok(result.items.some(i => i.kind === "archive" && i.status === "blocked" && /--accept-lost/.test(i.reason ?? "")));
+  assert.ok(!f.effects.includes("delete-repo"));
+});
+
+for (const change of ["none", "absent repo receipt", "missing receipt", "reappeared clone"] as const) {
+  test(`historical LOST logs on an already cleaned run: ${change}`, async (t) => {
+    const f = fixture(t);
+    await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+    f.appState.project = false;
+    f.appState.session = false;
+    f.deps.app.inventory = () => ({ projects: [], worktrees: [], sessions: [], workspaces: [] });
+    await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+    for (const id of [rootSession, childSession]) rmSync(join(f.dir, "sessions", f.record.name, id), { recursive: true });
+    const path = join(f.dir, "cleanup.jsonl");
+    const entries = readFileSync(path, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));
+    writeFileSync(path, entries.filter(e => e.action !== "archived" &&
+      !(change === "missing receipt" && e.kind === "repo" && e.action === "removed"))
+      .map(e => JSON.stringify(change === "absent repo receipt" && e.kind === "repo" && e.action === "removed" ? { ...e, action: "absent" } : e) + "\n").join(""));
+    if (change === "reappeared clone") mkdirSync(f.record.repoDir);
+    const result = await cleanupBatch(f.config, f.state, {}, f.deps);
+    const archives = result.items.filter(i => i.kind === "archive");
+    assert.ok(archives.some(i => /LOST:/.test(i.reason ?? "")));
+    if (change === "none" || change === "absent repo receipt") {
+      assert.ok(!result.items.some(i => i.status === "blocked"), JSON.stringify(result));
+      assert.ok(archives.every(i => i.status === "already gone"));
+    } else assert.ok(archives.some(i => i.status === "blocked"));
+  });
+}
+
+for (const guard of ["results", "running session"] as const) {
+  test(`accept-lost does not waive the ${guard} guard`, async (t) => {
+    const f = fixture(t);
+    f.appState.project = false;
+    f.appState.session = false;
+    rmSync(join(f.config.stateDir, rootSession), { recursive: true });
+    if (guard === "results") f.deps.results = async () => "missing scored row";
+    else f.deps.app.sessionRunning = id => id === childSession;
+    const result = await cleanupBatch(f.config, f.state, { yes: true, force: true, acceptLost: [f.record.name] }, f.deps);
+    assert.ok(result.items.some(i => i.status === "blocked" && /missing scored row|still running/.test(i.reason ?? "")));
+    assert.ok(!f.effects.includes("delete-repo"));
+    assert.ok(existsSync(f.record.repoDir));
+    assert.ok(existsSync(join(f.config.stateDir, childSession)));
+  });
+}
+
 test("a missing result blocks its own run, not another run's archives", async (t) => {
   const f = fixture(t);
   const second = { ...f.record, n: 6, name: "orch-eval-orchestrator-6", repo: "ncksol/orch-eval-orchestrator-6",

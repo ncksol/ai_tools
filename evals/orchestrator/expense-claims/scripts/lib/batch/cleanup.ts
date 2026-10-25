@@ -39,7 +39,7 @@ export interface CleanupItem {
 export interface CleanupReport { batch: string; dryRun: boolean; items: CleanupItem[] }
 interface JournalEntry {
   at: string;
-  action: "inventory" | "archived" | "removed" | "removing" | "lost" | "dropped" | "absent";
+  action: "inventory" | "archived" | "removed" | "removing" | "lost" | "accepted-lost" | "dropped" | "absent";
   identity: string;
   inventory?: CleanupInventory;
   kind?: CleanupItem["kind"];
@@ -73,7 +73,7 @@ function recordedRuns(state: BatchState): RunState[] {
 }
 
 export async function cleanupBatch(
-  config: BatchConfig, state: BatchState, options: { yes?: boolean; force?: boolean; dropped?: string[] }, deps: CleanupDeps,
+  config: BatchConfig, state: BatchState, options: { yes?: boolean; force?: boolean; dropped?: string[]; acceptLost?: string[] }, deps: CleanupDeps,
 ): Promise<CleanupReport> {
   const io = deps.fs ?? fs;
   const report: CleanupReport = { batch: config.id, dryRun: !options.yes, items: [] };
@@ -117,6 +117,9 @@ export async function cleanupBatch(
       if (!run) throw new Error(`unknown --dropped run: ${name}`);
       if (!run.row && !run.scoredAt) throw new Error(`--dropped run has no recorded result: ${name}`);
     }
+    for (const name of options.acceptLost ?? []) {
+      if (!runs.some(run => run.name === name)) throw new Error(`unknown --accept-lost run: ${name}`);
+    }
   } catch (error) {
     add("batch", config.dir, "blocked", errorText(error));
     return report;
@@ -152,6 +155,7 @@ export async function cleanupBatch(
     }
     const receipt = (kind: CleanupItem["kind"], target: string, action = "removed") =>
       entries.some(e => e.identity === identity && e.kind === kind && e.target === target && e.action === action);
+    const lossAccepted = () => receipt("run", run.name, "accepted-lost") || Boolean(options.acceptLost?.includes(run.name));
     const repoRemovedEarlier = !options.yes && receipt("repo", run.repo);
     // --yes records a repo it found gone under the owner's verified login, so later dry runs,
     // which only have the ambient login, can still tell that the batch is finished.
@@ -207,8 +211,20 @@ export async function cleanupBatch(
         : "Never started: no CLI session/log to copy; included in project removal");
     }
     const { logState, writeArchives } = sessionArchives(config, run, entries, append, io);
+    const runWorktrees = join(worktreeRoot, run.name);
+    // Older cleanup could finish after reporting LOST. Only recognize that completion when its
+    // durable removal receipts match and nothing remains that this exception could delete.
+    const previouslyCleaned = () =>
+      (receipt("repo", run.repo) || receipt("repo", run.repo, "absent")) &&
+      receipt("clone", run.repoDir) && receipt("kickoff", `${run.repoDir}.kickoff.md`) &&
+      !remote && !repoNotVisible && inventory.projects.length === 0 && inventory.workspaces.length === 0 &&
+      [run.repoDir, `${run.repoDir}.kickoff.md`, runWorktrees].every(path => pathKind(path, io) === "missing") &&
+      inventory.worktrees.every(path => beneath(runWorktrees, path) && pathKind(path, io) === "missing") &&
+      inventory.sessions.every(id => safeId(id) && pathKind(join(sessionRoot, id), io) === "missing");
+    let hasLoss = false;
+    let historicalLoss = false;
     // Check the post-score archive first. --yes may backfill legacy batches or retain later writes;
-    // missing originals without a verified backup never authorize deletion.
+    // lost evidence blocks further deletion unless its loss was explicitly accepted.
     const archiveGate = blocked;
     const archives: { item: CleanupItem; source: string; dest: string }[] = [];
     for (const id of inventory.sessions) {
@@ -225,8 +241,20 @@ export async function cleanupBatch(
           state = logState(source, dest);
         }
         if (state.status === "lost") {
+          hasLoss = true;
           if (options.yes) append({ action: "lost", identity, kind: "archive", target: source });
-          throw new Error("LOST: session logs are gone and no archive exists; keep the run's remaining evidence and restore a verified archive before cleanup");
+          const reason = "LOST: session logs are gone and no archive exists";
+          if (lossAccepted()) {
+            if (options.yes && !receipt("run", run.name, "accepted-lost")) {
+              append({ action: "accepted-lost", identity, kind: "run", target: run.name });
+            }
+            archive.status = "already gone";
+            archive.reason = `${reason}; ${receipt("run", run.name, "accepted-lost") ? "Recorded" : "Preview"} loss accepted for ${run.name}; remaining session originals are kept`;
+          } else if (previouslyCleaned()) {
+            historicalLoss = true;
+            archive.status = "already gone";
+            archive.reason = `${reason}; this run was already cleaned (matching removal receipts and no remaining artifacts)`;
+          } else throw new Error(`${reason}; keep the run's remaining evidence. Recover the archive, or explicitly accept the loss with cleanup --batch ${config.id} --accept-lost ${run.name} --yes; this permits other artifact deletions but keeps session originals`);
         } else if (state.status === "archived") {
           archive.status = "archived";
           if (!options.yes) archive.reason = `Verified archive of the current logs in ${dest}`;
@@ -292,7 +320,7 @@ export async function cleanupBatch(
             ? `KEEP ${project}: session ${running.join(", ")} in project ${inventory.projects[i].name} is still busy in the app. Wait for it to finish or stop it there, then run --yes again to archive its latest logs before you remove the project.`
             : changed.length
               ? `KEEP ${project}: logs changed during this check. Run --yes again to archive them before you remove the project.`
-              : `Available logs archived and verified; remove or retry removing ${project} in the app, then rerun cleanup. This removes its run/child/trust sessions too. This check cannot see later writes: if any of its sessions runs again before you remove the project, run --yes again first.`;
+              : `${hasLoss ? "Loss explicitly accepted; remaining available logs archived and verified" : "Available logs archived and verified"}; remove or retry removing ${project} in the app, then rerun cleanup. This removes its run/child/trust sessions too. This check cannot see later writes: if any of its sessions runs again before you remove the project, run --yes again first.`;
         }
       } catch { /* keep the KEEP line */ }
     };
@@ -306,7 +334,7 @@ export async function cleanupBatch(
     blocked ??= appBlock;
 
     const remove = async (kind: CleanupItem["kind"], target: string, check: () => Promise<"directory" | "file" | "missing">,
-      extra: { reason?: string; del?: () => Promise<void> } = {}) => {
+      extra: { reason?: string; del?: () => Promise<void>; keep?: boolean } = {}) => {
       const item = add(kind, target, "present", extra.reason);
       try {
         const type = await check();
@@ -315,7 +343,13 @@ export async function cleanupBatch(
           if (receipt(kind, target)) item.reason = "Removed earlier (matching cleanup receipt)";
           return item;
         }
+        if (historicalLoss) throw new Error("an artifact reappeared after the completed cleanup; explicitly accept the lost logs before removing it");
         if (blocked) throw new Error(blocked);
+        if (extra.keep) {
+          item.reason = "Kept: accepting lost logs does not delete remaining session originals";
+          item.checklist = true;
+          return item;
+        }
         if (!options.yes) return item;
         if (!options.force && deps.app.projectsForPath(run.repoDir).length) throw new Error("app project reappeared; stop before deleting disk data");
         await check();
@@ -342,7 +376,7 @@ export async function cleanupBatch(
         }
       }
       return type;
-    });
+    }, { keep: hasLoss && lossAccepted() });
     const cloneFolder = async (): Promise<"directory" | "missing"> => {
       const path = run.repoDir;
       if (path !== join(root, run.name)) throw new Error("folder is outside this run's allowed root");
@@ -370,7 +404,6 @@ export async function cleanupBatch(
     // Read the clone's Git registry before touching any worktree, so every linked worktree, recorded
     // by the app or not, goes through the same checks. The app can leave worktrees registered in the
     // clone with no app record; deleting the clone would strand them.
-    const runWorktrees = join(worktreeRoot, run.name);
     const admins = join(run.repoDir, ".git", "worktrees");
     const byHand = "inspect it and remove it by hand, then rerun cleanup";
     const readRegistry = async (): Promise<Map<string, boolean>> => {
@@ -442,7 +475,7 @@ export async function cleanupBatch(
       } : {}));
     }
     // Remove the run's app worktree folder only once nothing is left in it; never sweep contents.
-    if (!blocked) {
+    if (!blocked && !historicalLoss) {
       try {
         const type = pathKind(runWorktrees, io);
         if (type === "file") throw new Error(`${runWorktrees} is not a folder`);

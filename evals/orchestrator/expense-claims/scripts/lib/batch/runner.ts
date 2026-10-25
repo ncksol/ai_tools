@@ -1337,7 +1337,7 @@ function scanHygiene(ctx: Ctx, run: RunState): void {
   for (const finding of scanSwarm(readLogs(ctx, runSessionIds(ctx, run)))) addFlag(run, finding.code, finding.detail, iso(ctx.deps.now()));
 }
 
-function archiveScoredRun(ctx: Ctx, run: RunState): void {
+function archiveRunLogs(ctx: Ctx, run: RunState): void {
   const failures: string[] = [];
   let inventory: SessionInventory | null = null;
   try {
@@ -1581,7 +1581,7 @@ async function runStep(ctx: Ctx, state: BatchState, index: number): Promise<Step
       const row = rowOf(ctx, run);
       if (row) adoptRow(ctx, state, run, row);
       else await scoreRun(ctx, state, run);
-      archiveScoredRun(ctx, run);
+      archiveRunLogs(ctx, run);
       return { progressed: true };
     }
     case "scored": {
@@ -1673,6 +1673,7 @@ async function runStep(ctx: Ctx, state: BatchState, index: number): Promise<Step
     }
     case "done":
     case "void":
+      if (run.sessionId && !run.scoredAt) archiveRunLogs(ctx, run);
       if (run.status === "done") {
         scanHygiene(ctx, run);
         // Flags found after the outcome notification (cleanup, memory use after scoring) go out as a

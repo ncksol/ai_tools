@@ -106,3 +106,23 @@ test("failed discovery still copies known logs and marks the snapshot incomplete
   const receipts = readFileSync(join(h.config.dir, "sessions.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
   assert.ok(!receipts.some(e => e.action === "inventory"), "failed discovery must not masquerade as a saved swarm inventory");
 });
+
+for (const reason of ["permission-prompt", "app interruption"] as const) {
+  test(`a started run voided by ${reason} retains logs without scoring`, async (t) => {
+    const h = await harness({ scenarios: [reason === "permission-prompt" ? "permission-prompt" : "stall"] });
+    t.after(() => rmSync(h.dir, { recursive: true, force: true }));
+    if (reason === "app interruption") h.ctx.deps.appDb.interruption = () => ({ wasInterrupted: true, reason: "app restarted" });
+    await h.until(() => false);
+    const run = h.state().runs[0];
+    assert.equal(run.status, "void");
+    assert.equal(h.scoreCalls.length, 0);
+    const sessions = [run.sessionId!, ...h.app.childSessions(run.sessionId!)];
+    for (const id of sessions) {
+      const source = readFileSync(join(h.config.stateDir, id, "events.jsonl"));
+      const dest = join(h.config.dir, "sessions", run.name, id, "events.jsonl.gz");
+      assert.ok(existsSync(dest), `missing archive for void session ${id}`);
+      assert.deepEqual(gunzipSync(readFileSync(dest)), source);
+    }
+    assert.ok(existsSync(join(h.config.dir, "sessions.jsonl")));
+  });
+}

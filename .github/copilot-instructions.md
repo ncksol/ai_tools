@@ -55,6 +55,8 @@ Research skills:
 
 The eval runner's `batch init` preflight requires every recorded row from the latest earlier live batch with rows in the selected batches root to exist in the current `results.csv`, preventing repeated calibration from unlanded driver results. Empty and rehearsal batches do not hide that batch. Only an explicit `--ignore-results-batch <id>` overrides missing rows for a deliberately abandoned batch; the planner still reads results only from `results.csv`.
 
+Started eval runs that end without scoring also archive their logs at `void` or `done`. The lost-evidence cleanup block has two narrow exceptions: historical runs with matching deletion/absence receipts and no remaining artifacts report LOST as information; an explicit `--accept-lost <run> --yes` journals acceptance for that run identity and permits other eligible deletions while keeping session originals. Agents use this acceptance only when the user explicitly requests it for that run.
+
 When adding a new skill, create `ghcp/skills/<kebab-name>/SKILL.md`. When adding a new agent, create `ghcp/agents/<kebab-name>.agent.md`; an agent that belongs to the orchestrator family goes in `ghcp/plugins/wintermute/com.github.copilot/agents/` instead. When adding a new plugin, see the plugin conventions below.
 
 ## Plugin conventions
