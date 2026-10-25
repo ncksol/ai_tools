@@ -1,5 +1,6 @@
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { ALL_FEATURES, featureSetName } from "./features.ts";
+import { LIVE_VARIANTS, variantLabel } from "./variants.ts";
 
 export const LEGACY_RESULT_COLUMNS = [
   "date", "variant", "run", "repo", "session", "agent", "features", "calibration", "outcome",
@@ -94,7 +95,10 @@ export function median(values: number[]): number | null {
 }
 
 export const matchesPinnedAgent = (row: ResultRow): boolean =>
-  !row.agent_bundle_sha256 || row.agent === row.variant;
+  !row.agent_bundle_sha256 || (Boolean(row.agent) && variantLabel(row.agent) === row.variant);
+
+const isPinnedPolicy = (row: ResultRow): boolean =>
+  Boolean(row.agent_bundle_sha256) && !LIVE_VARIANTS.includes(row.variant);
 
 export interface VariantSummary {
   features: string;
@@ -126,7 +130,7 @@ export function summarize(rows: ResultRow[]): Summary {
   const times = batch.map((row) => (row.outcome === "passed" || row.outcome === "gate-failed" ? Number(row.minutes) : Infinity));
   const batchMedian = median(times);
   const counted = batchMedian !== null && batchMedian <= CALIBRATION_LIMIT_MINUTES;
-  const scored = eligible.filter((row) => !inBatch(row) || (counted && !row.agent_bundle_sha256));
+  const scored = eligible.filter((row) => !inBatch(row) || (counted && !isPinnedPolicy(row)));
   const groupKey = (row: ResultRow) => `${row.features}\u0000${row.variant}\u0000${row.agent_bundle_sha256}`;
   const groups = new Map<string, ResultRow[]>();
   for (const row of rows) {
@@ -136,7 +140,7 @@ export function summarize(rows: ResultRow[]): Summary {
   for (const row of scored) groups.get(groupKey(row))!.push(row);
   return {
     calibration: { runs: batch.length, median: batchMedian, counted },
-    pinnedCalibrations: eligible.filter((row) => inBatch(row) && row.agent_bundle_sha256).length,
+    pinnedCalibrations: eligible.filter((row) => inBatch(row) && isPinnedPolicy(row)).length,
     excludedAgentRuns: rows.length - eligible.length,
     groups: [...groups.entries()].map(([key, group]) => {
       const [features, variant, agentBundle] = key.split("\u0000");

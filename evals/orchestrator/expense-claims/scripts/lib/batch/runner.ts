@@ -19,7 +19,7 @@ import type { AppDb } from "./appdb.ts";
 import { scanSession, scanSwarm } from "./hygiene.ts";
 import { claimActive, releaseActive } from "./lock.ts";
 import { notices, type Notice } from "./notify.ts";
-import { computePins, diffPins } from "./pins.ts";
+import { agentBundleSha256, computePins, diffPins, readAgentRevision } from "./pins.ts";
 import { calibrationDecision, describePlan, nextRunNumber, planRound, provisionPlan, runRowFor, scoredCount } from "./plan.ts";
 import { buildReport } from "./report.ts";
 import {
@@ -1337,13 +1337,15 @@ function scanHygiene(ctx: Ctx, run: RunState): void {
 async function scoreRun(ctx: Ctx, state: BatchState, run: RunState): Promise<void> {
   const { config, deps } = ctx;
   findAnswerSource(ctx, run);
-  if (config.variantSet) {
-    const variant = config.variantSet.variants[run.variant];
+  {
+    const variant = config.variantSet?.variants[run.variant];
+    const primary = variant ? variant.agent : liveAgent(run.variant);
+    const watched = variant ? [variant.agent, ...Object.keys(variant.workers)] : Object.keys(state.pins.agents);
     const now = currentPins(config);
     if (!run.agentSha256 || !run.agentBundleSha256) addFlag(run, "agent-drift", "registered launch hashes were not recorded; provenance is unavailable", iso(deps.now()));
     else {
-      const changed = [variant.agent, ...Object.keys(variant.workers)].filter((name) =>
-        now.agents[name]?.sha256 !== (name === variant.agent ? run.agentSha256 : state.pins.agents[name]?.sha256));
+      const changed = watched.filter((name) =>
+        now.agents[name]?.sha256 !== (name === primary ? run.agentSha256 : state.pins.agents[name]?.sha256));
       if (changed.length > 0) addFlag(run, "agent-drift", `registered files changed between launch and scoring: ${changed.join(", ")}`, iso(deps.now()));
     }
   }
@@ -1353,9 +1355,10 @@ async function scoreRun(ctx: Ctx, state: BatchState, run: RunState): Promise<voi
   run.note = noteFor(config, run);
   const args = [config.scoreScript, "--repo-dir", run.repoDir, "--session", run.sessionId ?? "", "--state-dir", config.stateDir, "--results", config.resultsPath, "--note", run.note];
   args.push("--app-db", config.appDb, "--calibration", run.calibration ? "yes" : "no");
-  if (config.variantSet && run.agentSha256 && run.agentBundleSha256) {
-    const variant = config.variantSet.variants[run.variant];
-    args.push("--agent-revision", variant.revision, "--agent-sha256", run.agentSha256, "--agent-bundle-sha256", run.agentBundleSha256);
+  if (run.agentSha256 && run.agentBundleSha256) {
+    const revision = config.variantSet ? config.variantSet.variants[run.variant].revision : run.agentRevision;
+    if (revision) args.push("--agent-revision", revision);
+    args.push("--agent-sha256", run.agentSha256, "--agent-bundle-sha256", run.agentBundleSha256);
   }
   if (config.dryRun) args.push("--no-github");
   if (run.endReason === "final" && run.final) args.push("--end-at", run.final.timestamp);
@@ -1529,8 +1532,15 @@ async function runStep(ctx: Ctx, state: BatchState, index: number): Promise<Step
       run.startRequestedAt = iso(now);
       if (config.variantSet) {
         const variant = config.variantSet.variants[run.variant];
+        run.agentRevision = variant.revision;
         run.agentSha256 = state.pins.agents[variant.agent].sha256;
         run.agentBundleSha256 = variantBundle(variant);
+      } else {
+        const agent = liveAgent(run.variant);
+        const revision = state.pins.agentRevision === undefined ? readAgentRevision(config.agentsDir, state.pins.agents) : state.pins.agentRevision;
+        if (revision) run.agentRevision = revision;
+        run.agentSha256 = state.pins.agents[agent]?.sha256;
+        run.agentBundleSha256 = agentBundleSha256(state.pins.agents);
       }
       run.status = "starting";
       return { action: issue(ctx, state, "create_session", index, { args: runCreateArgs(ctx, run) }) };

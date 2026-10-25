@@ -218,9 +218,13 @@ async function main(): Promise<number> {
   const cutoff = values["end-at"] === undefined ? undefined : parseTime(values["end-at"], "--end-at");
   const provenance = ["agent-revision", "agent-sha256", "agent-bundle-sha256"] as const;
   if (provenance.some((key) => values[key] !== undefined)) {
-    for (const key of provenance) {
-      const pattern = key === "agent-revision" ? /^[a-f0-9]{40}$/ : /^[a-f0-9]{64}$/;
-      if (!pattern.test(values[key] ?? "")) throw new UsageError(`--${key} must be supplied with the other provenance flags and contain its full hash`);
+    if (values["agent-revision"] !== undefined && !/^[a-f0-9]{40}$/.test(values["agent-revision"])) {
+      throw new UsageError("--agent-revision must be a 40-character lowercase hex git sha");
+    }
+    for (const key of ["agent-sha256", "agent-bundle-sha256"] as const) {
+      if (!/^[a-f0-9]{64}$/.test(values[key] ?? "")) {
+        throw new UsageError(`--${key} must be supplied with the other provenance flags and contain its full hash`);
+      }
     }
     if (values.start) throw new UsageError("Agent provenance requires session-log timing, not manual timing");
   }
