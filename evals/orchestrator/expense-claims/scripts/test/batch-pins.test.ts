@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
-import { agentsToPin, computePins, diffPins } from "../lib/batch/pins.ts";
+import { agentBundleSha256, agentsToPin, computePins, diffPins, readAgentRevision } from "../lib/batch/pins.ts";
 
 let dir: string;
 let agentsDir: string;
@@ -84,3 +85,47 @@ test("names in a different plugin namespace do not pin a local worker", () => {
   writeFileSync(join(plugin, "session-worker.agent.md"), "unrelated\n");
   assert.deepEqual(agentsToPin(plugin, ["wintermute:orchestrator"]), { names: ["wintermute:orchestrator"], missing: [] });
 });
+
+test("agentBundleSha256 hashes sorted [name, sha256] pairs and readAgentRevision resolves clean git checkouts", () => {
+  const p = pins();
+  assert.equal(p.agentRevision, null);
+  const bundle = agentBundleSha256(p.agents);
+  assert.match(bundle, /^[a-f0-9]{64}$/);
+  const reversed = Object.fromEntries(Object.entries(p.agents).reverse());
+  assert.equal(agentBundleSha256(reversed), bundle);
+
+  const repo = join(dir, "git-plugin");
+  const repoAgents = join(repo, "ghcp", "plugins", "wintermute", "com.github.copilot", "agents");
+  mkdirSync(repoAgents, { recursive: true });
+  mkdirSync(join(repo, ".github", "plugin"), { recursive: true });
+  writeFileSync(
+    join(repo, ".github", "plugin", "marketplace.json"),
+    JSON.stringify({ plugins: [{ name: "wintermute", source: "./ghcp/plugins/wintermute" }] }),
+  );
+  writeFileSync(join(repoAgents, "orchestrator.agent.md"), "Uses wintermute:orchestrator-worker.\n");
+  writeFileSync(join(repoAgents, "orchestrator-worker.agent.md"), "worker\n");
+  for (const args of [["init", "-q", "-b", "main"], ["config", "user.name", "Test"], ["config", "user.email", "test@example.invalid"], ["add", "-A"], ["commit", "-q", "-m", "init"]]) {
+    assert.equal(spawnSync("git", args, { cwd: repo }).status, 0);
+  }
+  const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).stdout.trim();
+
+  const directPins = computePins({ agentsDir: repoAgents, variants: ["wintermute:orchestrator"], files: {}, appPlist: "", cliVersionFile: "" });
+  assert.equal(directPins.agentRevision, head);
+
+  const copilotHome = join(dir, "copilot-home");
+  const installed = join(copilotHome, "installed-plugins", "ai-tools", "wintermute", "com.github.copilot", "agents");
+  mkdirSync(installed, { recursive: true });
+  writeFileSync(join(installed, "orchestrator.agent.md"), "Uses wintermute:orchestrator-worker.\n");
+  writeFileSync(join(installed, "orchestrator-worker.agent.md"), "worker\n");
+  writeFileSync(
+    join(copilotHome, "settings.json"),
+    JSON.stringify({ extraKnownMarketplaces: { "ai-tools": { source: { source: "directory", path: repo } } } }),
+  );
+  const installedPins = computePins({ agentsDir: installed, variants: ["wintermute:orchestrator"], files: {}, appPlist: "", cliVersionFile: "" });
+  assert.equal(installedPins.agentRevision, head);
+
+  writeFileSync(join(repoAgents, "orchestrator-worker.agent.md"), "dirty worker\n");
+  assert.equal(readAgentRevision(repoAgents, directPins.agents), null);
+  assert.equal(readAgentRevision(installed, installedPins.agents), null);
+});
+

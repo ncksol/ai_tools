@@ -120,6 +120,22 @@ test("pinned policy calibrations stay excluded and different agent bundles are n
   assert.match(formatSummary(summary), /Excluded 2 pinned row\(s\).*logged agent/);
 });
 
+test("live variant rows with agent_bundle_sha256 match namespaced agents and split summary groups by bundle", () => {
+  const summary = summarize([
+    row({ variant: "orchestrator", agent: "wintermute:orchestrator", features: THREE, agent_bundle_sha256: "bundle1111", minutes: "30" }),
+    row({ variant: "orchestrator", agent: "wintermute:orchestrator", features: THREE, agent_bundle_sha256: "bundle1111", minutes: "40" }),
+    row({ variant: "orchestrator", agent: "wintermute:orchestrator", features: THREE, agent_bundle_sha256: "bundle2222", minutes: "50" }),
+  ]);
+  assert.equal(summary.excludedAgentRuns, 0);
+  assert.deepEqual(summary.groups.map((g) => [g.variant, g.agentBundle, g.runs, g.medianMinutes]), [
+    ["orchestrator", "bundle1111", 2, 35],
+    ["orchestrator", "bundle2222", 1, 50],
+  ]);
+  const formatted = formatSummary(summary);
+  assert.match(formatted, /orchestrator@bundle11/);
+  assert.match(formatted, /orchestrator@bundle22/);
+});
+
 test("median handles odd, even and empty lists", () => {
   assert.equal(median([3, 1, 2]), 2);
   assert.equal(median([4, 1, 3, 2]), 2.5);

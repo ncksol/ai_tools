@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import type { LogEvent } from "../lib/events.ts";
 import { saveState, validateConfig } from "../lib/batch/state.ts";
+import { agentBundleSha256 } from "../lib/batch/pins.ts";
 import { currentPins, requestStop, STOP_MESSAGE } from "../lib/batch/runner.ts";
 import { eventsPath } from "../lib/batch/swarm.ts";
 import { run as runProc } from "../lib/proc.ts";
@@ -90,14 +91,39 @@ test("live runs launch namespaced agents as top-level sessions and keep historic
     await h.drive(action);
     await h.until(() => false);
     const row = readResults(h.config.resultsPath)[0];
+    const state = h.state();
     assert.equal(row.variant, variant);
     assert.equal(row.agent, agent);
-    assert.ok(!h.state().runs[0].flags.some((flag) => flag.code === "session-settings"));
+    assert.equal(row.agent_sha256, state.pins.agents[agent].sha256);
+    assert.equal(row.agent_bundle_sha256, agentBundleSha256(state.pins.agents));
+    assert.equal(row.agent_revision, "");
+    assert.ok(!state.runs[0].flags.some((flag) => flag.code === "session-settings"));
+    assert.ok(!state.runs[0].flags.some((flag) => flag.code === "agent-drift"));
     const history = [{ ...row, agent: variant, repo: "old/run", run: "0" }, row];
     assert.deepEqual(calibrationDecision(history, [variant]).pending, []);
     assert.equal(summarize(history).groups.length, 1);
     assert.equal(summarize(history).groups[0].runs, 2);
   }
+});
+
+test("live runs pass --agent-revision when the plugin source is a clean git checkout and flag drift if changed", async () => {
+  const h = await make({ scenarios: ["ask-final"], variants: ["orchestrator"] });
+  for (const args of [["init", "-q", "-b", "main"], ["config", "user.name", "Test"], ["config", "user.email", "test@example.invalid"], ["add", "-A"], ["commit", "-q", "-m", "agents"]]) {
+    const res = await runProc("git", args, { cwd: h.config.agentsDir });
+    assert.equal(res.code, 0, res.stderr);
+  }
+  const head = (await runProc("git", ["rev-parse", "HEAD"], { cwd: h.config.agentsDir })).stdout.trim();
+  saveState(h.config.dir, { ...h.state(), pins: currentPins(h.config) });
+  await h.until((_, state) => state.runs[0]?.status === "running");
+  const expectedSha = h.state().pins.agents["wintermute:orchestrator"].sha256;
+  const expectedBundle = agentBundleSha256(h.state().pins.agents);
+  appendFileSync(join(h.config.agentsDir, "orchestrator-worker.agent.md"), "changed mid-run\n");
+  await h.until(() => false);
+  const [row] = readResults(h.config.resultsPath);
+  assert.equal(row.agent_revision, head);
+  assert.equal(row.agent_sha256, expectedSha);
+  assert.equal(row.agent_bundle_sha256, expectedBundle);
+  assert.ok(h.state().runs[0].flags.some((flag) => flag.code === "agent-drift"));
 });
 
 test("an interrupted diagnostic step preserves and commits the already-saved gate result", async () => {

@@ -145,9 +145,9 @@ npm run score -- --summary
 | `effort` | The orchestrator session's reasoning effort at the kickoff. Empty with manual timing. |
 | `copilot_version` | The Copilot version that wrote the session log. Empty with manual timing. |
 | `note` | `--note`, if given, followed by any warnings from `score`, for example a model change during the run or multiple completion markers. |
-| `agent_revision` | Full source commit of the pinned agent. Empty for legacy or unpinned runs. |
-| `agent_sha256` | SHA-256 of the registered alias file verified at launch, including its frontmatter. This is file provenance, not proof of loaded prompt bytes, which the event log does not expose. |
-| `agent_bundle_sha256` | SHA-256 over the alias name/hash and sorted worker names/hashes. Separates results when an agent or worker changes. |
+| `agent_revision` | Full source commit of the pinned agent when the agent or plugin source is a clean git checkout. Empty for legacy runs or installed copies without a known git checkout. |
+| `agent_sha256` | SHA-256 of the pinned agent or registered alias file verified at launch, including its frontmatter. This is file provenance, not proof of loaded prompt bytes, which the event log does not expose. |
+| `agent_bundle_sha256` | SHA-256 over the pinned agent set (sorted `[name, sha256]` pairs for live batches, or the alias name/hash and sorted worker names/hashes for `--variants-file` batches). Separates results when an agent or worker changes. |
 | `main_sha` | Full commit of the fresh `main` clone used for both suites. |
 | `robustness_status` | `passed`, `failed`, `error`, or `not-applicable` when the feature set has no robustness tests. This cannot change `outcome`. |
 | `robustness_passed`, `robustness_total` | Passing and total robustness tests. Empty when no suite ran. |
@@ -163,7 +163,7 @@ npm run score -- --summary
 
 Commit `results.csv` after each run, so the history across agent versions is kept. The scorer can read the old 21-column format and upgrades it on append or replacement. Historical fields stay unchanged; new fields remain blank rather than being backfilled with guesses.
 
-**Wintermute labels:** live runs keep the four historical bare `variant` labels and `orch-eval-<variant>-<n>` repo names. `new-run --variant`, `score --variant` and `batch init --variants` accept either a bare live label or its `wintermute:` ID and normalize it to the bare label. `agent` records the actual logged ID, now `wintermute:<variant>`; historical rows are not rewritten. This keeps run numbering, calibration lookup and unpinned summary groups continuous with earlier rows rather than splitting a series just because of packaging. It does not claim that different agent revisions have identical behavior. Pinned A/B/C labels, logged IDs, hashes and separate bundle groups are unchanged.
+**Wintermute labels:** live runs keep the four historical bare `variant` labels and `orch-eval-<variant>-<n>` repo names. `new-run --variant`, `score --variant` and `batch init --variants` accept either a bare live label or its `wintermute:` ID and normalize it to the bare label. `agent` records the actual logged ID, now `wintermute:<variant>`; historical rows are not rewritten. Live batches also pass `--agent-sha256`, `--agent-bundle-sha256` (over `pins.agents`) and, when the plugin source is a clean git checkout, `--agent-revision`, so summary groups split by bundle hash when prompts change. Pinned A/B/C labels, logged IDs, hashes and separate bundle groups are unchanged.
 
 ### Post-score robustness
 
@@ -257,7 +257,7 @@ The user launches the pilot with:
 npm run batch -- init --variants-file variants/review-policy.json --runs 3 --memory-off
 ```
 
-`--variants-file` cannot be combined with `--variants` or a self-test-only batch. The batch stores the resolved manifest and pins its bytes and snapshots. At launch it verifies the registered files and records the alias hash and bundle digest. It re-hashes them before scoring and flags `agent-drift` on a mismatch, retaining the launch hashes in the result. These prove registered-file provenance, not which prompt bytes the CLI loaded. The scorer accepts the complete set of `--agent-revision`, `--agent-sha256` and `--agent-bundle-sha256` flags with session-log timing; the batch supplies them automatically.
+`--variants-file` cannot be combined with `--variants` or a self-test-only batch. The batch stores the resolved manifest and pins its bytes and snapshots. At launch it verifies the registered files and records the alias hash and bundle digest. It re-hashes them before scoring and flags `agent-drift` on a mismatch, retaining the launch hashes in the result. These prove registered-file provenance, not which prompt bytes the CLI loaded. The scorer accepts `--agent-sha256` and `--agent-bundle-sha256` (plus optional `--agent-revision`) with session-log timing; the batch supplies them automatically.
 
 **Every exact A/B/C bundle must first have a full-feature calibration row; the early shortcut is disabled.** A historical row without matching alias and bundle hashes does not replace A's calibration. Once all three exist, the runner computes the Calibration rule once over **all full-feature calibration rows**, including the historical 65.7-minute row, and freezes that shared decision in batch state before any scored run. If the median exceeds 30 minutes, all variants drop Summary. If it is 30 minutes or less, the runner stops through its normal notification and morning-report path: keeping Summary contradicts the approved pilot, so it requires a user decision rather than silently changing scope. Pinned calibration rows never enter the scored comparison.
 

@@ -248,6 +248,9 @@ test("score rejects invalid log timing options before scoring", async () => {
     [["--answer-source", ""], /--answer-source must not be empty/],
     [["--start", "2026-01-01T10:00:00Z", "--end", "2026-01-01T10:20:00Z", "--end-at", "2026-01-01T10:20:00Z"], /--end-at.*manual timing/],
     [["--start", "2026-01-01T10:00:00Z", "--end", "2026-01-01T10:20:00Z", "--answer-source", "agent-driver"], /--answer-source.*manual timing/],
+    [["--agent-sha256", "a".repeat(64)], /--agent-bundle-sha256 must be supplied/],
+    [["--agent-bundle-sha256", "b".repeat(64)], /--agent-sha256 must be supplied/],
+    [["--agent-revision", "not-a-sha", "--agent-sha256", "a".repeat(64), "--agent-bundle-sha256", "b".repeat(64)], /--agent-revision/],
   ];
   for (const [args, message] of cases) {
     const result = await score([...common, ...args]);
@@ -288,7 +291,7 @@ test("a new variant's first run with fewer features is not a calibration run", {
   assert.equal(only.outcome, "passed");
 });
 
-test("explicit live runtime IDs keep manual scoring in the historical calibration and summary group", { timeout: 180_000 }, async () => {
+test("explicit live runtime IDs keep manual scoring in the historical calibration and summary group and record live provenance", { timeout: 180_000 }, async () => {
   const repoDir = join(dir, "orch-eval-orchestrator-1");
   cpSync(join(KIT_DIR, "reference"), repoDir, { recursive: true, filter: (src) => !/[\\/](node_modules|\.DS_Store)$/.test(src) });
   await git(repoDir, ["init", "-q", "-b", "main"]);
@@ -299,20 +302,25 @@ test("explicit live runtime IDs keep manual scoring in the historical calibratio
     ? { ...event, data: { agentName: "wintermute:orchestrator" } } : event);
   writeSession(stateDir, "live", "local/orch-eval-orchestrator-1", "2026-01-01T10:00:00Z", events);
   const results = join(dir, "live-results.csv");
-  for (const [n, variant] of [["1", "orchestrator"], ["2", "wintermute:orchestrator"]]) {
+  for (const [n, variant, extra] of [
+    ["1", "orchestrator", []],
+    ["2", "wintermute:orchestrator", []],
+    ["3", "wintermute:orchestrator", ["--agent-sha256", "a".repeat(64), "--agent-bundle-sha256", "b".repeat(64)]],
+  ] as const) {
     const result = await score([
       "--repo-dir", repoDir, "--no-github", "--results", results, "--state-dir", stateDir, "--session", "live",
-      "--n", n, "--variant", variant,
+      "--n", n, "--variant", variant, ...extra,
     ]);
     assert.equal(result.code, 0, result.stdout + result.stderr);
   }
   const rows = readResults(results);
-  assert.deepEqual(rows.map((row) => [row.variant, row.agent, row.calibration]), [
-    ["orchestrator", "wintermute:orchestrator", "yes"],
-    ["orchestrator", "wintermute:orchestrator", "no"],
+  assert.deepEqual(rows.map((row) => [row.variant, row.agent, row.calibration, row.agent_revision, row.agent_sha256, row.agent_bundle_sha256]), [
+    ["orchestrator", "wintermute:orchestrator", "yes", "", "", ""],
+    ["orchestrator", "wintermute:orchestrator", "no", "", "", ""],
+    ["orchestrator", "wintermute:orchestrator", "no", "", "a".repeat(64), "b".repeat(64)],
   ]);
-  assert.equal(summarize(rows).groups.length, 1);
-  assert.equal(summarize(rows).groups[0].runs, 2);
+  assert.equal(summarize(rows).groups.length, 2);
+  assert.deepEqual(summarize(rows).groups.map((g) => [g.agentBundle, g.runs]), [["", 2], ["b".repeat(64), 1]]);
 });
 
 test("robustness failures do not change a passing gate outcome or the timed score", { timeout: 180_000 }, async () => {

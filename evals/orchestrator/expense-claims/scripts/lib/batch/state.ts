@@ -132,6 +132,7 @@ export interface RunState {
   projectId?: string;
   appSessionId?: string;
   sessionId?: string;
+  agentRevision?: string;
   agentSha256?: string;
   agentBundleSha256?: string;
   // When create_session was first issued (the window for finding the session) and last issued.
@@ -228,6 +229,7 @@ export interface PendingAction {
 
 export interface Pins {
   agents: Record<string, { path: string; sha256: string }>;
+  agentRevision?: string | null;
   files: Record<string, string>;
   appVersion: string | null;
   cliVersion: string | null;
