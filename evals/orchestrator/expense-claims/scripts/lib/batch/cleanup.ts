@@ -1,19 +1,15 @@
-// Manual, fail-closed cleanup. state.json (via loadState) authorizes runs; discovery is saved only
-// by --yes, before the user removes app projects and their database links disappear.
+// Manual, fail-closed cleanup. state.json authorizes runs; post-score archives and legacy
+// cleanup receipts preserve discovery before app project removal erases its database links.
 import * as fs from "node:fs";
-import { createHash, randomUUID } from "node:crypto";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import { gzipSync, gunzipSync } from "node:zlib";
+import { createHash } from "node:crypto";
+import { join, resolve } from "node:path";
+import { beneath, pathKind, runIdentity, safeId, sessionArchives, type LogState, type SessionInventory } from "./archive.ts";
+export { pathKind } from "./archive.ts";
 import { pidAlive, readGuard } from "./lock.ts";
 import type { BatchConfig, BatchState, RunState } from "./state.ts";
 import type { run } from "../proc.ts";
 
-export interface CleanupInventory {
-  projects: { id: string; path: string; name: string }[];
-  worktrees: string[];
-  sessions: string[];
-  workspaces: { id: string; sessionId: string | null; archived: boolean; name?: string }[];
-}
+export type CleanupInventory = SessionInventory;
 export interface CleanupApp {
   inventory(run: Pick<RunState, "projectId" | "appSessionId" | "sessionId">): CleanupInventory;
   projectsForPath(path: string): string[];
@@ -55,47 +51,12 @@ interface JournalEntry {
 export class RepoNotVisible extends Error {
   constructor() { super("repo not found or not visible; absence requires the verified owner's keyring identity with repo scope"); }
 }
-const LOG_NAMES = ["events.jsonl", "workspace.yaml"];
 const PROJECT_PRESENCE = "app project still exists; follow its archive-first project checklist (--force overrides only project presence)";
 const sha256 = (data: string | Buffer): string => createHash("sha256").update(data).digest("hex");
-const safeId = (value: string): boolean => /^[a-zA-Z0-9][a-zA-Z0-9-]*$/.test(value);
-const beneath = (root: string, path: string): boolean => {
-  const rel = relative(root, path);
-  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
-};
-
-// Reject symlinks in every existing component, including ancestors of a missing target. Never
-// follow a dangling link, and distinguish absence from permission/I/O failures.
-export function pathKind(path: string, io: typeof fs = fs): "directory" | "file" | "missing" {
-  if (!isAbsolute(path) || resolve(path) !== path) throw new Error("path is not absolute and normalized");
-  const parts = path.split(sep).filter(Boolean);
-  let current = sep;
-  for (let i = 0; i < parts.length; i++) {
-    current = join(current, parts[i]);
-    let stat: fs.Stats;
-    try { stat = io.lstatSync(current); }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return "missing";
-      throw error;
-    }
-    if (stat.isSymbolicLink()) throw new Error(`symlink is not allowed: ${current}`);
-    if (i !== parts.length - 1 && !stat.isDirectory()) throw new Error(`not a directory: ${current}`);
-    if (i === parts.length - 1) {
-      if (stat.isDirectory()) return "directory";
-      if (stat.isFile()) return "file";
-      throw new Error(`not a regular file or folder: ${current}`);
-    }
-  }
-  throw new Error("filesystem root is not a cleanup target");
-}
 
 export function githubSlug(origin: string): string | null {
   const match = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([a-zA-Z0-9-]+\/[a-zA-Z0-9_.-]+?)(?:\.git)?$/.exec(origin.trim());
   return match?.[1] ?? null;
-}
-
-function runIdentity(run: RunState): string {
-  return sha256(JSON.stringify([run.repo, run.repoDir, run.projectId ?? null, run.preparedSha ?? run.seedSha ?? null]));
 }
 
 function recordedRuns(state: BatchState): RunState[] {
@@ -146,7 +107,10 @@ export async function cleanupBatch(
     pathKind(config.activeGuard, io);
     const active = readGuard(config.activeGuard).active;
     if (active) throw new Error(`active-batch guard still names ${active.id}; do not clean while a batch owns the machine`);
-    if (pathKind(journal, io) === "file") entries = io.readFileSync(journal, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line) as JournalEntry);
+    for (const path of [join(config.dir, "sessions.jsonl"), journal]) {
+      if (pathKind(path, io) === "file") entries.push(...io.readFileSync(path, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line) as JournalEntry));
+    }
+    entries.sort((a, b) => a.at.localeCompare(b.at));
     runs = recordedRuns(state);
     for (const name of options.dropped ?? []) {
       const run = runs.find(run => run.name === name);
@@ -193,9 +157,6 @@ export async function cleanupBatch(
     // which only have the ambient login, can still tell that the batch is finished.
     const repoAbsentEarlier = options.yes ? undefined : entries.findLast(e =>
       e.identity === identity && e.kind === "repo" && e.target === run.repo && e.action === "absent");
-    const archiveRecord = (source: string, dest: string, name: string) => entries.findLast(e =>
-      e.action === "archived" && e.identity === identity &&
-      (e.source === join(source, name) || (!e.source && e.target === join(dest, `${name}.gz`))));
     let blocked = globalBlock ?? resultBlocks.get(run.name) ?? null;
     if (resultBlocks.has(run.name)) add("results", run.name, "blocked", resultBlocks.get(run.name));
     let remote: { id: number; seedPresent: boolean } | null = null;
@@ -245,102 +206,9 @@ export async function cleanupBatch(
         ? `Session ${workspace.sessionId}${workspace.archived ? " (archived)" : ""}; included in project removal, no separate action`
         : "Never started: no CLI session/log to copy; included in project removal");
     }
-    const unpackedHash = (path: string): string | null => {
-      try { return sha256(gunzipSync(io.readFileSync(path))); } catch { return null; }
-    };
-    // Never overwrite an existing archive file, even one that does not verify: reuse the name that
-    // already holds these logs, otherwise take the first free name.
-    const archiveSlot = (dest: string, name: string, hash: string): string => {
-      const names = [join(dest, `${name}.gz`), join(dest, `${name}.${hash}.gz`)];
-      for (const path of names) {
-        const type = pathKind(path, io);
-        if (type === "missing" || (type === "file" && unpackedHash(path) === hash)) return path;
-      }
-      throw new Error(`${names.join(" and ")} already exist and neither holds the current ${name}; cleanup never overwrites an archive. Keep them and the session originals, inspect these files by hand, and keep the project until the logs are archived`);
-    };
-    // Every check of a session's logs uses logState: the first pass, the final check before the
-    // project line, and the deletion of the session's original folder. For each supported log file:
-    // - original present as a regular file: "verified" when a journaled archive of this run has the
-    //   current hash, lies inside the session's archive folder, is a regular file and decompresses to
-    //   that hash; otherwise out of date (only other contents archived), damaged (the archive of this
-    //   content is missing or corrupt) or unarchived, all of which --yes can still fix. A symlink or
-    //   other non-regular file is invalid.
-    // - original missing: workspace.yaml needs nothing; events.jsonl needs a verified backup (its
-    //   latest journaled archive still decompresses to the recorded hash). If the session folder and
-    //   that backup are both gone, the logs are LOST.
-    // The session is "archived" only when every file is verified or legitimately missing, "pending"
-    // when --yes can still write what is missing, "lost" as above; anything else throws and blocks.
-    type LogState = { status: "archived" | "lost"; notes?: undefined } | { status: "pending"; notes: string[] };
-    const logState = (source: string, dest: string): LogState => {
-      const folder = pathKind(source, io);
-      if (folder === "file") throw new Error("session state is not a folder");
-      pathKind(dest, io);
-      const notes: string[] = [];
-      let pending = false;
-      for (const name of LOG_NAMES) {
-        const input = join(source, name);
-        const type = folder === "missing" ? "missing" : pathKind(input, io);
-        if (type === "missing") {
-          if (name !== "events.jsonl") continue;
-          const recorded = archiveRecord(source, dest, name);
-          const copy = recorded?.target ?? join(dest, `${name}.gz`);
-          if (!beneath(dest, copy)) throw new Error("archive path is outside its session folder");
-          if (folder === "missing" && pathKind(copy, io) === "missing") return { status: "lost" };
-          if (!recorded || pathKind(copy, io) !== "file" || unpackedHash(copy) !== recorded.sha256) throw new Error("session event log is missing and no verified archive exists");
-          continue;
-        }
-        if (type !== "file") throw new Error(`not a regular log file: ${input}`);
-        const hash = sha256(io.readFileSync(input));
-        const records = entries.filter(e => e.action === "archived" && e.identity === identity &&
-          (e.source === input || (!e.source && e.target === join(dest, `${name}.gz`))));
-        if (records.some(e => e.sha256 === hash && e.target && beneath(dest, e.target) &&
-            pathKind(e.target, io) === "file" && unpackedHash(e.target) === hash)) continue;
-        pending = true;
-        const slot = archiveSlot(dest, name, hash);
-        const target = records.findLast(e => e.sha256 === hash)?.target;
-        if (target) {
-          notes.push(beneath(dest, target) && pathKind(target, io) === "file"
-            ? `recorded archive ${target} of ${name} does not verify; it is kept unchanged. --yes writes a new verified archive at ${slot}`
-            : `recorded archive ${target} of ${name} is missing. --yes archives the current log again at ${slot}`);
-        } else if (records.length) {
-          notes.push(`archive of ${name} is out of date: the log changed after --yes archived it. Run --yes again to write a new verified archive at ${slot}`);
-        }
-      }
-      return pending ? { status: "pending", notes } : { status: "archived" };
-    };
-    // workspace.yaml is useful provenance. session.db is a live SQLite database; copying its main
-    // file without its WAL is not a reliable backup, and events.jsonl is the raw evidence.
-    const writeArchives = (source: string, dest: string) => {
-      if (pathKind(source, io) !== "directory") return;
-      // Check every existing component of the archive folder (no symlinks, all real folders inside
-      // the batch folder) before creating anything.
-      if (!beneath(config.dir, dest)) throw new Error(`archive folder is outside the batch folder: ${dest}`);
-      if (pathKind(dest, io) === "file") throw new Error(`archive folder is not a folder: ${dest}`);
-      io.mkdirSync(dest, { recursive: true, mode: 0o700 });
-      for (const name of LOG_NAMES) {
-        const input = join(source, name);
-        const type = pathKind(input, io);
-        if (type === "missing") continue;
-        if (type !== "file") throw new Error(`not a regular log file: ${input}`);
-        const data = io.readFileSync(input);
-        const hash = sha256(data);
-        const output = archiveSlot(dest, name, hash);
-        if (pathKind(output, io) === "missing") {
-          const temporary = join(dest, `.${name}.${randomUUID()}.tmp`);
-          try {
-            io.writeFileSync(temporary, gzipSync(data), { mode: 0o600, flag: "wx" });
-            if (sha256(gunzipSync(io.readFileSync(temporary))) !== hash) throw new Error("archive verification failed");
-            io.renameSync(temporary, output);
-          } finally {
-            io.rmSync(temporary, { force: true });
-          }
-        }
-        if (pathKind(output, io) !== "file" || unpackedHash(output) !== hash) throw new Error("archive verification failed");
-        append({ action: "archived", identity, kind: "archive", source: input, target: output, sha256: hash });
-      }
-    };
-    // Archive before app removal destroys histories. Missing originals and backups are reported
-    // as lost; an existing but unverified backup blocks deletion.
+    const { logState, writeArchives } = sessionArchives(config, run, entries, append, io);
+    // Check the post-score archive first. --yes may backfill legacy batches or retain later writes;
+    // missing originals without a verified backup never authorize deletion.
     const archiveGate = blocked;
     const archives: { item: CleanupItem; source: string; dest: string }[] = [];
     for (const id of inventory.sessions) {
@@ -351,12 +219,14 @@ export async function cleanupBatch(
       try {
         if (!safeId(id)) throw new Error("invalid session identity");
         if (archiveGate) throw new Error(archiveGate);
-        if (options.yes) writeArchives(source, dest);
-        const state = logState(source, dest);
+        let state = logState(source, dest);
+        if (options.yes && state.status === "pending") {
+          writeArchives(source, dest);
+          state = logState(source, dest);
+        }
         if (state.status === "lost") {
-          archive.status = "already gone";
-          archive.reason = "LOST: session logs are gone and no archive exists; cannot recover them. Continuing known-item cleanup.";
           if (options.yes) append({ action: "lost", identity, kind: "archive", target: source });
+          throw new Error("LOST: session logs are gone and no archive exists; keep the run's remaining evidence and restore a verified archive before cleanup");
         } else if (state.status === "archived") {
           archive.status = "archived";
           if (!options.yes) archive.reason = `Verified archive of the current logs in ${dest}`;

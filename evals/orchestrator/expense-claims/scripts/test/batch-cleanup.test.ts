@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { cleanupBatch, formatCleanup, RepoNotVisible, type CleanupDeps, type CleanupApp } from "../lib/batch/cleanup.ts";
+import { archiveRun } from "../lib/batch/archive.ts";
 import { openCleanupApp } from "../lib/batch/cleanup-io.ts";
 import { openAppDb } from "../lib/batch/appdb.ts";
 import { buildReport } from "../lib/batch/report.ts";
@@ -520,15 +521,63 @@ test("app removal may erase session originals; verified archives allow cleanup t
   assert.ok(f.effects.includes("delete-repo"));
 });
 
-test("missing originals with no archive are reported lost without preventing known-item cleanup", async (t) => {
+test("post-score archives preserve discovery and allow cleanup after app histories disappear", async (t) => {
+  const f = fixture(t);
+  const failures = archiveRun(f.config, f.record, f.deps.app.inventory(f.record), [], f.deps.now);
+  assert.deepEqual(failures, []);
+  assert.equal(existsSync(join(f.dir, "cleanup.jsonl")), false);
+  f.appState.project = false;
+  f.appState.session = false;
+  f.deps.app.inventory = () => ({ projects: [], worktrees: [], sessions: [], workspaces: [] });
+  for (const id of [rootSession, childSession]) rmSync(join(f.config.stateDir, id), { recursive: true });
+  const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  assert.equal(result.items.filter(i => i.status === "blocked").length, 0, JSON.stringify(result));
+  assert.equal(result.items.filter(i => i.kind === "archive" && i.status === "archived").length, 2);
+  assert.ok(f.effects.includes("delete-repo"));
+});
+
+test("cleanup refreshes a post-score snapshot with shutdown evidence without overwriting it", async (t) => {
+  const f = fixture(t);
+  assert.deepEqual(archiveRun(f.config, f.record, f.deps.app.inventory(f.record), [], f.deps.now), []);
+  const original = join(f.dir, "sessions", f.record.name, rootSession, "events.jsonl.gz");
+  const before = readFileSync(original);
+  appendFileSync(join(f.config.stateDir, rootSession, "events.jsonl"), '{"type":"session.shutdown"}\n');
+  const preview = await cleanupBatch(f.config, f.state, {}, f.deps);
+  assert.ok(preview.items.some(i => i.kind === "archive" && /out of date/.test(i.reason ?? "")));
+  const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  assert.equal(result.items.find(i => i.kind === "archive" && i.target.endsWith(rootSession))?.status, "archived");
+  assert.deepEqual(readFileSync(original), before);
+  const entries = readFileSync(join(f.dir, "cleanup.jsonl"), "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));
+  const latest = entries.findLast(e => e.action === "archived" && e.source === join(f.config.stateDir, rootSession, "events.jsonl"));
+  assert.match(gunzipSync(readFileSync(latest.target)).toString(), /session.shutdown/);
+});
+
+test("cleanup rejects a damaged workspace archive after its original is removed", async (t) => {
+  const f = fixture(t);
+  writeFileSync(join(f.config.stateDir, rootSession, "workspace.yaml"), `id: ${rootSession}\n`);
+  assert.deepEqual(archiveRun(f.config, f.record, f.deps.app.inventory(f.record), [], f.deps.now), []);
+  f.appState.project = false;
+  f.appState.session = false;
+  rmSync(join(f.config.stateDir, rootSession), { recursive: true });
+  writeFileSync(join(f.dir, "sessions", f.record.name, rootSession, "workspace.yaml.gz"), "broken archive");
+  const result = await cleanupBatch(f.config, f.state, { yes: true, force: true }, f.deps);
+  assert.ok(result.items.some(i => i.kind === "archive" && i.status === "blocked" && /workspace.yaml/.test(i.reason ?? "")));
+  assert.ok(existsSync(f.record.repoDir));
+  assert.ok(!f.effects.includes("delete-repo"));
+});
+
+test("missing originals with no archive block deletion even with force", async (t) => {
   const f = fixture(t);
   f.appState.project = false;
   f.appState.session = false;
   rmSync(join(f.config.stateDir, rootSession), { recursive: true });
   rmSync(join(f.config.stateDir, childSession), { recursive: true });
-  const result = await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
+  const result = await cleanupBatch(f.config, f.state, { yes: true, force: true }, f.deps);
   assert.ok(result.items.some(i => i.kind === "archive" && /LOST:/.test(i.reason ?? "")));
-  assert.ok(f.effects.includes("delete-repo"));
+  assert.ok(result.items.some(i => i.kind === "archive" && i.status === "blocked"));
+  assert.ok(!f.effects.includes("delete-repo"));
+  assert.ok(existsSync(f.record.repoDir));
+  assert.ok(existsSync(f.worktree));
 });
 
 test("a missing result blocks its own run, not another run's archives", async (t) => {
@@ -933,7 +982,7 @@ test("a non-empty app worktree folder is kept and named", async (t) => {
 });
 
 for (const extra of ["a LOST log", "a LOST log and a kept non-empty run folder"] as const) {
-  test(`Next steps still asks for --yes when removals remain beside ${extra}`, async (t) => {
+  test(`Next steps blocks cleanup when evidence is missing beside ${extra}`, async (t) => {
     const f = fixture(t);
     rmSync(join(f.config.stateDir, childSession), { recursive: true });
     await cleanupBatch(f.config, f.state, { yes: true }, f.deps);
@@ -941,11 +990,11 @@ for (const extra of ["a LOST log", "a LOST log and a kept non-empty run folder"]
     f.appState.session = false;
     if (extra !== "a LOST log") writeFileSync(join(runFolder(f), "notes.txt"), "not a recorded worktree");
     const report = await cleanupBatch(f.config, f.state, {}, f.deps);
-    assert.ok(report.items.some(i => i.kind === "clone" && i.status === "present"));
-    if (extra === "a LOST log") assert.ok(report.items.some(i => i.kind === "worktree-parent" && i.status === "present" && !i.checklist));
+    assert.ok(report.items.some(i => i.kind === "clone" && i.status === "blocked"));
     const steps = nextSteps(report);
     assert.match(steps, /LOST: session logs are gone/);
-    assert.match(steps, /rerun this batch with --yes/);
+    assert.doesNotMatch(steps, /rerun this batch with --yes/);
+    assert.ok(existsSync(f.record.repoDir));
   });
 }
 
