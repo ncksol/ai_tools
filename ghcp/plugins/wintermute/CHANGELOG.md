@@ -6,6 +6,30 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace still follows main. See [Releases](README.md#releases) for prerequisites, checks and recovery after a partial publish.
 
+## 0.3.0 — 2026-10-27
+
+New model routing in `orchestrator`, `session-orchestrator`, `hands-on-orchestrator` and `hands-on-session-orchestrator`, based on a study of which models and effort levels suit which jobs.
+
+### Changed
+
+- Every row names only levels that Copilot offers: Argon runs at `high`, not `xhigh`, in the Mid tier and on both panels.
+- Low tier: Sol at `medium`, or at `low` for a single command or lookup; Sonnet at `medium` only for read-only jobs. If Sol isn't available, Opus at `low` takes the jobs that aren't read-only. The claims check runs on Sol at `medium`, or Opus at `low`.
+- Mid tier: Opus at `medium` or `high`, Sol at `high` or `xhigh`, Sonnet at `xhigh`, or Argon at `medium` or `high`. The defaults are Opus at `medium` and Sol at `high`. Astra no longer runs at Mid.
+- High tier adds Sol at `max` for long autonomous coding or terminal work and for find-and-fix debugging. A unit marked critical now runs at High by default.
+- Max tier: Opus at `max` for orchestration, and Opus or Astra at `max` for consults. Execution may now run at Max in two roles, Astra for incident RCA and Opus for the hardest implementation, but only when success matters more than cost and the user approves. Automatic tier-ups still stop at High.
+- Critical reviews and the critical final panel run Opus at `xhigh` instead of `max`. The disagreement panel keeps Opus at `max`.
+- If a model family isn't available, the fallback family runs at the level its row gives it.
+
+### Added
+
+- Routing for security, authentication and secrets reviews: Argon at `high` for code written by OpenAI models, with Opus at `xhigh` if Argon fails, and Astra at `xhigh` for all other code, including code with no model author. `orchestrator` and `hands-on-orchestrator` pass this route to their children for the reviews the children start themselves.
+- Routing for investigation and debugging. Opus is never the only investigator of an incident: when an Opus owner investigates an incident in its own work, the orchestrator adds an independent investigator on Astra at `xhigh`, and the owner still owns the fix.
+- Document draft and fact-check rows in the model table. Every load-bearing document gets a drafter and a fact-checker from different vendors. A shallow draft or fact-check is run again at the next level its row lists for that model, never at Max; at the top of its row it is treated as unverified instead.
+- A list of model and level combinations never to use. Reviewers and fact-checkers never come from the author's vendor; panel judges keep their own vendor rules.
+- Kickoff prompts for units that implement code at the Mid tier include acceptance tests written from the spec, which the unit implements and makes pass.
+- Every code-review brief asks the reviewer to report every finding, including the briefs that children write.
+- The README says the orchestrators are meant to run on Opus 5.5 at `max`.
+
 ## 0.2.2 — 2026-10-25
 
 ### Fixed

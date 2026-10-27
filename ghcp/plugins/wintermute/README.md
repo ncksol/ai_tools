@@ -51,6 +51,8 @@ The agents are in `com.github.copilot/agents/`. Copilot names a plugin agent `<p
 
 Run an orchestrator as the session's agent in the GitHub Copilot app: pick it before your first message, from the composer's **+** menu or with `/agent`. Where a tool or CLI flag takes an agent ID, use the `wintermute:` ID. A bare name never resolves to a plugin agent, so the orchestrators start their workers by these IDs, and the workers must come from this plugin too.
 
+The four orchestrators are meant to run on Opus 5.5 at `max` reasoning effort, the setup the local eval runs used. Their "Models and effort" tiers set the model and effort only for the jobs they hand out.
+
 ## The swarm dashboard
 
 A watch-only dashboard for agentic swarms in the GitHub Copilot app. A swarm is a session that has started child sessions, such as an orchestrator that hands each unit of work to its own session. Before its first child session, an `orchestrator`, `session-orchestrator`, `hands-on-orchestrator` or `hands-on-session-orchestrator` session is a swarm once it has started a `task` sub-agent, or while it waits on a tagged question, such as its plan question, so that the question shows under "Needs you". Sub-agents alone don't make other sessions swarms. The dashboard shows what every session and sub-agent is doing, how far it has got, what it costs and what needs you, so you can follow the work at a glance instead of reading transcripts.
