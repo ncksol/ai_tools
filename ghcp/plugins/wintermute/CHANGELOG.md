@@ -24,7 +24,7 @@ New model routing in `orchestrator`, `session-orchestrator`, `hands-on-orchestra
 
 - Routing for security, authentication and secrets reviews: Argon at `high` for code written by OpenAI models, with Opus at `xhigh` if Argon fails, and Astra at `xhigh` for all other code, including code with no model author. `orchestrator` and `hands-on-orchestrator` pass this route to their children for the reviews the children start themselves.
 - Routing for investigation and debugging. Opus is never the only investigator of an incident: when an Opus owner investigates an incident in its own work, the orchestrator adds an independent investigator on Astra at `xhigh`, and the owner still owns the fix.
-- Document draft and fact-check rows in the model table. Every load-bearing document gets a drafter and a fact-checker from different vendors. A shallow draft or fact-check is run again one level up within its row, never at Max.
+- Document draft and fact-check rows in the model table. Every load-bearing document gets a drafter and a fact-checker from different vendors. A shallow draft or fact-check is run again at the next level its row lists for that model, never at Max; at the top of its row it is treated as unverified instead.
 - A list of model and level combinations never to use. Reviewers and fact-checkers never come from the author's vendor; panel judges keep their own vendor rules.
 - Kickoff prompts for units that implement code at the Mid tier include acceptance tests written from the spec, which the unit implements and makes pass.
 - Every code-review brief asks the reviewer to report every finding, including the briefs that children write.
