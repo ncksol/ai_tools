@@ -29,7 +29,7 @@ You may edit files in scratch to check a finding or a fix.
 
 By default you install nothing and the code uses no network. Each exception needs permission in the user's request, and a permission covers only what it names:
 
-- **Installing dependencies:** only if the user allows installs or says that the code is trusted. The install may download what it installs. Install only into scratch (the exported copy's `node_modules`, or a virtual environment in scratch), never globally. Follow "Installing dependencies" below.
+- **Installing dependencies:** only if the user allows installs or says that the code is trusted. The install may download what it installs. Install only into scratch (the exported copy's `node_modules`), never globally. Follow "Installing dependencies" below.
 - **Network use by the code you run:** only if the user allows network access or says that the code is trusted.
 - **Documentation sites and web searches:** only if the user allows network access.
 
@@ -39,17 +39,18 @@ So permission to install does not let the code use the network, permission for n
 
 Use this only when the user allows installs.
 
-1. If the change edits package-manager configuration (a project `.npmrc`, `.yarnrc` or `.yarnrc.yml`, `pip.conf`, `nuget.config`, or a registry setting in a manifest), don't install. Say so under `Not verified`.
-2. Make a separate install HOME in scratch, for example `<SCRATCH_DIR>/install-home`. If the package manager needs registry, proxy or certificate settings from the user's configuration to reach its registry (for example `registry`, `proxy`, `https-proxy` or `cafile` in `~/.npmrc`, or `index-url` and `cert` in `pip.conf`), copy only those lines into the same file under the install HOME.
+1. If the change edits package-manager configuration (a project `.npmrc`, or a registry setting in `package.json`), don't install. Say so under `Not verified`.
+2. Make a separate install HOME in scratch, for example `<SCRATCH_DIR>/install-home`. If the package manager needs registry, proxy or certificate settings from the user's configuration to reach its registry (for example `registry`, `proxy`, `https-proxy` or `cafile` in `~/.npmrc`), copy only those lines into the same file under the install HOME.
 3. Never copy sign-in data: auth lines and tokens (`_auth`, `_authToken`, `_password`, `username`, `password`, any `//<host>/:` line), or a proxy or registry URL that contains credentials (`https://<user>:<secret>@...`). If the registry needs them, don't install. If the proxy is set in environment variables instead (`HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`), pass them to the install command only, and only when they contain no credentials.
-4. A private feed that needs the user's sign-in (for example, an authenticated npm, NuGet or Python feed) is not installed. Say under `Not verified` that the install needs sign-in.
-5. Install with lifecycle scripts turned off, from the exported copy, with the install HOME:
+4. A private feed that needs the user's sign-in (for example, an authenticated npm feed) is not installed. Say under `Not verified` that the install needs sign-in.
+5. Install only with npm, from the lockfile, with lifecycle scripts turned off. `--ignore-scripts` stops npm from running any package's install scripts, including native builds. First check that the lockfile has no Git dependencies, whose `prepare` step can run code; if this prints anything, don't install:
 
    ```bash
+   git grep -nE '"resolved": "git[+:]' <HEAD_SHA> -- package-lock.json npm-shrinkwrap.json
    cd <SCRATCH_DIR>/head && env -i PATH="$PATH" HOME=<SCRATCH_DIR>/install-home TMPDIR=<SCRATCH_DIR>/tmp npm ci --ignore-scripts
    ```
 
-   Use the same idea for other package managers (for example, `pip install --only-binary=:all:` into a virtual environment in scratch). If the install can't work with scripts off, don't install.
+   Don't install with other package managers: their installs can run build code from the change or its dependencies (for example, a Python build backend for a local or source package, or MSBuild targets during a .NET restore). If the check needs such an install, or the install fails with scripts off, say so under `Not verified`.
 6. Run the code with the clean scratch HOME from "Export the head commit", not with the install HOME.
 
 ## Report
