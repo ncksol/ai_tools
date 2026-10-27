@@ -22,12 +22,12 @@ New model routing in `orchestrator`, `session-orchestrator`, `hands-on-orchestra
 
 ### Added
 
-- Routing for security, authentication and secrets reviews: Astra at `xhigh`, or Argon at `high` for code written by OpenAI models, with Opus at `xhigh` if Argon fails.
-- Routing for investigation and debugging. Opus is never the only investigator of an incident.
-- A drafter and a fact-checker from different vendors for every load-bearing document.
-- A list of model and level combinations never to use.
-- Kickoff prompts for Mid-tier units include acceptance tests written from the spec, which the unit implements and makes pass.
-- Every code-review brief asks the reviewer to report every finding.
+- Routing for security, authentication and secrets reviews: Argon at `high` for code written by OpenAI models, with Opus at `xhigh` if Argon fails, and Astra at `xhigh` for all other code, including code with no model author. `orchestrator` and `hands-on-orchestrator` pass this route to their children for the reviews the children start themselves.
+- Routing for investigation and debugging. Opus is never the only investigator of an incident: when an Opus owner investigates an incident in its own work, the orchestrator adds an independent investigator on Astra at `xhigh`, and the owner still owns the fix.
+- Document draft and fact-check rows in the model table. Every load-bearing document gets a drafter and a fact-checker from different vendors. A shallow draft or fact-check is run again one level up within its row, never at Max.
+- A list of model and level combinations never to use. Reviewers and fact-checkers never come from the author's vendor; panel judges keep their own vendor rules.
+- Kickoff prompts for units that implement code at the Mid tier include acceptance tests written from the spec, which the unit implements and makes pass.
+- Every code-review brief asks the reviewer to report every finding, including the briefs that children write.
 - The README says the orchestrators are meant to run on Opus 5.5 at `max`.
 
 ## 0.2.2 — 2026-10-25
