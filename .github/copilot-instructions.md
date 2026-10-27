@@ -20,7 +20,7 @@ Current contents:
 
 PR-review skills (provider-neutral, inspection-only):
 
-- `strict-code-review` — the strict first-pass reviewer for GitHub and Azure DevOps PR URLs, local branches and pasted diffs (inspection-only; it never posts comments). Its provider adapters, trigger-based review checklist, and the rules for running code and for multi-model reviews are in `references/`. Users can invoke it explicitly with `/strict-code-review`.
+- `strict-code-review` — the strict first-pass reviewer for GitHub and Azure DevOps PR URLs, local branches and pasted diffs (inspection-only; it never posts comments). Its provider adapters and review checklist are in `references/`. Users can invoke it explicitly with `/strict-code-review`.
 - `analyse-pr-feedback` — triage reviewer feedback into a decision table (analysis-only).
 - `rereview-pr` — focused follow-up review after a previous review cycle (analysis-only).
 

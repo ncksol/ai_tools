@@ -197,8 +197,7 @@ To update, run `git -C ai_tools pull`, then run both `cp` commands again.
 # strict-code-review, for example, also needs the files in its references/ directory.
 base=https://raw.githubusercontent.com/ncksol/ai_tools/main/ghcp/skills/strict-code-review
 for f in SKILL.md references/azure-devops.md references/checklist.md \
-         references/github.md references/local.md references/pasted-diff.md \
-         references/running-code.md references/multi-model.md; do
+         references/github.md references/local.md references/pasted-diff.md; do
   curl -fsSL --create-dirs "$base/$f" -o ~/.copilot/skills/strict-code-review/"$f"
 done
 
@@ -259,7 +258,7 @@ ai_tools/
     ├── skills/
     │   ├── strict-code-review/
     │   │   ├── SKILL.md
-    │   │   └── references/            ← provider adapters, review checklist, running-code and multi-model guides
+    │   │   └── references/            ← provider adapters and the review checklist
     │   ├── analyse-pr-feedback/
     │   │   └── SKILL.md
     │   ├── rereview-pr/
