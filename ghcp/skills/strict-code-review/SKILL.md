@@ -113,7 +113,7 @@ A candidate needs three things from code you read in this run:
 
 Then try to refute it with tool reads, yourself:
 
-- Is it intended? Look for the description, a decision record or a code comment that chose it. Intent does not excuse a security or data-safety problem.
+- Is it intended? Look for the description, a decision record or a code comment that chose it. Intent does not excuse a security or data-safety problem. A documented limit or decision makes that choice intended, not every effect of it: when an effect the source doesn't state causes harm (for example, a documented per-call limit means items past the limit are never processed on any call), check that effect as a candidate of its own.
 - Is it already prevented? Read the caller, validation, framework default, configuration or infrastructure that would stop it. A guard counts only if it rejects the exact failing input: a validator that checks a value only when it is present does not stop a missing or empty one.
 - Is the premise right? Check types, data shapes and values at their source.
 - Does behaviour change? If not, it is style.
