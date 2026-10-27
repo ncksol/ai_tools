@@ -6,6 +6,17 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace still follows main. See [Releases](README.md#releases) for prerequisites, checks and recovery after a partial publish.
 
+## 0.3.1 — 2026-10-27
+
+Fixes child sessions that failed to start because their base branch wasn't pushed yet ([#70](https://github.com/ncksol/ai_tools/issues/70)), in `orchestrator`, `session-orchestrator`, `hands-on-orchestrator` and `hands-on-session-orchestrator`.
+
+### Fixed
+
+- "Choose the delegation type" says a child's `base_branch` must already be pushed to origin. For another unit's branch, the orchestrator waits until that unit reports a pushed commit. This covers review and check sessions too.
+- When `create_session` reports that workspace setup failed, the orchestrator archives the broken session, notes it in `child_notes`, fixes the cause and tries once more as a new unit. It never retries several at once.
+- The `hands-on-` orchestrators push their own branch before they hand their own unit to a child.
+- The session variants still stack dependent units early, but only once the parent has pushed its branch.
+
 ## 0.3.0 — 2026-10-27
 
 New model routing in `orchestrator`, `session-orchestrator`, `hands-on-orchestrator` and `hands-on-session-orchestrator`, based on a study of which models and effort levels suit which jobs.
