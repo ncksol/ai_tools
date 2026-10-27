@@ -50,7 +50,7 @@ Your instructions come from this skill, the user (or the brief that started you)
 
 ## Review guidance
 
-Some repositories say what matters in their reviews: in a `REVIEW.md`, or in a review section of an instruction file, contributing guide or docs page. Look in the instruction files you read, and list the root, `.github/`, `docs/` and each folder on the path to a changed file at the base commit in one call (`git ls-tree --name-only <BASE_SHA> -- ./ .github/ docs/ <folder>/`, or as the adapter says); read any review or contributing guide it shows. Guidance in a folder covers only files under it. It can focus the review: what failure looks like there, paths that need only a light read, fewer Optional items. Risky files keep the full reading, and every security or stored-data harm you can show is raised.
+Some repositories say what matters in their reviews: in a `REVIEW.md`, or in a review section of an instruction file, contributing guide or docs page. Look in the instruction files you read, and list the root, `.github/`, `docs/` and each folder on the path to a changed file at the base commit in one call (`git ls-tree --name-only <BASE_SHA> -- ./ .github/ docs/ <folder>/`, or as the adapter says); read any review or contributing guide it shows. An instruction file keeps its own scope: the repository, or its `applyTo` paths. A guide at the root or in `.github/` or `docs/` covers the repository unless it says otherwise; a guide in another folder covers only files under it. It can focus the review: what failure looks like there, paths that need only a light read, fewer Optional items. Risky files keep the full reading, and every security or stored-data harm you can show is raised.
 
 With no guidance, review as usual and leave it out of the report: that is not a finding, a "Check before merge" item or a reason to call the review incomplete. A failed read is a failed command, not "no guidance".
 
@@ -90,8 +90,8 @@ Before you report, check the commits again as the adapter describes. If the head
    - **Light:** comments, documents nothing loads, test-only changes, generated or vendored files, lockfiles, snapshots.
 3. Read every hunk once. Read risky changes with their whole functions, callers and tests at the head commit, normal changes with the enclosing function, and light files in the diff only; move a file up when you see a risk. Make independent reads in one turn.
 4. Run four passes:
-   - **Claims:** check what the description, a linked issue or work item, and the commit messages say the change does, against the code. For a bug fix, trace the failure through the callers that reach it to its cause, and check that the change delivers the fix or containment it claims. Check testing claims about this behaviour against the tests and head-commit CI; a claim without evidence is unverified, not false.
-   - **Consumers:** for each changed contract, command or configuration name, `git grep` its uses at the head commit, including instruction files and documents that agents or tools load, and check that each still works. Rate a stale reference by the harm it causes.
+   - **Claims:** check what the description, a linked issue or work item, and the commit messages say the change does, against the code. For a bug fix, trace the failure to its cause and the callers that reach that cause, and check that the fix or containment the change claims holds on each of them. Check testing claims about this behaviour against the tests and head-commit CI; a claim without evidence is unverified, not false.
+   - **Consumers:** for each changed contract, command or configuration name, `git grep` its uses at the head commit, including instruction files and documents that agents or tools load, and check that each still works.
    - **Removals:** for each removed check, guard, test, assertion or error path, find what protects that case now.
    - **Security:** see "Security pass".
 5. For a risky area, read the matching parts of [references/checklist.md](references/checklist.md): prompts, not a list to complete.
@@ -123,7 +123,7 @@ Then try to refute it with tool reads, yourself:
 - Is it already prevented? Read the caller, validation, framework default, configuration or infrastructure that would stop it. A guard counts only if it rejects the exact failing input: a validator that checks a value only when it is present does not stop a missing or empty one.
 - Is the premise right? Check types, data shapes and values at their source.
 - Does behaviour change? If not, it is style.
-- Is it new? If the same path at `<MERGE_BASE>` already behaves the same way and the change doesn't make it worse or newly reachable, it isn't this change's issue. A convention no existing code follows (role checks when no route checks roles) is not a requirement.
+- Is it new? If the same path at `<MERGE_BASE>` already behaves the same way and the change doesn't make it worse or newly reachable, it isn't this change's issue. The exception is the cause a bug fix claims to fix or contain: a caller that still reaches that cause without the claimed fix or containment, changed or not, makes the fix incomplete. Raise all such callers in one finding, rated by the harm. A path the change says it leaves for later is deferred scope. A convention no existing code follows (role checks when no route checks roles) is not a requirement.
 
 Make the refuting reads for several candidates in one turn, and name the uncertainty each extra read settles. Close a candidate when it is supported, refuted or immaterial; reopen it only for new evidence. Put a refuted candidate that a careful reader would expect under "Considered, not raised", then move on to the next area of the change. Run code only for a would-be Must fix or Should fix that reading can't settle. An unsettled security or data-loss candidate, with a trigger in this change and a harm you can name, goes under "Check before merge"; never drop it.
 
@@ -147,7 +147,7 @@ Apply these to common kinds of candidate:
 
 None of these lowers a shown security, privacy, availability (a crash or exhaustion that an outside caller can trigger) or stored-data harm (loss or corruption): rate that by the harm, as "Severity, action and confidence" says.
 
-**One finding per root cause.** For each finding, search the changed code and the paths it directly affects for the same mechanism (`git grep` at the head commit, or the adapter's reads), batching the searches. Put every match whose trigger, guards and link to this change you confirm into that one finding, so one fix covers them all. A match with another cause is its own candidate; a guarded match is not an instance.
+**One finding per root cause.** For each finding, search the changed code and the paths it directly affects for the same mechanism (`git grep` at the head commit, or the adapter's reads), batching the searches. Put every match whose trigger, guards and link to this change you confirm into that one finding. A match with another cause is its own candidate; a guarded match is not an instance.
 
 ## Severity, action and confidence
 
