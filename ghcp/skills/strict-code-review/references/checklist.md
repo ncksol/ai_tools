@@ -1,198 +1,62 @@
-# Review checklist
+# Review prompts by trigger
 
-Part of the `strict-code-review` skill. Read it with `SKILL.md`: every rule there still applies.
+Part of the `strict-code-review` skill. Read the sections whose trigger matches a risky or normal change. They are ideas, not a list to complete; each candidate still goes through "Checking candidates" and "Is it worth raising?".
 
-## Correctness and logic
+## Outside input (request, CLI argument, file, message, webhook, model output)
 
-Check for:
+- Reaches a query, command, file path, template, HTML or deserialiser without the project's escaping or validation.
+- Empty, missing, duplicate, oversized, malformed or boundary values.
 
-- incorrect business logic
-- wrong conditions
-- missing branches
-- bad defaults
-- off-by-one errors
-- incorrect state transitions
-- null or undefined handling bugs
-- incorrect assumptions about data shape
-- regressions against existing behaviour
-- broken control flow
-- swallowed errors
-- incorrect feature flag behaviour
+## Sign-in, permissions, tenants, ownership
 
-## Edge cases
+- A new route or handler lacks the auth its neighbours have.
+- The caller can name an object it doesn't own: an ID in a URL, a cache or query not keyed by tenant.
+- A default grants access; a check moved, weakened or removed.
 
-Check for:
+## Data that is logged, returned or stored
 
-- empty input
-- missing input
-- malformed input
-- duplicate input
-- large input
-- paginated data
-- boundary values
-- unusual ordering
-- retries
-- repeated requests
-- partial failures
-- time zones
-- daylight saving time
-- concurrency
-- race conditions
+- Secrets, tokens or personal data in logs, errors or responses.
+- A partial failure leaves bad data; a retry writes twice; a job or webhook isn't idempotent.
+- A migration breaks the running version or existing rows, or can't be rolled back.
+- Wrong cache keys or invalidation; stale reads.
 
-## Security and privacy
+## A changed contract (API, route, CLI flag, config key, schema, event, file format)
 
-Check for:
+- Shape, defaults, status codes or error format changed for existing callers.
+- Callers found with `git grep` at the head commit, and documented outside callers, still work.
 
-- missing authentication
-- missing authorisation
-- broken ownership checks
-- broken tenancy isolation
-- privilege escalation
-- SQL injection
-- command injection
-- XSS
-- template injection
-- path traversal
-- unsafe deserialisation
-- unsafe HTML rendering
-- secrets in logs
-- tokens in errors
-- credentials in client responses
-- PII leakage
-- overly broad permissions
-- insecure defaults
+## State, concurrency, retries, time, errors
 
-## Data and persistence
+- Check-then-act races; retries without backoff or idempotency; missing timeouts; leaked connections or handles.
+- Ordering, pagination cursors, time zones.
+- Errors swallowed, mapped to the wrong status, or leaving partial state.
 
-Check for:
+## Hot paths and large data
 
-- unsafe migrations
-- backwards-incompatible schema changes
-- missing indexes for new query patterns
-- N+1 queries
-- unbounded queries
-- missing transaction boundaries
-- partial-failure data corruption
-- duplicate writes
-- non-idempotent webhook or job handling
-- incorrect retry behaviour
-- stale reads
-- cache invalidation bugs
-- data loss during rollback
+- N+1 or unbounded queries, serial awaits, memory growth, at the realistic data size and after any limit that caps it.
 
-## API and contract compatibility
+## Frontend
 
-Check for:
+- Effect dependencies and cleanup; user or model text rendered as HTML; hydration mismatches; keyboard access; loading and error states.
 
-- request shape changes
-- response shape changes
-- backwards compatibility breaks
-- wrong HTTP status codes
-- inconsistent error formats
-- missing validation
-- server/client type mismatches
-- undocumented breaking changes
-- versioning issues
-- changes that break existing consumers
+## Tests
 
-## Resilience and operations
+- A test passes even if the feature is broken: it mocks the code under test, asserts nothing, or skips the path.
+- A risky changed path has no test that would fail if it broke, where similar code has such tests.
 
-Check for:
+## Dependencies, build, CI, deployment
 
-- missing timeouts
-- missing cancellation
-- retry storms
-- no fallback path
-- poor failure behaviour
-- connection leaks
-- file handle leaks
-- memory leaks
-- missing resource cleanup
-- insufficient logging
-- unsafe logging
-- missing metrics or traces for important new flows
-- operational blind spots
-- poor behaviour when dependencies fail
+- A new dependency: maintained, licence, pinned, lockfile in step.
+- New required configuration or environment variables, and unsafe defaults.
+- CI or packaging edits that skip or weaken checks, widen workflow permissions, or expose secrets to untrusted code (for example, `pull_request_target`).
 
-## Performance
+## Agent files: skills, agent prompts, instruction files, tool configuration
 
-Check for:
+- A `tools` list or permission widens what an agent can run or access.
+- Outside text (PR content, issues, web pages, tool output) can steer the agent, or a safety rule is dropped.
+- Rules that must stay in step (text kept the same across files, versions kept equal in several manifests, a rule with copies elsewhere) changed in one place only.
+- Frontmatter no longer parses; a linked file no longer exists; the change contradicts the repository's instruction files.
 
-- hot-path inefficiencies
-- unnecessary serial awaits
-- blocking work
-- excessive database calls
-- repeated expensive computation
-- memory growth
-- inefficient data fetching
-- excessive payload size
-- excessive frontend re-renders
-- cache misuse
-- changes that will not scale with realistic data volume
+## Optional at most
 
-## Frontend-specific issues
-
-Where applicable, check for:
-
-- invalid React hook usage
-- incorrect effect dependencies
-- missing effect cleanup
-- redundant or inconsistent state
-- unsafe rendering of user-generated or AI-generated content
-- SSR/client boundary mistakes
-- hydration issues
-- accessibility regressions
-- broken keyboard navigation
-- missing focus states
-- incorrect ARIA usage
-- poor loading or error states
-- stale client cache behaviour
-
-## Test quality
-
-Check for:
-
-- missing tests for changed behaviour
-- missing negative tests
-- missing boundary tests
-- missing regression tests
-- missing error-path tests
-- missing auth/authz tests
-- missing migration tests
-- missing concurrency or idempotency tests
-- tests that only verify implementation details
-- tests that would pass even if the feature were broken
-- flaky tests due to timing, randomness, network, or ordering
-- untested production-critical paths
-
-## Maintainability and simplicity
-
-Check for:
-
-- unnecessary abstraction
-- duplicate logic
-- ignoring existing helper functions
-- broad changes unrelated to the PR intent
-- unclear ownership boundaries
-- confusing control flow
-- excessive coupling
-- over-engineering
-- hand-rolled logic where a project primitive already exists
-- changes that make future bugs more likely
-
-## Dependencies and deployment safety
-
-Check for:
-
-- new dependency risk
-- licence risk
-- supply-chain risk
-- incompatible dependency versions
-- config changes
-- environment variable changes
-- missing deployment notes
-- missing rollback plan for risky changes
-- feature flag concerns
-- build or packaging changes
-- CI/CD compatibility
-- infrastructure drift
+Logging and metrics for new flows, deployment notes, rollback plans, abstraction, duplication, naming, comments and focus styles give Optional findings at most, and only with a concrete effect.
