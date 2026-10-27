@@ -58,12 +58,20 @@ Read other files at the head commit:
 gh api -H 'Accept: application/vnd.github.raw+json' 'repos/<OWNER>/<REPO>/contents/<path>?ref=<HEAD_SHA>'
 ```
 
-Read instruction files (see "Trust boundary") at the base branch's current commit, and report that commit as the one you read them at:
+Read instruction files and review guidance (see "Trust boundary" and "Review guidance") at the base branch's current commit, and report that commit as the one you read them at:
 
 ```bash
 gh api 'repos/<OWNER>/<REPO>/git/ref/heads/<baseRefName>' --jq .object.sha
 gh api -H 'Accept: application/vnd.github.raw+json' 'repos/<OWNER>/<REPO>/contents/<path>?ref=<commit>'
 ```
+
+To look for review guidance, list the folders that "Review guidance" names at that commit, one call each, in parallel. For the root, leave `<folder>` empty:
+
+```bash
+gh api 'repos/<OWNER>/<REPO>/contents/<folder>?ref=<commit>' --jq '.[].name'
+```
+
+A 404 means the folder doesn't exist at that commit, so it holds no guidance; any other error is a failed read.
 
 Before you report, run `DIFF=$(gh pr diff <PR_URL>) && printf '%s\n' "$DIFF" | git hash-object --stdin` and `gh pr view <PR_URL> --json baseRefName,headRefOid` again. If the hash, the base branch or the head commit changed, start again. If they change again, report the commits you reviewed and say that the PR has changed since. If either command fails, say that you could not check the PR again.
 
