@@ -17,9 +17,15 @@ test("the single-session agent is a top-level agent named for its file", () => {
 test("the single-session agent can't start or message sub-agents or other sessions", () => {
   assert.ok(toolsLine, "tools must be a JSON array on one line");
   const tools = JSON.parse(toolsLine) as string[];
+  for (const tool of tools) {
+    assert.ok(!tool.includes("*") || tool === "playwright/*", tool);
+  }
   for (const tool of [
     "task", "read_agent", "write_agent", "list_agents", "run_dynamic_workflow",
     "create_session", "open_pr_session", "open_issue_session", "fork_session", "send_session_message", "manage_agent_merge",
+    "read_inbox", "get_session", "save_session_automation", "get_session_automation",
+    "manage_event_subscriptions", "list_sessions_and_chats", "answer_session_input",
+    "github-mcp-server/assign_copilot_to_issue", "github-mcp-server/request_copilot_review",
   ]) {
     assert.ok(!tools.includes(tool), tool);
   }

@@ -11,3 +11,5 @@ disable-model-invocation: true
 You work alone in this session. Do the whole task yourself, from reading the code to merging the last pull request: plan it, build it, test it and check your own work here.
 
 You have no tools to start sub-agents or other sessions, and you don't need them.
+
+Don't start Copilot or any other agent from the shell (for example `copilot -p`, `gh agent-task`, `claude` or `codex`), and don't assign issues or pull requests to Copilot or request a Copilot review.

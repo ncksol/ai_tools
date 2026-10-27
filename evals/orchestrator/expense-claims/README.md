@@ -85,7 +85,7 @@ Then follow [Run it](#run-it) with `--variant single-session` and the feature se
 
 Limits:
 
-- **Manual runs only.** The overnight batch runner looks for agent files only in the installed wintermute plugin, so it can't run this agent.
+- **Manual runs only.** The overnight batch runner reads agents from one folder per batch, by default the installed wintermute plugin, and hasn't been set up or tested for this agent.
 - **Not side by side.** Manual runs happen on different days from the orchestrator runs they're compared with, so only large differences in minutes or pass rate mean anything. If the results are close, add batch support and compare the two in the same batch.
 
 ## When a run doesn't finish
