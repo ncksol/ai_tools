@@ -25,7 +25,7 @@ The design, with the reasons behind each rule, is in [the design doc](../../../d
 | `acceptance/` | The hidden black-box acceptance suite, one file for v1 and one per feature. |
 | `robustness/` | Hidden edge-case tests, run after scoring, never as the gate. |
 | `pricing/2026-10-20.json` | Dated USD-per-million token rates, with model tiers and promotion expiry. |
-| `variants/` | Eval-only A/B/C agent snapshots, their shared worker and the hashed `review-policy.json` manifest. Not ordinary agent installation files. |
+| `variants/` | Eval-only A/B/C agent snapshots, their shared worker, the hashed `review-policy.json` manifest and the `single-session` baseline agent. Not ordinary agent installation files. |
 | `scripts/` | `new-run`, `score`, the acceptance and robustness runners, the kit check, the overnight batch runner (`batch.ts` and `lib/batch/`) and their tests. |
 | `package.json` | The npm scripts: `test`, `check`, `new-run`, `score`, `acceptance`, `robustness` and `batch`. |
 
@@ -53,7 +53,7 @@ Choose one model and effort for the orchestrator session, for example Claude Opu
 
    This creates the private repo `ncksol/orch-eval-<variant>-<n>` from `seed/`, with one `Seed v1` commit on `main`. The clone is `~/orch-evals/orch-eval-<variant>-<n>`, and the kickoff file is `~/orch-evals/orch-eval-<variant>-<n>.kickoff.md`. `<n>` is one more than the highest run number of that variant in the clone/kickoff names or retained `batches/*/state.json` run and provisioned-slot records under `~/orch-evals/`. Batch numbering also checks results.csv and its current runs. Cleanup therefore does not reset automatic numbering. To set it yourself, pass `--n <k>`; it must be a positive whole number. `new-run` never reuses a run folder: it stops if the folder or the GitHub repo already exists. Other flags: `--features` (see [Calibration](#calibration)), `--owner`, `--runs-dir`, and `--dry-run`, which builds the clone and kickoff file locally without touching GitHub.
 2. In the Copilot app, add the clone as a project.
-3. Start a **new top-level session** in that project with the agent under test, using the held-constant model and effort. For a live variant such as `orchestrator`, select `wintermute:orchestrator`; `new-run` prints the exact runtime ID. Pinned A/B/C aliases keep their bare IDs. **An orchestrator run is always a top-level session. You start it yourself, or the `eval-runner` driver starts it as a detached top-level session in an overnight batch that you launched (see [Overnight batches](#overnight-batches)). Never start one as a child of another session, and never ask any other agent to start one, or start one any other way.**
+3. Start a **new top-level session** in that project with the agent under test, using the held-constant model and effort. For a live variant such as `orchestrator`, select `wintermute:orchestrator`; `new-run` prints the exact runtime ID. Pinned A/B/C aliases keep their bare IDs, and so does the single-session baseline, `single-session` (see [Single-session baseline](#single-session-baseline)). **An orchestrator run is always a top-level session. You start it yourself, or the `eval-runner` driver starts it as a detached top-level session in an overnight batch that you launched (see [Overnight batches](#overnight-batches)). Never start one as a child of another session, and never ask any other agent to start one, or start one any other way.**
 4. Copy the kickoff, then paste it into the composer as the first message:
 
    ```bash
@@ -69,6 +69,24 @@ Choose one model and effort for the orchestrator session, for example Claude Opu
    ```
 
    Then commit `results.csv` and follow [Memory hygiene](#memory-hygiene).
+
+### Single-session baseline
+
+`variants/single-session.agent.md` is a baseline with no orchestration: one top-level session that plans, builds, tests and merges the whole task itself. It has no tools to start sub-agents or other sessions, so it runs no reviewers, panels or claims checks. It shows whether orchestration pays off at this task's size.
+
+Register it once, from this kit folder, unless `~/.copilot/agents/single-session.agent.md` already exists:
+
+```bash
+mkdir -p ~/.copilot/agents
+ln -s "$PWD/variants/single-session.agent.md" "$HOME/.copilot/agents/single-session.agent.md"
+```
+
+Then follow [Run it](#run-it) with `--variant single-session` and the feature set of the runs you compare it with, for example `npm run new-run -- --variant single-session --features policy,reports,import`. In step 3, select the agent `single-session`, with the same model and effort as those runs. The kickoff, answer sheet and scoring are unchanged, and `npm run score -- --summary` lists the runs under `single-session`.
+
+Limits:
+
+- **Manual runs only.** The overnight batch runner looks for agent files only in the installed wintermute plugin, so it can't run this agent.
+- **Not side by side.** Manual runs happen on different days from the orchestrator runs they're compared with, so only large differences in minutes or pass rate mean anything. If the results are close, add batch support and compare the two in the same batch.
 
 ## When a run doesn't finish
 
