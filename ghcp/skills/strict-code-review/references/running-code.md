@@ -43,14 +43,13 @@ Use this only when the user allows installs.
 2. Make a separate install HOME in scratch, for example `<SCRATCH_DIR>/install-home`. If the package manager needs registry, proxy or certificate settings from the user's configuration to reach its registry (for example `registry`, `proxy`, `https-proxy` or `cafile` in `~/.npmrc`), copy only those lines into the same file under the install HOME.
 3. Never copy sign-in data: auth lines and tokens (`_auth`, `_authToken`, `_password`, `username`, `password`, any `//<host>/:` line), or a proxy or registry URL that contains credentials (`https://<user>:<secret>@...`). If the registry needs them, don't install. If the proxy is set in environment variables instead (`HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`), pass them to the install command only, and only when they contain no credentials.
 4. A private feed that needs the user's sign-in (for example, an authenticated npm feed) is not installed. Say under `Not verified` that the install needs sign-in.
-5. Install only with npm, from the lockfile, with lifecycle scripts turned off. `--ignore-scripts` stops npm from running any package's install scripts, including native builds. First check that the lockfile has no Git dependencies, whose `prepare` step can run code; if this prints anything, don't install:
+5. Install only with npm, from the lockfile, into the exported copy, with lifecycle scripts turned off:
 
    ```bash
-   git grep -nE '"resolved": "git[+:]' <HEAD_SHA> -- package-lock.json npm-shrinkwrap.json
    cd <SCRATCH_DIR>/head && env -i PATH="$PATH" HOME=<SCRATCH_DIR>/install-home TMPDIR=<SCRATCH_DIR>/tmp npm ci --ignore-scripts
    ```
 
-   Don't install with other package managers: their installs can run build code from the change or its dependencies (for example, a Python build backend for a local or source package, or MSBuild targets during a .NET restore). If the check needs such an install, or the install fails with scripts off, say so under `Not verified`.
+   `--ignore-scripts` stops the lifecycle scripts of the package and its registry dependencies, but the install still runs code that the change controls: for example, a Git dependency's build step may still run. Treat the install as running the change's code: the same scratch location, the empty environment, no tokens, and the same warning that this is not a sandbox. Don't install with other package managers. If the check needs another package manager, or the install fails, say so under `Not verified`.
 6. Run the code with the clean scratch HOME from "Export the head commit", not with the install HOME.
 
 ## Report
