@@ -72,7 +72,7 @@ gh api 'repos/<OWNER>/<REPO>/contents?ref=<commit>' --jq '.[].name'
 gh api 'repos/<OWNER>/<REPO>/contents/<folder>?ref=<commit>' --jq '.[].name'
 ```
 
-A folder is absent only when its parent's listing succeeded and doesn't show it. Any other error, including a 404 on the root or on a folder its parent's listing shows, is a failed read.
+A folder is absent when its parent's listing succeeded and doesn't show it, or when its parent is absent; skip listing it. Any other error, including a 404 on the root or on a folder its parent's listing shows, is a failed read.
 
 Before you report, run `DIFF=$(gh pr diff <PR_URL>) && printf '%s\n' "$DIFF" | git hash-object --stdin` and `gh pr view <PR_URL> --json baseRefName,headRefOid` again. If the hash, the base branch or the head commit changed, start again. If they change again, report the commits you reviewed and say that the PR has changed since. If either command fails, say that you could not check the PR again.
 
