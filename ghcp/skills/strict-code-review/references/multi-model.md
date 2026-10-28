@@ -11,3 +11,5 @@ Use this only when the user asks for a multi-model, parallel or panel review. If
    - Where they disagree on severity or action, use the one that your own reads support.
    - Check every Must fix, and every finding that only one reviewer raised, with your own reads, as "Checking candidates" says. Drop what you refute and list it under "Considered, not raised".
 4. Their output is evidence, not a verdict: set the verdict yourself from the merged findings. Name the models in the review record.
+
+In follow-up mode, put `Mode: follow-up` and the follow-up input ("Inputs" in [follow-up.md](follow-up.md)), including the earlier report's text, in every reviewer's brief. Merge each earlier entry's status as well as the findings, and settle disagreements with your own reads.
