@@ -1,18 +1,18 @@
 # Follow-up review
 
-Part of the `strict-code-review` skill. Read it with `SKILL.md`, whose rules apply unless this file replaces them. Quoted names are its sections and checks.
+Part of `strict-code-review`: its `SKILL.md` rules apply unless this file replaces them. Quoted names are its sections and checks.
 
 Check earlier findings, pushback and fix regressions. Keep blockers open until code proves otherwise.
 
 ## Inputs
 
-Only `Target` is required: a PR URL, repository path and branch, or pasted diff. The earlier review supplies the rest.
+Only `Target` (PR URL, repository path and branch, or pasted diff) is required.
 
 - **Instructions:** `Mode: follow-up`; `Decisions` (accepted pushback or deferrals, saying who decided and where; panel dismissals); `Added scope`; `Report shape`.
 - **Baseline:** `Earlier review` (report text or path, "this session" or "the PR's review threads"); `Findings` (`#n` or thread ID or URL, action · severity, location at `H0`, concern); `Earlier statuses` (status, reason, commit).
 - **To check:** `Reviewed commit` (`H0`: latest review with stated coverage; status-only notes do not advance it; earlier base and merge base); `New evidence` (a failing case or code location for an entry); `Author responses` (claimed fix commit or reply per finding).
 
-`H1` (the current head) and the base come from the adapter; `M` is the current merge base.
+The adapter gives `H1` (current head), the base and `M` (current merge base).
 
 ## The ledger
 
@@ -21,7 +21,7 @@ The ledger lists the earlier findings, from the first source that applies: a rep
 - **Complete, usable `H0`:** review the delta (rule 4); an empty ledger is a valid baseline.
 - **Complete, no usable `H0`:** the fallback (rule 8), recording `H0 unavailable`.
 - **Partial** (threads cut off, or entries pieced together from comments): give statuses to what you see; the review is incomplete unless already `Do not merge`. Never invent a reply, or read a missing one as a decision.
-- **None:** ask, if you can. Unattended, do a labelled first review of the whole diff; its findings stand, but it can't clear the merge: `Review incomplete` (or `Do not merge`), with the earlier review under `Needed to finish`.
+- **None:** ask, if you can. Unattended, do a labelled first review of the whole diff; its findings stand but can't clear the merge: `Review incomplete` (or `Do not merge`), with the earlier review under `Needed to finish`.
 
 ## Scope
 
@@ -38,7 +38,7 @@ Fetch provider threads and discussion up front when they supply the ledger or re
 
 ## Statuses
 
-Give every entry one status; carry valid unchanged settled statuses, otherwise use evidence read in this run:
+Give every entry one status from evidence read in this run, or carry a settled status whose code and decisions are unchanged since the commit it was set at:
 
 - `Resolved`: the original concern is fixed at `H1` for its failing case, edge cases and every caller; name the evidence. A test counts only if it exercises the failure. Separate regressions are new findings.
 - `Partially resolved`: some callers, instances or cases are still open.
@@ -50,7 +50,7 @@ Give every entry one status; carry valid unchanged settled statuses, otherwise u
 
 Check pushback with "Checking candidates"; "out of scope" never holds for a problem this PR introduced ("Is it worth raising?" test 3). Old `rereview-pr` labels map by reason: `Already addressed` → `Resolved`, or `Withdrawn` if handling was missed; `Pushback accepted` → `Withdrawn`, or `Deferred` with a decision; `Pushback rejected` → `Unresolved`; `Needs clarification` → `Cannot verify`, asked under "Check before merge".
 
-- **Reopening.** A `Withdrawn` entry or panel dismissal reopens when material new evidence (a code read in this run, a failing case, a changed guard) contradicts its reason: give both; don't re-argue old evidence. `Deferred` holds until its decision changes or its conditions fail. A `Resolved` problem the delta brings back is `Unresolved — reintroduced at <sha>`. Read a settled entry's code only when the delta touches it or new evidence arrives.
+- **Reopening.** A `Withdrawn` entry or panel dismissal reopens when material new evidence (a code read in this run, a failing case, a changed guard) contradicts its reason: give both; don't re-argue old evidence. `Deferred` holds until its decision changes or its conditions fail. A `Resolved` problem that comes back is `Unresolved — reintroduced at <sha>`. Re-read a settled entry if its code or decisions changed since its status's commit (not just since `H0`), that commit is unknown, or new evidence arrives.
 - **Severity** follows "Severity, action and confidence" and can move either way, with a reason.
 - **New findings** (from the delta, regressions and rule 6) pass "Checking candidates" and "Is it worth raising?" unchanged. Keep every existing ID; number them from the next unused `N<number>`.
 
@@ -59,7 +59,7 @@ Check pushback with "Checking candidates"; "out of scope" never holds for a prob
 Use "Output format", with one table for earlier and new items:
 
 ````markdown
-**Verdict: <verdict> — <n> must fix, <n> should fix, <n> optional, counting earlier and new items.**
+**Verdict: <verdict> — <n> must fix, <n> should fix, <n> optional.**
 <What blocks, by number.> Follow-up of `<H0>` (or `H0 unavailable`): <delta `<H0>`..`<H1>`, or full diff and why>; ledger: <source>, <complete | partial>.
 
 | # | Concern / claimed fix | Status | Action now · severity · confidence | Evidence | Where |
