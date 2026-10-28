@@ -2,7 +2,7 @@
 
 Part of the `strict-code-review` skill. Read it with `SKILL.md`, whose rules apply unless this file replaces them. Quoted names are its sections and checks.
 
-A follow-up re-checks a change after an earlier review: are the findings fixed, is the pushback right, did fixes break anything, what still blocks? An open blocker stays open until the code shows otherwise.
+Check earlier findings, pushback and fix regressions. Keep blockers open until code proves otherwise.
 
 ## Inputs
 
@@ -10,7 +10,7 @@ Only `Target` is required: a PR URL, repository path and branch, or pasted diff.
 
 - **Instructions:** `Mode: follow-up`; `Decisions` (accepted pushback or deferrals, saying who decided and where; panel dismissals); `Added scope`; `Report shape`.
 - **Baseline:** `Earlier review` (report text or path, "this session" or "the PR's review threads"); `Findings` (`#n` or thread ID or URL, action · severity, location at `H0`, concern); `Earlier statuses` (status, reason, commit).
-- **To check:** `Reviewed commit` (`H0`, earlier base and merge base); `New evidence` (a failing case or code location for an entry); `Author responses` (claimed fix commit or reply per finding).
+- **To check:** `Reviewed commit` (`H0`: latest review with stated coverage; status-only notes do not advance it; earlier base and merge base); `New evidence` (a failing case or code location for an entry); `Author responses` (claimed fix commit or reply per finding).
 
 `H1` (the current head) and the base come from the adapter; `M` is the current merge base.
 
@@ -38,7 +38,7 @@ Fetch provider threads and discussion up front when they supply the ledger or re
 
 ## Statuses
 
-Give every entry one status, from evidence read in this run:
+Give every entry one status; carry valid unchanged settled statuses, otherwise use evidence read in this run:
 
 - `Resolved`: the original concern is fixed at `H1` for its failing case, edge cases and every caller; name the evidence. A test counts only if it exercises the failure. Separate regressions are new findings.
 - `Partially resolved`: some callers, instances or cases are still open.
@@ -72,14 +72,14 @@ Then "Check before merge", finding blocks (open earlier items first), Optional, 
 
 - **Rows:** open blockers first; a closed row has action `closed` and one evidence line.
 - **Finding blocks:** one per open Must fix or Should fix, readable without the earlier report. For an earlier finding, the quote is a reply in its thread: what is still open, the failing case, the fix.
-- **Replies:** optional drafts, at most 40 words per closed entry, naming the evidence; post nothing.
+- **Replies:** only when requested, at most 40 words per closed entry, naming the evidence; post nothing.
 - In a brief's report shape, put the table inside it.
 
 ## Verdict
 
 Apply the "Verdict" table, unchanged, to the current set: open earlier entries at their current action, plus new findings. Current Should-fix items that together make a Must-fix risk still mean `Do not merge`. `Ready to merge` means ready within the follow-up scope; say so. An earlier blocker leaves the set only as `Resolved`, `Withdrawn`, `Deferred` with a supplied decision, or `Duplicate of` a closed entry, each with evidence.
 
-Completeness, replacing the rule in "Verdict": the ledger is complete, every entry has a status from evidence read in this run, every hunk in the chosen scope was read with the code it depends on, and no needed answer is missing. A partial or missing ledger, `Cannot verify` on an entry that blocks or could block, or a missing answer makes the review incomplete; it never clears a merge.
+Completeness, replacing the rule in "Verdict": the ledger is complete, every entry has fresh evidence or a validly carried settled status, every hunk in the chosen scope was read with the code it depends on, and no needed answer is missing. A partial or missing ledger, `Cannot verify` on an entry that blocks or could block, or a missing answer makes the review incomplete; it never clears a merge.
 
 ## Threads and trust
 
