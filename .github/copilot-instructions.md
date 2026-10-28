@@ -20,9 +20,9 @@ Current contents:
 
 PR-review skills (provider-neutral, inspection-only):
 
-- `strict-code-review` — the strict first-pass reviewer for GitHub and Azure DevOps PR URLs, local branches and pasted diffs (inspection-only; it never posts comments). Its provider adapters, trigger-based review checklist, and the rules for running code and for multi-model reviews are in `references/`. Users can invoke it explicitly with `/strict-code-review`.
+- `strict-code-review` — the strict reviewer for GitHub and Azure DevOps PR URLs, local branches and pasted diffs (inspection-only; it never posts comments or changes threads). It has two modes: a first review, and a follow-up that re-checks earlier findings, the author's replies and the changes since an earlier review. Its "Review mode" section picks the mode; the follow-up rules are in `references/follow-up.md`, which only follow-up runs load. Its provider adapters, trigger-based review checklist, and the rules for running code and for multi-model reviews are also in `references/`. Users can invoke it explicitly with `/strict-code-review`.
 - `analyse-pr-feedback` — triage reviewer feedback into a decision table (analysis-only).
-- `rereview-pr` — focused follow-up review after a previous review cycle (analysis-only).
+- `rereview-pr` — thin entry point for the follow-up mode of `strict-code-review`, kept so `/rereview-pr` and its description triggers keep working. It has no review rules of its own, and reports `Review incomplete` when the current `strict-code-review` is missing, unreadable or older.
 
 Research skills:
 
@@ -111,6 +111,8 @@ The body is a prompt addressed to the future Copilot session ("You are…"), not
 - Shared **Severity** scale: `Critical | High | Medium | Low` (use the same wording across the review skills).
 - Adapter sections for `Local branch` and `Pasted diff/feedback` so the skill works without network access.
 
+`rereview-pr` meets the general and PR-review conventions by delegation: it loads `strict-code-review`'s follow-up mode and adds no rules, sections or adapters of its own. Put follow-up rules in `strict-code-review`, not in the alias.
+
 When extending an existing skill, keep that skill's established section ordering and vocabulary so the family stays consistent. Do **not** bolt PR-review machinery (provider adapters, PR safety rules) onto a non-PR skill such as `storm-research`.
 
 ## Agent file conventions
@@ -127,7 +129,7 @@ Agent files (`ghcp/agents/<name>.agent.md`, or `com.github.copilot/agents/<name>
 - The **PR-review skills** are inspection-and-reporting only: they must never edit, commit, push, or otherwise mutate a PR. Other skills may write output when the user explicitly asks for it — e.g. `storm-research` writes its HTML report only after the user accepts the offer. Do not add a skill that mutates a PR.
 - Do **not** instruct any skill to invoke GitHub's native Copilot PR reviewer.
 - Do not invent line numbers or sources, claim commands ran when they didn't, or claim surrounding code was inspected when only the diff was read — these prohibitions are repeated across skills and must be preserved.
-- Prefer `gh` CLI and `az` CLI commands over raw HTTP. When REST is insufficient (e.g., review thread resolution), use `gh api graphql` as shown in `rereview-pr/SKILL.md`.
+- Prefer `gh` CLI and `az` CLI commands over raw HTTP. When REST is insufficient (e.g., review thread resolution), use `gh api graphql` as shown in `strict-code-review/references/github.md`.
 
 ## Working in this repo
 
