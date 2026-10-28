@@ -48,9 +48,9 @@ This repo is also a **Copilot CLI plugin marketplace** (`ai-tools`). Plugins are
 
 | Skill | What it does | When to invoke |
 |---|---|---|
-| [`strict-code-review`](./ghcp/skills/strict-code-review/SKILL.md) | First-pass strict senior-engineer review of a GitHub or Azure DevOps PR, a local branch, or a pasted diff. Inspection only — no comments posted, no code changed. | `/strict-code-review <url>`, or "Do a strict review of my branch" |
+| [`strict-code-review`](./ghcp/skills/strict-code-review/SKILL.md) | Strict senior-engineer first-pass and follow-up review of a GitHub or Azure DevOps PR, a local branch, or a pasted diff. Its follow-up mode re-checks earlier findings, the author's pushback and the changes since. Inspection only — no comments posted, no threads resolved, no code changed. | `/strict-code-review <url>`, or "Do a strict review of my branch" |
 | [`analyse-pr-feedback`](./ghcp/skills/analyse-pr-feedback/SKILL.md) | Triages reviewer comments into a decision table (agree / disagree / needs clarification) so you can reply intentionally. | "Analyse the feedback on `<url>`" |
-| [`rereview-pr`](./ghcp/skills/rereview-pr/SKILL.md) | Focused **second-pass** review: were the previous findings actually addressed? Is the engineer's pushback valid? | "Re-review `<url>`" |
+| [`rereview-pr`](./ghcp/skills/rereview-pr/SKILL.md) | Alias for `strict-code-review`'s **follow-up mode**: were the earlier findings fixed, is the pushback valid, did the fixes break anything? Needs the current `strict-code-review` installed beside it. | `/rereview-pr <url>`, or "Re-review `<url>`" |
 | [`storm-research`](./ghcp/skills/storm-research/SKILL.md) | Runs the Stanford **STORM** research method — five expert perspectives, a contradiction map, a synthesised briefing, and a self-critique — grounded in real web sources. Outputs a chat briefing plus an optional self-contained HTML report. Based on [this article](https://github.com/stanford-oval/storm) that turned [official repo](https://github.com/stanford-oval/storm) into a set of prompts. | "Research `<topic>` deeply" / "STORM `<topic>`". |
 
 The three PR-review skills (`strict-code-review`, `analyse-pr-feedback`, `rereview-pr`) are **provider-neutral** — they work with both **GitHub** and **Azure DevOps** pull requests, and gracefully fall back to local branches or pasted diffs/feedback when remote access isn't available.
@@ -188,17 +188,19 @@ cp -R ai_tools/ghcp/skills/* ~/.copilot/skills/
 cp    ai_tools/ghcp/agents/*.agent.md ~/.copilot/agents/
 ```
 
-To update, run `git -C ai_tools pull`, then run both `cp` commands again.
+To update, run `git -C ai_tools pull`, then run both `cp` commands again. Always replace `strict-code-review` and `rereview-pr` together: the alias stops with `Review incomplete` if the `strict-code-review` beside it is missing or older.
 
 ### Option 3: Cherry-pick a single skill or agent
 
 ```bash
 # A skill: download SKILL.md and every file it links to.
 # strict-code-review, for example, also needs the files in its references/ directory.
+# rereview-pr is an alias: fetch the current strict-code-review beside it.
 base=https://raw.githubusercontent.com/ncksol/ai_tools/main/ghcp/skills/strict-code-review
 for f in SKILL.md references/azure-devops.md references/checklist.md \
          references/github.md references/local.md references/pasted-diff.md \
-         references/running-code.md references/multi-model.md; do
+         references/running-code.md references/multi-model.md \
+         references/follow-up.md; do
   curl -fsSL --create-dirs "$base/$f" -o ~/.copilot/skills/strict-code-review/"$f"
 done
 
@@ -229,20 +231,26 @@ Once installed, describe what you want and the CLI routes to the best match, or 
   → activates analyse-pr-feedback
 
 > I pushed fixes for the review comments on PR 482, can you re-review?
-  → activates rereview-pr
+  → activates strict-code-review in follow-up mode (or rereview-pr, its alias)
+
+> /strict-code-review Mode: follow-up https://github.com/acme/widgets/pull/482
+  Earlier review: <paste the earlier report>
+  → re-checks the earlier findings, the replies and the changes since that review
 ```
 
 Pasted diffs, local branch names, and Azure DevOps URLs all work too.
 
 For a PR URL, start the prompt with `/strict-code-review`. When many skills are installed, the CLI may describe only some of them to the model, so a prompt such as "Review this PR: `<url>`" can go to another review skill.
 
-`strict-code-review` reads files from its `references/` directory while it runs. In non-interactive runs (`copilot -p`), the CLI cannot ask for approval, so it refuses those reads unless you give it read access to the skill's resolved directory. Installed skills are often symlinks and the CLI checks the real path, so `--add-dir ~/.copilot/skills` is not enough:
+`strict-code-review` reads files from its `references/` directory while it runs, and `rereview-pr` reads `strict-code-review`'s files. In non-interactive runs (`copilot -p`), the CLI cannot ask for approval, so it refuses those reads unless you give it read access to the skill's resolved directory. Installed skills are often symlinks and the CLI checks the real path, so `--add-dir ~/.copilot/skills` is not enough:
 
 ```bash
 copilot -p "<your request>" --add-dir "$(realpath ~/.copilot/skills/strict-code-review)"
 ```
 
-Without that access, the skill stops with `Review incomplete` and says how to grant it.
+Use the same `--add-dir` for `/rereview-pr`. Without that access, either skill stops with `Review incomplete` and says how to grant it.
+
+To ask for a follow-up from another agent or a fresh session, name `strict-code-review` (or use `/rereview-pr`), write `Mode: follow-up`, and include the earlier report's text.
 
 ---
 
@@ -259,11 +267,11 @@ ai_tools/
     ├── skills/
     │   ├── strict-code-review/
     │   │   ├── SKILL.md
-    │   │   └── references/            ← provider adapters, review checklist, running-code and multi-model guides
+    │   │   └── references/            ← provider adapters, follow-up mode, review checklist, running-code and multi-model guides
     │   ├── analyse-pr-feedback/
     │   │   └── SKILL.md
     │   ├── rereview-pr/
-    │   │   └── SKILL.md
+    │   │   └── SKILL.md               ← alias for strict-code-review's follow-up mode
     │   └── storm-research/
     │       └── SKILL.md
     ├── agents/

@@ -23,7 +23,7 @@ cd <SCRATCH_DIR>/head && env -i PATH="$PATH" HOME=<SCRATCH_DIR>/home TMPDIR=<SCR
 
 This protects the user's checkout and your environment variables, but it is not a sandbox. The code can still read files by absolute path, including in your real home directory, follow symbolic links out of the copy, and use the network.
 
-You may edit files in scratch to check a finding or a fix.
+You may edit files in scratch to check a finding or a fix. Before a probe that may write outside its target folder, work out each path it will write to, after resolving `../`, absolute paths and symbolic links, and check that every one is inside scratch. Nesting the target folder doesn't contain an escape. If you can't establish that, don't run the probe.
 
 ## What the user can allow
 

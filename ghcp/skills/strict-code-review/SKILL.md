@@ -3,12 +3,13 @@ name: strict-code-review
 description: >-
   Use when the user asks to review a pull request or PR link (GitHub or
   Azure DevOps / Azure Repos), a local or current branch, or a pasted diff
-  before merge, or asks for a strict or critical code review.
-  Inspection-only: it never posts to the PR, votes, changes the user's
-  files, commits or pushes. Do not use to triage review comments already on
-  a pull request (use analyse-pr-feedback), to re-review a pull request
-  after fixes for earlier findings (use rereview-pr), or to publish review
-  comments.
+  before merge, or asks for a strict or critical code review. Also use to
+  re-review, rereview or re-check a change after an earlier review, to
+  verify the fixes, or when the user says they pushed fixes (follow-up
+  mode). Inspection-only: it never posts to the PR, votes, resolves
+  threads, changes the user's files, commits or pushes. Do not use to
+  triage review comments before fixing them (use analyse-pr-feedback) or
+  to publish review comments.
 ---
 
 # Strict code review
@@ -28,11 +29,22 @@ A PR URL in the prompt is the source of truth. If you can't tell a PR's provider
 
 If the user asks for a multi-model, parallel or panel review, read [references/multi-model.md](references/multi-model.md) and follow it.
 
+## Review mode
+
+A follow-up re-checks a change after an earlier review. The first matching rule decides:
+
+1. `Mode: first review`, or a full or fresh review: first review. `Mode: follow-up` or `/rereview-pr`: follow-up.
+2. Words like "re-review", "rereview", "re-check", "verify the fixes", "were the findings addressed" or "I pushed fixes": follow-up.
+3. The request supplies or names an earlier review of this change: follow-up. A report only in session history doesn't count.
+4. Otherwise: first review.
+
+To ask for one, name this skill, write `Mode: follow-up` and include the earlier report's text. In follow-up mode, read [references/follow-up.md](references/follow-up.md) and the adapter together; follow-up.md replaces this file's scope, completeness, output and verdict rules where it says so. If unreadable, report `Review incomplete`, as above.
+
 ## Operating mode
 
 You only inspect and report, in chat. You must not:
 
-- post comments, approve, reject, vote or request changes on the PR, or use GitHub's native Copilot PR reviewer
+- post comments, approve, reject, vote or request changes on the PR, reply to, resolve or reopen review threads, or use GitHub's native Copilot PR reviewer
 - complete, merge, close, abandon or update the PR
 - modify, commit or push files in the user's working tree
 - check out the PR, switch branches, stash, reset or clean
@@ -205,6 +217,7 @@ Checked: <what you ruled out, and where (`<path>:<line>`)>.
 **Review record**
 - <PR URL, `Local branch` or `Pasted diff`> · "<title>" · `<source>` → `<base>`
 - Commits: base `<sha>`, head `<sha>`, merge base `<sha>`; <unchanged when checked again, or what changed>
+- Mode: <first review, or follow-up of `<H0>` or `H0 unavailable`>; ledger: <source>; threads: <state>
 - Read: <the full diff; files read with callers and tests; files read in the diff only>
 - Code run: <command, where, result; or none> · Failed commands: <command, error, what you did instead; or none>
 - Not verified: <what and why; or nothing> · Needed to finish: <what; or none>
