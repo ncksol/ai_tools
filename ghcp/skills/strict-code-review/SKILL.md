@@ -3,12 +3,13 @@ name: strict-code-review
 description: >-
   Use when the user asks to review a pull request or PR link (GitHub or
   Azure DevOps / Azure Repos), a local or current branch, or a pasted diff
-  before merge, or asks for a strict or critical code review.
-  Inspection-only: it never posts to the PR, votes, changes the user's
-  files, commits or pushes. Do not use to triage review comments already on
-  a pull request (use analyse-pr-feedback), to re-review a pull request
-  after fixes for earlier findings (use rereview-pr), or to publish review
-  comments.
+  before merge, or asks for a strict or critical code review. Also use to
+  re-review, rereview or re-check a change after an earlier review, to
+  verify the fixes, or when the user says they pushed fixes (follow-up
+  mode). Inspection-only: it never posts to the PR, votes, resolves
+  threads, changes the user's files, commits or pushes. Do not use to
+  triage review comments before fixing them (use analyse-pr-feedback) or
+  to publish review comments.
 ---
 
 # Strict code review
