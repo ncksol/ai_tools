@@ -98,19 +98,23 @@ Inline review threads, with their resolved state (REST does not report it reliab
 
 ```bash
 gh api graphql -f query='
-query($owner:String!, $repo:String!, $number:Int!) {
+query($owner:String!, $repo:String!, $number:Int!, $cursor:String) {
   repository(owner:$owner, name:$repo) {
     pullRequest(number:$number) {
-      reviewThreads(first:100) {
+      reviewThreads(first:100, after:$cursor) {
+        pageInfo { hasNextPage endCursor }
         nodes {
+          id
           isResolved
           isOutdated
           path
           line
-          comments(first:50) { nodes { author { login } body createdAt } }
+          comments(first:50) { pageInfo { hasNextPage endCursor } nodes { author { login } body createdAt url } }
         }
       }
     }
   }
 }' -F owner=<OWNER> -F repo=<REPO> -F number=<NUMBER>
 ```
+
+Page until `hasNextPage` is false: threads with `-f cursor=<endCursor>`, a thread's comments with `query($id:ID!, $cursor:String) { node(id:$id) { ... on PullRequestReviewThread { comments(first:50, after:$cursor) {…} } } }`.
