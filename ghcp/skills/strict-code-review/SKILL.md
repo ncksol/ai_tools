@@ -31,14 +31,14 @@ If the user asks for a multi-model, parallel or panel review, read [references/m
 
 ## Review mode
 
-Follow-up mode re-checks a change after an earlier review. The first matching rule decides:
+A follow-up re-checks a change after an earlier review. The first matching rule decides:
 
 1. `Mode: first review`, or a full or fresh review: first review. `Mode: follow-up` or `/rereview-pr`: follow-up.
 2. Words like "re-review", "rereview", "re-check", "verify the fixes", "were the findings addressed" or "I pushed fixes": follow-up.
 3. The request supplies or names an earlier review of this change: follow-up. A report only in session history doesn't count.
 4. Otherwise: first review.
 
-To ask for one, name this skill, write `Mode: follow-up` and include the earlier report's text. In follow-up mode, read [references/follow-up.md](references/follow-up.md) first; it replaces this file's scope, completeness, output and verdict rules where it says so. If you can't read it, report `Review incomplete`, as above.
+To ask for one, name this skill, write `Mode: follow-up` and include the earlier report's text. In follow-up mode, read [references/follow-up.md](references/follow-up.md) and the adapter together; follow-up.md replaces this file's scope, completeness, output and verdict rules where it says so. If unreadable, report `Review incomplete`, as above.
 
 ## Operating mode
 
