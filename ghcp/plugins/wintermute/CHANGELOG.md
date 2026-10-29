@@ -6,6 +6,12 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace still follows main. See [Releases](README.md#releases) for prerequisites, checks and recovery after a partial publish.
 
+## 0.3.3 — 2026-10-29
+
+### Fixed
+
+- The dashboard now shows every session that a chat or a Copilot app Project created. Before, it showed only the first one. A chat orchestrator's swarm, or a Project, that started several sessions showed one unit, and the cost of the other sessions was missing. Sessions created by another project session still need a parent link, and detached sessions, which the app records without a creator, stay top-level sessions.
+
 ## 0.3.2 — 2026-10-29
 
 ### Fixed
