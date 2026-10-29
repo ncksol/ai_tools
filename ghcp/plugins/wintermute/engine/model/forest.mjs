@@ -88,7 +88,9 @@ export function buildForest(app, { waitingRoots = new Set(), hasSubagents = () =
   for (const ws of app.workspaces.values()) {
     if (nodes.get(ws.id).parentId) continue;
     const creator = ws.coordinatingCreatorSessionId ?? ws.creatorSessionId;
-    if (!creator || resolve(creator)) continue;
+    // A workspace session's creation needs a workspace link. A chat node, made here for an earlier workspace or by a chat
+    // link, still takes every workspace its chat created.
+    if (!creator || nodes.get(resolve(creator))?.kind === 'project') continue;
     const parent = chatNode(creator);
     if (parent) link(ws.id, parent);
   }

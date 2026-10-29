@@ -28,7 +28,7 @@
     {
       "name": "wintermute",
       "description": "Orchestrator agents for the GitHub Copilot app and a watch-only dashboard for the swarms they run: sessions, sub-agents, cost, stuck detection and run history.",
-      "version": "0.3.2",
+      "version": "0.3.3",
       "source": "./ghcp/plugins/wintermute",
       "author": {
         "name": "Nick Sologoub"
