@@ -327,13 +327,15 @@ export function createSwarmEngine(options = {}) {
    * refresh (see readUsage). Sessions that are no longer in a swarm are forgotten. Resolves the CLI sessions whose cost is not
    * complete: their log is missing (its cost is unknown, or the last good one), could not be read (the last good totals stay),
    * or has usage lines that could not be applied. Such a line is skipped for good, so its session stays incomplete, with a
-   * warning on every refresh, until its log is read again from the start.
+   * warning on every refresh, until its log is read again from the start. `diagnostics` collects notes by CLI session.
    */
-  async function readCosts(cliIds, diag) {
+  async function readCosts(cliIds, diagnostics) {
     for (const cliId of [...usageTails.keys()]) if (!cliIds.has(cliId)) usageTails.delete(cliId);
     ledger.retain(cliIds);
     const incomplete = new Set();
     for (const cliId of cliIds) {
+      const diag = [];
+      diagnostics.set(cliId, diag);
       let entry = usageTails.get(cliId);
       if (!entry) {
         entry = { tail: createTail(path.join(paths.stateDir, cliId, 'events.jsonl')), failed: 0, lastError: '' };
@@ -435,8 +437,8 @@ export function createSwarmEngine(options = {}) {
    * or session.db could not be read (the last good value was used), when a PR's first lookup has not finished (its outcome is
    * not known yet), or `globalsRead` is false (data.db failed). `costsIncomplete` holds the CLI sessions whose cost is not
    * complete (see readCosts), so a summary built from them never replaces the last good one.
-   * The snapshot's diagnostics are the engine-wide ones (`shared`) and the notes about this root's own sessions; those notes
-   * are also added to `diag`, the engine's list.
+   * `shared` holds engine-wide and this root's cost diagnostics. The snapshot adds the notes from reading this root's
+   * sessions; those notes are also added to `diag`, the engine's list.
    */
   async function buildTracked(rootId, at, diag, shared, dbFiles, globalsRead) {
     const own = [];
@@ -586,7 +588,8 @@ export function createSwarmEngine(options = {}) {
     for (const failure of lookup?.errors() ?? []) diag.push({ level: 'info', source: 'pr-lookup', message: `${failure.key}: ${failure.error}` });
 
     const costIds = new Set(forest.roots.flatMap(root => treeNodes(forest, root.id).flatMap(node => node.cliSessionIds)));
-    costsIncomplete = await readCosts(costIds, diag);
+    const costDiagnostics = new Map();
+    costsIncomplete = await readCosts(costIds, costDiagnostics);
     swarms = await listRoots(at, diag);
     const rootIds = new Set(forest.roots.map(root => root.id));
     const tracked = new Set([
@@ -599,9 +602,12 @@ export function createSwarmEngine(options = {}) {
     const dbFiles = new Set();
     // The engine-wide notes so far; each root's snapshot adds only the notes about its own sessions (see buildTracked).
     const shared = [...diag];
+    for (const notes of costDiagnostics.values()) diag.push(...notes);
     for (const rootId of tracked) {
       try {
-        const { snapshot, complete } = await buildTracked(rootId, at, diag, shared, dbFiles, globalsRead);
+        const cliIds = new Set(treeNodes(forest, rootId).flatMap(node => node.cliSessionIds));
+        const ownCosts = [...cliIds].flatMap(cliId => costDiagnostics.get(cliId) ?? []);
+        const { snapshot, complete } = await buildTracked(rootId, at, diag, [...shared, ...ownCosts], dbFiles, globalsRead);
         const hash = digest(snapshot);
         const entry = snapshots.get(rootId);
         if (entry && entry.hash === hash) {
