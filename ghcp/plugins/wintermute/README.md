@@ -44,7 +44,7 @@ The agents are in `com.github.copilot/agents/`. Copilot names a plugin agent `<p
 | --- | --- | --- |
 | `orchestrator` | `wintermute:orchestrator` | Plans, delegates and tracks multi-PR work, with no shell, file-editing, search, web or MCP tools. Hands owned work to child sessions and one-off jobs to `orchestrator-worker` sub-agents. |
 | `session-orchestrator` | `wintermute:session-orchestrator` | Like `orchestrator`, but delegates only to child sessions, which run as `session-worker`. |
-| `hands-on-orchestrator` | `wintermute:hands-on-orchestrator` | Like `orchestrator`, but may do a quick job itself, and commits small edits on its own session branch. |
+| `hands-on-orchestrator` | `wintermute:hands-on-orchestrator` | Like `orchestrator`, but may do a quick job itself, and commits small edits on its own session branch. Plans for wall-clock speed with the same rules as `hands-on-session-orchestrator`. |
 | `hands-on-session-orchestrator` | `wintermute:hands-on-session-orchestrator` | The same change made to `session-orchestrator`. |
 | `orchestrator-worker` | `wintermute:orchestrator-worker` | Does one-off jobs for `orchestrator` and `hands-on-orchestrator`, which start it through `task`. Hidden from the picker. |
 | `session-worker` | `wintermute:session-worker` | The agent every child session of `session-orchestrator` and `hands-on-session-orchestrator` runs as. Hidden from the picker. |
