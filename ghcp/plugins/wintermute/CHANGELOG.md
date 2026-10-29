@@ -6,6 +6,17 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace still follows main. See [Releases](README.md#releases) for prerequisites, checks and recovery after a partial publish.
 
+## 0.3.4 — 2026-10-29
+
+### Changed
+
+- `hands-on-orchestrator` now has the same instructions as `hands-on-session-orchestrator`, apart from delegating one-off jobs to sub-agents instead of one-off sessions. Before, only the session variants had "Split work for speed", which tells them the user measures wall-clock time and how to plan for it, so evals that compared the two hands-on variants also compared different planning instructions. `hands-on-orchestrator` gains that section, adapted to sub-agents, and four rules from `hands-on-session-orchestrator`:
+  - confirm that a child started before you count on it;
+  - give each sub-agent one job;
+  - a sub-agent gets the tier or review row of its job;
+  - tell each owner that you start its review and claims check.
+- `orchestrator` is unchanged, so it still lacks these rules.
+
 ## 0.3.3 — 2026-10-29
 
 ### Fixed
