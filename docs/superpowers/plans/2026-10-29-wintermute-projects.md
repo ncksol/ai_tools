@@ -507,7 +507,7 @@ What each decision changes:
 | U2 | `skills/` | Plan as written. |
 | U2 | `com.github.copilot/skills/` | Unit `skills` sets `SKILLS_DIR = 'com.github.copilot/skills'` in Task 11 and puts both skills there; the coordinator's relative policy path becomes `../../agents/hands-on-session-orchestrator.agent.md`. The validator derives it, so only the skill text changes. |
 | U2 | `neither` | Stop. The orchestrator asks the user; no `skills` unit until a location loads. |
-| U5 | any | Recorded only. The README's recovery text comes from `trial`'s real-skill check (Task 15, Step 6; Task 17, Step 1). |
+| U5 | any | Recorded only. The README's recovery text, and whether to offer design 8.2's global-instructions fallback, come from `trial`'s real-skill check (Task 15, Step 6; Task 16, Step 6; Task 17, Step 1). |
 | U6 | markers as observed in existing logs | Plan as written. |
 | U6 | the child marker is only in the kickoff message | The worker skill's scope check also accepts `forwarded_from_coordinator: true` in the current message (Task 12 gives both texts). |
 | U10 | `allowed` | Plan as written. |
@@ -1219,7 +1219,8 @@ Branch from `main`. It doesn't need unit `engine-roots`: its tests make the Proj
 
 **Interfaces:**
 - Produces: `export const NO_HANDOFF_NOTICE` (the app's exact sentence); `export function parseResultRecords(content): Array<{ fromSessionId: string|null, fromProjectSessionId: string|null, assignmentId: string|null, content: string, appNotice: boolean }>`. A results notification adds one `state.inbound` entry per record: `{ at, fromSessionId, fromProjectSessionId, fromName: null, sourceToolCallId: null, content, assignmentId, purpose: 'handoff', appNotice }`.
-- Produces: the no-handoff notice is never a report, and it clears every report up to its time: an earlier assignment's report, or a `complete` inferred from `session.task_complete`. A report after it still counts. Each notice adds a feed item `{ kind: 'report', text: 'ended without a report' }`.
+- Produces: each sent report keeps its `assignment_id` (`state.sent[i].assignmentId`).
+- Produces: the no-handoff notice is never a report, and it clears the reports before it: an earlier assignment's report, or a `complete` inferred from `session.task_complete`. A report survives when its own result record arrived with the notice or after it, matched by assignment id or else by text, because one notification can end one assignment without a handoff and bring another's real one (design C5, C6). A report after the notice still counts. Each notice adds a feed item `{ kind: 'report', text: 'ended without a report' }`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1285,24 +1286,44 @@ test('a results notification adds received copies and is not a human message', (
   assert.equal(state.lastHumanAt, null);
 });
 
+test('a sent report keeps its assignment_id', () => {
+  const log = new EventLog(T0);
+  log.start(); log.turnStart();
+  log.done(log.tool('send_session_message', { session_id: 'proj', message: 'Summary: Done.', purpose: 'handoff', assignment_id: 'assignment:proj:call-1' }));
+  log.report('proj', 'Summary: Also done.', 'handoff');
+  assert.deepEqual(fold(log).sent.map(item => item.assignmentId), ['assignment:proj:call-1', null]);
+});
+
+const second = name => `swarm-status: complete unit=${name}\nSummary: The second assignment is done.`;
+
 /**
- * A Project ("proj", a plain session that created its children) with five children. At minute 55 one results notification
- * brings x's handoff, and the no-handoff notice for y, z, w and v.
+ * A Project ("proj", a plain session that created its children) with eight children. At minute 55 one results notification
+ * brings x's handoff, the no-handoff notice for y, z, w and v, and, for b1, b2 and b3, the notice that ended their first
+ * assignment together with the handoff of their second.
  * - x sent nothing itself: its report is the received copy.
  * - y did nothing else.
  * - z ended its assignment with a successful session.task_complete at minute 54.
  * - w handed off an earlier assignment at minute 52.
  * - v handed off a later assignment at minute 57.
+ * - b1 sent nothing itself; b2 sent its second handoff at minute 54 with its assignment_id; b3 sent it at minute 54 without one.
  */
 async function resultsSnapshot() {
   const home = scenario();
   home.session({ id: 'proj', title: 'Expense reports', createdAt: at(50) });
+  const sendSecond = (log, name, assignmentId) => {
+    log.at(at(54));
+    const args = { session_id: 'proj', message: second(name), purpose: 'handoff', ...(assignmentId ? { assignment_id: assignmentId } : {}) };
+    log.done(log.tool('send_session_message', args), { result: 'Message accepted for delivery' });
+  };
   const children = {
     x: () => {},
     y: () => {},
     z: log => { log.at(at(54)); log.taskComplete('Wrote the file.'); },
     w: log => { log.at(at(52)); log.report('proj', 'swarm-status: complete unit=w\nSummary: The first assignment is done.', 'handoff'); },
     v: log => { log.at(at(57)); log.report('proj', 'swarm-status: complete unit=v\nSummary: The second assignment is done.', 'handoff'); },
+    b1: () => {},
+    b2: log => sendSecond(log, 'b2', 'assignment:proj:call-b2-second'),
+    b3: log => sendSecond(log, 'b3', null),
   };
   for (const [index, [name, events]] of Object.entries(children).entries()) {
     home.workspace({ id: `ws-${name}`, name: `Unit ${name}`, createdAt: at(51), sessionId: `cli-${name}`, creatorSessionId: 'proj' });
@@ -1313,12 +1334,13 @@ async function resultsSnapshot() {
     home.writeEvents(`cli-${name}`, child.events);
     home.lock(`cli-${name}`, NO_SUCH_PID + 910 + index, at(51));
   }
-  const notice = name => ({ assignment_id: `assignment:proj:call-${name}`, project_session_id: `ws-${name}`, id: `cli-${name}`, handoff: NO_HANDOFF_NOTICE });
+  const record = (name, call, handoff) => ({ assignment_id: `assignment:proj:call-${call}`, project_session_id: `ws-${name}`, id: `cli-${name}`, handoff });
   const root = new EventLog(at(50));
   root.start(); root.turnStart(); root.at(at(55));
   root.user(resultsNotice([
-    { assignment_id: 'assignment:proj:call-x', project_session_id: 'ws-x', id: 'cli-x', handoff: 'swarm-status: complete unit=x commit=3f9a2c1\nSummary: The endpoint is pushed.' },
-    notice('y'), notice('z'), notice('w'), notice('v'),
+    record('x', 'x', 'swarm-status: complete unit=x commit=3f9a2c1\nSummary: The endpoint is pushed.'),
+    ...['y', 'z', 'w', 'v'].map(name => record(name, name, NO_HANDOFF_NOTICE)),
+    ...['b1', 'b2', 'b3'].flatMap(name => [record(name, `${name}-first`, NO_HANDOFF_NOTICE), record(name, `${name}-second`, second(name))]),
   ]), { source: 'agent-coordinator-results' });
   root.turnEnd();
   home.writeEvents('proj', root.events);
@@ -1338,7 +1360,7 @@ test('a Project unit takes its report from the results notification', async () =
   assert.equal(snapshot.run.contract.statusLines, true);
 });
 
-test('the no-handoff notice is never a report, and clears every report up to its time', async () => {
+test('the no-handoff notice is never a report, and clears the reports before it', async () => {
   const snapshot = await resultsSnapshot();
   const unit = name => snapshot.units.find(item => item.id === `ws-${name}`);
   for (const name of ['y', 'z', 'w']) {
@@ -1346,6 +1368,14 @@ test('the no-handoff notice is never a report, and clears every report up to its
     assert.ok(snapshot.feed.some(item => item.unitId === `ws-${name}` && item.kind === 'report' && item.text === 'ended without a report'), name);
   }
   assert.deepEqual([unit('v').report.status, unit('v').report.title], ['complete', 'The second assignment is done.']);
+});
+
+test("a notice keeps another assignment's handoff that arrives with it", async () => {
+  const snapshot = await resultsSnapshot();
+  for (const name of ['b1', 'b2', 'b3']) {
+    const report = snapshot.units.find(item => item.id === `ws-${name}`).report;
+    assert.deepEqual([report?.status, report?.title], ['complete', 'The second assignment is done.'], name);
+  }
 });
 ```
 
@@ -1394,6 +1424,16 @@ export function parseResultRecords(content) {
 }
 ```
 
+In `recordToolStart`, keep each sent report's `assignment_id`: replace its `pushBounded(state.sent, { ... }, LIMITS.sent);` call with:
+
+```js
+    pushBounded(state.sent, {
+      at, toolCallId: callId, source: state.source, target: typeof args.session_id === 'string' ? args.session_id : null,
+      purpose: typeof args.purpose === 'string' ? args.purpose : null, message, failed: false,
+      assignmentId: typeof args.assignment_id === 'string' && args.assignment_id ? args.assignment_id : null,
+    }, LIMITS.sent);
+```
+
 In `recordUserMessage`, add this block right after the `<session_automation` block:
 
 ```js
@@ -1410,29 +1450,48 @@ In `recordUserMessage`, add this block right after the `<session_automation` blo
 
 - [ ] **Step 4: Make the notice part of report selection**
 
-In `engine/model/swarm.mjs`, in `buildUnit`, replace the line `const received = parent.all.inbound.filter(...)` with:
+In `engine/model/swarm.mjs`, in `buildUnit`, replace the lines from `let report = sent.length ? sent[sent.length - 1].view : null;` to the line that ends `report = reportFromTask(lastTask);` with:
 
 ```js
+  let report = sent.length ? sent[sent.length - 1].view : null;
+  // What the selected report came from, its assignment and its text, to match it to a result record (see the notice below).
+  let origin = sent.length ? { assignmentId: sent[sent.length - 1].item.assignmentId ?? null, content: sent[sent.length - 1].item.message } : null;
+  // Design section 10 accepts either copy of a report: the child's sent message or the orchestrator's received one.
   const fromUnit = item => c.ids.has(item.fromSessionId) || c.ids.has(item.fromProjectSessionId);
   const received = parent.all.inbound.filter(item => !item.appNotice && fromUnit(item));
-  // The app's no-handoff notice (design C16) says the session ended without reporting; it is never the unit's report.
+  // The app's no-handoff notice (design C16) says an assignment ended without a report; it is never the unit's report.
   const notices = parent.all.inbound.filter(item => item.appNotice && fromUnit(item));
   for (const item of notices) extraFeed.push({ id: `${node.id}:no-handoff:${item.at}`, at: item.at, unitId: node.id, label, kind: 'report', text: 'ended without a report' });
-```
-
-A few lines below, give the received copy its purpose: replace `if (last) report = reportFromMessage(last.content, null, last.at);` with:
-
-```js
-    if (last) report = reportFromMessage(last.content, last.purpose ?? null, last.at);
-```
-
-Directly after the line `if (lastTask && (!report || lastTask.at > report.at + TASK_OVERRIDE_MS)) report = reportFromTask(lastTask);`, add:
-
-```js
-  // A no-handoff notice outranks every report up to its time: neither an earlier assignment's report nor a completion inferred
-  // from session.task_complete stands for the assignment that ended without one. A report after the notice still counts.
+  if (!statusLines.length) {
+    for (let index = received.length - 1; index >= 0; index -= 1) {
+      const line = parseStatusLine(received[index].content);
+      if (!line) continue;
+      flags.statusLines = true;
+      statusLines.push({ at: received[index].at, pr: line.pr });
+    }
+  }
+  if (!report) {
+    const last = received[received.length - 1];
+    if (last) {
+      report = reportFromMessage(last.content, last.purpose ?? null, last.at);
+      origin = { assignmentId: last.assignmentId ?? null, content: last.content };
+    }
+  }
+  const lastTask = c.all.taskCompletes[c.all.taskCompletes.length - 1];
+  if (lastTask && (!report || lastTask.at > report.at + TASK_OVERRIDE_MS)) {
+    report = reportFromTask(lastTask);
+    origin = null;
+  }
+  // A no-handoff notice outranks the reports before it: neither an earlier assignment's report nor a completion inferred from
+  // session.task_complete stands for the assignment that ended without one. Results are coalesced, so one notification can end
+  // one assignment without a handoff and bring another assignment's real one: a report survives when its own result record
+  // arrived with the notice or after it (matched by assignment id, else by text), or when the report itself came after it.
   const lastNotice = notices[notices.length - 1];
-  if (report && lastNotice && report.at <= lastNotice.at) report = null;
+  if (report && lastNotice && report.at <= lastNotice.at) {
+    const delivered = origin !== null && received.some(item => item.at >= lastNotice.at
+      && ((origin.assignmentId !== null && item.assignmentId === origin.assignmentId) || item.content === origin.content));
+    if (!delivered) report = null;
+  }
 ```
 
 - [ ] **Step 5: Run the tests to see them pass**
@@ -2714,7 +2773,7 @@ Write one section per row, in the form of Task 3 (Decision and Evidence). An out
 | U1 | The `create_session` call with `kickoff.agent` returns an error and the inventory has no session from it. | `rejected` / `rejected-leaves-session` / `accepted` |
 | U3 | An `open_canvas` call with `canvasId: "swarm-dashboard"` succeeds after the first child exists. | `has-open_canvas` / `no-open_canvas` (the skill's fallback line was sent) |
 | U4 | The one-off summary job runs as a `task` call with `agent_type: "wintermute:orchestrator-worker"`, and it succeeds. | `plugin-agent-resolves` / `falls-back` |
-| U5 | After the compaction and after the resume, each before its first `create_session` or `send_session_message`: a load of `wintermute-project`; two `view` reads of `hands-on-session-orchestrator.agent.md`; `sql` reads of the tables; a `get_session` for every child that wasn't archived. No second `create_session` for trial-a, trial-b or trial-c. | `real-skill-recovers` (both pass) / `manual-recovery` |
+| U5 | After the compaction and after the resume, each before its first `create_session` or `send_session_message`: a load of `wintermute-project`; two `view` reads of `hands-on-session-orchestrator.agent.md`; `sql` reads of the tables; a `get_session` for every child that wasn't archived. No second `create_session` for trial-a, trial-b or trial-c. | `real-skill-recovers`: both pass. `no-reload`: after the compaction or the resume, no load of `wintermute-project` comes before the first dispatch, so the memory line didn't trigger a reload. `reload-without-reconcile`: the skill loaded, but a policy read, a table read or a child's `get_session` was missing before the first dispatch, or an owner was duplicated. |
 | U7 | The in-place schedule's row has `owner_session_id` = the Project, and the user saw it in the Automations tab. | `project-owned-in-place` / `not-listed` |
 | U8 | Each of the three relays ends with a `tool.execution_complete`. Record each result's `outcome` and `success`. | per relay: the recorded ending; a relay that never completed is `unverified` |
 | U9 | The `create_session` calls with `notify_on_idle: "always"` succeed, and the Project receives an idle notification for trial-a after each of its two idle times (Step 2's `inbound` lines). | `always-delivered` / `always-accepted-not-delivered` / `always-rejected` |
@@ -2742,7 +2801,15 @@ For U8 and U9, copy each recorded event shape (type, `source`, the fields the en
 
 - [ ] **Step 6: Route the fixes**
 
-For each unknown whose answer is bad, the orchestrator sends the fix from design section 10's "If the answer is bad" column, as a new assignment, to the owning unit: U1, U3, U4, U9, U11 and U13 to `skills`; U7 to `skills` (the coordinator's "PR monitoring" falls back to the child scheduling itself); U8 to `engine-results`; a failed dashboard check to the engine unit that owns the behaviour. U5 `manual-recovery` needs no fix: `release` uses README variant B.
+For each unknown whose answer is bad, the orchestrator sends the fix from design section 10's "If the answer is bad" column, as a new assignment, to the owning unit: U1, U3, U4, U9, U11 and U13 to `skills`; U7 to `skills` (the coordinator's "PR monitoring" falls back to the child scheduling itself); U8 to `engine-results`; a failed dashboard check to the engine unit that owns the behaviour.
+
+U5 has its own handling:
+- `reload-without-reconcile` is a defect in the coordinator's recovery rules, not in the memory trigger. It goes to `skills` as a fix, and Task 15, Step 6 runs again. The global-instructions fallback isn't offered for it.
+- `no-reload` means the memory line doesn't trigger a reload. Design 8.2 answers that with a fallback that needs the user's consent. The orchestrator asks the user, tagged `[unit=trial need=question]`, whether to add this conditional line to their global custom instructions, `~/.copilot/copilot-instructions.md`. The question quotes the line, says that it is the user's personal file, and says that the line loads in every session but acts only in a Project whose memory names the skill:
+
+  > In a Copilot app Project whose memory names the `wintermute-project` skill, load that skill before you plan or dispatch work if its rules aren't in your context.
+
+  Only if the user agrees, a one-off session appends exactly that line to the end of the file, changing nothing else, and Task 15, Step 6 runs again with a new compaction and resume. If that passes, the decision becomes `recovers-with-global-line`; the line stays after cleanup, because the user chose it. If the user declines or hasn't answered, or the rerun still fails, the decision stays `no-reload`, and the user reloads by hand with `/wintermute-project`.
 
 - [ ] **Step 7: Write the findings and report**
 
@@ -2815,10 +2882,18 @@ Variant A (`trial` U5 `real-skill-recovers`, after both the compaction and the r
 **After a compaction or a restart** the Project loads the skill again by itself, because of the memory line.
 ```
 
-Variant B (`trial` U5 `manual-recovery`, or no `trial` result yet):
+Variant B (`trial` U5 `no-reload` or `reload-without-reconcile`, or no `trial` result yet):
 
 ```markdown
 **After a compaction or a restart** the Project may lose the skill's rules. Type `/wintermute-project` again to reload them.
+```
+
+Variant C (`trial` U5 `recovers-with-global-line`, after the user agreed to the line and the rerun passed):
+
+```markdown
+**After a compaction or a restart** the Project loads the skill again only if your global custom instructions (`~/.copilot/copilot-instructions.md`) have this line. It loads in every session, but acts only in a Project whose memory names the skill. Until you add it, type `/wintermute-project` again after a compaction or a restart.
+
+> In a Copilot app Project whose memory names the `wintermute-project` skill, load that skill before you plan or dispatch work if its rules aren't in your context.
 ```
 
 If the probe's U10 decision is `allowed-after-change`, add, with the verified setting from the findings: ``**Autopilot children** need <setting> turned on in Settings to run builds and tests.`` With `allowed`, add nothing. With `unverified`, the build never reached this unit (see Task 3, Step 6).
