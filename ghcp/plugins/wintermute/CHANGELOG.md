@@ -6,6 +6,12 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace still follows main. See [Releases](README.md#releases) for prerequisites, checks and recovery after a partial publish.
 
+## 0.3.2 — 2026-10-29
+
+### Fixed
+
+- Cost warnings about missing or unreadable session logs and invalid usage lines now appear only on the swarm that contains the session, including child sessions and older aliases. Unrelated swarms no longer show those data warnings. Engine-wide diagnostics still appear on every swarm, and aggregate engine diagnostics still include all session warnings.
+
 ## 0.3.1 — 2026-10-27
 
 Fixes child sessions that failed to start because their base branch wasn't pushed yet ([#70](https://github.com/ncksol/ai_tools/issues/70)), in `orchestrator`, `session-orchestrator`, `hands-on-orchestrator` and `hands-on-session-orchestrator`.
