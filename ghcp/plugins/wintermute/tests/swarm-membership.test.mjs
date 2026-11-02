@@ -99,7 +99,7 @@ test('a top-level session with no child is not a swarm without the whole signal'
     'ws-session-worker': { agent: 'session-worker', ask: PLAN },
     'ws-plugin-worker': { agent: 'wintermute:orchestrator-worker', ask: PLAN },
     'ws-plugin-session-worker': { agent: 'wintermute:session-worker', ask: PLAN },
-    'ws-other-plugin': { agent: 'other-plugin:orchestrator', ask: PLAN },
+    'ws-other-plugin': { agent: 'other-plugin:hands-on-orchestrator', ask: PLAN },
     'ws-other-agent': { agent: 'andrej', ask: PLAN },
   };
   const cli = {};

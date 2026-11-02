@@ -86,7 +86,7 @@ test('an orchestrator from the wintermute plugin with only task sub-agents is a 
   const others = {
     worker: withSubagent(home, { id: 'ws-plugin-worker', cli: 'cli-plugin-worker', agent: 'wintermute:orchestrator-worker', alive: true }),
     sessionWorker: withSubagent(home, { id: 'ws-plugin-session-worker', cli: 'cli-plugin-session-worker', agent: 'wintermute:session-worker', alive: true }),
-    otherPlugin: withSubagent(home, { id: 'ws-other-plugin', cli: 'cli-other-plugin', agent: 'other-plugin:orchestrator', alive: true }),
+    otherPlugin: withSubagent(home, { id: 'ws-other-plugin', cli: 'cli-other-plugin', agent: 'other-plugin:hands-on-orchestrator', alive: true }),
   };
   const engine = engineFor(home, at(60));
   await engine.refresh();

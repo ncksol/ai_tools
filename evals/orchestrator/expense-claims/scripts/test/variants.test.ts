@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { LIVE_VARIANTS, liveAgent, variantLabel, POLICY_VARIANTS, readVariants, verifyVariants, variantBundle } from "../lib/variants.ts";
+import { LIVE_VARIANTS, liveAgent, POLICY_VARIANTS, readVariants, verifyVariants, variantBundle } from "../lib/variants.ts";
 import { calibrationDecision, planNext, scoredCount } from "../lib/batch/plan.ts";
 import type { RunState } from "../lib/batch/state.ts";
 import { RESULT_COLUMNS, type ResultRow } from "../lib/results.ts";
@@ -34,12 +34,12 @@ function fixture() {
 test("variant selection pins aliases and workers independently of the ordinary installed orchestrator", () => {
   const f = fixture();
   try {
-    writeFileSync(join(f.agents, "orchestrator.agent.md"), "moving normal agent");
+    writeFileSync(join(f.agents, "hands-on-orchestrator.agent.md"), "moving normal agent");
     const set = readVariants(f.path);
     assert.equal(set.variants["orchestrator-review-a"].agent, "orchestrator-review-a");
     assert.deepEqual(verifyVariants(set, f.agents), []);
     const before = variantBundle(set.variants["orchestrator-review-a"]);
-    writeFileSync(join(f.agents, "orchestrator.agent.md"), "new normal policy");
+    writeFileSync(join(f.agents, "hands-on-orchestrator.agent.md"), "new normal policy");
     assert.deepEqual(verifyVariants(set, f.agents), []);
     assert.equal(variantBundle(set.variants["orchestrator-review-a"]), before);
     writeFileSync(join(f.agents, "worker.agent.md"), "changed worker\n");
@@ -178,6 +178,5 @@ test("wrong or missing logged agents cannot satisfy calibrations, change the med
 
 test("retired base agents are not live variants", () => {
   assert.deepEqual(LIVE_VARIANTS, ["hands-on-orchestrator", "hands-on-session-orchestrator"]);
-  assert.equal(variantLabel("wintermute:orchestrator"), "wintermute:orchestrator");
   assert.equal(liveAgent("hands-on-orchestrator"), "wintermute:hands-on-orchestrator");
 });

@@ -107,7 +107,7 @@ test("pinned policy calibrations stay excluded and different agent bundles are n
     row({ variant: "orchestrator-review-a", agent: "orchestrator-review-a", calibration: "yes", agent_bundle_sha256: "first", minutes: "10" }),
     row({ variant: "orchestrator-review-a", agent: "orchestrator-review-a", features: THREE, agent_bundle_sha256: "first", minutes: "15", robustness_status: "failed" }),
     row({ variant: "orchestrator-review-a", agent: "orchestrator-review-a", features: THREE, agent_bundle_sha256: "second", minutes: "25" }),
-    row({ variant: "orchestrator-review-a", agent: "orchestrator", calibration: "yes", agent_bundle_sha256: "first", minutes: "99" }),
+    row({ variant: "orchestrator-review-a", agent: "hands-on-orchestrator", calibration: "yes", agent_bundle_sha256: "first", minutes: "99" }),
     row({ variant: "orchestrator-review-a", features: THREE, agent_bundle_sha256: "first", minutes: "99" }),
   ]);
   assert.equal(summary.groups.find((g) => g.features === FULL)!.runs, 0);
