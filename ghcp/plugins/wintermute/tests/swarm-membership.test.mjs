@@ -47,7 +47,7 @@ function lone(home, { id, cli = `cli-${id.slice(3)}`, agent = null, ask = null, 
 /** The scenario's live swarm and finished swarm, plus an orchestrator (ws-plan) that waits on its plan question with no child yet. */
 function planningHome() {
   const home = scenario();
-  lone(home, { id: 'ws-plan', cli: 'cli-plan', agent: 'orchestrator', ask: PLAN });
+  lone(home, { id: 'ws-plan', cli: 'cli-plan', agent: 'hands-on-orchestrator', ask: PLAN });
   return home;
 }
 
@@ -60,11 +60,8 @@ const ids = engine => engine.listSwarms().map(swarm => swarm.id).sort();
 test('an orchestrator waiting on its tagged plan question is a swarm before its first child, and its question needs you', async () => {
   const home = planningHome();
   const extra = [
-    ['ws-session-plan', 'cli-session-plan', 'session-orchestrator'],
     ['ws-hands-on-plan', 'cli-hands-on-plan', 'hands-on-orchestrator'],
     ['ws-hands-on-session-plan', 'cli-hands-on-session-plan', 'hands-on-session-orchestrator'],
-    ['ws-plugin-plan', 'cli-plugin-plan', 'wintermute:orchestrator'],
-    ['ws-plugin-session-plan', 'cli-plugin-session-plan', 'wintermute:session-orchestrator'],
     ['ws-plugin-hands-on-plan', 'cli-plugin-hands-on-plan', 'wintermute:hands-on-orchestrator'],
     ['ws-plugin-hands-on-session-plan', 'cli-plugin-hands-on-session-plan', 'wintermute:hands-on-session-orchestrator'],
   ];
@@ -90,32 +87,32 @@ test('a top-level session with no child is not a swarm without the whole signal'
   const home = planningHome();
   const falseSwarms = {
     'ws-plain': { agent: null, ask: PLAN },
-    'ws-quiet': { agent: 'orchestrator' },
+    'ws-quiet': { agent: 'hands-on-orchestrator' },
     'ws-quiet-hands-on': { agent: 'hands-on-orchestrator' },
-    'ws-untagged': { agent: 'orchestrator', ask: 'Approve this split into two units?' },
-    'ws-badtag': { agent: 'session-orchestrator', ask: '[unit=* need=approve] Approve this split?' },
+    'ws-untagged': { agent: 'hands-on-orchestrator', ask: 'Approve this split into two units?' },
+    'ws-badtag': { agent: 'hands-on-session-orchestrator', ask: '[unit=* need=approve] Approve this split?' },
     'ws-badtag-hands-on': { agent: 'hands-on-session-orchestrator', ask: '[unit=* need=approve] Approve this split?' },
-    'ws-answered': { agent: 'orchestrator', ask: PLAN, answered: true },
-    'ws-ended': { agent: 'orchestrator', ask: PLAN, alive: false },
-    'ws-archived': { agent: 'orchestrator', ask: PLAN, archivedAt: at(58) },
+    'ws-answered': { agent: 'hands-on-orchestrator', ask: PLAN, answered: true },
+    'ws-ended': { agent: 'hands-on-orchestrator', ask: PLAN, alive: false },
+    'ws-archived': { agent: 'hands-on-orchestrator', ask: PLAN, archivedAt: at(58) },
     'ws-worker': { agent: 'orchestrator-worker', ask: PLAN },
     'ws-session-worker': { agent: 'session-worker', ask: PLAN },
     'ws-plugin-worker': { agent: 'wintermute:orchestrator-worker', ask: PLAN },
     'ws-plugin-session-worker': { agent: 'wintermute:session-worker', ask: PLAN },
-    'ws-other-plugin': { agent: 'other-plugin:orchestrator', ask: PLAN },
+    'ws-other-plugin': { agent: 'other-plugin:hands-on-orchestrator', ask: PLAN },
     'ws-other-agent': { agent: 'andrej', ask: PLAN },
   };
   const cli = {};
   for (const [id, options] of Object.entries(falseSwarms)) cli[id] = lone(home, { id, ...options });
   // An open plan approval (exit_plan_mode) is not a tagged question, even when its summary starts with a tag.
-  home.workspace({ id: 'ws-planmode', name: 'Plan mode', createdAt: at(55), sessionId: 'cli-planmode', agent: 'orchestrator' });
+  home.workspace({ id: 'ws-planmode', name: 'Plan mode', createdAt: at(55), sessionId: 'cli-planmode', agent: 'hands-on-orchestrator' });
   const planMode = new EventLog(at(55));
   planMode.start(); planMode.turnStart(); planMode.at(at(56)); planMode.plan(PLAN);
   home.writeEvents('cli-planmode', planMode.events);
   home.lock('cli-planmode', NO_SUCH_PID + ++pids, at(55));
   cli['ws-planmode'] = 'cli-planmode';
   // An orchestrator that runs as a child session stays a unit of its parent's swarm.
-  home.workspace({ id: 'ws-nested', name: 'Nested orchestrator', createdAt: at(55), sessionId: 'cli-nested', parentId: 'ws-root', creatorSessionId: 'cli-root', agent: 'orchestrator' });
+  home.workspace({ id: 'ws-nested', name: 'Nested orchestrator', createdAt: at(55), sessionId: 'cli-nested', parentId: 'ws-root', creatorSessionId: 'cli-root', agent: 'hands-on-orchestrator' });
   const nested = new EventLog(at(55));
   nested.start(); nested.turnStart(); nested.at(at(56)); nested.ask(PLAN);
   home.writeEvents('cli-nested', nested.events);
@@ -160,8 +157,8 @@ test('an orchestrator leaves the swarm list once its question is answered, and j
 
 test('an orchestrator whose log has been quiet for the finished-run time stays a swarm only while its process is known to run', async () => {
   const home = planningHome();
-  const running = lone(home, { id: 'ws-running', agent: 'orchestrator', ask: PLAN });
-  const unknown = lone(home, { id: 'ws-unknown', agent: 'orchestrator', ask: PLAN });
+  const running = lone(home, { id: 'ws-running', agent: 'hands-on-orchestrator', ask: PLAN });
+  const unknown = lone(home, { id: 'ws-unknown', agent: 'hands-on-orchestrator', ask: PLAN });
   const unknownPid = NO_SUCH_PID + pids;
   // The process probe fails for ws-unknown's lock, so whether its process runs is not known.
   const probe = async locks => {
@@ -177,7 +174,7 @@ test('an orchestrator whose log has been quiet for the finished-run time stays a
 
 test('a chat that runs an orchestrator and waits on a tagged question is a swarm before its first child', async () => {
   const home = scenario();
-  home.chat({ id: 'chat-plan', title: 'Planning chat', createdAt: at(55), agent: 'session-orchestrator' });
+  home.chat({ id: 'chat-plan', title: 'Planning chat', createdAt: at(55), agent: 'hands-on-session-orchestrator' });
   const log = new EventLog(at(55));
   log.start(); log.turnStart(); log.at(at(56)); log.ask(PLAN);
   home.writeEvents('chat-plan', log.events);
@@ -199,38 +196,35 @@ test('a chat that runs an orchestrator and waits on a tagged question is a swarm
 
 test('the forest makes a top session with no child a root only when the engine names it', () => {
   assert.deepEqual(ORCHESTRATOR_AGENTS, [
-    'orchestrator', 'session-orchestrator', 'hands-on-orchestrator', 'hands-on-session-orchestrator',
-    'wintermute:orchestrator', 'wintermute:session-orchestrator', 'wintermute:hands-on-orchestrator', 'wintermute:hands-on-session-orchestrator',
+    'hands-on-orchestrator', 'hands-on-session-orchestrator',
+    'wintermute:hands-on-orchestrator', 'wintermute:hands-on-session-orchestrator',
   ]);
   const session = (id, agent) => [id, { id, title: id, mode: null, model: null, reasoningEffort: null, isRunning: false, wasInterrupted: false, createdAt: 1, archivedAt: null, agent }];
   const workspace = (id, sessionId, archivedAt = null) => [id, { id, projectId: null, worktreeId: null, name: id, branch: null, createdAt: 1, archivedAt, sessionId, creatorSessionId: null, coordinatingCreatorSessionId: null, createdPr: null }];
   const app = {
     projects: new Map(), worktrees: new Map(), automations: [], diagnostics: [], parentLinks: [], chatLinks: [],
     workspaces: new Map([
-      workspace('ws-orch', 'cli-orch'), workspace('ws-hands-on', 'cli-hands-on'),
+      workspace('ws-hands-on', 'cli-hands-on'),
       workspace('ws-plain', 'cli-plain'), workspace('ws-gone', 'cli-gone', 2),
     ]),
     aliases: [
-      { sessionId: 'cli-orch', workspaceId: 'ws-orch', createdAt: 1 },
       { sessionId: 'cli-hands-on', workspaceId: 'ws-hands-on', createdAt: 1 },
       { sessionId: 'cli-plain', workspaceId: 'ws-plain', createdAt: 1 },
     ],
     sessions: new Map([
-      session('cli-orch', 'orchestrator'), session('cli-hands-on', 'hands-on-orchestrator'),
-      session('cli-plain', null), session('cli-gone', 'orchestrator'),
-      session('chat-orch', 'session-orchestrator'), session('chat-hands-on', 'hands-on-session-orchestrator'),
+      session('cli-hands-on', 'hands-on-orchestrator'),
+      session('cli-plain', null), session('cli-gone', 'hands-on-orchestrator'),
+      session('chat-hands-on', 'hands-on-session-orchestrator'),
       session('chat-plain', 'andrej'),
     ]),
   };
   const forest = buildForest(app);
   assert.deepEqual(forest.roots, []);
   assert.deepEqual(forest.candidates, [
-    { id: 'ws-orch', cliId: 'cli-orch' }, { id: 'ws-hands-on', cliId: 'cli-hands-on' },
-    { id: 'chat-orch', cliId: 'chat-orch' }, { id: 'chat-hands-on', cliId: 'chat-hands-on' },
+    { id: 'ws-hands-on', cliId: 'cli-hands-on' }, { id: 'chat-hands-on', cliId: 'chat-hands-on' },
   ]);
-  const promoted = buildForest(app, { waitingRoots: new Set(['ws-orch', 'ws-hands-on', 'chat-orch', 'chat-hands-on', 'ws-plain']) });
-  assert.deepEqual(promoted.roots.map(root => root.id).sort(), ['chat-hands-on', 'chat-orch', 'ws-hands-on', 'ws-orch']);
-  assert.equal(promoted.nodes.get('chat-orch').kind, 'chat');
+  const promoted = buildForest(app, { waitingRoots: new Set(['ws-hands-on', 'chat-hands-on', 'ws-plain']) });
+  assert.deepEqual(promoted.roots.map(root => root.id).sort(), ['chat-hands-on', 'ws-hands-on']);
   assert.equal(promoted.nodes.get('chat-hands-on').kind, 'chat');
 });
 
@@ -259,7 +253,7 @@ test('a page opened for a session in no swarm gets no snapshot, never another sw
 
 const swarmOnlyHome = () => {
   const home = new CopilotHome();
-  lone(home, { id: 'ws-plan', cli: 'cli-plan', agent: 'orchestrator', ask: PLAN });
+  lone(home, { id: 'ws-plan', cli: 'cli-plan', agent: 'hands-on-orchestrator', ask: PLAN });
   return home;
 };
 

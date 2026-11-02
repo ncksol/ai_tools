@@ -1,10 +1,10 @@
-import { access, readFile } from 'node:fs/promises';
+import { access, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { isStableVersion, releaseNotesProblem } from './release.mjs';
 
 export const AGENTS_DIR = 'com.github.copilot/agents';
 export const PACKAGED_AGENTS = Object.freeze([
-  'orchestrator', 'session-orchestrator', 'hands-on-orchestrator', 'hands-on-session-orchestrator', 'orchestrator-worker', 'session-worker',
+  'hands-on-orchestrator', 'hands-on-session-orchestrator', 'orchestrator-worker', 'session-worker',
 ]);
 const BARE_ID = new RegExp(`(?:agent_type|kickoff\\.agent):\\s*"(${PACKAGED_AGENTS.join('|')})"`, 'g');
 
@@ -100,6 +100,17 @@ export async function validatePackage(root, repositoryRoot, manifest) {
       errors.push(`ghcp/agents/${name}.agent.md: the plugin ships this agent, so no copy may stay in ghcp/agents/`);
     } catch (error) {
       if (error.code !== 'ENOENT') errors.push(`ghcp/agents/${name}.agent.md: ${error.message}`);
+    }
+  }
+  let entries = [];
+  try {
+    entries = await readdir(path.join(root, AGENTS_DIR));
+  } catch (error) {
+    if (error.code !== 'ENOENT') errors.push(`${AGENTS_DIR}: ${error.message}`);
+  }
+  for (const entry of entries.sort()) {
+    if (entry.endsWith('.agent.md') && !PACKAGED_AGENTS.includes(entry.slice(0, -'.agent.md'.length))) {
+      errors.push(`${AGENTS_DIR}/${entry}: agent is not packaged`);
     }
   }
   try {

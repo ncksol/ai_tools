@@ -28,8 +28,8 @@ const log = () => {};
 const ok = (stdout: string): ProcResult => ({ code: 0, stdout, stderr: "" });
 
 test("runName and parseRunName round-trip", () => {
-  assert.equal(runName("session-orchestrator", 2), "orch-eval-session-orchestrator-2");
-  assert.deepEqual(parseRunName("orch-eval-session-orchestrator-2"), { variant: "session-orchestrator", n: 2 });
+  assert.equal(runName("hands-on-session-orchestrator", 2), "orch-eval-hands-on-session-orchestrator-2");
+  assert.deepEqual(parseRunName("orch-eval-hands-on-session-orchestrator-2"), { variant: "hands-on-session-orchestrator", n: 2 });
   assert.equal(parseRunName("other"), null);
 });
 
@@ -74,10 +74,10 @@ test("dry run builds a seed-only repo and never calls gh", async () => {
 
 test("a prefixed live agent continues the historical run numbering without a colon in repo names", async () => {
   const dir = mkdtempSync(join(runsDir, "plugin-"));
-  mkdirSync(join(dir, "orch-eval-orchestrator-3"));
+  mkdirSync(join(dir, "orch-eval-hands-on-orchestrator-3"));
   const { gh, calls } = fakeGh({});
-  const result = await newRun({ variant: "wintermute:orchestrator", features: ALL_FEATURES, owner: "ncksol", runsDir: dir, dryRun: true }, { gh, log });
-  assert.equal(result.name, "orch-eval-orchestrator-4");
+  const result = await newRun({ variant: "wintermute:hands-on-orchestrator", features: ALL_FEATURES, owner: "ncksol", runsDir: dir, dryRun: true }, { gh, log });
+  assert.equal(result.name, "orch-eval-hands-on-orchestrator-4");
   assert.equal(calls.length, 0);
 });
 

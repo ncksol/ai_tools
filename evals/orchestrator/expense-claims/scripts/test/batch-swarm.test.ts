@@ -34,7 +34,7 @@ const settle = { idleSettleMs: 20_000, swarmSettleMs: 60_000 };
 function run(extra: LogEvent[] = []): LogEvent[] {
   return [
     ev("session.start", 0, { selectedModel: "claude-opus-5.5", reasoningEffort: "max", contextTier: "long_context" }),
-    ev("subagent.selected", 0, { agentName: "orchestrator" }),
+    ev("subagent.selected", 0, { agentName: "hands-on-orchestrator" }),
     ev("user.message", 1, { content: "kickoff text" }),
     ev("assistant.turn_start", 1),
     ...extra,
@@ -45,7 +45,7 @@ test("the kickoff, agent, model, effort and context tier are read like score rea
   const view = orchestratorView(run([ev("assistant.message", 2, { messageId: "m1", content: "hi" }), ev("assistant.turn_end", 2)]));
   assert.equal(view.startedBy, "user");
   assert.equal(kickoffText(view), "kickoff text");
-  assert.deepEqual([view.agent, view.model, view.effort, view.contextTier], ["orchestrator", "claude-opus-5.5", "max", "long_context"]);
+  assert.deepEqual([view.agent, view.model, view.effort, view.contextTier], ["hands-on-orchestrator", "claude-opus-5.5", "max", "long_context"]);
   assert.equal(view.openTurn, false);
 });
 

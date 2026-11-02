@@ -15,12 +15,12 @@ before(() => {
   checkout = join(dir, "checkout");
   mkdirSync(agentsDir);
   mkdirSync(checkout);
-  writeFileSync(join(checkout, "orchestrator.agent.md"), "Starts orchestrator-worker sub-agents.\n");
+  writeFileSync(join(checkout, "hands-on-orchestrator.agent.md"), "Starts orchestrator-worker sub-agents.\n");
   writeFileSync(join(checkout, "orchestrator-worker.agent.md"), "worker v1\n");
-  writeFileSync(join(checkout, "session-orchestrator.agent.md"), "Children run as session-worker.\n");
+  writeFileSync(join(checkout, "hands-on-session-orchestrator.agent.md"), "Children run as session-worker.\n");
   writeFileSync(join(checkout, "session-worker.agent.md"), "session worker v1\n");
   writeFileSync(join(checkout, "andrej.agent.md"), "unrelated\n");
-  for (const name of ["orchestrator", "orchestrator-worker", "session-orchestrator", "session-worker", "andrej"]) {
+  for (const name of ["hands-on-orchestrator", "orchestrator-worker", "hands-on-session-orchestrator", "session-worker", "andrej"]) {
     symlinkSync(join(checkout, `${name}.agent.md`), join(agentsDir, `${name}.agent.md`));
   }
   writeFileSync(join(dir, "Info.plist"), "<key>CFBundleShortVersionString</key>\n\t<string>1.1.30</string>\n");
@@ -30,10 +30,10 @@ before(() => {
 after(() => rmSync(dir, { recursive: true, force: true }));
 
 const pins = () =>
-  computePins({ agentsDir, variants: ["orchestrator", "session-orchestrator"], files: { "kickoff.md": join(dir, "kickoff.md") }, appPlist: join(dir, "Info.plist"), cliVersionFile: join(dir, "cli.d.ts") });
+  computePins({ agentsDir, variants: ["hands-on-orchestrator", "hands-on-session-orchestrator"], files: { "kickoff.md": join(dir, "kickoff.md") }, appPlist: join(dir, "Info.plist"), cliVersionFile: join(dir, "cli.d.ts") });
 
 test("the variants and the workers they name are pinned through their symlinks", () => {
-  assert.deepEqual(agentsToPin(agentsDir, ["orchestrator", "session-orchestrator"]).names, ["orchestrator", "orchestrator-worker", "session-orchestrator", "session-worker"]);
+  assert.deepEqual(agentsToPin(agentsDir, ["hands-on-orchestrator", "hands-on-session-orchestrator"]).names, ["hands-on-orchestrator", "hands-on-session-orchestrator", "orchestrator-worker", "session-worker"]);
   assert.deepEqual(agentsToPin(agentsDir, ["missing"]).missing, ["missing"]);
   const pinned = pins();
   assert.equal(pinned.agents["session-worker"].path, realpathSync(join(checkout, "session-worker.agent.md")));
@@ -62,12 +62,12 @@ test("any change to a pinned agent, its link, the kit files or the versions is d
 test("plugin IDs resolve to bare filenames and pin prefixed workers and their dependencies", () => {
   const plugin = join(dir, "plugin");
   mkdirSync(plugin);
-  writeFileSync(join(plugin, "orchestrator.agent.md"), 'Use agent_type: "wintermute:orchestrator-worker". Not other:session-worker.\n');
+  writeFileSync(join(plugin, "hands-on-orchestrator.agent.md"), 'Use agent_type: "wintermute:orchestrator-worker". Not other:session-worker.\n');
   writeFileSync(join(plugin, "orchestrator-worker.agent.md"), 'Use wintermute:session-worker.\n');
   writeFileSync(join(plugin, "session-worker.agent.md"), "worker\n");
-  const options = { agentsDir: plugin, variants: ["wintermute:orchestrator"], files: {}, appPlist: "", cliVersionFile: "" };
+  const options = { agentsDir: plugin, variants: ["wintermute:hands-on-orchestrator"], files: {}, appPlist: "", cliVersionFile: "" };
   assert.deepEqual(agentsToPin(plugin, options.variants), {
-    names: ["wintermute:orchestrator", "wintermute:orchestrator-worker", "wintermute:session-worker"], missing: [],
+    names: ["wintermute:hands-on-orchestrator", "wintermute:orchestrator-worker", "wintermute:session-worker"], missing: [],
   });
   const before = computePins(options);
   assert.equal(before.agents["wintermute:orchestrator-worker"].path, realpathSync(join(plugin, "orchestrator-worker.agent.md")));
@@ -81,9 +81,9 @@ test("plugin IDs resolve to bare filenames and pin prefixed workers and their de
 test("names in a different plugin namespace do not pin a local worker", () => {
   const plugin = join(dir, "isolated-plugin");
   mkdirSync(plugin);
-  writeFileSync(join(plugin, "orchestrator.agent.md"), "Do not use other:session-worker.\n");
+  writeFileSync(join(plugin, "hands-on-orchestrator.agent.md"), "Do not use other:session-worker.\n");
   writeFileSync(join(plugin, "session-worker.agent.md"), "unrelated\n");
-  assert.deepEqual(agentsToPin(plugin, ["wintermute:orchestrator"]), { names: ["wintermute:orchestrator"], missing: [] });
+  assert.deepEqual(agentsToPin(plugin, ["wintermute:hands-on-orchestrator"]), { names: ["wintermute:hands-on-orchestrator"], missing: [] });
 });
 
 test("agentBundleSha256 hashes sorted [name, sha256] pairs and readAgentRevision resolves clean git checkouts", () => {
@@ -102,26 +102,26 @@ test("agentBundleSha256 hashes sorted [name, sha256] pairs and readAgentRevision
     join(repo, ".github", "plugin", "marketplace.json"),
     JSON.stringify({ plugins: [{ name: "wintermute", source: "./ghcp/plugins/wintermute" }] }),
   );
-  writeFileSync(join(repoAgents, "orchestrator.agent.md"), "Uses wintermute:orchestrator-worker.\n");
+  writeFileSync(join(repoAgents, "hands-on-orchestrator.agent.md"), "Uses wintermute:orchestrator-worker.\n");
   writeFileSync(join(repoAgents, "orchestrator-worker.agent.md"), "worker\n");
   for (const args of [["init", "-q", "-b", "main"], ["config", "user.name", "Test"], ["config", "user.email", "test@example.invalid"], ["add", "-A"], ["commit", "-q", "-m", "init"]]) {
     assert.equal(spawnSync("git", args, { cwd: repo }).status, 0);
   }
   const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).stdout.trim();
 
-  const directPins = computePins({ agentsDir: repoAgents, variants: ["wintermute:orchestrator"], files: {}, appPlist: "", cliVersionFile: "" });
+  const directPins = computePins({ agentsDir: repoAgents, variants: ["wintermute:hands-on-orchestrator"], files: {}, appPlist: "", cliVersionFile: "" });
   assert.equal(directPins.agentRevision, head);
 
   const copilotHome = join(dir, "copilot-home");
   const installed = join(copilotHome, "installed-plugins", "ai-tools", "wintermute", "com.github.copilot", "agents");
   mkdirSync(installed, { recursive: true });
-  writeFileSync(join(installed, "orchestrator.agent.md"), "Uses wintermute:orchestrator-worker.\n");
+  writeFileSync(join(installed, "hands-on-orchestrator.agent.md"), "Uses wintermute:orchestrator-worker.\n");
   writeFileSync(join(installed, "orchestrator-worker.agent.md"), "worker\n");
   writeFileSync(
     join(copilotHome, "settings.json"),
     JSON.stringify({ extraKnownMarketplaces: { "ai-tools": { source: { source: "directory", path: repo } } } }),
   );
-  const installedPins = computePins({ agentsDir: installed, variants: ["wintermute:orchestrator"], files: {}, appPlist: "", cliVersionFile: "" });
+  const installedPins = computePins({ agentsDir: installed, variants: ["wintermute:hands-on-orchestrator"], files: {}, appPlist: "", cliVersionFile: "" });
   assert.equal(installedPins.agentRevision, head);
 
   writeFileSync(join(repoAgents, "orchestrator-worker.agent.md"), "dirty worker\n");

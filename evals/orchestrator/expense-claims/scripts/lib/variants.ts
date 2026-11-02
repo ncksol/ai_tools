@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-export const LIVE_VARIANTS = ["orchestrator", "session-orchestrator", "hands-on-orchestrator", "hands-on-session-orchestrator"];
+export const LIVE_VARIANTS = ["hands-on-orchestrator", "hands-on-session-orchestrator"];
 // The labels of the shipped A/B/C manifest, variants/review-policy.json. readVariants rejects any other
 // label, so summaries tell pinned-policy rows from live rows without reading that file.
 export const POLICY_VARIANTS: ReadonlySet<string> = new Set(["orchestrator-review-a", "orchestrator-review-b", "orchestrator-review-c"]);
@@ -64,7 +64,7 @@ export function readVariants(path: string): VariantSet {
   const aliases = new Set<string>();
   for (const [label, value] of Object.entries(entries)) {
     const variant = object(value);
-    if (!name(label) || !POLICY_VARIANTS.has(label) || !variant || !name(variant.agent) || label !== variant.agent || ["orchestrator", "session-orchestrator"].includes(variant.agent) ||
+    if (!name(label) || !POLICY_VARIANTS.has(label) || !variant || !name(variant.agent) || label !== variant.agent || LIVE_VARIANTS.includes(variant.agent) ||
         typeof variant.revision !== "string" || !/^[a-f0-9]{40}$/.test(variant.revision) || aliases.has(variant.agent)) {
       throw new Error(`Invalid variant ${label} in manifest ${path}`);
     }

@@ -58,15 +58,22 @@ const editJson = (file, change) => {
   writeFileSync(file, JSON.stringify(value));
 };
 
-test('the plugin ships the six orchestrator agents, each named after its file', () => {
+test('the plugin ships the four agents, each named after its file', () => {
   assert.deepEqual([...PACKAGED_AGENTS].sort(), [
-    'hands-on-orchestrator', 'hands-on-session-orchestrator', 'orchestrator', 'orchestrator-worker', 'session-orchestrator', 'session-worker',
+    'hands-on-orchestrator', 'hands-on-session-orchestrator', 'orchestrator-worker', 'session-worker',
   ]);
   for (const name of PACKAGED_AGENTS) {
     const { errors, fields } = parseAgentFrontmatter(readFileSync(agentFile(pluginRoot, name), 'utf8'));
     assert.deepEqual(errors, [], name);
     assert.equal(fields.name, name);
   }
+});
+
+test('an agent file the plugin does not package is reported', async () => {
+  const { repo, root } = sandbox();
+  cpSync(agentFile(root, 'hands-on-orchestrator'), agentFile(root, 'stray-agent'));
+  const errors = await validatePlugin(root, repo);
+  assert.ok(errors.includes('com.github.copilot/agents/stray-agent.agent.md: agent is not packaged'), errors.join('\n'));
 });
 
 test('a missing packaged agent is reported', async () => {
@@ -82,19 +89,19 @@ test('an agent whose frontmatter name differs from its file name, or whose front
   writeFileSync(worker, readFileSync(worker, 'utf8').replace('name: orchestrator-worker', 'name: worker'));
   const session = agentFile(root, 'session-worker');
   writeFileSync(session, readFileSync(session, 'utf8').replace(/^tools: .*$/m, 'tools: [bash, view'));
-  const plain = agentFile(root, 'orchestrator');
+  const plain = agentFile(root, 'hands-on-orchestrator');
   writeFileSync(plain, readFileSync(plain, 'utf8').replace(/^---\n/, ''));
   const errors = await validatePlugin(root, repo);
   assert.ok(errors.includes('com.github.copilot/agents/orchestrator-worker.agent.md: frontmatter name worker must match the file name orchestrator-worker'), errors.join('\n'));
   assert.ok(errors.includes('com.github.copilot/agents/session-worker.agent.md: frontmatter tools must be a JSON array of non-empty strings'), errors.join('\n'));
-  assert.ok(errors.includes('com.github.copilot/agents/orchestrator.agent.md: missing or invalid frontmatter'), errors.join('\n'));
+  assert.ok(errors.includes('com.github.copilot/agents/hands-on-orchestrator.agent.md: missing or invalid frontmatter'), errors.join('\n'));
 });
 
 test('an agent that starts a worker by its bare name is reported', async () => {
   const { repo, root } = sandbox();
   for (const [name, from, to] of [
-    ['orchestrator', 'agent_type: "wintermute:orchestrator-worker"', 'agent_type: "orchestrator-worker"'],
-    ['session-orchestrator', 'kickoff.agent: "wintermute:session-worker"', 'kickoff.agent: "session-worker"'],
+    ['hands-on-orchestrator', 'agent_type: "wintermute:orchestrator-worker"', 'agent_type: "orchestrator-worker"'],
+    ['hands-on-session-orchestrator', 'kickoff.agent: "wintermute:session-worker"', 'kickoff.agent: "session-worker"'],
   ]) {
     const file = agentFile(root, name);
     const text = readFileSync(file, 'utf8');
@@ -102,16 +109,16 @@ test('an agent that starts a worker by its bare name is reported', async () => {
     writeFileSync(file, text.replace(from, to));
   }
   const errors = await validatePlugin(root, repo);
-  assert.ok(errors.includes('com.github.copilot/agents/orchestrator.agent.md: start orchestrator-worker by its plugin ID "wintermute:orchestrator-worker"'), errors.join('\n'));
-  assert.ok(errors.includes('com.github.copilot/agents/session-orchestrator.agent.md: start session-worker by its plugin ID "wintermute:session-worker"'), errors.join('\n'));
+  assert.ok(errors.includes('com.github.copilot/agents/hands-on-orchestrator.agent.md: start orchestrator-worker by its plugin ID "wintermute:orchestrator-worker"'), errors.join('\n'));
+  assert.ok(errors.includes('com.github.copilot/agents/hands-on-session-orchestrator.agent.md: start session-worker by its plugin ID "wintermute:session-worker"'), errors.join('\n'));
 });
 
 test('a copy of a packaged agent left in ghcp/agents is reported', async () => {
   const { repo, root } = sandbox();
   mkdirSync(path.join(repo, 'ghcp/agents'), { recursive: true });
-  cpSync(agentFile(root, 'orchestrator'), path.join(repo, 'ghcp/agents/orchestrator.agent.md'));
+  cpSync(agentFile(root, 'hands-on-orchestrator'), path.join(repo, 'ghcp/agents/hands-on-orchestrator.agent.md'));
   const errors = await validatePlugin(root, repo);
-  assert.ok(errors.some(error => error.startsWith('ghcp/agents/orchestrator.agent.md: the plugin ships this agent')), errors.join('\n'));
+  assert.ok(errors.some(error => error.startsWith('ghcp/agents/hands-on-orchestrator.agent.md: the plugin ships this agent')), errors.join('\n'));
 });
 
 test('an agents field in plugin.json is reported, since Agent Plugins 1.0 ignores it', async () => {
@@ -143,31 +150,31 @@ test('a CHANGELOG with no entry for the current version, or no CHANGELOG, is rep
 
 test('agent frontmatter follows a strict flat YAML subset and decodes quoted values', async () => {
   const parse = lines => parseAgentFrontmatter(`---\n${lines.join('\n')}\n---\n\nBody.\n`);
-  assert.deepEqual(parse(['name: orchestrator', 'description: Coordinates work: dispatch and track']).errors,
+  assert.deepEqual(parse(['name: hands-on-orchestrator', 'description: Coordinates work: dispatch and track']).errors,
     ['frontmatter description contains ": ", " #", a tab or a trailing ":"; quote it']);
-  assert.deepEqual(parse(['name: orchestrator', 'description: Plans work # and tracks it']).errors,
+  assert.deepEqual(parse(['name: hands-on-orchestrator', 'description: Plans work # and tracks it']).errors,
     ['frontmatter description contains ": ", " #", a tab or a trailing ":"; quote it']);
-  assert.deepEqual(parse(['name: orchestrator', 'description: "Plans work']).errors,
+  assert.deepEqual(parse(['name: hands-on-orchestrator', 'description: "Plans work']).errors,
     ['frontmatter description has an unterminated or malformed double-quoted string']);
-  assert.deepEqual(parse(['name: orchestrator', "description: 'Plans work"]).errors,
+  assert.deepEqual(parse(['name: hands-on-orchestrator', "description: 'Plans work"]).errors,
     ['frontmatter description has an unterminated or malformed single-quoted string']);
-  assert.deepEqual(parse(['name: orchestrator', 'description: "Plans" work']).errors,
+  assert.deepEqual(parse(['name: hands-on-orchestrator', 'description: "Plans" work']).errors,
     ['frontmatter description has an unterminated or malformed double-quoted string']);
-  assert.deepEqual(parse(['name: orchestrator', 'description: - Plans work']).errors, ['frontmatter description starts with a YAML indicator; quote it']);
-  assert.deepEqual(parse(['name: orchestrator', 'description: >-', '  Plans work']).errors,
+  assert.deepEqual(parse(['name: hands-on-orchestrator', 'description: - Plans work']).errors, ['frontmatter description starts with a YAML indicator; quote it']);
+  assert.deepEqual(parse(['name: hands-on-orchestrator', 'description: >-', '  Plans work']).errors,
     ['frontmatter description starts with a YAML indicator; quote it', 'unsupported frontmatter line:   Plans work']);
-  assert.deepEqual(parse(['name: orchestrator', 'description:']).errors, ['frontmatter description has no value']);
-  assert.deepEqual(parse(['name: orchestrator', 'description: Plans', 'tools: [view, grep]']).errors,
+  assert.deepEqual(parse(['name: hands-on-orchestrator', 'description:']).errors, ['frontmatter description has no value']);
+  assert.deepEqual(parse(['name: hands-on-orchestrator', 'description: Plans', 'tools: [view, grep]']).errors,
     ['frontmatter tools must be a JSON array of non-empty strings']);
-  const quoted = parse(['name: "orchestrator"', "description: 'Coordinates work: it''s quoted'", 'tools: ["view", "grep"]', 'model: ["a", "b"]']);
+  const quoted = parse(['name: "hands-on-orchestrator"', "description: 'Coordinates work: it''s quoted'", 'tools: ["view", "grep"]', 'model: ["a", "b"]']);
   assert.deepEqual(quoted.errors, []);
-  assert.deepEqual(quoted.fields, { name: 'orchestrator', description: "Coordinates work: it's quoted", tools: ['view', 'grep'], model: ['a', 'b'] });
+  assert.deepEqual(quoted.fields, { name: 'hands-on-orchestrator', description: "Coordinates work: it's quoted", tools: ['view', 'grep'], model: ['a', 'b'] });
 });
 
 test('a quoted agent name is compared after decoding, and an invalid description is reported by the validator', async () => {
   const { repo, root } = sandbox();
-  const file = agentFile(root, 'orchestrator');
-  writeFileSync(file, readFileSync(file, 'utf8').replace('name: orchestrator\n', 'name: "orchestrator"\n'));
+  const file = agentFile(root, 'hands-on-orchestrator');
+  writeFileSync(file, readFileSync(file, 'utf8').replace('name: hands-on-orchestrator\n', 'name: "hands-on-orchestrator"\n'));
   assert.deepEqual(await validatePlugin(root, repo), []);
   const worker = agentFile(root, 'session-worker');
   writeFileSync(worker, readFileSync(worker, 'utf8').replace(/^description: .*$/m, 'description: Runs one unit: a branch or a job'));

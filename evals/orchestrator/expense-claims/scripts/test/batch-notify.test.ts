@@ -23,12 +23,12 @@ test("the topic URL comes from the environment first, then the private file", ()
 });
 
 test("notification text", () => {
-  assert.equal(notices.batchStarted("20261019-2200", "orchestrator x3, session-orchestrator x3 on policy+reports+import").body, "Batch 20261019-2200 started. Plan: orchestrator x3, session-orchestrator x3 on policy+reports+import.");
-  const passed = notices.runOutcome("b1", { index: 2, total: 6, variant: "session-orchestrator", n: 1, outcome: "passed", minutes: "38.4", suite: "59/59", prs: "3", ci: "success", flags: [] });
+  assert.equal(notices.batchStarted("20261019-2200", "hands-on-orchestrator x3, hands-on-session-orchestrator x3 on policy+reports+import").body, "Batch 20261019-2200 started. Plan: hands-on-orchestrator x3, hands-on-session-orchestrator x3 on policy+reports+import.");
+  const passed = notices.runOutcome("b1", { index: 2, total: 6, variant: "hands-on-session-orchestrator", n: 1, outcome: "passed", minutes: "38.4", suite: "59/59", prs: "3", ci: "success", flags: [] });
   assert.equal(passed.title, "Eval run 2/6: passed");
-  assert.equal(passed.body, "Batch b1, run 2 of 6: session-orchestrator #1 passed in 38.4 min (suite 59/59, PRs merged 3, main CI success). Flags: none.");
+  assert.equal(passed.body, "Batch b1, run 2 of 6: hands-on-session-orchestrator #1 passed in 38.4 min (suite 59/59, PRs merged 3, main CI success). Flags: none.");
   assert.equal(passed.priority, "default");
-  const flagged = notices.runOutcome("b1", { index: 3, total: 6, variant: "orchestrator", n: 3, outcome: "stalled", minutes: "41.0", suite: "40/59", prs: "1", ci: "failure", flags: ["memory-write", "open-tool-at-stall"] });
+  const flagged = notices.runOutcome("b1", { index: 3, total: 6, variant: "hands-on-orchestrator", n: 3, outcome: "stalled", minutes: "41.0", suite: "40/59", prs: "1", ci: "failure", flags: ["memory-write", "open-tool-at-stall"] });
   assert.match(flagged.body, /Flags: memory-write, open-tool-at-stall\.$/);
   assert.equal(flagged.priority, "high");
   assert.match(notices.done("b1", "6 run(s)", "/r.md").body, /Turn Copilot Memory back on at github\.com\/settings\/copilot\/features/);
@@ -39,9 +39,9 @@ test("notification text", () => {
 test("sendNtfy posts title, priority, tags and body to the topic (local stub)", async () => {
   const stub = await startNtfyStub();
   try {
-    const result = await sendNtfy(stub.url, notices.runVoid("b1", "orchestrator", 4, "create_session failed"));
+    const result = await sendNtfy(stub.url, notices.runVoid("b1", "hands-on-orchestrator", 4, "create_session failed"));
     assert.deepEqual(result, { ok: true });
-    assert.deepEqual(stub.received, [{ title: "Eval run void", priority: "high", body: "Batch b1: orchestrator #4 is void and was not scored: create_session failed" }]);
+    assert.deepEqual(stub.received, [{ title: "Eval run void", priority: "high", body: "Batch b1: hands-on-orchestrator #4 is void and was not scored: create_session failed" }]);
   } finally {
     await stub.close();
   }
