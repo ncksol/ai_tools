@@ -34,3 +34,63 @@ test('a status-check reply while only waiting for PR reviews is complete, in all
   const line = '- Send only results, blockers and questions. A reply to a status check from the orchestrator, when work continues and nothing is needed, is progress. When your objective is done and you are only waiting, for example for reviews of your open PR, the reply is complete.';
   for (const name of [...ORCHESTRATORS, 'session-worker']) assert.ok(agent(name).includes(line), name);
 });
+
+const ROUTING = [
+  '  - Before you choose who does a job, decide whether it is a review or a claims check. A review looks for defects. A claims check confirms what the owner says it delivered, at the pushed commit; the owner\'s own report is not that proof. If a request asks for both, such as "re-check the fix and refresh the test claims", split it into two jobs: the review part goes to its reviewer, and the claims part goes to a claims checker.',
+  '  - Every claims check goes to a new claims checker at the claims check row, with its model and effort set explicitly. This includes a request to refresh earlier claims, and the claims check of your own unit. Never give a claims check to a reviewer, a judge or any other agent because it already has the context, and never give a claims checker a reviewer\'s model or effort. A model or effort the user named for claims checks overrides the row.',
+  '  - The claims check brief gives the scope to check, the repo, the branch, the exact pushed head commit, the target or base branch, and the evidence to send back: the tests run at that commit with their counts, CI at that commit, and the scope compared with the brief.',
+  '  - A review brief covers only the review. The reviewer may still run tests, read CI or reproduce a failure when it needs that to establish a finding. Those results don\'t count as the claims check.',
+  '  - If a reviewer reports that it was sent a claims job, start a claims checker for it. Don\'t count the check as done or as not needed.',
+].join('\n');
+const REUSE_CLAUSE = 'A claims check never goes to an idle agent because it has the context: start a new claims checker (see "Claims check" in "Evidence and review").';
+const RECHECK_CLAUSE = 'A re-check covers only the review of the new diff: the claims check for the new commit goes to a new claims checker (see "Claims check").';
+const OWN_UNIT_LINE = '- Start its claims check and its regular or critical review yourself, as separate jobs, as you would for a child\'s unit (see "Evidence and review").';
+const CLAIMS_ROW = '| Claims check | Sol at `medium`; Opus at `low` if Sol isn\'t listed | The check before every merge, publish and "done". A check, not a review. |';
+
+test('both orchestrators have the same claims routing rule under the Claims check bullet', () => {
+  for (const name of ORCHESTRATORS) {
+    const text = agent(name);
+    const at = text.indexOf('- **Claims check**:');
+    assert.ok(at >= 0, `${name}: claims bullet`);
+    const bulletEnd = text.indexOf('\n', at);
+    assert.equal(text.slice(bulletEnd + 1, bulletEnd + 1 + ROUTING.length), ROUTING, `${name}: routing follows the bullet`);
+  }
+});
+
+test('combined review-and-claims requests are split, and claims refreshes and own units get a new checker', () => {
+  for (const name of ORCHESTRATORS) {
+    const text = agent(name);
+    assert.match(text, /split it into two jobs/, name);
+    assert.match(text, /a request to refresh earlier claims, and the claims check of your own unit/, name);
+    assert.ok(text.includes(OWN_UNIT_LINE), `${name}: own-unit line`);
+  }
+});
+
+test('each orchestrator runs the claims checker as its own delegation type', () => {
+  assert.ok(agent('hands-on-orchestrator').includes('Run it as a one-off, read-only sub-agent.'));
+  assert.ok(agent('hands-on-orchestrator').includes('Start every sub-agent as `wintermute:orchestrator-worker`.'));
+  assert.ok(agent('hands-on-session-orchestrator').includes('Run it as a one-off, read-only session, created with `base_branch` set to that branch.'));
+  assert.ok(agent('hands-on-session-orchestrator').includes('Create every child, owner or one-off, with `kickoff.agent: "wintermute:session-worker"`'));
+});
+
+test('reuse of idle agents and re-checks exclude claims checks', () => {
+  for (const name of ORCHESTRATORS) {
+    const text = agent(name);
+    const reuse = text.split('\n').find(l => l.startsWith('- Send a follow-up to an idle '));
+    assert.ok(reuse && reuse.includes(REUSE_CLAUSE), `${name}: split-work reuse rule`);
+    const recheck = text.split('\n').find(l => l.startsWith('- **Re-checks**'));
+    assert.ok(recheck && recheck.includes(RECHECK_CLAUSE), `${name}: re-check rule`);
+  }
+  const step4 = agent('hands-on-session-orchestrator').split('\n').find(l => l.startsWith('4. If an idle session'));
+  assert.ok(step4 && step4.includes(REUSE_CLAUSE), 'helper request step 4');
+});
+
+test('the claims check row keeps its models and is no longer called a review row', () => {
+  for (const name of ORCHESTRATORS) {
+    const text = agent(name);
+    assert.ok(text.includes(CLAIMS_ROW), `${name}: row unchanged`);
+    assert.doesNotMatch(text, /last five rows are review rows/, name);
+    assert.doesNotMatch(text, /a claims check, a review or a judge gets its review row/, name);
+    assert.match(text, /a claims check gets the claims check row, a review or a judge gets its review row/, name);
+  }
+});
