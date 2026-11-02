@@ -266,7 +266,7 @@ test('a registry PR takes its state from the app\'s record when the lookup fails
   assert.deepEqual({ source: other.pr.source, state: other.pr.state, stage: other.stage }, { source: 'registry', state: 'unknown', stage: 'pr_open' });
 });
 
-// Item 3: the monitor timer shows "0s" for registry PRs.
+// Item 3: when a registry PR is known to have opened, and that registry PRs without a schedule have no monitor.
 
 test('a registry PR is known from the earliest retained status line that names it', () => {
   const registry = { prProvider: 'github', prId: 8, prRepo: 'acme/shop' };
@@ -298,4 +298,10 @@ test('registry PRs without a schedule show no monitor, whatever is known about w
     assert.deepEqual({ state: unit.monitor.state, since: unit.monitor.since }, { state: 'none', since: null }, id);
   }
   assert.equal(unitOf(snapshot, 'looked').stage, 'in_review');
+});
+
+test('an open PR without a schedule reads "no monitor", with no warning', () => {
+  const unit = { pr: { state: 'open' }, monitor: deriveMonitor({ stage: 'in_review', hasPr: true, now: at(60), thresholds: DEFAULT_THRESHOLDS }) };
+  assert.equal(text(monitorHtml(unit, at(60))), 'no monitor');
+  assert.doesNotMatch(monitorHtml(unit, at(60), true), /missing|starts when/);
 });

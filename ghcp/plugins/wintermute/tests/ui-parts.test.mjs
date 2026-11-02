@@ -68,7 +68,10 @@ test('monitor text covers alive, missing, ended and no PR', () => {
   assert.equal(text(monitorHtml(findByLabel(snapshot, 'F2a'), NOW)), 'ended, PR merged');
   assert.equal(text(monitorHtml(findByLabel(snapshot, 'F2a'), NOW, true)), 'ended when the PR merged');
   assert.equal(text(monitorHtml(findByLabel(snapshot, 'I1'), NOW)), 'no PR yet');
-  assert.equal(text(monitorHtml(findByLabel(snapshot, 'I1'), NOW, true)), 'starts when the PR opens');
+  assert.equal(text(monitorHtml(findByLabel(snapshot, 'I1'), NOW, true)), 'no PR yet');
+  const unwatched = { ...findByLabel(snapshot, 'D5'), monitor: { state: 'none', lastCheckAt: null, nextCheckAt: null, everyMinutes: null, since: null } };
+  assert.equal(text(monitorHtml(unwatched, NOW)), 'no monitor');
+  assert.equal(text(monitorHtml(unwatched, NOW, true)), 'no monitor');
   const paused = { ...findByLabel(snapshot, 'D5'), monitor: { state: 'paused', lastCheckAt: null, nextCheckAt: null, everyMinutes: 10, since: NOW - 300000 } };
   assert.equal(text(monitorHtml(paused, NOW)), 'paused · 5m');
 });

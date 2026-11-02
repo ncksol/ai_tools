@@ -132,7 +132,7 @@ function prState(pr, now) {
 
 function prHtml(unit, now) {
   const { pr, monitor } = unit;
-  if (!pr) return '<p class="small muted">No PR yet. A PR monitor starts when the PR opens.</p>';
+  if (!pr) return '<p class="small muted">No PR yet.</p>';
   const state = closedNotMerged(unit)
     ? `<span class="pr-state">${closedBadge}${pr.closedAt ? `<span>${ago(pr.closedAt, now)}</span>` : ''}</span>`
     : `<span>${prState(pr, now)}</span>`;
