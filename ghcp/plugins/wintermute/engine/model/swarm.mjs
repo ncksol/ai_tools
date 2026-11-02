@@ -760,10 +760,7 @@ export function buildSnapshot(input) {
   const lastActivityAt = maxTime(...[...contexts.values()].map(c => c.all.lastEventAt), lastCostAt) ?? root.createdAt ?? now;
   // A running nested sub-agent, or a child session's own sub-agent, also keeps the run live: no unit status shows them.
   const anyActive = [orchestrator, ...everyUnit].some(session => ACTIVE_DETAILS.has(session.statusDetail)) || hiddenWorkRuns(input, contexts, root.id);
-  // A unit that has done its part and waits on PR reviewers keeps the run out of History, as PR monitor checks used to,
-  // but the run is still quiet: its clocks don't tick.
-  const anyWaiting = units.some(unit => WAITING_ON_REVIEW.has(unit));
-  const { lifecycle, finishedAt } = runLifecycle({ lastActivityAt, anyActive: anyActive || anyWaiting, now, thresholds });
+  const { lifecycle, finishedAt } = runLifecycle({ lastActivityAt, anyActive, now, thresholds });
   const monitorDue = units.some(unit => unit.monitor.state === 'alive') || app.automations.some(item => rootContext.ids.has(item.sessionId)
     && item.pausedAt === null && item.nextRunAt !== null && item.nextRunAt > now - thresholds.monitorGraceMs);
   // An archived unit is over, whatever its status shows (an archived failed unit shows failed).

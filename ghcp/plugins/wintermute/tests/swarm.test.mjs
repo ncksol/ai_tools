@@ -964,13 +964,6 @@ function quietSwarm(build, now) {
   ui.start(); ui.turnStart(); ui.at(at(30)); ui.turnEnd();
   data.states.set('cli-ui', fold(ui, 'cli-ui'));
   data.app.automations = [];
-  // These runs are about sub-agents and processes: the API unit's PR has merged, so it doesn't keep the run live
-  // as a unit waiting on review would.
-  const prInfo = data.prInfo;
-  data.prInfo = (pr, options) => {
-    const info = prInfo(pr, options);
-    return pr.id === 4711 && info ? { ...info, state: 'merged', mergedAt: at(100) } : info;
-  };
   return { data, ids };
 }
 

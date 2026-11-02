@@ -300,17 +300,16 @@ test('registry PRs without a schedule show no monitor, whatever is known about w
   assert.equal(unitOf(snapshot, 'looked').stage, 'in_review');
 });
 
-test('a swarm whose units finished their work and wait on PR reviews is not stalled, and stays live', () => {
+test('a swarm whose units finished their work and wait on PR reviews is not stalled, with draft or ready PRs', () => {
   const reported = (id, status) => ({ id, row: githubPr(id === 'a' ? 8 : 9), log: log => { log.at(at(20)); log.report('ws-root', `swarm-status: ${status} unit=${id} pr=github:${id === 'a' ? 8 : 9}\nSummary: PR open.`, status === 'complete' ? 'handoff' : 'progress'); } });
-  const open = pr => ({ state: 'open', title: `PR ${pr.id}`, openedAt: at(15), mergedAt: null, closedAt: null, reviewNote: null, url: null, checkedAt: at(55), error: null });
-  const waiting = buildSnapshot(swarm([reported('a', 'complete'), reported('b', 'complete')], open));
-  assert.deepEqual(validateSnapshot(waiting), []);
-  assert.deepEqual(waiting.units.map(unit => unit.statusDetail), ['idle', 'idle']);
-  assert.equal(waiting.run.stalled, null);
-  const muchLater = buildSnapshot({ ...swarm([reported('a', 'complete'), reported('b', 'complete')], open), now: at(60) + 5 * 60 * MINUTE });
-  assert.equal(muchLater.run.lifecycle, 'live', 'waiting on reviewers keeps the run out of History');
-  assert.equal(muchLater.run.stalled, null);
-  const oneUnfinished = buildSnapshot(swarm([reported('a', 'complete'), reported('b', 'progress')], open));
+  const lookup = state => () => ({ state, title: 'PR', openedAt: at(15), mergedAt: null, closedAt: null, reviewNote: null, url: null, checkedAt: at(55), error: null });
+  for (const state of ['open', 'draft']) {
+    const waiting = buildSnapshot(swarm([reported('a', 'complete'), reported('b', 'complete')], lookup(state)));
+    assert.deepEqual(validateSnapshot(waiting), []);
+    assert.deepEqual(waiting.units.map(unit => unit.statusDetail), ['idle', 'idle'], state);
+    assert.equal(waiting.run.stalled, null, state);
+  }
+  const oneUnfinished = buildSnapshot(swarm([reported('a', 'complete'), reported('b', 'progress')], lookup('open')));
   assert.notEqual(oneUnfinished.run.stalled, null, 'a unit that did not finish its work still stalls the swarm');
 });
 

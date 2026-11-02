@@ -252,6 +252,7 @@ test('a unit waits on review only when it reported complete, has an open PR and 
   assert.equal(awaitingReview(base), true);
   assert.equal(awaitingReview({ ...base, detail: 'stopped' }), true);
   assert.equal(awaitingReview({ ...base, prState: 'unknown' }), true);
+  assert.equal(awaitingReview({ ...base, prState: 'draft' }), true);
   assert.equal(awaitingReview({ ...base, parentRepliedAt: T0 - MINUTE }), true);
   assert.equal(awaitingReview({ ...base, parentRepliedAt: T0 + MINUTE }), false, 'the orchestrator sent new work after the report');
   assert.equal(awaitingReview({ ...base, report: { status: 'progress', at: T0 } }), false);

@@ -48,13 +48,13 @@ export const AWAITING_REVIEW = 'awaiting_review';
 
 /**
  * A unit has done its part and waits on PR reviewers or the orchestrator: it is idle, its latest report is `complete`,
- * the orchestrator has not replied since, and its PR is still open (or open as far as the registry knows).
+ * the orchestrator has not replied since, and its PR is still open, as a draft or not (or open as far as the registry knows).
  */
 export function awaitingReview({ detail, report, parentRepliedAt, prState }) {
   if (detail !== 'idle' && detail !== 'stopped') return false;
   if (!report || report.status !== 'complete') return false;
   if (parentRepliedAt !== null && parentRepliedAt !== undefined && parentRepliedAt > report.at) return false;
-  return prState === 'open' || prState === 'unknown';
+  return prState === 'open' || prState === 'draft' || prState === 'unknown';
 }
 
 /** The design's tool rule: bash initial_wait + 5 min (10 min without one); read_bash delay + 2 min; read_agent timeout + 2 min; quick tools 2 min. */
