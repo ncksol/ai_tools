@@ -94,3 +94,13 @@ test('the claims check row keeps its models and is no longer called a review row
     assert.match(text, /a claims check gets the claims check row, a review or a judge gets its review row/, name);
   }
 });
+
+const MISROUTE_HEAD = '- A claims check is a separate job from a review. If you are a reviewer and your brief or a follow-up also asks you to verify the author\'s claims for a merge, publish or "done", for example "refresh the test and lint claims", do the review and leave the claims job undone.';
+const MISROUTE_TAIL = 'Don\'t do the claims job anyway, don\'t count it as done or as not needed, and don\'t start another agent for it. You may still run tests, read CI or reproduce a failure when your review needs that to establish a finding.';
+
+test('both workers hand a misrouted claims job back and keep tests for findings', () => {
+  const where = { 'orchestrator-worker': 'Under **Blockers or questions**, say that a claims job was sent to you and needs a separate claims checker.', 'session-worker': 'In your report, under `Blockers:`, say that a claims job was sent to you and needs a separate claims checker.' };
+  for (const [name, middle] of Object.entries(where)) {
+    assert.ok(agent(name).includes(`${MISROUTE_HEAD} ${middle} ${MISROUTE_TAIL}`), name);
+  }
+});
