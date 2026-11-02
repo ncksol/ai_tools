@@ -14,6 +14,10 @@ After merging, run `npm run release:publish -- --dry-run`, then `npm run release
 - The swarm dashboard no longer counts a session as an orchestrator because its agent is one of the removed ones, so their past runs without child sessions no longer show as swarms.
 - `npm run validate` now reports any agent file in `com.github.copilot/agents/` that the plugin doesn't package.
 
+### Changed
+
+- `orchestrator-worker` no longer says the orchestrator that starts it has no shell, file, search or web tools. Its only caller, `hands-on-orchestrator`, has them but does only quick jobs itself.
+
 ## 0.3.4 — 2026-10-29
 
 ### Changed
