@@ -6,6 +6,14 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace still follows main. See [Releases](README.md#releases) for prerequisites, checks and recovery after a partial publish.
 
+## 0.4.0 — 2026-11-02
+
+### Removed
+
+- The `orchestrator` and `session-orchestrator` agents. Use `hands-on-orchestrator` or `hands-on-session-orchestrator` instead. Sessions that still select a removed agent ID get no agent until they switch.
+- The swarm dashboard no longer counts a session as an orchestrator because its agent is one of the removed ones, so their past runs without child sessions no longer show as swarms.
+- `npm run validate` now reports any agent file in `com.github.copilot/agents/` that the plugin doesn't package.
+
 ## 0.3.4 — 2026-10-29
 
 ### Changed

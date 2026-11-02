@@ -28,13 +28,13 @@ Then start new sessions, or restart the app, to get the updated agents: a runnin
 
 Before 0.2.0 the dashboard was the `swarm-dashboard` plugin and the agents were loose files that you linked or copied into `~/.copilot/agents/`. To move to `wintermute`:
 
-1. Remove the six agents from `~/.copilot/agents/`. The plugin's agents answer only to their `wintermute:` IDs. Old copies there stay separate agents under the bare names, with the same names in the agent picker, and run the old prompts, which start bare-named workers. Once your clone pulls this release, the symlinks also point at files that no longer exist.
+1. Remove the old agent files from `~/.copilot/agents/`. The plugin's agents answer only to their `wintermute:` IDs. Old copies there stay separate agents under the bare names, with the same names in the agent picker, and run the old prompts, which start bare-named workers. Once your clone pulls this release, the symlinks also point at files that no longer exist.
 2. Run `copilot plugin uninstall swarm-dashboard@ai-tools`. Two installed plugins that both register the `swarm-dashboard` canvas would clash.
 3. Run `copilot plugin install wintermute@ai-tools`.
 4. Restart the app, or reload extensions in every open session. Any session that still runs the old extension can keep hosting the 0.1.x dashboard server on port 7927, with no out-of-date notice. A session keeps the agents it started with until the app restarts, so if you only reload extensions, start a new session for orchestrator work.
 5. With a dashboard canvas open, check that `curl -s http://127.0.0.1:7927/api/health` reports `"version":"0.2.0"`. An older version means a session still hosts the old server: restart the app.
 
-The [CHANGELOG](CHANGELOG.md) entry for 0.2.0 has the commands. The canvas id (`swarm-dashboard`), the port and the run history in `~/.copilot/swarm-dashboard/` stay the same, so past runs stay in History, including runs of the agents under their old plain names.
+The [CHANGELOG](CHANGELOG.md) entry for 0.2.0 has the commands. The canvas id (`swarm-dashboard`), the port and the run history in `~/.copilot/swarm-dashboard/` stay the same, so past runs stay in History.
 
 ## The agents
 
@@ -42,20 +42,18 @@ The agents are in `com.github.copilot/agents/`. Copilot names a plugin agent `<p
 
 | Agent | ID | What it does |
 | --- | --- | --- |
-| `orchestrator` | `wintermute:orchestrator` | Plans, delegates and tracks multi-PR work, with no shell, file-editing, search, web or MCP tools. Hands owned work to child sessions and one-off jobs to `orchestrator-worker` sub-agents. |
-| `session-orchestrator` | `wintermute:session-orchestrator` | Like `orchestrator`, but delegates only to child sessions, which run as `session-worker`. |
-| `hands-on-orchestrator` | `wintermute:hands-on-orchestrator` | Like `orchestrator`, but may do a quick job itself, and commits small edits on its own session branch. Plans for wall-clock speed with the same rules as `hands-on-session-orchestrator`. |
-| `hands-on-session-orchestrator` | `wintermute:hands-on-session-orchestrator` | The same change made to `session-orchestrator`. |
-| `orchestrator-worker` | `wintermute:orchestrator-worker` | Does one-off jobs for `orchestrator` and `hands-on-orchestrator`, which start it through `task`. Hidden from the picker. |
-| `session-worker` | `wintermute:session-worker` | The agent every child session of `session-orchestrator` and `hands-on-session-orchestrator` runs as. Hidden from the picker. |
+| `hands-on-orchestrator` | `wintermute:hands-on-orchestrator` | Plans, delegates and tracks multi-PR work. Hands owned work to child sessions and one-off jobs to `orchestrator-worker` sub-agents, may do a quick job itself, and commits small edits on its own session branch. Plans for wall-clock speed. |
+| `hands-on-session-orchestrator` | `wintermute:hands-on-session-orchestrator` | Like `hands-on-orchestrator`, but delegates only to child sessions, which run as `session-worker`, and never starts sub-agents. |
+| `orchestrator-worker` | `wintermute:orchestrator-worker` | Does one-off jobs for `hands-on-orchestrator`, which starts it through `task`. Hidden from the picker. |
+| `session-worker` | `wintermute:session-worker` | The agent every child session of `hands-on-session-orchestrator` runs as. Hidden from the picker. |
 
 Run an orchestrator as the session's agent in the GitHub Copilot app: pick it before your first message, from the composer's **+** menu or with `/agent`. Where a tool or CLI flag takes an agent ID, use the `wintermute:` ID. A bare name never resolves to a plugin agent, so the orchestrators start their workers by these IDs, and the workers must come from this plugin too.
 
-The four orchestrators are meant to run on Opus 5.5 at `max` reasoning effort, the setup the local eval runs used. Their "Models and effort" tiers set the model and effort only for the jobs they hand out.
+The two orchestrators are meant to run on Opus 5.5 at `max` reasoning effort, the setup the local eval runs used. Their "Models and effort" tiers set the model and effort only for the jobs they hand out.
 
 ## The swarm dashboard
 
-A watch-only dashboard for agentic swarms in the GitHub Copilot app. A swarm is a session that has started child sessions, such as an orchestrator that hands each unit of work to its own session. Before its first child session, an `orchestrator`, `session-orchestrator`, `hands-on-orchestrator` or `hands-on-session-orchestrator` session is a swarm once it has started a `task` sub-agent, or while it waits on a tagged question, such as its plan question, so that the question shows under "Needs you". Sub-agents alone don't make other sessions swarms. The dashboard shows what every session and sub-agent is doing, how far it has got, what it costs and what needs you, so you can follow the work at a glance instead of reading transcripts.
+A watch-only dashboard for agentic swarms in the GitHub Copilot app. A swarm is a session that has started child sessions, such as an orchestrator that hands each unit of work to its own session. Before its first child session, a `hands-on-orchestrator` or `hands-on-session-orchestrator` session is a swarm once it has started a `task` sub-agent, or while it waits on a tagged question, such as its plan question, so that the question shows under "Needs you". Sub-agents alone don't make other sessions swarms. The dashboard shows what every session and sub-agent is doing, how far it has got, what it costs and what needs you, so you can follow the work at a glance instead of reading transcripts.
 
 It opens as a canvas in the app's side panel, or in any browser through a small local launcher. It reads Copilot's local data read-only. Its only network requests are read-only `gh` and `az` queries about the swarm's pull requests.
 
@@ -126,7 +124,7 @@ Run these from the plugin folder.
 | `npm start` | Serve the dashboard for browsers (`--port`, `--demo`, `--still`) |
 | `npm run snapshot -- --list` | Print the swarms as JSON; `--swarm <id>`, `--history` and `--run <id>` print the rest |
 | `npm test` | Run the unit tests |
-| `npm run validate` | Check the plugin's manifests, files and marketplace entry, the six agents and their worker IDs, and that the CHANGELOG has an entry for the current version |
+| `npm run validate` | Check the plugin's manifests, files and marketplace entry, the four agents and their worker IDs, and that the CHANGELOG has an entry for the current version |
 | `npm run release:bump -- <version\|patch\|minor\|major>` | Advance the single package version and prepare its changelog section |
 | `npm run release:publish -- --dry-run` | Check release readiness and preview the tag and notes without publishing |
 | `npm run release:publish` | Tag the current main commit, push only that tag and create its GitHub Release |
@@ -193,7 +191,7 @@ Publishing is not atomic across Git and GitHub. If a push or GitHub Release crea
 | `engine/` | Reads Copilot's local data into swarm snapshots and run summaries |
 | `server/` | The local server, live updates, the shared port and the canvas host |
 | `ui/` | The dashboard page: plain ES modules and CSS, no build step |
-| `com.github.copilot/agents/` | The six orchestrator agents |
+| `com.github.copilot/agents/` | The orchestrator agents and their workers |
 | `com.github.copilot/extensions/swarm-dashboard/` | The canvas extension |
 | `scripts/` | The launcher, the snapshot command, the layout check and the validator |
 | `tests/` | Unit tests and synthetic fixtures |
