@@ -6,6 +6,18 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace still follows main. See [Releases](README.md#releases) for prerequisites, checks and recovery after a partial publish.
 
+## 0.6.0 — 2026-11-02
+
+### Changed
+
+- Claims checks have their own route. `hands-on-orchestrator` and `hands-on-session-orchestrator` decide whether a job is a review or a claims check before they choose who does it, and split a request that asks for both. Every claims check, including a request to refresh earlier claims and the check of the orchestrator's own unit, goes to a new claims checker at the Claims check row (Sol at `medium`, or Opus at `low` if Sol isn't listed): a `wintermute:orchestrator-worker` sub-agent or a `wintermute:session-worker` one-off session. An idle reviewer's context is no longer a reason to send it a claims job, and the claims check row is no longer called a review row. The claims brief gives the exact pushed head commit and the base branch. Reviewers may still run tests to establish a finding.
+- When a worker is asked to do a claims job as part of a review, it does the review, leaves the claims job undone and reports it for a separate claims checker.
+- Required reviews, panels, security reviews and claims checks, and when they run, are unchanged.
+
+### Upgrading
+
+- Running sessions keep the prompts they started with.
+
 ## 0.5.0 — 2026-11-02
 
 ### Changed
