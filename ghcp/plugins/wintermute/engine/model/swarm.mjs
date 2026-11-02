@@ -6,7 +6,10 @@ import { descendants, resolveNodeId } from './forest.mjs';
 import { setRunStats } from './run-stats.mjs';
 import { effortOf, mergeStates } from './session-state.mjs';
 import { deriveMonitor, deriveStage, hostOf, mentionFits, prView, resolvePr } from './stage.mjs';
-import { ACTIVE_DETAILS, displayOf, evaluateStatus, evaluateSubagentUnit, subagentLimitMs, swarmStalled, toolLimitMs, toolView } from './status.mjs';
+import { ACTIVE_DETAILS, AWAITING_REVIEW, awaitingReview, displayOf, evaluateStatus, evaluateSubagentUnit, subagentLimitMs, swarmStalled, toolLimitMs, toolView } from './status.mjs';
+
+/** Units built by buildUnit that have done their part and wait on PR reviewers; kept out of the snapshot. */
+const WAITING_ON_REVIEW = new WeakSet();
 
 const SEGMENT_GAP_MS = 2 * MINUTE;
 const TASK_OVERRIDE_MS = 5 * MINUTE;
@@ -393,13 +396,17 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
 
   const outcome = row?.outcome ?? (merged ? 'merged' : closedWithoutMerge ? 'closed' : evaluation.detail === 'failed' ? 'failed' : null);
   const outcomeAt = outcome ? row?.endedAt ?? pr?.mergedAt ?? pr?.closedAt ?? null : null;
-  return {
+  const unit = {
     ...sessionView(input, c, label, evaluation, report, row?.title ?? null, marks, outcomeAt),
     // The registry's branch wins over the app's, which can be missing or stale; assignDependencies matches base branches on it.
     branch: row?.branch ?? node.branch ?? null,
     parentId: node.parentId, depth: node.depth, stage, closedWithoutMerge, outcome, pr, monitor, dependsOn: null, todoId: row?.todoId ?? null,
     agent: null,
   };
+  const waiting = !node.archivedAt && !merged && !closedWithoutMerge
+    && awaitingReview({ detail: evaluation.detail, report, parentRepliedAt, prState: pr?.state ?? null });
+  if (waiting) WAITING_ON_REVIEW.add(unit);
+  return unit;
 }
 
 function planFromTodos(db, units, registry) {
@@ -753,13 +760,16 @@ export function buildSnapshot(input) {
   const lastActivityAt = maxTime(...[...contexts.values()].map(c => c.all.lastEventAt), lastCostAt) ?? root.createdAt ?? now;
   // A running nested sub-agent, or a child session's own sub-agent, also keeps the run live: no unit status shows them.
   const anyActive = [orchestrator, ...everyUnit].some(session => ACTIVE_DETAILS.has(session.statusDetail)) || hiddenWorkRuns(input, contexts, root.id);
-  const { lifecycle, finishedAt } = runLifecycle({ lastActivityAt, anyActive, now, thresholds });
+  // A unit that has done its part and waits on PR reviewers keeps the run out of History, as PR monitor checks used to,
+  // but the run is still quiet: its clocks don't tick.
+  const anyWaiting = units.some(unit => WAITING_ON_REVIEW.has(unit));
+  const { lifecycle, finishedAt } = runLifecycle({ lastActivityAt, anyActive: anyActive || anyWaiting, now, thresholds });
   const monitorDue = units.some(unit => unit.monitor.state === 'alive') || app.automations.some(item => rootContext.ids.has(item.sessionId)
     && item.pausedAt === null && item.nextRunAt !== null && item.nextRunAt > now - thresholds.monitorGraceMs);
   // An archived unit is over, whatever its status shows (an archived failed unit shows failed).
   const archivedIds = new Set(nodes.filter(node => node.archivedAt !== null && node.archivedAt !== undefined).map(node => node.id));
   const stalled = lifecycle === 'live'
-    ? swarmStalled({ orchestratorDetail: orchestrator.statusDetail, unitDetails: everyUnit.map(unit => (archivedIds.has(unit.id) ? 'archived' : unit.statusDetail)), monitorDue, lastActivityAt })
+    ? swarmStalled({ orchestratorDetail: orchestrator.statusDetail, unitDetails: everyUnit.map(unit => (archivedIds.has(unit.id) ? 'archived' : WAITING_ON_REVIEW.has(unit) ? AWAITING_REVIEW : unit.statusDetail)), monitorDue, lastActivityAt })
     : null;
   const { feed, recent } = buildFeed(contexts, labels, extraFeed, flags);
   for (const view of [orchestrator, ...everyUnit]) view.recent = recent.get(view.id) ?? [];

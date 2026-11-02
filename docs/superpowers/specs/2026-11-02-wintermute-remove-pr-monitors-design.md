@@ -48,7 +48,7 @@ Owner sessions schedule recurring PR-watch automations after they open a PR. Eac
   - `engine/model/stage.mjs` `deriveMonitor`: with no automation row and the unit not ended, return `none`. Keep `alive`, `paused`, `ended` and overdue-row `missing` as they are.
   - `deriveStage` keeps `monitorEver` for placing a unit with unknown PR state in review, so historical data still places correctly.
   - `ui/parts.mjs` `monitorHtml`: `none` reads "no monitor" (long and short), not "starts when the PR opens" / "no PR yet" wording that promises a monitor. `ui/live.mjs`: "No PR yet." without the monitor promise.
-  - `engine/model/status.mjs` stall rules are unchanged.
+  - `engine/model/status.mjs`: the unit stall rule is unchanged. For the swarm stall rule, a unit waiting on review (latest report `complete`, PR open, no orchestrator reply since) has done its part: it counts like an ended unit, and it keeps the run out of History without restarting its clocks (user decision after the first review: "no swarm unit should be stalled because they are waiting on PR reviews").
 - **README**: describe the Monitor slot as showing a configured schedule, if any, and add an upgrade note that updating the plugin doesn't change prompts in running sessions or stop their existing automations.
 - **Tests**: dashboard regression tests for `deriveMonitor` (open PR with no row → `none`; overdue row → `missing`; wakes/cleared saves with no row → `none`) and UI copy. Static prompt assertions that no agent file instructs starting or stopping a PR monitor; these check the text only, not runtime behaviour, and the PR says so.
 

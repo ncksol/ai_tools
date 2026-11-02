@@ -300,6 +300,20 @@ test('registry PRs without a schedule show no monitor, whatever is known about w
   assert.equal(unitOf(snapshot, 'looked').stage, 'in_review');
 });
 
+test('a swarm whose units finished their work and wait on PR reviews is not stalled, and stays live', () => {
+  const reported = (id, status) => ({ id, row: githubPr(id === 'a' ? 8 : 9), log: log => { log.at(at(20)); log.report('ws-root', `swarm-status: ${status} unit=${id} pr=github:${id === 'a' ? 8 : 9}\nSummary: PR open.`, status === 'complete' ? 'handoff' : 'progress'); } });
+  const open = pr => ({ state: 'open', title: `PR ${pr.id}`, openedAt: at(15), mergedAt: null, closedAt: null, reviewNote: null, url: null, checkedAt: at(55), error: null });
+  const waiting = buildSnapshot(swarm([reported('a', 'complete'), reported('b', 'complete')], open));
+  assert.deepEqual(validateSnapshot(waiting), []);
+  assert.deepEqual(waiting.units.map(unit => unit.statusDetail), ['idle', 'idle']);
+  assert.equal(waiting.run.stalled, null);
+  const muchLater = buildSnapshot({ ...swarm([reported('a', 'complete'), reported('b', 'complete')], open), now: at(60) + 5 * 60 * MINUTE });
+  assert.equal(muchLater.run.lifecycle, 'live', 'waiting on reviewers keeps the run out of History');
+  assert.equal(muchLater.run.stalled, null);
+  const oneUnfinished = buildSnapshot(swarm([reported('a', 'complete'), reported('b', 'progress')], open));
+  assert.notEqual(oneUnfinished.run.stalled, null, 'a unit that did not finish its work still stalls the swarm');
+});
+
 test('an open PR without a schedule reads "no monitor", with no warning', () => {
   const unit = { pr: { state: 'open' }, monitor: deriveMonitor({ stage: 'in_review', hasPr: true, now: at(60), thresholds: DEFAULT_THRESHOLDS }) };
   assert.equal(text(monitorHtml(unit, at(60))), 'no monitor');

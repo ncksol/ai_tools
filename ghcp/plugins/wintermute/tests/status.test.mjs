@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_THRESHOLDS } from '../engine/config.mjs';
 import { STATUS_DETAILS } from '../engine/schema.mjs';
-import { busyWindowStart, displayOf, evaluateStatus, evaluateSubagentUnit, swarmStalled, toolLimitMs } from '../engine/model/status.mjs';
+import { awaitingReview, busyWindowStart, displayOf, evaluateStatus, evaluateSubagentUnit, swarmStalled, toolLimitMs } from '../engine/model/status.mjs';
 import { MINUTE } from '../engine/time.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { fold } from './helpers/fold.mjs';
@@ -245,6 +245,28 @@ test('the swarm is stalled when the orchestrator and every open unit are idle an
   assert.equal(swarmStalled({ orchestratorDetail: 'idle', unitDetails: ['idle'], monitorDue: true, lastActivityAt: T0 }), null);
   assert.equal(swarmStalled({ orchestratorDetail: 'busy', unitDetails: ['idle'], monitorDue: false, lastActivityAt: T0 }), null);
   assert.equal(swarmStalled({ orchestratorDetail: 'idle', unitDetails: ['merged', 'archived'], monitorDue: false, lastActivityAt: T0 }), null);
+});
+
+test('a unit waits on review only when it reported complete, has an open PR and has had no reply since', () => {
+  const base = { detail: 'idle', report: { status: 'complete', at: T0 }, parentRepliedAt: null, prState: 'open' };
+  assert.equal(awaitingReview(base), true);
+  assert.equal(awaitingReview({ ...base, detail: 'stopped' }), true);
+  assert.equal(awaitingReview({ ...base, prState: 'unknown' }), true);
+  assert.equal(awaitingReview({ ...base, parentRepliedAt: T0 - MINUTE }), true);
+  assert.equal(awaitingReview({ ...base, parentRepliedAt: T0 + MINUTE }), false, 'the orchestrator sent new work after the report');
+  assert.equal(awaitingReview({ ...base, report: { status: 'progress', at: T0 } }), false);
+  assert.equal(awaitingReview({ ...base, report: null }), false);
+  assert.equal(awaitingReview({ ...base, prState: null }), false, 'no PR: nothing outside the swarm to wait on');
+  assert.equal(awaitingReview({ ...base, prState: 'merged' }), false);
+  assert.equal(awaitingReview({ ...base, prState: 'closed' }), false);
+  assert.equal(awaitingReview({ ...base, detail: 'busy' }), false);
+  assert.equal(awaitingReview({ ...base, detail: 'crashed' }), false);
+});
+
+test('units waiting on review neither stall a swarm nor hide an idle unit that does', () => {
+  assert.equal(swarmStalled({ orchestratorDetail: 'idle', unitDetails: ['awaiting_review', 'awaiting_review', 'merged'], monitorDue: false, lastActivityAt: T0 }), null);
+  assert.deepEqual(swarmStalled({ orchestratorDetail: 'idle', unitDetails: ['awaiting_review', 'idle'], monitorDue: false, lastActivityAt: T0 }),
+    { since: T0, reason: 'The orchestrator and every open unit are idle or ended, and nothing is scheduled to run.' });
 });
 
 test('busyWindowStart walks back through busy spans', () => {
