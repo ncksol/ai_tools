@@ -122,18 +122,18 @@ test("pinned policy calibrations stay excluded and different agent bundles are n
 
 test("live variant rows with agent_bundle_sha256 match namespaced agents and split summary groups by bundle", () => {
   const summary = summarize([
-    row({ variant: "orchestrator", agent: "wintermute:orchestrator", features: THREE, agent_bundle_sha256: "bundle1111", minutes: "30" }),
-    row({ variant: "orchestrator", agent: "wintermute:orchestrator", features: THREE, agent_bundle_sha256: "bundle1111", minutes: "40" }),
-    row({ variant: "orchestrator", agent: "wintermute:orchestrator", features: THREE, agent_bundle_sha256: "bundle2222", minutes: "50" }),
+    row({ variant: "hands-on-orchestrator", agent: "wintermute:hands-on-orchestrator", features: THREE, agent_bundle_sha256: "bundle1111", minutes: "30" }),
+    row({ variant: "hands-on-orchestrator", agent: "wintermute:hands-on-orchestrator", features: THREE, agent_bundle_sha256: "bundle1111", minutes: "40" }),
+    row({ variant: "hands-on-orchestrator", agent: "wintermute:hands-on-orchestrator", features: THREE, agent_bundle_sha256: "bundle2222", minutes: "50" }),
   ]);
   assert.equal(summary.excludedAgentRuns, 0);
   assert.deepEqual(summary.groups.map((g) => [g.variant, g.agentBundle, g.runs, g.medianMinutes]), [
-    ["orchestrator", "bundle1111", 2, 35],
-    ["orchestrator", "bundle2222", 1, 50],
+    ["hands-on-orchestrator", "bundle1111", 2, 35],
+    ["hands-on-orchestrator", "bundle2222", 1, 50],
   ]);
   const formatted = formatSummary(summary);
-  assert.match(formatted, /orchestrator@bundle11/);
-  assert.match(formatted, /orchestrator@bundle22/);
+  assert.match(formatted, /hands-on-orchestrator@bundle11/);
+  assert.match(formatted, /hands-on-orchestrator@bundle22/);
 });
 
 test("median handles odd, even and empty lists", () => {

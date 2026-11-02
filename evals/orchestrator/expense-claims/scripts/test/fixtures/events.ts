@@ -15,7 +15,7 @@ export function ev(type: string, minute: number, data: Record<string, unknown> =
 export function basic(): LogEvent[] {
   return [
     ev("session.start", 0, { selectedModel: "claude-opus-5.5", reasoningEffort: "max", copilotVersion: "1.0.99-2" }),
-    ev("subagent.selected", 0, { agentName: "orchestrator" }),
+    ev("subagent.selected", 0, { agentName: "hands-on-orchestrator" }),
     ev("user.message", 1),
     ev("assistant.turn_start", 1),
     ev("assistant.message", 2),

@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { POLICY_VARIANTS, readVariants, verifyVariants, variantBundle } from "../lib/variants.ts";
+import { LIVE_VARIANTS, liveAgent, variantLabel, POLICY_VARIANTS, readVariants, verifyVariants, variantBundle } from "../lib/variants.ts";
 import { calibrationDecision, planNext, scoredCount } from "../lib/batch/plan.ts";
 import type { RunState } from "../lib/batch/state.ts";
 import { RESULT_COLUMNS, type ResultRow } from "../lib/results.ts";
@@ -61,7 +61,7 @@ test("manifest labels equal file IDs and logged names so session selection can b
     }
     assert.equal(chooseRunSession(f.dir, "test/repo", labels[1]).session.id, "session-1");
     const manifest = JSON.parse(readFileSync(f.path, "utf8"));
-    manifest.variants[labels[0]].agent = "orchestrator";
+    manifest.variants[labels[0]].agent = "hands-on-orchestrator";
     writeFileSync(f.path, JSON.stringify(manifest));
     assert.throws(() => readVariants(f.path), /Invalid variant/);
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
@@ -164,7 +164,7 @@ test("wrong or missing logged agents cannot satisfy calibrations, change the med
       variant, agent: variant, agent_sha256: set.variants[variant].sha256, agent_bundle_sha256: variantBundle(set.variants[variant]),
       calibration: "yes", features: "policy+reports+import+summary", outcome: "passed", minutes: "40",
     }) as ResultRow);
-    for (const agent of ["orchestrator", ""]) {
+    for (const agent of ["hands-on-orchestrator", ""]) {
       const wrong = valid.map((row) => ({ ...row, agent, minutes: "1" }));
       assert.deepEqual(calibrationDecision(wrong, labels, set).pending, labels);
       assert.deepEqual(calibrationDecision(wrong, labels, set, { dropSummary: true, reason: "old decision" }).pending, labels);
@@ -174,4 +174,10 @@ test("wrong or missing logged agents cannot satisfy calibrations, change the med
       assert.equal(calibrationDecision([...valid, { ...wrong[2], calibration: "no" }], labels, set).state, "drop");
     }
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test("retired base agents are not live variants", () => {
+  assert.deepEqual(LIVE_VARIANTS, ["hands-on-orchestrator", "hands-on-session-orchestrator"]);
+  assert.equal(variantLabel("wintermute:orchestrator"), "wintermute:orchestrator");
+  assert.equal(liveAgent("hands-on-orchestrator"), "wintermute:hands-on-orchestrator");
 });
