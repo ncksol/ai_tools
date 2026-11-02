@@ -24,6 +24,8 @@ copilot plugin update wintermute@ai-tools
 
 Then start new sessions, or restart the app, to get the updated agents: a running session keeps the agents it started with. Reloading extensions in a session, or restarting the app, refreshes the dashboard canvas. A dashboard server that already runs on the port keeps serving the old version until no session hosts it any more (see [Troubleshooting](#troubleshooting)). Agent changes in this repository reach you only through a plugin update, not through `git pull`.
 
+An update doesn't change the prompts of sessions that are already running, and doesn't stop automations those sessions already created. From 0.5.0 the agents no longer start PR monitors; PR-monitor schedules made by older sessions keep running until you stop them in the app or archive their session.
+
 ## Moving from swarm-dashboard
 
 Before 0.2.0 the dashboard was the `swarm-dashboard` plugin and the agents were loose files that you linked or copied into `~/.copilot/agents/`. To move to `wintermute`:
@@ -65,7 +67,7 @@ It opens as a canvas in the app's side panel, or in any browser through a small 
 - Activity: the latest events across the swarm.
 - Timeline: each session's busy, idle and waiting time over the last hours or the whole run, with cost over time. The orchestrator's one-off sub-agents have their own lanes right under it, for those active in the chosen window.
 - Plan and Board: the planned units and what each waits on, and every unit by stage, from planned to archived, with the orchestrator's sub-agents in a column of their own.
-- Detail panel: one unit's current activity, why it counts as stuck or waiting, its latest report, sub-agents, PR and monitor (for a sub-agent: its type, mode and effort), and recent activity.
+- Detail panel: one unit's current activity, why it counts as stuck or waiting, its latest report, sub-agents, PR and monitor (for a sub-agent: its type, mode and effort), and recent activity. The monitor shows a scheduled automation on the unit, if there is one; agents no longer start PR monitors, so an open PR without one shows "no monitor", which is normal. Only a configured schedule that is overdue shows as missing.
 - History: finished runs with their duration, cost and outcomes, and a summary of each run.
 
 ## Open the dashboard
@@ -113,7 +115,7 @@ Read-only access. The dashboard reads `~/.copilot/data.db` and the session folde
 
 ## How it decides what is stuck
 
-A session counts as stuck when a model call, tool call or sub-agent has gone quiet for longer than a set limit, when it is busy but has written nothing for 10 minutes, when it keeps failing or repeating itself, or when it has been idle for 30 minutes after a progress report with no task finished and no monitor due; a session waiting for your answer is never stuck. The detail panel names the rule that fired and its numbers. The rules and their limits are in the [design](../../../docs/superpowers/specs/2026-10-15-swarm-dashboard-design.md) (section 9) and the defaults in `engine/config.mjs`. Orchestrators can report status in a fixed format that the dashboard reads exactly (design section 10).
+A session counts as stuck when a model call, tool call or sub-agent has gone quiet for longer than a set limit, when it is busy but has written nothing for 10 minutes, when it keeps failing or repeating itself, or when it has been idle for 30 minutes after a progress report with no task finished and no monitor due; a session waiting for your answer is never stuck. The detail panel names the rule that fired and its numbers. The rules and their limits are in the [design](../../../docs/superpowers/specs/2026-10-15-swarm-dashboard-design.md) (section 9) and the defaults in `engine/config.mjs`. Orchestrators can report status in a fixed format that the dashboard reads exactly (design section 10). A whole swarm counts as stalled when the orchestrator and every open unit are idle and nothing is scheduled to run. A unit whose latest report is `complete`, whose PR is open (draft or ready) and that has had no reply from the orchestrator since is waiting on review: it has done its part, so it doesn't count towards a stall.
 
 ## Commands
 

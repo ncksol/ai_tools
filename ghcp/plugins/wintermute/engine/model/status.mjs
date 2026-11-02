@@ -43,6 +43,19 @@ const POLLING_TOOLS = new Set(['read_bash', 'read_agent', 'list_agents', 'list_b
 const IDLE_DETAILS = new Set(['idle', 'stopped', 'crashed', 'failed', 'stalled', 'blocked', 'blocked_on_orchestrator']);
 /** Units that are over: they neither keep a swarm busy nor count as idle work. */
 const ENDED_DETAILS = new Set(['archived', 'merged', 'completed', 'cancelled']);
+/** Stands in for a unit's detail in swarmStalled when awaitingReview holds; never a unit's own statusDetail. */
+export const AWAITING_REVIEW = 'awaiting_review';
+
+/**
+ * A unit has done its part and waits on PR reviewers or the orchestrator: it is idle, its latest report is `complete`,
+ * the orchestrator has not replied since, and its PR is still open, as a draft or not (or open as far as the registry knows).
+ */
+export function awaitingReview({ detail, report, parentRepliedAt, prState }) {
+  if (detail !== 'idle' && detail !== 'stopped') return false;
+  if (!report || report.status !== 'complete') return false;
+  if (parentRepliedAt !== null && parentRepliedAt !== undefined && parentRepliedAt > report.at) return false;
+  return prState === 'open' || prState === 'draft' || prState === 'unknown';
+}
 
 /** The design's tool rule: bash initial_wait + 5 min (10 min without one); read_bash delay + 2 min; read_agent timeout + 2 min; quick tools 2 min. */
 export function toolLimitMs(tool, t) {
@@ -208,9 +221,10 @@ export function evaluateStatus(input) {
 
 export function swarmStalled({ orchestratorDetail, unitDetails, monitorDue, lastActivityAt }) {
   if (!IDLE_DETAILS.has(orchestratorDetail) || monitorDue) return null;
-  const open = unitDetails.filter(detail => !ENDED_DETAILS.has(detail));
+  // A unit waiting on review has done its part, so, like an ended unit, it neither stalls the swarm nor keeps it busy.
+  const open = unitDetails.filter(detail => !ENDED_DETAILS.has(detail) && detail !== AWAITING_REVIEW);
   if (!open.length || !open.every(detail => IDLE_DETAILS.has(detail))) return null;
-  return { since: lastActivityAt, reason: 'The orchestrator and every open unit are idle or ended, and no monitor is due.' };
+  return { since: lastActivityAt, reason: 'The orchestrator and every open unit are idle or ended, and nothing is scheduled to run.' };
 }
 
 /**

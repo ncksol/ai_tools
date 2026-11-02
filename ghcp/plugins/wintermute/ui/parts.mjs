@@ -60,7 +60,7 @@ export function monitorHtml(unit, now, long = false) {
     const merged = unit.outcome === 'merged' || unit.pr?.state === 'merged';
     return `${dot}${merged ? (long ? 'ended when the PR merged' : 'ended, PR merged') : 'ended'}`;
   }
-  return `${dot}${long ? 'starts when the PR opens' : 'no PR yet'}`;
+  return `${dot}${unit.pr ? 'no monitor' : 'no PR yet'}`;
 }
 
 /**

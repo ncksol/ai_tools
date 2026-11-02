@@ -29,7 +29,8 @@ test('the detail panel explains a stuck unit', () => {
   assert.match(words, /Current activity Doing Running bash: dotnet test --filter E2E Tool call bash: dotnet test --filter E2E · 48m Last event 48m ago/);
   assert.match(words, /Latest report complete 3h ago Contract tests are wired and pass locally\. Starting the end-to-end run next\. Evidence 12 contract tests pass Blockers None reported/);
   assert.match(words, /Sub-agents None in this session/);
-  assert.match(words, /PR and monitor No PR yet\. A PR monitor starts when the PR opens\./);
+  assert.match(words, /PR and monitor No PR yet\./);
+  assert.doesNotMatch(words, /monitor starts/);
   assert.match(words, /Recent activity No recent activity$/);
 });
 

@@ -6,6 +6,18 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace still follows main. See [Releases](README.md#releases) for prerequisites, checks and recovery after a partial publish.
 
+## 0.5.0 — 2026-11-02
+
+### Changed
+
+- The agents no longer watch PRs. `hands-on-orchestrator` and `hands-on-session-orchestrator` no longer tell a child to start a PR monitor when it publishes a PR, or to stop one when it merges, and they forbid any replacement: no session automation, event subscription, polling loop, background script, heartbeat or extra agent to watch a PR. `session-worker` has the same rule and sends `complete` once its PR is open and its assigned gates are done. A reply to a later status check while a unit only waits for reviews is also `complete`, in all three agents' report rules, so the dashboard keeps counting the unit as waiting on review. One-shot PR checks for assigned work are unchanged. When a required gate needs CI that is still running, the owner may wait for it once, with one blocking command limited to about 30 minutes, then report the result or that CI is still pending. Nothing reacts to new reviewer activity on its own any more; review comments go to the PR's owner as owned work when the orchestrator learns of them.
+- The swarm dashboard shows "no monitor" for an open PR with no schedule, instead of a missing-monitor warning, and no longer says a monitor starts when the PR opens. A configured schedule that is overdue still shows as missing. Live PR lookups and past monitor checks are unchanged.
+- A unit that has done its part counts as waiting on review: its latest report is `complete`, its PR is open (draft or ready), and the orchestrator hasn't replied since. It no longer makes the swarm count as stalled. A swarm is stalled only when the orchestrator and every other open unit are idle. The stalled reason no longer mentions a monitor. As before, a run with no activity for 2 hours moves to History.
+
+### Upgrading
+
+- Running sessions keep the prompts they started with, and PR-monitor schedules they already created keep running. Stop those in the app, or archive their session, if you no longer want them.
+
 ## 0.4.0 — 2026-11-02
 
 ### Removed

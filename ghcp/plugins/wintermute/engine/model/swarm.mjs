@@ -6,7 +6,10 @@ import { descendants, resolveNodeId } from './forest.mjs';
 import { setRunStats } from './run-stats.mjs';
 import { effortOf, mergeStates } from './session-state.mjs';
 import { deriveMonitor, deriveStage, hostOf, mentionFits, prView, resolvePr } from './stage.mjs';
-import { ACTIVE_DETAILS, displayOf, evaluateStatus, evaluateSubagentUnit, subagentLimitMs, swarmStalled, toolLimitMs, toolView } from './status.mjs';
+import { ACTIVE_DETAILS, AWAITING_REVIEW, awaitingReview, displayOf, evaluateStatus, evaluateSubagentUnit, subagentLimitMs, swarmStalled, toolLimitMs, toolView } from './status.mjs';
+
+/** Units built by buildUnit that have done their part and wait on PR reviewers; kept out of the snapshot. */
+const WAITING_ON_REVIEW = new WeakSet();
 
 const SEGMENT_GAP_MS = 2 * MINUTE;
 const TASK_OVERRIDE_MS = 5 * MINUTE;
@@ -376,7 +379,7 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
   const { stage, merged, closedWithoutMerge } = deriveStage({ archivedAt: node.archivedAt, outcome: row?.outcome ?? null, pr, monitorEver });
   const monitor = deriveMonitor({
     stage, hasPr: Boolean(pr), closedWithoutMerge, automations, wakes: c.all.automation.wakes, saves: c.all.automation.saves,
-    prKnownAt: pr?.openedAt ?? identity?.knownAt ?? null, now: input.now, thresholds: input.thresholds,
+    now: input.now, thresholds: input.thresholds,
   });
   const evaluation = evaluateStatus({
     state: c.current, alive: c.alive, archivedAt: node.archivedAt, merged, mergedAt: pr?.mergedAt ?? row?.endedAt ?? null,
@@ -393,13 +396,17 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
 
   const outcome = row?.outcome ?? (merged ? 'merged' : closedWithoutMerge ? 'closed' : evaluation.detail === 'failed' ? 'failed' : null);
   const outcomeAt = outcome ? row?.endedAt ?? pr?.mergedAt ?? pr?.closedAt ?? null : null;
-  return {
+  const unit = {
     ...sessionView(input, c, label, evaluation, report, row?.title ?? null, marks, outcomeAt),
     // The registry's branch wins over the app's, which can be missing or stale; assignDependencies matches base branches on it.
     branch: row?.branch ?? node.branch ?? null,
     parentId: node.parentId, depth: node.depth, stage, closedWithoutMerge, outcome, pr, monitor, dependsOn: null, todoId: row?.todoId ?? null,
     agent: null,
   };
+  const waiting = !node.archivedAt && !merged && !closedWithoutMerge
+    && awaitingReview({ detail: evaluation.detail, report, parentRepliedAt, prState: pr?.state ?? null });
+  if (waiting) WAITING_ON_REVIEW.add(unit);
+  return unit;
 }
 
 function planFromTodos(db, units, registry) {
@@ -759,7 +766,7 @@ export function buildSnapshot(input) {
   // An archived unit is over, whatever its status shows (an archived failed unit shows failed).
   const archivedIds = new Set(nodes.filter(node => node.archivedAt !== null && node.archivedAt !== undefined).map(node => node.id));
   const stalled = lifecycle === 'live'
-    ? swarmStalled({ orchestratorDetail: orchestrator.statusDetail, unitDetails: everyUnit.map(unit => (archivedIds.has(unit.id) ? 'archived' : unit.statusDetail)), monitorDue, lastActivityAt })
+    ? swarmStalled({ orchestratorDetail: orchestrator.statusDetail, unitDetails: everyUnit.map(unit => (archivedIds.has(unit.id) ? 'archived' : WAITING_ON_REVIEW.has(unit) ? AWAITING_REVIEW : unit.statusDetail)), monitorDue, lastActivityAt })
     : null;
   const { feed, recent } = buildFeed(contexts, labels, extraFeed, flags);
   for (const view of [orchestrator, ...everyUnit]) view.recent = recent.get(view.id) ?? [];

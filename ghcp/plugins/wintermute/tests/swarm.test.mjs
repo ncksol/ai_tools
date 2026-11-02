@@ -1078,7 +1078,7 @@ test('completed and cancelled sub-agent units do not keep a swarm from stalling,
   const stalled = buildSnapshot(quietSwarm(finishedOnes, at(130)).data);
   assert.deepEqual(subUnits(stalled).map(unit => unit.statusDetail), ['completed', 'cancelled']);
   assert.equal(stalled.run.lifecycle, 'live');
-  assert.deepEqual(stalled.run.stalled, { since: at(111), reason: 'The orchestrator and every open unit are idle or ended, and no monitor is due.' });
+  assert.deepEqual(stalled.run.stalled, { since: at(111), reason: 'The orchestrator and every open unit are idle or ended, and nothing is scheduled to run.' });
   const busyToo = buildSnapshot(quietSwarm(root => {
     finishedOnes(root);
     root.at(at(125));
