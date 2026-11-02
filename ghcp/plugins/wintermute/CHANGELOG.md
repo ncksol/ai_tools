@@ -10,7 +10,7 @@ After merging, run `npm run release:publish -- --dry-run`, then `npm run release
 
 ### Removed
 
-- The `orchestrator` and `session-orchestrator` agents. Use `hands-on-orchestrator` or `hands-on-session-orchestrator` instead. Sessions that still select a removed agent ID get no agent until they switch.
+- The `orchestrator` and `session-orchestrator` agents. Use `hands-on-orchestrator` or `hands-on-session-orchestrator` instead. Switch any session or setting that selects a removed agent to one of these.
 - The swarm dashboard no longer counts a session as an orchestrator because its agent is one of the removed ones, so their past runs without child sessions no longer show as swarms.
 - `npm run validate` now reports any agent file in `com.github.copilot/agents/` that the plugin doesn't package.
 
