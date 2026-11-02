@@ -210,7 +210,7 @@ export function swarmStalled({ orchestratorDetail, unitDetails, monitorDue, last
   if (!IDLE_DETAILS.has(orchestratorDetail) || monitorDue) return null;
   const open = unitDetails.filter(detail => !ENDED_DETAILS.has(detail));
   if (!open.length || !open.every(detail => IDLE_DETAILS.has(detail))) return null;
-  return { since: lastActivityAt, reason: 'The orchestrator and every open unit are idle or ended, and no monitor is due.' };
+  return { since: lastActivityAt, reason: 'The orchestrator and every open unit are idle or ended, and nothing is scheduled to run.' };
 }
 
 /**

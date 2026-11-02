@@ -240,7 +240,7 @@ test('without a registry, a failed last task means failed', () => {
 
 test('the swarm is stalled when the orchestrator and every open unit are idle and no monitor is due', () => {
   assert.deepEqual(swarmStalled({ orchestratorDetail: 'idle', unitDetails: ['idle', 'archived', 'stalled'], monitorDue: false, lastActivityAt: T0 }),
-    { since: T0, reason: 'The orchestrator and every open unit are idle or ended, and no monitor is due.' });
+    { since: T0, reason: 'The orchestrator and every open unit are idle or ended, and nothing is scheduled to run.' });
   assert.equal(swarmStalled({ orchestratorDetail: 'idle', unitDetails: ['idle', 'busy'], monitorDue: false, lastActivityAt: T0 }), null);
   assert.equal(swarmStalled({ orchestratorDetail: 'idle', unitDetails: ['idle'], monitorDue: true, lastActivityAt: T0 }), null);
   assert.equal(swarmStalled({ orchestratorDetail: 'busy', unitDetails: ['idle'], monitorDue: false, lastActivityAt: T0 }), null);
@@ -253,7 +253,7 @@ test('busyWindowStart walks back through busy spans', () => {
 });
 
 test('completed and cancelled sub-agent units are ended like merged and archived units; a busy one keeps the swarm open', () => {
-  const stalled = { since: T0, reason: 'The orchestrator and every open unit are idle or ended, and no monitor is due.' };
+  const stalled = { since: T0, reason: 'The orchestrator and every open unit are idle or ended, and nothing is scheduled to run.' };
   assert.deepEqual(swarmStalled({ orchestratorDetail: 'idle', unitDetails: ['idle', 'completed', 'cancelled'], monitorDue: false, lastActivityAt: T0 }), stalled);
   assert.deepEqual(swarmStalled({ orchestratorDetail: 'idle', unitDetails: ['stalled', 'failed', 'crashed', 'completed'], monitorDue: false, lastActivityAt: T0 }), stalled);
   assert.equal(swarmStalled({ orchestratorDetail: 'idle', unitDetails: ['idle', 'completed', 'busy'], monitorDue: false, lastActivityAt: T0 }), null);
