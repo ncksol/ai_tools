@@ -376,7 +376,7 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
   const { stage, merged, closedWithoutMerge } = deriveStage({ archivedAt: node.archivedAt, outcome: row?.outcome ?? null, pr, monitorEver });
   const monitor = deriveMonitor({
     stage, hasPr: Boolean(pr), closedWithoutMerge, automations, wakes: c.all.automation.wakes, saves: c.all.automation.saves,
-    prKnownAt: pr?.openedAt ?? identity?.knownAt ?? null, now: input.now, thresholds: input.thresholds,
+    now: input.now, thresholds: input.thresholds,
   });
   const evaluation = evaluateStatus({
     state: c.current, alive: c.alive, archivedAt: node.archivedAt, merged, mergedAt: pr?.mergedAt ?? row?.endedAt ?? null,

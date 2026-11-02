@@ -112,7 +112,7 @@ test('stages run from coding through review to merged and archived', () => {
 });
 
 test('monitors are alive, missing, paused, ended or none', () => {
-  const base = { hasPr: true, automations: [], wakes: [], saves: [], prKnownAt: T0, now: T0 + 60 * MINUTE, thresholds: DEFAULT_THRESHOLDS };
+  const base = { hasPr: true, automations: [], wakes: [], saves: [], now: T0 + 60 * MINUTE, thresholds: DEFAULT_THRESHOLDS };
   const row = { sessionId: 'cli-1', interval: 'minutes', everyMinutes: 10, lastRunAt: T0 + 55 * MINUTE, nextRunAt: T0 + 65 * MINUTE, pausedAt: null, name: 'PR monitor' };
   assert.deepEqual(deriveMonitor({ ...base, stage: 'in_review', automations: [row] }),
     { state: 'alive', lastCheckAt: T0 + 55 * MINUTE, nextCheckAt: T0 + 65 * MINUTE, everyMinutes: 10, since: null });
@@ -120,20 +120,23 @@ test('monitors are alive, missing, paused, ended or none', () => {
   assert.equal(deriveMonitor({ ...base, stage: 'in_review', automations: [{ ...row, nextRunAt: T0 + 40 * MINUTE }] }).since, T0 + 40 * MINUTE);
   assert.equal(deriveMonitor({ ...base, stage: 'in_review', automations: [{ ...row, nextRunAt: T0 + 57 * MINUTE }] }).state, 'alive');
   assert.deepEqual(deriveMonitor({ ...base, stage: 'pr_open', automations: [{ ...row, pausedAt: T0 + 30 * MINUTE }] }).since, T0 + 30 * MINUTE);
-  const missing = deriveMonitor({ ...base, stage: 'in_review', wakes: [T0 + 10 * MINUTE, T0 + 20 * MINUTE], saves: [{ at: T0, clear: false, everyMinutes: 10 }] });
-  assert.deepEqual(missing, { state: 'missing', lastCheckAt: T0 + 20 * MINUTE, nextCheckAt: null, everyMinutes: 10, since: T0 + 30 * MINUTE });
-  assert.equal(deriveMonitor({ ...base, stage: 'pr_open' }).since, T0);
+  // Only a configured schedule can be missing. Past wakes or a stopped schedule with no row are history, not a failure.
+  const history = deriveMonitor({ ...base, stage: 'in_review', wakes: [T0 + 10 * MINUTE, T0 + 20 * MINUTE], saves: [{ at: T0, clear: false, everyMinutes: 10 }] });
+  assert.deepEqual(history, { state: 'none', lastCheckAt: T0 + 20 * MINUTE, nextCheckAt: null, everyMinutes: 10, since: null });
+  assert.equal(deriveMonitor({ ...base, stage: 'in_review', saves: [{ at: T0, clear: true, everyMinutes: null }] }).state, 'none');
+  assert.deepEqual(deriveMonitor({ ...base, stage: 'pr_open' }), { state: 'none', lastCheckAt: null, nextCheckAt: null, everyMinutes: null, since: null });
+  assert.equal(deriveMonitor({ ...base, stage: 'in_review' }).state, 'none');
   assert.equal(deriveMonitor({ ...base, stage: 'coding', hasPr: false }).state, 'none');
   assert.equal(deriveMonitor({ ...base, stage: 'merged' }).state, 'ended');
   assert.equal(deriveMonitor({ ...base, stage: 'archived', hasPr: false }).state, 'none');
 });
 
 test('a PR closed without merge ends its monitor, with no stage change', () => {
-  const base = { hasPr: true, automations: [], wakes: [], saves: [], prKnownAt: T0, now: T0 + 60 * MINUTE, thresholds: DEFAULT_THRESHOLDS };
+  const base = { hasPr: true, automations: [], wakes: [], saves: [], now: T0 + 60 * MINUTE, thresholds: DEFAULT_THRESHOLDS };
   const row = { sessionId: 'cli-1', interval: 'minutes', everyMinutes: 10, lastRunAt: T0 + 55 * MINUTE, nextRunAt: T0 + 65 * MINUTE, pausedAt: null, name: 'PR monitor' };
   assert.deepEqual(deriveMonitor({ ...base, stage: 'pr_open', closedWithoutMerge: true }),
     { state: 'ended', lastCheckAt: null, nextCheckAt: null, everyMinutes: null, since: null });
   assert.deepEqual(deriveMonitor({ ...base, stage: 'in_review', closedWithoutMerge: true, automations: [row] }).nextCheckAt, null);
   assert.equal(deriveMonitor({ ...base, stage: 'coding', hasPr: false, closedWithoutMerge: true }).state, 'none');
-  assert.equal(deriveMonitor({ ...base, stage: 'pr_open', closedWithoutMerge: false }).state, 'missing');
+  assert.equal(deriveMonitor({ ...base, stage: 'pr_open', closedWithoutMerge: false }).state, 'none');
 });

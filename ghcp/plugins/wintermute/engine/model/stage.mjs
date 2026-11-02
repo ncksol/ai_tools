@@ -1,4 +1,4 @@
-import { MINUTE, maxTime } from '../time.mjs';
+import { maxTime } from '../time.mjs';
 import { ADO_REPO, GITHUB_REPO } from './pr-lookup.mjs';
 
 /** The unit's code host: `workspace.yaml` host_type and repository, else the project's GitHub columns. */
@@ -122,8 +122,12 @@ export function deriveStage({ archivedAt = null, outcome = null, pr = null, moni
   return { stage, merged, closedWithoutMerge };
 }
 
-/** Monitor state from the unit's automation rows and its wake and schedule history (builder decision 8). */
-export function deriveMonitor({ stage, hasPr, closedWithoutMerge = false, automations = [], wakes = [], saves = [], prKnownAt = null, now, thresholds }) {
+/**
+ * Monitor state from the unit's automation rows and its wake and schedule history (builder decision 8). Agents no
+ * longer start PR monitors, so a unit with no automation row has no monitor (`none`), even with an open PR or past
+ * wakes; only a configured schedule that is overdue is `missing`.
+ */
+export function deriveMonitor({ stage, hasPr, closedWithoutMerge = false, automations = [], wakes = [], saves = [], now, thresholds }) {
   const lastWake = wakes.length ? wakes[wakes.length - 1] : null;
   const row = [...automations].sort((a, b) => (b.nextRunAt ?? 0) - (a.nextRunAt ?? 0))[0] ?? null;
   const lastSave = saves.length ? saves[saves.length - 1] : null;
@@ -136,9 +140,5 @@ export function deriveMonitor({ stage, hasPr, closedWithoutMerge = false, automa
     if (row.nextRunAt !== null && row.nextRunAt !== undefined && row.nextRunAt < now - thresholds.monitorGraceMs) return view('missing', { since: row.nextRunAt });
     return view('alive');
   }
-  if (stage !== 'pr_open' && stage !== 'in_review') return view('none');
-  const expected = (everyMinutes ?? 10) * MINUTE;
-  // No wake, no cleared schedule and no time for the PR: the start is not known, so `since` stays null.
-  const since = lastWake !== null ? lastWake + expected : lastSave?.clear ? lastSave.at : prKnownAt;
-  return view('missing', { since: since === null ? null : Math.min(since, now) });
+  return view('none');
 }

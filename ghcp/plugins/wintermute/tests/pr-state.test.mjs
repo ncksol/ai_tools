@@ -275,10 +275,9 @@ test('a registry PR is known from the earliest retained status line that names i
   assert.equal(resolvePr({ registry, statusLines: [{ at: at(25), pr: { provider: 'github', id: 9 } }] }).knownAt, null);
 });
 
-test('a missing monitor with no known start time has no start time, not now', () => {
-  const missing = deriveMonitor({ stage: 'in_review', hasPr: true, prKnownAt: null, now: at(60), thresholds: DEFAULT_THRESHOLDS });
-  assert.deepEqual({ state: missing.state, since: missing.since, lastCheckAt: missing.lastCheckAt }, { state: 'missing', since: null, lastCheckAt: null });
-  assert.equal(deriveMonitor({ stage: 'in_review', hasPr: true, prKnownAt: at(20), now: at(60), thresholds: DEFAULT_THRESHOLDS }).since, at(20));
+test('an open PR with no automation has no monitor, not a missing one', () => {
+  const monitor = deriveMonitor({ stage: 'in_review', hasPr: true, now: at(60), thresholds: DEFAULT_THRESHOLDS });
+  assert.deepEqual(monitor, { state: 'none', lastCheckAt: null, nextCheckAt: null, everyMinutes: null, since: null });
 });
 
 test('a missing monitor with no known start time says so instead of "0s"', () => {
@@ -287,19 +286,16 @@ test('a missing monitor with no known start time says so instead of "0s"', () =>
   assert.equal(text(monitorHtml(unit, at(60), true)), 'missing · no check, start time not known');
 });
 
-test('a registry PR\'s monitor counts from a real time, or says that none is known', () => {
+test('registry PRs without a schedule show no monitor, whatever is known about when they opened', () => {
   const snapshot = buildSnapshot(swarm([
     { id: 'told', row: githubPr(8), log: log => { log.at(at(20)); log.report('ws-root', 'swarm-status: progress unit=told pr=github:8\nSummary: PR open.', 'progress'); } },
     { id: 'quiet', row: githubPr(9) },
     { id: 'looked', row: githubPr(10) },
   ], pr => (pr.id === 10 ? { state: 'open', title: 'Looked', openedAt: at(25), mergedAt: null, closedAt: null, reviewNote: null, url: null, checkedAt: at(55), error: null } : null)));
   assert.deepEqual(validateSnapshot(snapshot), []);
-  const told = unitOf(snapshot, 'told');
-  const quiet = unitOf(snapshot, 'quiet');
-  const looked = unitOf(snapshot, 'looked');
-  assert.deepEqual({ state: told.monitor.state, since: told.monitor.since }, { state: 'missing', since: at(20) });
-  assert.equal(text(monitorHtml(told, at(60))), 'missing · no check for 40m');
-  assert.deepEqual({ state: quiet.monitor.state, since: quiet.monitor.since }, { state: 'missing', since: null });
-  assert.equal(text(monitorHtml(quiet, at(60))), 'missing · no check, start time not known');
-  assert.deepEqual({ state: looked.monitor.state, since: looked.monitor.since }, { state: 'missing', since: at(25) });
+  for (const id of ['told', 'quiet', 'looked']) {
+    const unit = unitOf(snapshot, id);
+    assert.deepEqual({ state: unit.monitor.state, since: unit.monitor.since }, { state: 'none', since: null }, id);
+  }
+  assert.equal(unitOf(snapshot, 'looked').stage, 'in_review');
 });
