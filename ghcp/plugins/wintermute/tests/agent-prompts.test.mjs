@@ -29,3 +29,8 @@ test('both orchestrators forbid PR watching with the same words, in the rule and
 test('session-worker forbids PR watching and keeps one-shot PR checks', () => {
   assert.ok(agent('session-worker').includes(WORKER_RULE));
 });
+
+test('a status-check reply while only waiting for PR reviews is complete, in all three report blocks', () => {
+  const line = '- Send only results, blockers and questions. A reply to a status check from the orchestrator, when work continues and nothing is needed, is progress. When your objective is done and you are only waiting, for example for reviews of your open PR, the reply is complete.';
+  for (const name of [...ORCHESTRATORS, 'session-worker']) assert.ok(agent(name).includes(line), name);
+});
