@@ -71,9 +71,9 @@ test('the plugin ships the four agents, each named after its file', () => {
 
 test('an agent file the plugin does not package is reported', async () => {
   const { repo, root } = sandbox();
-  cpSync(agentFile(root, 'hands-on-orchestrator'), agentFile(root, 'orchestrator'));
+  cpSync(agentFile(root, 'hands-on-orchestrator'), agentFile(root, 'stray-agent'));
   const errors = await validatePlugin(root, repo);
-  assert.ok(errors.includes('com.github.copilot/agents/orchestrator.agent.md: agent is not packaged'), errors.join('\n'));
+  assert.ok(errors.includes('com.github.copilot/agents/stray-agent.agent.md: agent is not packaged'), errors.join('\n'));
 });
 
 test('a missing packaged agent is reported', async () => {
@@ -150,25 +150,25 @@ test('a CHANGELOG with no entry for the current version, or no CHANGELOG, is rep
 
 test('agent frontmatter follows a strict flat YAML subset and decodes quoted values', async () => {
   const parse = lines => parseAgentFrontmatter(`---\n${lines.join('\n')}\n---\n\nBody.\n`);
-  assert.deepEqual(parse(['name: orchestrator', 'description: Coordinates work: dispatch and track']).errors,
+  assert.deepEqual(parse(['name: hands-on-orchestrator', 'description: Coordinates work: dispatch and track']).errors,
     ['frontmatter description contains ": ", " #", a tab or a trailing ":"; quote it']);
-  assert.deepEqual(parse(['name: orchestrator', 'description: Plans work # and tracks it']).errors,
+  assert.deepEqual(parse(['name: hands-on-orchestrator', 'description: Plans work # and tracks it']).errors,
     ['frontmatter description contains ": ", " #", a tab or a trailing ":"; quote it']);
-  assert.deepEqual(parse(['name: orchestrator', 'description: "Plans work']).errors,
+  assert.deepEqual(parse(['name: hands-on-orchestrator', 'description: "Plans work']).errors,
     ['frontmatter description has an unterminated or malformed double-quoted string']);
-  assert.deepEqual(parse(['name: orchestrator', "description: 'Plans work"]).errors,
+  assert.deepEqual(parse(['name: hands-on-orchestrator', "description: 'Plans work"]).errors,
     ['frontmatter description has an unterminated or malformed single-quoted string']);
-  assert.deepEqual(parse(['name: orchestrator', 'description: "Plans" work']).errors,
+  assert.deepEqual(parse(['name: hands-on-orchestrator', 'description: "Plans" work']).errors,
     ['frontmatter description has an unterminated or malformed double-quoted string']);
-  assert.deepEqual(parse(['name: orchestrator', 'description: - Plans work']).errors, ['frontmatter description starts with a YAML indicator; quote it']);
-  assert.deepEqual(parse(['name: orchestrator', 'description: >-', '  Plans work']).errors,
+  assert.deepEqual(parse(['name: hands-on-orchestrator', 'description: - Plans work']).errors, ['frontmatter description starts with a YAML indicator; quote it']);
+  assert.deepEqual(parse(['name: hands-on-orchestrator', 'description: >-', '  Plans work']).errors,
     ['frontmatter description starts with a YAML indicator; quote it', 'unsupported frontmatter line:   Plans work']);
-  assert.deepEqual(parse(['name: orchestrator', 'description:']).errors, ['frontmatter description has no value']);
-  assert.deepEqual(parse(['name: orchestrator', 'description: Plans', 'tools: [view, grep]']).errors,
+  assert.deepEqual(parse(['name: hands-on-orchestrator', 'description:']).errors, ['frontmatter description has no value']);
+  assert.deepEqual(parse(['name: hands-on-orchestrator', 'description: Plans', 'tools: [view, grep]']).errors,
     ['frontmatter tools must be a JSON array of non-empty strings']);
-  const quoted = parse(['name: "orchestrator"', "description: 'Coordinates work: it''s quoted'", 'tools: ["view", "grep"]', 'model: ["a", "b"]']);
+  const quoted = parse(['name: "hands-on-orchestrator"', "description: 'Coordinates work: it''s quoted'", 'tools: ["view", "grep"]', 'model: ["a", "b"]']);
   assert.deepEqual(quoted.errors, []);
-  assert.deepEqual(quoted.fields, { name: 'orchestrator', description: "Coordinates work: it's quoted", tools: ['view', 'grep'], model: ['a', 'b'] });
+  assert.deepEqual(quoted.fields, { name: 'hands-on-orchestrator', description: "Coordinates work: it's quoted", tools: ['view', 'grep'], model: ['a', 'b'] });
 });
 
 test('a quoted agent name is compared after decoding, and an invalid description is reported by the validator', async () => {
