@@ -6,6 +6,20 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace still follows main. See [Releases](README.md#releases) for prerequisites, checks and recovery after a partial publish.
 
+## 0.7.0 — 2026-11-06
+
+### Changed
+
+- Follow-up work is sized on its own. `hands-on-orchestrator` and `hands-on-session-orchestrator` have a new "Follow-up jobs" rule in "Evidence and review". Every fix, reviewer re-check, panel re-check, claims check and rebase is sized from the diff at the pushed commit and the owner's test and CI evidence, with the same inputs as planning. It no longer inherits the unit's tier, review rows, reviewer count or critical status. An owner still does the fixes and rebases on its own work at its own model; sizing sets their review and checks. A mechanical change that tests and CI fully cover needs no reviewer re-check. A small change with real logic gets at most one reviewer. A significant change gets the unit's original reviewers, and a change that meets a critical-unit trigger gets a critical review, even in a regular unit. Lower scrutiny needs evidence the orchestrator states; if unsure, it chooses the higher level, and it records one line for each follow-up.
+- A mechanical follow-up may skip its separate claims check when an earlier claims check passed for the unit, the whole change since that check is mechanical, touches no build, CI or test configuration and removes or skips no tests, and CI's test job ran and passed at the exact new head. The orchestrator reads that CI result itself and records it. A unit's first claims check and the claims check on `main` after the last merge always run.
+- A new Light review row (Sol at `high`, Sonnet at `xhigh` or Argon at `high`, never from the author's vendor) is only for small follow-ups with real logic and no critical-unit trigger, never for a unit's first review.
+- A claims check may go to the unit's own idle claims checker from an earlier check, which the orchestrator now keeps until the unit merges. A claims check still never goes to a reviewer, a judge or any other agent.
+- "Re-checks", "Critical units", the fix PR for a panel finding and "Models and effort" point to the new rule. After the final panel, the judges re-check a change only when it can affect how units work together or the spec as a whole.
+
+### Upgrading
+
+- Running sessions keep the prompts they started with.
+
 ## 0.6.0 — 2026-11-02
 
 ### Changed
