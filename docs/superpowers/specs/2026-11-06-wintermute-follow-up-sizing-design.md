@@ -18,7 +18,7 @@ Eval runs 13 and 14 show the same pattern. In run 14 a one-line README commit tr
   - larger or riskier than the original unit: more scrutiny than the unit had.
 - A follow-up may skip its separate claims check only when all of these hold:
   - an earlier claims check passed for this unit, at an earlier commit;
-  - the change since then is mechanical and touches no build, CI or test configuration, and removes or skips no tests;
+  - the whole change since the commit that check passed at is mechanical, touches no build, CI or test configuration, and removes or skips no tests;
   - CI's test job ran, and passed, at the exact new head commit. It did not skip.
   The orchestrator reads that CI result itself as a quick job and records the run and the commit.
 - A claims check that does run may go to the unit's idle claims checker from an earlier check, instead of always a new one.
@@ -69,6 +69,7 @@ The two options added during design, both limited to follow-ups:
 - Its CI read for a skipped claims check is a quick job, not a claims check, so "Quick jobs you do yourself" doesn't change.
 - For a small follow-up, the one reviewer is the unit's idle reviewer that has the context. A new reviewer at the Light review row replaces it when that reviewer is Astra, or when none is idle. After the panel, the one reviewer is the unit's reviewer for changes inside the unit, or one judge for changes to how units work together.
 - A unit's claims checker is kept until the unit merges, like its reviewer, so it can take a later claims check.
+- An owner's model can't change, and its work can't move to another session, so the owner still does its own fixes and rebases. For those, sizing sets the review and checks, not who does them. A fix that outgrows the owner's tier follows the existing rule for an under-tiered child.
 - `hands-on-orchestrator` children get the Light review row with the other review rows. Their own optional reviews stay at the Regular review row.
 
 ## Left to the builder

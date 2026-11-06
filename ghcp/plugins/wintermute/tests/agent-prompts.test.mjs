@@ -106,7 +106,7 @@ test('both workers hand a misrouted claims job back and keep tests for findings'
 });
 
 const LIGHT_ROW = '| Light review | Sol at `high`, Sonnet at `xhigh` or Argon at `high`, never from the author\'s vendor | The review of a small follow-up with real logic that meets no critical-unit trigger (see "Follow-up jobs" in "Evidence and review"). Never a unit\'s first review. |';
-const FOLLOW_UP_TIER_LINE = '- A follow-up job gets the tier or review row that fits its own scope and risk, not the unit\'s (see "Follow-up jobs" in "Evidence and review"). A small fix in a critical unit doesn\'t get the critical review row, and a risky follow-up in a regular unit can.';
+const FOLLOW_UP_TIER_LINE = '- A follow-up job you hand out, such as a review, a claims check or a helper, gets the tier or review row that fits its own scope and risk, not the unit\'s (see "Follow-up jobs" in "Evidence and review"). A small fix in a critical unit doesn\'t get the critical review row, and a risky follow-up in a regular unit can. The owner\'s own fixes and rebases stay with the owner, at its model.';
 const CRITICAL_POINTER = 'Size each follow-up job on its own (see "Follow-up jobs" in "Evidence and review"): a critical unit\'s follow-ups aren\'t critical by default, and a follow-up that meets a trigger gets critical scrutiny even in a regular unit.';
 const CLAIMS_EXCEPTION = 'A follow-up commit may skip its claims check only as "Follow-up jobs" allows.';
 const FINDINGS_POINTER = 'That PR is a follow-up: "Follow-up jobs" decides its review, its claims check and whether the panel re-checks it.';
@@ -140,6 +140,7 @@ test('the follow-up rule covers every follow-up type, both directions, its safeg
     'The vendor rule, security routing, the claims check rules, required human or project reviews and the user\'s explicit choices apply at whatever level you choose.',
     'Lower the scrutiny only on evidence you state. If unsure, choose the higher level.',
     'in the unit\'s `child_notes` row, or in `own_units` for your own unit',
+    'The owner still does the fixes and rebases on its own work, at its own model, which can\'t change: sizing sets their review and checks.',
   ]) assert.ok(rule.includes(phrase), phrase);
 });
 
@@ -147,7 +148,7 @@ test('a follow-up skips its claims check only after an earlier pass, on a mechan
   const rule = followUpRule(agent('hands-on-session-orchestrator'));
   for (const phrase of [
     'an earlier claims check passed for this unit',
-    'touches no build, CI or test configuration and removes or skips no tests',
+    'the whole change from the commit that check passed at to the new head is mechanical, touches no build, CI or test configuration, and removes or skips no tests',
     'CI\'s test job ran at the exact new head commit and passed, not skipped',
     'Read that CI result yourself as a quick job; this read is not a claims check.',
     'Otherwise the claims check runs.',
