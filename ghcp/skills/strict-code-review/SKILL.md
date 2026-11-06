@@ -71,10 +71,9 @@ With no guidance, review as usual and leave it out of the report: that is not a 
 Reading the code is the main method. If CI ran at the head commit (the adapter says which checks did), use its result instead of running suites; if the change edits CI or test configuration, first read what the checks now run.
 
 - Never run code from the change in the user's working tree. Before you run any, read [references/running-code.md](references/running-code.md) and follow it. If you can't read it, don't run code.
-- By default, install nothing, and use the network only for the provider and Git reads this skill prescribes: no downloads, documentation sites or web searches. Only the user can allow more.
+- By default, install nothing. Only the user can allow installs.
 - Start every `az` command with `AZURE_EXTENSION_USE_DYNAMIC_INSTALL=no`, so that Azure CLI can't install an extension on its own.
 - Use only the sign-in that `gh`, `az` and `git` already have. Never fetch, print or pass on access tokens (for example, `gh auth token` or `az account get-access-token`), or send authenticated requests yourself (for example, with `curl`). Don't sign in for the user; if sign-in fails, ask them to, and don't work around it with tokens or another account.
-- Access only the repositories that hold the change: the target and, for a fork, the source. Don't query other organisations, projects or repositories, even to find out why access failed; report the error and what you need.
 - Keep every file you create in one scratch directory outside the user's repository (for example, from `mktemp -d`), and delete it when you finish.
 
 ## Base and head commits

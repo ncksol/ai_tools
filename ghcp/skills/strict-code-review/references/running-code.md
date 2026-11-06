@@ -31,9 +31,8 @@ By default you install nothing and the code uses no network. Each exception need
 
 - **Installing dependencies:** only if the user allows installs or says that the code is trusted. The install may download what it installs. Install only into scratch (the exported copy's `node_modules`), never globally. Follow "Installing dependencies" below.
 - **Network use by the code you run:** only if the user allows network access or says that the code is trusted.
-- **Documentation sites and web searches:** only if the user allows network access.
 
-So permission to install does not let the code use the network, permission for network access does not allow installs, and a statement that the code is trusted does not allow documentation sites or web searches.
+So permission to install does not let the code use the network, and permission for network access does not allow installs.
 
 ## Installing dependencies
 
