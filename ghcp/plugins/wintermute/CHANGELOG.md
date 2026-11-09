@@ -6,6 +6,16 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace still follows main. See [Releases](README.md#releases) for prerequisites, checks and recovery after a partial publish.
 
+## 0.7.1 — 2026-11-09
+
+### Changed
+
+- A re-check stays small. In `hands-on-orchestrator` and `hands-on-session-orchestrator`, a re-check brief now tells the reviewer to run code only to settle a possible finding, with the smallest check that settles it. The reviewer doesn't repeat the owner's test runs, full test suites or mutation checks, even when a project's test rules ask authors for them. The owner's evidence and CI cover those, and so does the claims check when one runs. Before this, a reviewer could rerun mutation checks and full suites for a 14-line follow-up.
+
+### Upgrading
+
+- Running sessions keep the prompts they started with.
+
 ## 0.7.0 — 2026-11-06
 
 ### Changed
