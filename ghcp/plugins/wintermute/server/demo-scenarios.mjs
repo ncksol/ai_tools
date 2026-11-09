@@ -6,20 +6,25 @@ const TYPES = ['explore', 'task', 'code-review', 'rubber-duck', 'research', 'gen
 /**
  * Extra units for the stress scenario: every status detail, long names and labels (C6-1 fits its ring whole, MM-1 does
  * not), crowded chips, a PR closed without merging and a deep plan. A unit without its own effort keeps B1's (xhigh).
- * Q1 has a long model name with xhigh and two finished sub-agents, one with an effort and one without.
+ * Q1 has a long model name with xhigh and two finished sub-agents, one with an effort and one without, and its data
+ * could not all be read. C6 works on a todo long enough to need its two lines. K7 has done its job (idle, complete
+ * report, no PR), J8 closed with no PR and T0 stopped with no outcome, so the Finished section has every outcome.
  */
 const EXTRA = [
-  { label: 'Q1', name: 'Export format questions for the reporting service, with a name long enough to need an ellipsis', status: 'question', statusDetail: 'waiting_question', bucket: 'waiting', stage: 'pr_open', dependsOn: 'B1', model: 'claude-sonnet-5-1m-context-preview-20261001', effort: 'xhigh', finished: 2 },
+  { label: 'Q1', name: 'Export format questions for the reporting service, with a name long enough to need an ellipsis', status: 'question', statusDetail: 'waiting_question', bucket: 'waiting', stage: 'pr_open', dependsOn: 'B1', model: 'claude-sonnet-5-1m-context-preview-20261001', effort: 'xhigh', finished: 2, dataWarning: 'Its log could not be read at 14:00. Cost and state may be out of date.' },
   { label: 'S2', name: 'retry loop', status: 'stuck', statusDetail: 'spinning', bucket: 'stuck', reason: 'Spinning rule: 6 failed tool calls within 30 busy minutes.', dependsOn: 'Q1', effort: null },
   { label: 'X3', name: 'crashed worker', status: 'blocked', statusDetail: 'crashed', bucket: 'failed', reason: 'Ended rule: the process is gone, with no shutdown event and a turn still open.', alive: false, dependsOn: 'S2' },
   { label: 'P4', name: 'paused monitor', status: 'idle', statusDetail: 'idle', bucket: 'idle', stage: 'in_review', monitor: 'paused', dependsOn: 'X3', effort: 'medium' },
   { label: 'N5', name: 'no report and no task list', status: 'busy', statusDetail: 'busy', bucket: 'working', report: null, progress: null, dependsOn: 'P4', effort: null },
-  { label: 'C6', name: 'crowded chips', status: 'busy', statusDetail: 'slow_model_call', bucket: 'working', crowd: 7, effort: 'high' },
+  { label: 'C6', name: 'crowded chips', status: 'busy', statusDetail: 'slow_model_call', bucket: 'working', crowd: 7, effort: 'high', todo: 'Check every endpoint example in the API reference against the running service, including the error responses and the paging links' },
   { label: 'REPORTING-SERVICE', name: 'a label longer than the ring', status: 'stuck', statusDetail: 'stuck_subagent', bucket: 'stuck', reason: 'Sub-agent rule: code-review has had no events for 14 min (limit 10 min).', stuckSubagent: true },
   { label: 'R8', name: 'blocked report', status: 'blocked', statusDetail: 'blocked', bucket: 'waiting', reportStatus: 'blocked' },
   { label: 'M9', name: 'merged after review', status: 'merged', statusDetail: 'merged', bucket: 'done', stage: 'merged', outcome: 'merged' },
   { label: 'C6-1', name: 'closed without merging', status: 'idle', statusDetail: 'idle', bucket: 'idle', stage: 'pr_open', outcome: 'closed' },
   { label: 'MM-1', name: 'a four-character label too wide for its ring', status: 'idle', statusDetail: 'idle', bucket: 'idle' },
+  { label: 'K7', name: 'cost analysis that reported complete', status: 'idle', statusDetail: 'idle', bucket: 'idle', reportStatus: 'complete' },
+  { label: 'J8', name: 'one-off job closed with no PR', status: 'idle', statusDetail: 'idle', bucket: 'idle', outcome: 'closed' },
+  { label: 'T0', name: 'stopped with no outcome', status: 'idle', statusDetail: 'stopped', bucket: 'idle', alive: false },
 ];
 
 /**
@@ -31,11 +36,11 @@ const EXTRA = [
 const SUBAGENT_UNITS = [
   { label: 'investigate-flaky-integration-te', state: 'running', type: 'general-purpose', mode: 'background', effort: null, start: 25, end: null, name: 'Investigate the flaky integration tests in the export pipeline, with a description long enough to need an ellipsis' },
   { label: 'review-api-diff', state: 'running', type: 'code-review', mode: 'sync', effort: null, start: 8, end: null, name: 'Review the API diff for breaking changes', crowd: 4 },
-  { label: 'trace-import-callers', state: 'running', type: 'explore', mode: 'background', effort: 'low', start: 3, end: null, name: 'Trace who calls the import service', tool: true },
+  { label: 'trace-import-callers', state: 'running', type: 'explore', mode: 'background', effort: 'low', start: 3, end: null, name: 'Trace who calls the import service', tool: true, toolDesc: 'Find every caller of the import service, including the scheduled jobs and the admin tools, and note which ones retry on failure so the new policy covers them' },
   { label: 'draft-release-notes', state: 'running', type: 'task', mode: 'background', effort: 'medium', start: 1, end: null, name: 'Draft the release notes for the export changes', report: null },
   { label: 'rubber-duck-plan', state: 'running', type: 'rubber-duck', mode: 'sync', effort: 'high', start: 14, end: null, name: 'Talk through the migration plan' },
   { label: 'compare-grid-libraries', state: 'running', type: 'research', mode: 'background', effort: 'medium', start: 40, end: null, name: 'Compare three grid libraries for the report view', title: 'Compared the first two grid libraries on bundle size, sorting, virtual scrolling and keyboard support so far' },
-  { label: 'measure-render-cost', state: 'stuck', type: 'explore', mode: 'background', effort: 'low', start: 50, end: null, name: 'Measure the render cost of the report table', silent: 16, reason: 'Sub-agent rule: no events for 16 min (limit 10 min).' },
+  { label: 'measure-render-cost', state: 'stuck', type: 'explore', mode: 'background', effort: 'low', start: 50, end: null, name: 'Measure the render cost of the report table', silent: 16, reason: 'Sub-agent rule: no events for 16 min (limit 10 min).', dataWarning: 'Some usage lines could not be read, so the cost may be incomplete.' },
   { label: 'check-lint-config', state: 'stuck', type: 'task', mode: 'sync', effort: null, start: 75, end: null, name: 'Check the lint configuration against the style guide', silent: 12, reason: 'Sub-agent rule: no events for 12 min (limit 10 min).' },
   { label: 'audit-feed-ids', state: 'completed', type: 'general-purpose', mode: 'sync', effort: 'high', start: 200, end: 170, name: 'Audit the feed item ids for duplicates' },
   { label: 'list-dead-code', state: 'completed', type: 'explore', mode: 'background', effort: 'low', start: 400, end: 380, name: 'List the functions that nothing calls' },
@@ -84,6 +89,7 @@ function subagentUnit(template, spec, index, t, parentId) {
     monitor: { state: 'none', lastCheckAt: null, nextCheckAt: null, everyMinutes: null, since: null },
     progress: null, outcome: null, closedWithoutMerge: false, dependsOn: null, todoId: null,
     agent: { type: spec.type, mode: spec.mode, effort: spec.effort },
+    todo: null, toolDesc: spec.toolDesc ?? null, dataWarning: spec.dataWarning ?? null,
   });
   unit.activity = spec.tool
     ? { label: 'Running grep: ImportService', tool: { id: `${id}-tool`, name: 'grep', summary: 'grep: ImportService', startedAt: lastEventAt, limitMs: 120000 }, lastEventAt }
@@ -155,6 +161,7 @@ function stressUnit(template, spec, index, t, parentId) {
     startedAt, endedAt, lastEventAt, alive: spec.alive ?? true, cost: { credits: round1(1500 + index * 2333.3), calls: 100 + index * 10 },
     model: spec.model ?? template.model, effort: 'effort' in spec ? spec.effort : template.effort,
     parentId, depth: 1, stage, closedWithoutMerge: spec.outcome === 'closed', outcome: spec.outcome ?? null, dependsOn: spec.dependsOn ?? null, todoId: null,
+    todo: spec.todo ?? null, toolDesc: null, dataWarning: spec.dataWarning ?? null,
   });
   unit.pr = stage === 'coding' ? null : {
     ...template.pr, id: 500 + index, title: `${spec.name} PR`, url: `https://github.com/sample-org/sample-repo/pull/${500 + index}`,
@@ -187,10 +194,17 @@ const D5_BLOCKER = 'PR #421 is ready; publishing it needs approval.';
 /**
  * The example swarm as the demos show it: the fixture plus one replied blocker, so the example has both grey badges
  * (B1's replied question comes from the fixture). D5's latest report becomes a blocker that the orchestrator answered
- * 30 minutes later, so D5 stays idle. The fixture file itself never changes.
+ * 30 minutes later, so D5 stays idle. B1 works on a todo, I1 and map-import-module describe their tool calls, and B2's
+ * cost is incomplete. The fixture file itself never changes.
  */
 export function exampleScenario(fixtures) {
   const snapshot = structuredClone(fixtures.snapshots[0]);
+  const byLabel = label => snapshot.units.find(unit => unit.label === label);
+  // What the units are doing, and one whose data could not all be read, as the engine reports them.
+  if (byLabel('B1')) byLabel('B1').todo = 'Page the order list by cursor';
+  if (byLabel('I1')) byLabel('I1').toolDesc = 'Run the end-to-end contract tests';
+  if (byLabel('map-import-module')) byLabel('map-import-module').toolDesc = 'Find who calls the import service';
+  if (byLabel('B2')) byLabel('B2').dataWarning = 'Some usage lines could not be read, so the cost is incomplete.';
   const d5 = snapshot.units.find(unit => unit.label === 'D5');
   if (d5?.report) {
     const { at } = d5.report;
@@ -241,7 +255,8 @@ export function stressScenario(fixtures) {
   snapshot.planned.push({ label: 'Z10', name: 'final clean-up once everything else has merged', dependsOn: 'N5', canStart: false, waitsOn: 'N5', todoId: null });
   snapshot.needs.push(
     { id: 'stress:need:question', kind: 'question', unitIds: [], labels: [], fromId: snapshot.orchestrator.id, text: 'Should the export keep the old CSV column order for existing users, or move everyone to the new order at once?', since: t - 95 * MIN, tagged: true },
-    { id: 'stress:need:pr', kind: 'pr', unitIds: [extra[0].id], labels: [extra[0].label], fromId: snapshot.orchestrator.id, text: 'Publish PR #500 for review?', since: t - 12 * MIN, tagged: true },
+    // It names Q1 and C6, so C6's footer holds a Needs you marker, seven chips and its todos, and folds.
+    { id: 'stress:need:pr', kind: 'pr', unitIds: [extra[0].id, extra[5].id], labels: [extra[0].label, extra[5].label], fromId: snapshot.orchestrator.id, text: 'Publish PR #500 for review?', since: t - 12 * MIN, tagged: true },
   );
   snapshot.needs.sort((a, b) => a.since - b.since);
   snapshot.run.stalled = { since: t - 32 * MIN, reason: 'Swarm rule: the orchestrator and every open child are idle, and no monitor is due.' };

@@ -59,11 +59,19 @@ export function showsEllipsis(style) {
   return style.textOverflow === 'ellipsis' && !/flex|grid/.test(style.display);
 }
 
-/** Whether an ancestor that hides its overflow cuts a box: across unless the ancestor shows an ellipsis there, or down. `area` is its padding box. */
+/** Whether an element clamps its text to a number of lines, which ends the last one with an ellipsis. */
+export function clampsLines(style) {
+  return parseInt(style.webkitLineClamp, 10) > 0;
+}
+
+/**
+ * Whether an ancestor that hides its overflow cuts a box: across unless the ancestor shows an ellipsis there, or down
+ * unless it clamps its lines. `area` is its padding box.
+ */
 export function cutsBox(box, area, style) {
   const hides = value => value === 'hidden' || value === 'clip';
   const across = hides(style.overflowX) && !showsEllipsis(style) && (box.left < area.left - 0.5 || box.right > area.right + 0.5);
-  const down = hides(style.overflowY) && (box.top < area.top - 0.5 || box.bottom > area.bottom + 0.5);
+  const down = hides(style.overflowY) && !clampsLines(style) && (box.top < area.top - 0.5 || box.bottom > area.bottom + 0.5);
   return across || down;
 }
 
@@ -100,11 +108,14 @@ export function auditPage(options) {
   const texts = html.filter(el => shown.has(el) && ownText(el));
   const svgTexts = all.filter(el => el instanceof SVGTextElement && visible(el));
   const family = normalise(options.fontFamily ?? getComputedStyle(root).fontFamily);
+  // Unit labels are set in the monospace family; every other text uses the page's.
+  const mono = options.mono ? { selector: options.mono.selector, family: normalise(options.mono.family) } : null;
 
   for (const el of [...texts, ...svgTexts]) {
     const style = getComputedStyle(el);
     checks += 1;
-    if (normalise(style.fontFamily) !== family) report('font-family', el, style.fontFamily);
+    const want = mono && el.closest(mono.selector) ? mono.family : family;
+    if (normalise(style.fontFamily) !== want) report('font-family', el, style.fontFamily);
     if (!options.sizes.includes(parseFloat(style.fontSize))) report('font-size', el, style.fontSize);
     if (!(el instanceof SVGElement) && !options.lineHeights.includes(parseFloat(style.lineHeight))) report('line-height', el, style.lineHeight);
     if (!options.weights.includes(Number(style.fontWeight))) report('font-weight', el, style.fontWeight);
@@ -200,7 +211,7 @@ export function auditPage(options) {
       if (style.overflowX === 'visible') report('spill', el, `${el.scrollWidth}px of content in ${el.clientWidth}px`);
       else if (!showsEllipsis(style)) report('clipped', el, `${el.scrollWidth}px of content in ${el.clientWidth}px`);
     }
-    if (style.display !== 'inline' && style.overflowY !== 'visible' && el.scrollHeight > el.clientHeight + 1) report('hidden-lines', el, `${el.scrollHeight}px of lines in ${el.clientHeight}px`);
+    if (style.display !== 'inline' && style.overflowY !== 'visible' && !clampsLines(style) && el.scrollHeight > el.clientHeight + 1) report('hidden-lines', el, `${el.scrollHeight}px of lines in ${el.clientHeight}px`);
     const cut = cutBy(el);
     if (cut) report('cut', el, `cut off by ${describe(cut)}`);
     const container = el.parentElement && el.parentElement.closest(options.containers);
@@ -233,21 +244,26 @@ export function auditPage(options) {
     }
   }
 
-  // A card's border says what it is. The browser resolves each expected colour on a probe, so the check needs no colour maths.
+  // The browser resolves each expected border colour on a probe, so the border checks need no colour maths.
+  const resolved = new Map();
+  const resolve = value => {
+    if (!resolved.has(value)) {
+      const probe = document.createElement('div');
+      probe.style.borderTopStyle = 'solid';
+      probe.style.borderTopColor = value;
+      document.body.appendChild(probe);
+      resolved.set(value, getComputedStyle(probe).borderTopColor);
+      probe.remove();
+    }
+    return resolved.get(value);
+  };
+  const otherBorder = (el, want) => {
+    const style = getComputedStyle(el);
+    return [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor].find(colour => colour !== want);
+  };
+  // A Board card's border says what it is.
   const kindBorders = options.kindBorders;
   if (kindBorders) {
-    const resolved = new Map();
-    const resolve = value => {
-      if (!resolved.has(value)) {
-        const probe = document.createElement('div');
-        probe.style.borderTopStyle = 'solid';
-        probe.style.borderTopColor = value;
-        document.body.appendChild(probe);
-        resolved.set(value, getComputedStyle(probe).borderTopColor);
-        probe.remove();
-      }
-      return resolved.get(value);
-    };
     for (const el of root.querySelectorAll(kindBorders.selector)) {
       if (!shown.has(el) || el.matches(kindBorders.skip) || el.matches(':hover')) continue;
       const kind = el.getAttribute('data-kind');
@@ -257,9 +273,19 @@ export function auditPage(options) {
         continue;
       }
       const want = resolve(kindBorders.colours[kind]);
-      const style = getComputedStyle(el);
-      const got = [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor].find(colour => colour !== want);
+      const got = otherBorder(el, want);
       if (got !== undefined) report('kind-border', el, `border ${got} instead of ${want} for a ${kind} card`);
+    }
+  }
+  // Cards tab cards have the neutral border, whatever their kind; status shows through the mark, the words and the tint.
+  const neutralBorders = options.neutralBorders;
+  if (neutralBorders) {
+    const want = resolve(neutralBorders.colour);
+    for (const el of root.querySelectorAll(neutralBorders.selector)) {
+      if (!shown.has(el) || el.matches(neutralBorders.skip) || el.matches(':hover')) continue;
+      checks += 1;
+      const got = otherBorder(el, want);
+      if (got !== undefined) report('neutral-border', el, `border ${got} instead of ${want}`);
     }
   }
 
@@ -300,19 +326,21 @@ export const AUDIT_DEFAULTS = Object.freeze({
   lineHeights: [16, 20, 24],
   weights: [400, 500],
   fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
-  atoms: '.chip,.badge,.pill,.ring,.meter,.bar,.stage,.sw,button,select,.need,.b-card,.mc,.pn,.pl-row,.tile,.kv,.fi,.h-row,.g-row,.g-track,.hb-row,.c-who,.c-trk,.c-sum,.tabs,.seg,.v-out',
-  containers: '.b-card,.need,.rail,.detail,.mc,.pn,.pl-row,.tile,.h-row,.run-answer,.empty,.v-out,.dash',
-  follows: [{ item: '.cards-note', ref: '.b-card', gapOf: '.b-grid' }],
-  kindBorders: { selector: '.b-card[data-open], .mc[data-open]', skip: '.is-sel', colours: { subagent: 'var(--busy)', project: 'var(--merged)', chat: 'var(--merged)' } },
-  padding: { '.dash': 16, '.b-card': 16, '.rail': 16, '.detail': 16, '.need': 12, '.pn': 12, '.pl-row': 12, '.mc': 12 },
+  mono: { selector: '.b-lab', family: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
+  atoms: '.chip,.badge,.pill,.ring,.mark,.b-warn,.b-tag,.b-need,.bar,.sw,button,select,.b-card,.mc,.pn,.pl-row,.tile,.kv,.fi,.h-row,.g-row,.g-track,.hb-row,.c-who,.c-trk,.c-sum,.tabs,.seg,.v-out',
+  containers: '.b-card,.o-wait,.rail,.detail,.mc,.pn,.pl-row,.tile,.h-row,.run-answer,.empty,.v-out,.dash',
+  follows: [{ item: '.b-zone > .cards-note', ref: '.b-zone > :not(.cards-note)', gapOf: '.b-zone' }],
+  kindBorders: { selector: '.board .mc[data-open]', skip: '.is-sel', colours: { subagent: 'var(--busy)', project: 'var(--merged)', chat: 'var(--merged)' } },
+  neutralBorders: { selector: '.b-card[data-open], .b-fin .mc[data-open]', skip: '.is-sel', colour: 'var(--line)' },
+  padding: { '.dash': 16, '.b-card': 16, '.rail': 16, '.detail': 16, '.pn': 12, '.pl-row': 12, '.mc': 12 },
   heights: {
     '.chip': 24, '.badge': 20, '.pill': 20, '.d-top .seg > button': 28, '.c-bar .seg > button': 24, '.x': 28, '.pick select': 28, '.ck-open > button': 28,
-    '.ring': 40, '.meter': 4, '.bar': 4, '.stage': 4, '.g-track': 12,
+    '.ring': 40, '.b-zone .b-card': 162, '.b-card .mark': 32, '.d-id > .mark': 44, '.b-warn': 16, '.b-tag': 20, '.b-need': 24, '.bar': 4, '.g-track': 12,
   },
 });
 
 /** The audit as one expression for Runtime.evaluate. */
 export function auditScript(options = AUDIT_DEFAULTS) {
-  const source = [oklchToSrgb, parseColor, composite, luminance, contrastRatio, showsEllipsis, cutsBox, auditPage].map(fn => fn.toString()).join('\n');
+  const source = [oklchToSrgb, parseColor, composite, luminance, contrastRatio, showsEllipsis, clampsLines, cutsBox, auditPage].map(fn => fn.toString()).join('\n');
   return `(() => {\n${source}\nreturn auditPage(${JSON.stringify(options)});\n})()`;
 }

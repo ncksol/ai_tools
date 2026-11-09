@@ -1,18 +1,271 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  BOARD_STAGES, CARD_FADE_MS, REPORT_CLASS, REPORT_LABELS, STATE_LINES, SUBAGENT_CARD_GRACE_MS, UNIT_STAGES, archivedUnits, boardColumns, cardTimeLeft, cardUnits, closedNotMerged, feedText,
-  findByLabel, findPlanned, flattenPlan, isFinishedSubagent, isSubagent, needItems, nextCardChange, omittedSubagents, planForest, planLayout, progressPercent, reportKind, reportTitle, runClockEnd, runEnd, sharePercent, stateLine, unitClockEnd, unitEnd, withoutStatusPrefix,
+  BOARD_STAGES, REPORT_CLASS, REPORT_LABELS, STATE_LINES, UNIT_STAGES, activeSubagents, archivedUnits, askingIds, boardColumns, cardZones, closedNotMerged, countTiles, effortOf, feedText,
+  findByLabel, findPlanned, finishedOutcome, flattenPlan, foldFooter, isDone, isFinished, isSubagent, needItems, needMark, nowLine, omittedSubagents, orchestratorView, planForest, planLayout,
+  prWords, progressPercent, reportKind, reportTitle, runClockEnd, runEnd, sharePercent, shortModel, stateLine, stateWords, unitClockEnd, unitEnd, waitingOnYou, withoutStatusPrefix,
 } from '../ui/model.mjs';
 import { createDemoEngine } from '../server/demo-engine.mjs';
 import { NOW, closedSnapshot, exampleSnapshot } from './helpers/ui.mjs';
 
 const labels = units => units.map(unit => unit.label);
+const isArchivedUnit = unit => archivedUnits({ units: [unit] }).length === 1;
 
-test('cards sort stuck, question, plan, blocked, busy, idle, merged and hide archived units', () => {
+test('the Cards tab has an active grid, attention first, and a Finished section, latest first; archived units are on neither', () => {
   const snapshot = exampleSnapshot();
-  assert.deepEqual(labels(cardUnits(snapshot, NOW)), ['I1', 'table-research', 'B2', 'F1', 'B1', 'map-import-module', 'D5', 'F2a']);
+  const { active, finished } = cardZones(snapshot);
+  assert.deepEqual(labels(active), ['I1', 'table-research', 'B2', 'F1', 'B1', 'map-import-module', 'D5']);
+  assert.deepEqual(labels(finished), ['F2a', 'scan-docs-links', 'migrate-fixtures', 'audit-schema-usage']);
   assert.deepEqual(labels(archivedUnits(snapshot)), ['B0']);
+});
+
+test('the active grid puts a status the view does not know last', () => {
+  const snapshot = exampleSnapshot();
+  findByLabel(snapshot, 'B1').status = 'something_new';
+  assert.deepEqual(labels(cardZones(snapshot).active), ['I1', 'table-research', 'B2', 'F1', 'map-import-module', 'D5', 'B1']);
+});
+
+test('questions and plans sort oldest wait first within their state', () => {
+  const snapshot = exampleSnapshot();
+  Object.assign(findByLabel(snapshot, 'B1'), { status: 'question', statusDetail: 'waiting_question', since: NOW - 60000 });
+  Object.assign(findByLabel(snapshot, 'D5'), { status: 'question', statusDetail: 'waiting_question', since: NOW - 600000 });
+  Object.assign(findByLabel(snapshot, 'F1'), { status: 'plan', statusDetail: 'waiting_plan', since: NOW - 3600000 });
+  assert.deepEqual(labels(cardZones(snapshot).active), ['I1', 'table-research', 'D5', 'B1', 'F1', 'B2', 'map-import-module']);
+});
+
+/** A unit for the finished and done rules: idle, with a complete report and no PR, unless `over` says otherwise. */
+const unitWith = over => ({ id: 'u', kind: 'project', status: 'idle', statusDetail: 'idle', stage: 'coding', since: NOW - 60000, endedAt: null, pr: null, outcome: null, closedWithoutMerge: false, report: { status: 'complete', at: NOW - 120000, title: 'Done' }, ...over });
+const none = new Set();
+
+test('a unit is finished once its work has ended: stopped, merged, done, failed, crashed, cancelled or closed without merging', () => {
+  for (const [status, statusDetail] of [['idle', 'stopped'], ['merged', 'merged'], ['done', 'completed'], ['blocked', 'failed'], ['blocked', 'crashed'], ['blocked', 'cancelled']]) {
+    assert.equal(isFinished(unitWith({ status, statusDetail, report: null }), none), true, statusDetail);
+  }
+  assert.equal(isFinished(unitWith({ status: 'merged', statusDetail: 'idle', report: null }), none), true, 'status merged');
+  assert.equal(isFinished(unitWith({ status: 'done', statusDetail: 'idle', report: null }), none), true, 'status done');
+  assert.equal(isFinished(unitWith({ report: null, closedWithoutMerge: true, outcome: 'closed' }), none), true, 'closed without a PR');
+  assert.equal(isFinished(unitWith({ report: null, closedWithoutMerge: true, pr: { id: 1, state: 'closed' } }), none), true, 'PR closed');
+  for (const [status, statusDetail] of [['busy', 'busy'], ['stuck', 'silent'], ['question', 'waiting_question'], ['plan', 'waiting_plan'], ['blocked', 'blocked'], ['blocked', 'blocked_on_orchestrator'], ['idle', 'idle']]) {
+    assert.equal(isFinished(unitWith({ status, statusDetail, report: null }), none), false, statusDetail);
+  }
+});
+
+test('the done rule: idle, latest report complete and no PR still open; a PR in an unknown state keeps the unit active', () => {
+  assert.equal(isDone(unitWith({})), true, 'no PR');
+  for (const state of ['merged', 'closed']) assert.equal(isFinished(unitWith({ pr: { id: 1, state } }), none), true, state);
+  for (const state of ['open', 'draft', 'unknown']) assert.equal(isFinished(unitWith({ pr: { id: 1, state } }), none), false, state);
+  for (const status of ['progress', 'needs_input', 'blocked']) assert.equal(isFinished(unitWith({ report: { status, at: NOW } }), none), false, status);
+  assert.equal(isFinished(unitWith({ report: null }), none), false, 'no report');
+  assert.equal(isFinished(unitWith({ status: 'busy', statusDetail: 'busy' }), none), false, 'it turned busy again, so it is back on the grid');
+  const snapshot = exampleSnapshot();
+  const d5 = findByLabel(snapshot, 'D5');
+  assert.equal(d5.report.status, 'complete');
+  assert.ok(cardZones(snapshot).active.includes(d5), 'its draft PR is still open');
+  d5.pr.state = 'merged';
+  assert.ok(cardZones(snapshot).finished.includes(d5));
+});
+
+test('a unit with an open question or plan of its own stays active, whatever its state', () => {
+  const failed = unitWith({ status: 'blocked', statusDetail: 'failed', outcome: 'failed' });
+  assert.equal(isFinished(failed, new Set(['u'])), false);
+  const snapshot = exampleSnapshot();
+  Object.assign(findByLabel(snapshot, 'B2'), { status: 'blocked', statusDetail: 'failed', outcome: 'failed', endedAt: NOW - 60000 });
+  assert.deepEqual(askingIds(snapshot), new Set(['ws-0004-b2', 'ws-0000-root']));
+  assert.ok(labels(cardZones(snapshot).active).includes('B2'));
+  snapshot.needs = snapshot.needs.filter(need => need.fromId !== 'ws-0004-b2');
+  assert.ok(labels(cardZones(snapshot).finished).includes('B2'));
+});
+
+test('an orchestrator sub-agent moves to Finished as soon as it ends, and comes back when a follow-up makes it busy', () => {
+  const snapshot = exampleSnapshot();
+  const unit = findByLabel(snapshot, 'map-import-module');
+  Object.assign(unit, { status: 'done', statusDetail: 'completed', endedAt: NOW - 1000, since: NOW - 1000 });
+  assert.equal(labels(cardZones(snapshot).finished)[0], 'map-import-module');
+  Object.assign(unit, { status: 'busy', statusDetail: 'busy', endedAt: null, since: NOW - 500 });
+  assert.ok(labels(cardZones(snapshot).active).includes('map-import-module'));
+});
+
+test('a finished unit reads its outcome and age, with a green, red or grey tone; "closed, not merged" only when it had a PR', () => {
+  const outcome = over => { const { words, tone } = finishedOutcome(unitWith(over)); return [words, tone]; };
+  assert.deepEqual(outcome({ status: 'idle', statusDetail: 'stopped', report: null }), ['stopped {a}', 'off']);
+  assert.deepEqual(outcome({ status: 'merged', statusDetail: 'merged' }), ['merged {a}', 'ok']);
+  assert.deepEqual(outcome({ status: 'done', statusDetail: 'completed' }), ['done {a}', 'ok']);
+  assert.deepEqual(outcome({}), ['done {a}', 'ok'], 'the done rule');
+  assert.deepEqual(outcome({ status: 'blocked', statusDetail: 'failed' }), ['failed {a}', 'bad']);
+  assert.deepEqual(outcome({ status: 'blocked', statusDetail: 'crashed' }), ['crashed {a}', 'bad']);
+  assert.deepEqual(outcome({ status: 'blocked', statusDetail: 'cancelled' }), ['cancelled {a}', 'off']);
+  assert.deepEqual(outcome({ closedWithoutMerge: true, outcome: 'closed' }), ['closed {a}', 'off']);
+  assert.deepEqual(outcome({ closedWithoutMerge: true, outcome: 'closed', pr: { id: 9, state: 'closed' } }), ['closed, not merged {a}', 'off']);
+  assert.equal(finishedOutcome(unitWith({})).at, NOW - 120000, 'the done rule dates from the complete report');
+  assert.equal(finishedOutcome(unitWith({ status: 'done', statusDetail: 'completed', endedAt: NOW - 5000 })).at, NOW - 5000);
+  assert.equal(finishedOutcome(unitWith({ status: 'blocked', statusDetail: 'crashed' })).at, NOW - 60000, 'no end: the start of its state');
+});
+
+test('stuck state words name the cause; a sub-agent\'s own card says "silent"; others follow STATE_LINES', () => {
+  const words = (statusDetail, kind = 'project') => stateWords({ kind, status: 'stuck', statusDetail });
+  assert.equal(words('stuck_tool'), 'Stuck · tool call {t}');
+  assert.equal(words('silent'), 'Stuck · silent {t}');
+  assert.equal(words('stuck_model_call'), 'Stuck · no model reply {t}');
+  assert.equal(words('stuck_subagent'), 'Stuck · sub-agent silent {t}');
+  assert.equal(words('stuck_subagent', 'subagent'), 'Stuck · silent {t}');
+  assert.equal(words('stuck_tool', 'subagent'), 'Stuck · tool call {t}');
+  assert.equal(stateWords({ kind: 'project', status: 'blocked', statusDetail: 'blocked_on_orchestrator' }), STATE_LINES.blocked_on_orchestrator);
+  assert.equal(stateLine({ status: 'stuck', statusDetail: 'stuck_tool' }), 'Stuck · no events {t}', 'the detail panel and the cockpit keep theirs');
+});
+
+/** A live session for the now-line rules: busy, with a progress report from before this busy stretch. */
+const liveUnit = over => ({ id: 'u', kind: 'project', status: 'busy', statusDetail: 'busy', since: NOW - 60000, report: { status: 'progress', at: NOW - 600000, title: 'Earlier report' }, activity: { label: 'Thinking', tool: null }, todo: null, toolDesc: null, ...over });
+const noNeeds = { needs: [] };
+const tool = (name, summary) => ({ id: 't', name, summary, startedAt: NOW - 30000, limitMs: null });
+
+test('a working unit\'s now line: the stuck tool call, else its todo, the sync sub-agent, the tool call, the activity, a fresh report, "Thinking"', () => {
+  const line = over => nowLine(liveUnit(over), noNeeds);
+  const bash = tool('bash', 'bash: npm run import:e2e');
+  const stuck = { status: 'stuck', statusDetail: 'stuck_tool', activity: { label: 'Running bash: npm run import:e2e', tool: bash } };
+  assert.deepEqual(line({ ...stuck, toolDesc: 'Running the slow import suite', todo: 'Prove the retry policy' }), { text: 'Running the slow import suite' });
+  assert.deepEqual(line({ ...stuck, todo: 'Prove the retry policy' }), { text: 'Running bash: npm run import:e2e' }, 'no description: the command');
+  assert.deepEqual(line({ todo: 'Wire the **refund** handler', activity: { label: 'Running bash: npm test', tool: bash } }), { text: 'Wire the refund handler' });
+  const sync = { activity: { label: 'Waiting for its research (sync)', tool: tool('task', 'task: Find past incidents') }, toolDesc: 'Find past incidents' };
+  assert.deepEqual(line(sync), { text: 'Waiting for its research (sync)' });
+  assert.deepEqual(line({ activity: { label: 'Running bash: npm test', tool: bash }, toolDesc: 'Run the unit tests' }), { text: 'Run the unit tests' });
+  assert.deepEqual(line({ activity: { label: 'Running bash: npm test', tool: bash } }), { text: 'Running bash: npm run import:e2e' });
+  assert.deepEqual(line({ activity: { label: 'Compacting the conversation', tool: null } }), { text: 'Compacting the conversation' });
+  assert.deepEqual(line({ report: { status: 'progress', at: NOW - 30000, title: 'Status: progress. Half way' } }), { text: 'Half way', at: NOW - 30000 });
+  assert.deepEqual(line({}), { text: 'Thinking', muted: true });
+  assert.deepEqual(nowLine({ ...liveUnit({}), todo: undefined, toolDesc: undefined }, noNeeds), { text: 'Thinking', muted: true }, 'a snapshot without the new fields');
+  for (const statusDetail of ['slow_model_call', 'silent', 'stuck_model_call', 'stuck_subagent', 'spinning']) assert.deepEqual(line({ statusDetail, todo: 'A todo' }), { text: 'A todo' }, statusDetail);
+});
+
+test('a waiting unit\'s now line is its question or plan; any other unit with one of its own says "Asks you"; else its latest report', () => {
+  const question = { id: 'n1', kind: 'question', unitIds: ['u'], labels: ['U'], fromId: 'u', text: 'Keep the **v1** header?', since: NOW - 60000, tagged: true };
+  const plan = { ...question, id: 'n2', kind: 'plan', text: 'Split the job in two' };
+  const waiting = liveUnit({ status: 'question', statusDetail: 'waiting_question' });
+  assert.deepEqual(nowLine(waiting, { needs: [question] }), { text: 'Keep the v1 header?' });
+  assert.deepEqual(nowLine({ ...waiting, status: 'plan', statusDetail: 'waiting_plan' }, { needs: [question, plan] }), { text: 'Split the job in two' });
+  const failed = liveUnit({ status: 'blocked', statusDetail: 'failed' });
+  assert.deepEqual(nowLine(failed, { needs: [question] }), { text: 'Asks you: Keep the v1 header?' });
+  assert.deepEqual(nowLine(failed, { needs: [{ ...question, fromId: 'root' }] }), { text: 'Earlier report', at: NOW - 600000 }, 'an item that only names it is not its own');
+  assert.deepEqual(nowLine(waiting, noNeeds), { text: 'Earlier report', at: NOW - 600000 }, 'waiting with no item: its report');
+  for (const statusDetail of ['blocked', 'idle', 'stalled', 'blocked_on_orchestrator']) {
+    assert.deepEqual(nowLine(liveUnit({ status: 'idle', statusDetail, todo: 'Not shown' }), noNeeds), { text: 'Earlier report', at: NOW - 600000 }, statusDetail);
+  }
+  assert.deepEqual(nowLine(liveUnit({ status: 'idle', statusDetail: 'idle', report: null }), noNeeds), { text: 'No report yet', muted: true });
+});
+
+test('a Needs you marker shows on a unit an item names, unless that unit asked it; PR and plan approvals shorten to "Approve"', () => {
+  const snapshot = exampleSnapshot();
+  const mark = label => needMark(findByLabel(snapshot, label), snapshot);
+  assert.deepEqual([mark('D5').label, mark('D5').short, mark('D5').need.text], ['PR to approve', 'Approve', 'Publish PR #421 for review?']);
+  assert.equal(mark('B2'), null, 'B2 asked its own plan');
+  assert.equal(mark('B1'), null);
+  snapshot.needs[0].fromId = 'ws-0000-root';
+  assert.deepEqual([mark('B2').label, mark('B2').short], ['Plan to approve', 'Approve']);
+  snapshot.needs[0].kind = 'question';
+  assert.deepEqual([mark('B2').label, mark('B2').short], ['Question', 'Question']);
+});
+
+test('PRs read with their state, model IDs read short, and a sub-agent unit takes its agent\'s effort', () => {
+  assert.equal(prWords({ id: 418, state: 'open' }), 'PR #418 · in review');
+  assert.equal(prWords({ id: 418, state: 'draft' }), 'PR #418 · draft');
+  assert.equal(prWords({ id: 418, state: 'merged' }), 'PR #418 · merged');
+  assert.equal(prWords({ id: 418, state: 'closed' }), 'PR #418 · closed');
+  assert.equal(prWords({ id: 418, state: 'unknown' }), 'PR #418');
+  assert.equal(shortModel('claude-opus-5.5'), 'Opus 5.5');
+  assert.equal(shortModel('claude-sonnet-5'), 'Sonnet 5');
+  assert.equal(shortModel('gpt-6.1-sol'), 'GPT-6.1 Sol');
+  assert.equal(shortModel('gpt-6-astra'), 'GPT-6 Astra');
+  assert.equal(shortModel('gpt-5.4-mini'), 'GPT-5.4 Mini');
+  assert.equal(shortModel('gemini-4-argon'), 'Gemini 4 Argon');
+  assert.equal(shortModel('claude-haiku-5.5'), 'Haiku 5.5');
+  assert.equal(shortModel(null), null);
+  assert.equal(shortModel(''), null);
+  assert.equal(effortOf({ effort: 'high', agent: { effort: 'low' } }), 'high');
+  assert.equal(effortOf({ effort: null, agent: { effort: 'low' } }), 'low');
+  assert.equal(effortOf({ effort: null, agent: null }), null);
+});
+
+/** A footer with item widths in px and 8 px gaps; the fold changes what it shows, and over() compares it with `width`. */
+function footer({ width, need = 0, needShort = 0, chips = [], progress = 0, more = 24, count = 40 }) {
+  const state = { progress: progress > 0, shown: chips.length, more: false, count: false, short: false };
+  const sizes = () => [
+    need && (state.short ? needShort : need),
+    ...chips.slice(0, state.shown),
+    state.more ? more : 0,
+    state.count ? count : 0,
+    state.progress ? progress : 0,
+  ].filter(Boolean);
+  return {
+    state,
+    over: () => sizes().reduce((sum, size) => sum + size, 0) + 8 * Math.max(0, sizes().length - 1) > width,
+    progress: progress > 0,
+    chips: chips.length,
+    need: need > 0,
+    hideProgress: () => { state.progress = false; },
+    showChips: shown => { Object.assign(state, { shown, more: true }); },
+    countChips: () => { Object.assign(state, { shown: 0, more: false, count: true }); },
+    shortenNeed: () => { state.short = true; },
+    hideCount: () => { state.count = false; },
+  };
+}
+
+test('a footer folds in the agreed order: progress, chips into "+N", one count chip, the marker\'s short label, then no count chip', () => {
+  const fold = options => foldFooter(footer(options));
+  assert.deepEqual(fold({ width: 400, need: 100, chips: [80, 80], progress: 50 }), [], 'it fits');
+  assert.deepEqual(fold({ width: 300, need: 100, chips: [80, 80], progress: 50 }), ['progress']);
+  assert.deepEqual(fold({ width: 220, need: 100, chips: [80, 80, 80], progress: 50 }), ['progress', '+1', '+2']);
+  assert.deepEqual(fold({ width: 180, need: 100, chips: [80, 80], progress: 50 }), ['progress', '+1', 'count']);
+  assert.deepEqual(fold({ width: 120, need: 100, needShort: 60, chips: [80, 80] }), ['+1', 'count', 'need']);
+  assert.deepEqual(fold({ width: 70, need: 100, needShort: 60, chips: [80, 80], progress: 50 }), ['progress', '+1', 'count', 'need', 'no count']);
+  assert.deepEqual(fold({ width: 60, need: 100, needShort: 60, progress: 50 }), ['progress', 'need'], 'no chips: nothing to count');
+  assert.deepEqual(fold({ width: 60, chips: [80], progress: 50 }), ['progress', 'count'], 'one chip has nothing to fold into "+N"');
+  assert.deepEqual(fold({ width: 30, chips: [80] }), ['count', 'no count']);
+  const folded = footer({ width: 70, need: 100, needShort: 60, chips: [80, 80], progress: 50 });
+  foldFooter(folded);
+  assert.deepEqual(folded.state, { progress: false, shown: 0, more: false, count: false, short: true }, 'the marker never hides');
+});
+
+test('waiting on you counts the Needs you items and a stall, and the tiles count the grid', () => {
+  const snapshot = exampleSnapshot();
+  assert.deepEqual(waitingOnYou(snapshot), { count: 2, oldest: snapshot.needs[0].since });
+  const tiles = () => countTiles(snapshot).map(({ key, state, count }) => `${key}:${state}:${count}`);
+  assert.deepEqual(tiles(), ['working:busy:2', 'stuck:stuck:2', 'waiting on you:question:2', 'blocked:blocked:1', 'idle:idle:1', 'finished:merged:4']);
+  snapshot.run.stalled = { since: NOW - 3 * 3600000, reason: 'Stalled.' };
+  assert.deepEqual(waitingOnYou(snapshot), { count: 3, oldest: NOW - 3 * 3600000 });
+  snapshot.needs = [];
+  snapshot.run.stalled = null;
+  assert.deepEqual(waitingOnYou(snapshot), { count: 0, oldest: null });
+  assert.deepEqual(tiles(), ['working:busy:2', 'stuck:stuck:2', 'waiting on you:question:0', 'blocked:blocked:1', 'idle:idle:1', 'finished:merged:4'], 'B2 waits on a plan, so it counts in no state tile');
+});
+
+test('the orchestrator\'s view: a finished or stalled run, its own question, what it is doing, or what it waits for', () => {
+  const snapshot = exampleSnapshot();
+  const view = () => orchestratorView(snapshot);
+  assert.deepEqual(view(), { status: 'question', detail: 'waiting_question', words: 'Waiting on question · {t}', at: snapshot.orchestrator.since, text: 'Publish PR #421 for review?' });
+  snapshot.needs[1].fromId = 'ws-0007-d5';
+  snapshot.needs.push({ id: 'swarm-q', kind: 'question', unitIds: [], labels: [], fromId: 'elsewhere', text: 'Whole swarm?', since: NOW, tagged: false });
+  assert.equal(view().text, 'Whole swarm?', 'no item of its own: one about the whole swarm');
+  const o = snapshot.orchestrator;
+  Object.assign(o, { status: 'busy', statusDetail: 'busy', since: NOW - 40000, todo: 'Start R8', toolDesc: null, activity: { label: 'Thinking', tool: null } });
+  assert.deepEqual([view().status, view().words, view().text, view().muted], ['busy', 'Busy · {t}', 'Start R8', undefined]);
+  o.todo = null;
+  assert.deepEqual([view().text, view().muted], ['Thinking', true]);
+  o.activity = { label: 'Waiting for its explore (sync)', tool: tool('task', 'task: Map the handlers') };
+  assert.equal(view().text, 'Waiting for its explore (sync)');
+  Object.assign(o, { status: 'idle', statusDetail: 'idle', activity: { label: 'Idle', tool: null } });
+  assert.deepEqual([view().words, view().text], ['Idle · {t}', 'Waiting for 2 sessions and 2 sub-agents to report; 1 unit waiting on you']);
+  for (const unit of snapshot.units) if (['busy', 'stuck'].includes(unit.status)) Object.assign(unit, { status: 'idle', statusDetail: 'idle' });
+  assert.equal(view().text, '1 unit waiting on you');
+  findByLabel(snapshot, 'B2').status = 'idle';
+  assert.deepEqual([view().text, view().muted], ['Nothing is running.', true]);
+  snapshot.run.stalled = { since: NOW - 600000, reason: 'Swarm rule: **nothing** is due.' };
+  assert.deepEqual(view(), { status: 'stuck', detail: 'stalled', words: 'Swarm stalled · {t}', at: NOW - 600000, text: 'Swarm rule: nothing is due.' });
+  Object.assign(snapshot.run, { lifecycle: 'finished', finishedAt: NOW - 3600000 });
+  assert.deepEqual(view(), { status: 'done', detail: 'completed', words: 'Swarm finished · {a}', at: NOW - 3600000, text: 'Nothing left to run.', muted: true });
+});
+
+test('running and stuck sub-agents make the footer chips, stuck first', () => {
+  const sub = (id, status) => ({ id, status });
+  assert.deepEqual(activeSubagents({ subagents: [sub('a', 'running'), sub('b', 'completed'), sub('c', 'stuck'), sub('d', 'running')] }).map(item => item.id), ['c', 'a', 'd']);
 });
 
 test('a unit whose PR closed without merging is marked until it is archived', () => {
@@ -67,101 +320,6 @@ test('a unit\'s runtime stops at its own end, else where the run\'s clock stops'
   assert.equal(unitClockEnd(d5, snapshot), NOW - 600000);
   assert.equal(unitEnd(d5, snapshot), null, 'it has not ended');
   assert.equal(unitClockEnd(f2a, snapshot), f2a.endedAt, 'its own end comes first');
-});
-
-test('cards put a status the view does not know last', () => {
-  const snapshot = exampleSnapshot();
-  findByLabel(snapshot, 'B1').status = 'something_new';
-  assert.deepEqual(labels(cardUnits(snapshot, NOW)), ['I1', 'table-research', 'B2', 'F1', 'map-import-module', 'D5', 'F2a', 'B1']);
-});
-
-test('cards show sub-agent units while they run or are stuck, and finished ones only in their grace period', () => {
-  const snapshot = exampleSnapshot();
-  const shown = labels(cardUnits(snapshot, NOW).filter(isSubagent));
-  assert.deepEqual(shown, ['table-research', 'map-import-module']);
-  for (const label of ['audit-schema-usage', 'migrate-fixtures', 'scan-docs-links']) assert.ok(!labels(cardUnits(snapshot, NOW)).includes(label), label);
-  Object.assign(findByLabel(snapshot, 'map-import-module'), { status: 'done', statusDetail: 'completed', endedAt: NOW - SUBAGENT_CARD_GRACE_MS - 1000, since: NOW - SUBAGENT_CARD_GRACE_MS - 1000 });
-  assert.deepEqual(labels(cardUnits(snapshot, NOW).filter(isSubagent)), ['table-research']);
-});
-
-/** The example with one sub-agent unit set to a finished state that ended `ago` ms before NOW. */
-function finishedAgo(label, status, statusDetail, ago) {
-  const snapshot = exampleSnapshot();
-  const unit = findByLabel(snapshot, label);
-  Object.assign(unit, { status, statusDetail, endedAt: NOW - ago, since: NOW - ago });
-  return { snapshot, unit };
-}
-const FINISHED = [['audit-schema-usage', 'done', 'completed'], ['migrate-fixtures', 'blocked', 'failed'], ['scan-docs-links', 'blocked', 'cancelled'], ['migrate-fixtures', 'blocked', 'crashed']];
-
-test('a finished sub-agent keeps its card for 10 minutes after it ended', () => {
-  assert.equal(SUBAGENT_CARD_GRACE_MS, 10 * 60 * 1000);
-  for (const [label, status, detail] of FINISHED) {
-    const inside = finishedAgo(label, status, detail, SUBAGENT_CARD_GRACE_MS - 1000);
-    assert.ok(cardUnits(inside.snapshot, NOW).includes(inside.unit), `${detail} inside the grace period`);
-    assert.equal(isFinishedSubagent(inside.unit), true, detail);
-    assert.equal(cardTimeLeft(inside.unit, NOW), 1000, detail);
-    const past = finishedAgo(label, status, detail, SUBAGENT_CARD_GRACE_MS + 1000);
-    assert.ok(!cardUnits(past.snapshot, NOW).includes(past.unit), `${detail} past the grace period`);
-  }
-});
-
-test('a crashed sub-agent with no endedAt counts its grace period from since', () => {
-  const { snapshot, unit } = finishedAgo('migrate-fixtures', 'blocked', 'crashed', 0);
-  Object.assign(unit, { endedAt: null, since: NOW - 60000 });
-  assert.equal(cardTimeLeft(unit, NOW), SUBAGENT_CARD_GRACE_MS - 60000);
-  assert.ok(cardUnits(snapshot, NOW).includes(unit));
-  unit.since = NOW - SUBAGENT_CARD_GRACE_MS - 60000;
-  assert.ok(!cardUnits(snapshot, NOW).includes(unit));
-});
-
-test('a follow-up that makes a finished sub-agent busy again brings its card back', () => {
-  const { snapshot, unit } = finishedAgo('audit-schema-usage', 'done', 'completed', SUBAGENT_CARD_GRACE_MS * 3);
-  assert.ok(!cardUnits(snapshot, NOW).includes(unit));
-  Object.assign(unit, { status: 'busy', statusDetail: 'busy', endedAt: null, since: NOW - 30000 });
-  assert.equal(isFinishedSubagent(unit), false);
-  assert.equal(cardTimeLeft(unit, NOW), null);
-  assert.ok(cardUnits(snapshot, NOW).includes(unit));
-});
-
-test('a finished sub-agent with no time at all has no card', () => {
-  const { snapshot, unit } = finishedAgo('audit-schema-usage', 'done', 'completed', 0);
-  Object.assign(unit, { endedAt: null, since: null, lastEventAt: null });
-  assert.equal(cardTimeLeft(unit, NOW), 0);
-  assert.ok(!cardUnits(snapshot, NOW).includes(unit));
-});
-
-test('only finished sub-agents have card time left', () => {
-  const snapshot = exampleSnapshot();
-  for (const label of ['B1', 'F2a', 'B0', 'table-research', 'map-import-module']) assert.equal(cardTimeLeft(findByLabel(snapshot, label), NOW), null, label);
-});
-
-/** The example with a done and a failed sub-agent in their grace period, and a cancelled one past it. */
-function graceSnapshot() {
-  const snapshot = exampleSnapshot();
-  Object.assign(findByLabel(snapshot, 'audit-schema-usage'), { endedAt: NOW - 3 * 60000, since: NOW - 3 * 60000 });
-  Object.assign(findByLabel(snapshot, 'migrate-fixtures'), { endedAt: NOW - 5 * 60000, since: NOW - 5 * 60000 });
-  Object.assign(findByLabel(snapshot, 'scan-docs-links'), { endedAt: NOW - SUBAGENT_CARD_GRACE_MS - 60000, since: NOW - SUBAGENT_CARD_GRACE_MS - 60000 });
-  return snapshot;
-}
-
-test('cards in the grace period keep the usual sort order', () => {
-  assert.deepEqual(labels(cardUnits(graceSnapshot(), NOW)), ['I1', 'table-research', 'B2', 'F1', 'migrate-fixtures', 'B1', 'map-import-module', 'D5', 'F2a', 'audit-schema-usage']);
-});
-
-test('the next change on the Cards tab is when a card starts to fade, or leaves once it fades', () => {
-  assert.equal(nextCardChange(exampleSnapshot(), NOW), null, 'every finished sub-agent is past its grace period');
-  const snapshot = graceSnapshot();
-  const audit = findByLabel(snapshot, 'audit-schema-usage');
-  const migrate = findByLabel(snapshot, 'migrate-fixtures');
-  const leftAudit = cardTimeLeft(audit, NOW);
-  assert.equal(leftAudit, 7 * 60000);
-  assert.equal(nextCardChange(snapshot, NOW), 5 * 60000 - CARD_FADE_MS, 'the smallest wait over several');
-  Object.assign(migrate, { endedAt: null, since: null, lastEventAt: null });
-  assert.equal(nextCardChange(snapshot, NOW), leftAudit - CARD_FADE_MS, 'not fading yet');
-  Object.assign(audit, { endedAt: NOW - SUBAGENT_CARD_GRACE_MS + 400 });
-  assert.equal(nextCardChange(snapshot, NOW), 400, 'fading');
-  audit.endedAt = NOW - SUBAGENT_CARD_GRACE_MS;
-  assert.equal(nextCardChange(snapshot, NOW), null, 'gone');
 });
 
 test('omitted sub-agents add up the finished ones the snapshot leaves out', () => {
@@ -301,16 +459,18 @@ test('the board ends with the Sub-agents column; the stage track keeps the sessi
   assert.deepEqual(UNIT_STAGES, ['coding', 'pr_open', 'in_review', 'merged', 'archived']);
 });
 
-test('every unit the Cards tab leaves out is on the Board', async () => {
+test('every unit off the active grid is on the Board, and every finished one in the Finished section', async () => {
   const stress = await createDemoEngine({ scenario: 'stress', now: () => NOW, simulate: false }).getSnapshot();
   const archivedMerged = exampleSnapshot();
   Object.assign(archivedMerged.units.find(unit => unit.label === 'F2a'), { status: 'archived', stage: 'merged' });
-  for (const snapshot of [exampleSnapshot(), stress, closedSnapshot(), archivedMerged, graceSnapshot()]) {
-    const shown = new Set(cardUnits(snapshot, NOW));
+  for (const snapshot of [exampleSnapshot(), stress, closedSnapshot(), archivedMerged]) {
+    const { active, finished } = cardZones(snapshot);
+    const shown = new Set(active);
     const left = snapshot.units.filter(unit => !shown.has(unit));
     assert.ok(left.length > 0);
     const onBoard = new Set(boardColumns(snapshot).flatMap(column => column.nodes.map(node => node.unit)));
     for (const unit of left) assert.ok(onBoard.has(unit), unit.label);
+    for (const unit of left) assert.equal(finished.includes(unit), !isArchivedUnit(unit), unit.label);
   }
 });
 

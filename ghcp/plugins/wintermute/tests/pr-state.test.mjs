@@ -11,7 +11,7 @@ import { deriveMonitor, deriveStage, prView, resolvePr } from '../engine/model/s
 import { evaluateStatus } from '../engine/model/status.mjs';
 import { MINUTE } from '../engine/time.mjs';
 import { tileGrid } from '../ui/cockpit-model.mjs';
-import { boardColumns, cardUnits, closedNotMerged, isArchived } from '../ui/model.mjs';
+import { boardColumns, cardZones, closedNotMerged, isArchived } from '../ui/model.mjs';
 import { boardHtml, planListHtml } from '../ui/plan.mjs';
 import { monitorHtml } from '../ui/parts.mjs';
 import { EventLog } from './helpers/event-log.mjs';
@@ -82,6 +82,9 @@ const githubPr = (id, extra = {}) => ({ pr_provider: 'github', pr_repo: 'acme/sh
 
 // Item 1: merged units end up under "Archived", and archived failed units count as Done.
 
+/** Every unit on the Cards tab: the active grid, then the Finished section. Archived units are in neither. */
+const onCards = snapshot => Object.values(cardZones(snapshot)).flat();
+
 test('an archived unit whose PR merged goes under Merged, not Archived', () => {
   assert.equal(deriveStage({ archivedAt: T0, outcome: null, pr: { state: 'merged' } }).stage, 'merged');
   assert.equal(deriveStage({ archivedAt: T0, outcome: 'merged', pr: null }).stage, 'merged');
@@ -146,7 +149,7 @@ test('archived units are placed, shown and counted by their outcome, and the hea
   const column = stage => boardColumns(snapshot).find(entry => entry.stage === stage).nodes.map(node => node.unit.label);
   assert.deepEqual([column('coding'), column('pr_open'), column('merged'), column('archived')], [['fail', 'drop'], ['close'], ['merge'], ['plain']]);
   // Archived units still leave the Cards tab, and they are over: they do not make the swarm stalled.
-  assert.deepEqual(cardUnits(snapshot, at(60)), []);
+  assert.deepEqual(onCards(snapshot), []);
   assert.equal(snapshot.run.stalled, null);
 });
 
@@ -174,14 +177,14 @@ test('an archived unit recorded as failed whose PR then merged stays off the Car
   assert.deepEqual(validateSnapshot(snapshot), []);
   const mixed = unitOf(snapshot, 'mixed');
   assert.deepEqual({ stage: mixed.stage, detail: mixed.statusDetail, archived: isArchived(mixed) }, { stage: 'merged', detail: 'failed', archived: true });
-  assert.deepEqual(cardUnits(snapshot, at(60)), []);
+  assert.deepEqual(onCards(snapshot), []);
   assert.equal(snapshot.run.stalled, null);
 });
 
 test('a unit that is not archived keeps its card', () => {
   const snapshot = buildSnapshot(swarm([{ id: 'open', row: githubPr(13) }], lookup({ 13: 'open' })));
   assert.equal(isArchived(unitOf(snapshot, 'open')), false);
-  assert.deepEqual(cardUnits(snapshot, at(60)).map(unit => unit.label), ['open']);
+  assert.deepEqual(onCards(snapshot).map(unit => unit.label), ['open']);
 });
 
 // Review finding 3: archival reaches the UI without changing the schema version 1 snapshot shape.
@@ -221,7 +224,7 @@ test('an archived unit keeps its archived mark when later marks pass the mark li
   assert.equal(unit.timeline.marks.filter(mark => mark.kind === 'archived').length, 1);
   assert.ok(unit.timeline.marks.every((mark, index, list) => index === 0 || list[index - 1].at <= mark.at));
   assert.equal(unit.status, 'blocked');
-  assert.deepEqual(cardUnits(snapshot, at(60)), []);
+  assert.deepEqual(onCards(snapshot), []);
 });
 
 // Item 2: a registry PR shows "Not known yet" when the gh lookup fails.

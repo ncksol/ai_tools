@@ -23,11 +23,12 @@ const SCENARIOS = {
   stress: { detail: 'ws-9001-stress', subagent: 'call-9101-sub', run: null, historyError: true },
 };
 /**
- * Every dashboard view as URL parameters. Activity exists only in narrow mode; history views need a finished run,
- * except the History list of a scenario served with History failing.
+ * Every dashboard view as URL parameters, and a control to click once the page is ready. Activity exists only in narrow
+ * mode; history views need a finished run, except the History list of a scenario served with History failing.
  */
 export const VIEWS = [
   { name: 'cards', params: {} },
+  { name: 'cards-finished', params: {}, click: '[data-finished]' },
   { name: 'detail', params: { detail: 'DETAIL' } },
   { name: 'detail-subagent', params: { detail: 'SUBAGENT' } },
   { name: 'activity', params: { tab: 'activity' }, narrowOnly: true },
@@ -38,7 +39,7 @@ export const VIEWS = [
   { name: 'history', params: { page: 'history' }, history: true },
   { name: 'run', params: { page: 'run', run: 'RUN' }, history: true },
 ];
-export const SELF_TEST_RULES = ['overlap', 'font-family', 'font-size', 'font-style', 'text-transform', 'font-weight', 'letter-spacing', 'line-height', 'contrast', 'colour', 'grid', 'padding', 'height', 'spill', 'clipped', 'hidden-lines', 'cut', 'outside', 'gap', 'align', 'kind-border', 'hscroll'];
+export const SELF_TEST_RULES = ['overlap', 'font-family', 'font-size', 'font-style', 'text-transform', 'font-weight', 'letter-spacing', 'line-height', 'contrast', 'colour', 'grid', 'padding', 'height', 'spill', 'clipped', 'hidden-lines', 'cut', 'outside', 'gap', 'align', 'kind-border', 'neutral-border', 'hscroll'];
 export const USAGE = `Usage: check-layout [--scenario example|stress | --live <url>] [--width <px>] [--screenshots <dir>] [--engine chrome|webkit]
 
 Checks every dashboard view, in the light and the dark theme, for overlap, clipped text, type, spacing, sizes,
@@ -113,7 +114,7 @@ export function buildStates({ scenarios, widths, canvasWidths, targets = SCENARI
             if (params.detail === 'DETAIL') params.detail = target.detail;
             if (params.detail === 'SUBAGENT') params.detail = target.subagent;
             if (params.run === 'RUN') params.run = target.run;
-            states.push({ theme, scenario, host, width, view: view.name, narrowOnly: Boolean(view.narrowOnly), params });
+            states.push({ theme, scenario, host, width, view: view.name, narrowOnly: Boolean(view.narrowOnly), click: view.click ?? null, params });
           }
         }
       }
@@ -269,7 +270,7 @@ function inspectPage() {
   if (Math.abs(window.scrollY - state.scrollY) > 1) issues.push(`the page scrolled from ${state.scrollY} to ${window.scrollY} px`);
   const now = document.timeline.currentTime;
   let rings = 0;
-  for (const arc of document.querySelectorAll('.ring .arc.spin')) {
+  for (const arc of document.querySelectorAll('.ring .arc.spin, .mark .arc.spin')) {
     const animation = arc.getAnimations()[0];
     if (!animation) continue;
     rings += 1;
@@ -1068,6 +1069,13 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
       await page.waitFor(`location.href === ${JSON.stringify(url)} && document.documentElement.dataset.ready === '1'`);
       await page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
       if (state.narrowOnly && await page.evaluate('document.documentElement.dataset.narrow') !== '1') continue;
+      if (state.click) {
+        const clicked = await page.evaluate(`(() => { const el = document.querySelector(${JSON.stringify(state.click)}); el?.click(); return Boolean(el); })()`);
+        // A live swarm may have nothing finished yet; the synthetic ones always do.
+        if (!clicked && options.live) continue;
+        if (!clicked) failures.push({ state, issues: [{ rule: 'click', target: state.click, detail: 'not found' }] });
+        await page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      }
       const shownTheme = await page.evaluate('document.documentElement.dataset.theme');
       const result = await page.evaluate(auditScript(AUDIT_DEFAULTS));
       views += 1;

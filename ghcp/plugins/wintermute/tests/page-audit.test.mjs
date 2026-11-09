@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { AUDIT_DEFAULTS, auditScript, composite, contrastRatio, cutsBox, oklchToSrgb, parseColor, showsEllipsis } from '../scripts/lib/page-audit.mjs';
+import { AUDIT_DEFAULTS, auditScript, clampsLines, composite, contrastRatio, cutsBox, oklchToSrgb, parseColor, showsEllipsis } from '../scripts/lib/page-audit.mjs';
 
 const close = (actual, expected, tolerance = 0.005) => assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} is not about ${expected}`);
 
@@ -60,18 +60,41 @@ test('the audit script is self-contained and carries its options', () => {
   assert.doesNotThrow(() => new Function(script));
 });
 
-test('the dashboard audit holds the Cards note to the cards\' gap and text edge', () => {
-  assert.deepEqual(AUDIT_DEFAULTS.follows, [{ item: '.cards-note', ref: '.b-card', gapOf: '.b-grid' }]);
+test('the dashboard audit holds the Cards note one gap below what comes before it, lined up with it', () => {
+  assert.deepEqual(AUDIT_DEFAULTS.follows, [{ item: '.b-zone > .cards-note', ref: '.b-zone > :not(.cards-note)', gapOf: '.b-zone' }]);
   assert.ok(auditScript(AUDIT_DEFAULTS).includes('.cards-note'));
 });
 
-test('the dashboard audit holds every unit card\'s border to the colour of its kind, so a card that lost its kind is reported, except the selected card', () => {
+test('the dashboard audit holds a Board card\'s border to the colour of its kind, except the selected card', () => {
   assert.deepEqual(AUDIT_DEFAULTS.kindBorders, {
-    selector: '.b-card[data-open], .mc[data-open]',
+    selector: '.board .mc[data-open]',
     skip: '.is-sel',
     colours: { subagent: 'var(--busy)', project: 'var(--merged)', chat: 'var(--merged)' },
   });
   const script = auditScript(AUDIT_DEFAULTS);
-  assert.ok(script.includes('"kindBorders":{"selector":".b-card[data-open], .mc[data-open]"'));
+  assert.ok(script.includes('"kindBorders":{"selector":".board .mc[data-open]"'));
   assert.ok(script.includes("'kind-border'"));
+});
+
+test('the dashboard audit holds every Cards tab card, active or finished, to the neutral border, except the selected card', () => {
+  assert.deepEqual(AUDIT_DEFAULTS.neutralBorders, { selector: '.b-card[data-open], .b-fin .mc[data-open]', skip: '.is-sel', colour: 'var(--line)' });
+  assert.ok(auditScript(AUDIT_DEFAULTS).includes("'neutral-border'"));
+});
+
+test('the dashboard audit holds active cards to 162 px and their marks to 32 px, and sets unit labels in monospace', () => {
+  assert.equal(AUDIT_DEFAULTS.heights['.b-zone .b-card'], 162);
+  assert.equal(AUDIT_DEFAULTS.heights['.b-card .mark'], 32);
+  assert.equal(AUDIT_DEFAULTS.heights['.d-id > .mark'], 44);
+  assert.deepEqual(AUDIT_DEFAULTS.mono, { selector: '.b-lab', family: 'ui-monospace, SFMono-Regular, Menlo, monospace' });
+});
+
+test('a box cut down by an ancestor that clamps its lines is not cut: the clamp ends its last line with an ellipsis', () => {
+  const area = { left: 0, top: 0, right: 100, bottom: 40 };
+  const below = { left: 0, top: 40, right: 50, bottom: 60 };
+  const hidden = { overflowX: 'hidden', overflowY: 'hidden', textOverflow: 'clip', display: '-webkit-box' };
+  assert.equal(cutsBox(below, area, { ...hidden, webkitLineClamp: 'none' }), true);
+  assert.equal(cutsBox(below, area, { ...hidden, webkitLineClamp: '2' }), false);
+  assert.equal(clampsLines({ webkitLineClamp: '2' }), true);
+  assert.equal(clampsLines({ webkitLineClamp: 'none' }), false);
+  assert.equal(clampsLines({}), false);
 });

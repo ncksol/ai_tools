@@ -1,7 +1,8 @@
 import { cockpitAddressHtml, cockpitControlHtml } from './cockpit-link.mjs';
-import { ago, esc } from './format.mjs';
+import { ago, elapsed, esc, timeOfDay } from './format.mjs';
 import { historyHtml, runHtml } from './history.mjs';
-import { activityHtml, cardsHtml, detailHtml, headerHtml, needsHtml, railHtml } from './live.mjs';
+import { activityHtml, cardsHtml, detailHtml, headerHtml, railHtml } from './live.mjs';
+import { waitingOnYou } from './model.mjs';
 import { boardHtml } from './plan.mjs';
 import { themeControlHtml } from './theme.mjs';
 import { timelineHtml } from './timeline.mjs';
@@ -258,8 +259,14 @@ function pickerHtml(view) {
   return `<label class="pick"><span class="small muted">Swarm</span><select data-swarm aria-label="Swarm">${options}</select></label>`;
 }
 
+/** Whether the page shows data it can no longer refresh: it is disconnected, so its clocks stop (see main.mjs). */
+export const isStale = view => view.connection === 'retrying';
+
 function statusHtml(view) {
-  if (view.connection === 'retrying') return '<span class="small warn">Disconnected · retrying</span>';
+  if (isStale(view)) {
+    const from = view.snapshot && view.staleSince ? ` · showing data from ${timeOfDay(view.staleSince)}, clocks stopped` : '';
+    return `<span class="small warn">Disconnected · retrying${from}</span>`;
+  }
   const warnings = (view.snapshot?.diagnostics ?? []).filter(entry => entry.level === 'warn');
   const note = warnings.length
     ? `<span class="small muted" title="${esc(warnings.map(entry => `${entry.source}: ${entry.message}`).join('\n'))}">${warnings.length} data warning${warnings.length === 1 ? '' : 's'}</span>`
@@ -283,8 +290,16 @@ function liveHtml(view) {
     return `<div class="empty"><h3>${heading}</h3><p class="small muted">${esc(snapshot.run.name)} finished ${ago(at, view.now)}. Finished runs are in History.</p>`
       + `<button type="button" class="link" data-run="${esc(snapshot.run.id)}">Open its summary</button></div>`;
   }
-  const ctx = { snapshot, now: view.now, phaseMs: view.phaseMs, detail: view.detail, fresh: view.fresh };
-  return headerHtml(ctx) + needsHtml(ctx) + bodyHtml(view, ctx);
+  const ctx = { snapshot, now: view.now, phaseMs: view.phaseMs, detail: view.detail, fresh: view.fresh, finishedOpen: Boolean(view.finishedOpen), stale: isStale(view) };
+  return headerHtml(ctx) + bodyHtml(view, ctx);
+}
+
+/** Off the Cards tab, one line says how much waits on you and since when, and opens the Cards tab; none when nothing waits. */
+export function waitingHtml(snapshot, now) {
+  const { count, oldest } = waitingOnYou(snapshot);
+  if (!count) return '';
+  return `<button type="button" class="o-wait" data-tab="cards"><span class="dot"></span><span class="o-wait-n">${count} waiting on you</span>`
+    + `<span class="o-wait-t"> · oldest ${elapsed(oldest, now)}</span><span class="o-go">Show on Cards →</span></button>`;
 }
 
 function bodyHtml(view, ctx) {
@@ -294,7 +309,8 @@ function bodyHtml(view, ctx) {
     ? detailHtml(view.detail, true, ctx)
     : `<div class="tabs" role="tablist" aria-label="Live views">${tabs.map(name => `<button type="button" role="tab" data-tab="${name}" aria-selected="${tab === name}">${TABS[name]}</button>`).join('')}</div><div class="tab-body">${tabBody(tab, view, ctx)}</div>`;
   const side = view.narrow ? '' : `<aside class="d-side">${view.detail ? detailHtml(view.detail, false, ctx) : railHtml(ctx)}</aside>`;
-  return `<div class="d-body${view.narrow ? ' is-narrow' : view.detail ? ' has-detail' : ''}"><div class="d-main">${main}</div>${side}</div>`;
+  const waiting = tab === 'cards' ? '' : waitingHtml(ctx.snapshot, ctx.now);
+  return `${waiting}<div class="d-body${view.narrow ? ' is-narrow' : view.detail ? ' has-detail' : ''}"><div class="d-main">${main}</div>${side}</div>`;
 }
 
 function tabBody(tab, view, ctx) {

@@ -38,9 +38,9 @@ test('every 15 seconds the Timeline renders again, so its rows follow the moving
   assert.doesNotMatch(tick, /drawTimeline/);
 });
 
-test('a finished sub-agent\'s card fades and leaves on time, and the other cards glide unless motion is reduced', () => {
+test('cards glide unless motion is reduced, and every render folds the card footers that do not fit', () => {
   const main = readFileSync(file('main.mjs'), 'utf8');
-  for (const needle of ['nextCardChange(', 'cardTimer', 'clearTimeout(cardTimer)', '.animate(']) assert.ok(main.includes(needle), needle);
+  assert.doesNotMatch(main, /nextCardChange|cardTimer/, 'finished sub-agents leave the grid at once, with no timer');
   const glide = main.slice(main.indexOf('function glide'), main.indexOf('\n}\n', main.indexOf('function glide')));
   assert.match(glide, /matchMedia\('\(prefers-reduced-motion: reduce\)'\)\.matches/);
   assert.ok(glide.includes('.animate('));
@@ -49,9 +49,27 @@ test('a finished sub-agent\'s card fades and leaves on time, and the other cards
   const start = main.indexOf('\nfunction render() {');
   const next = main.slice(start + 1).search(/\n(?:async )?function /);
   const render = main.slice(start, next === -1 ? undefined : start + 1 + next);
-  for (const call of ['glide(cards);', 'scheduleCardChange();']) assert.ok(render.includes(call), `render() calls ${call}`);
-  const pagehide = main.slice(main.indexOf("addEventListener('pagehide'"));
-  assert.match(pagehide.slice(0, pagehide.indexOf('});')), /clearTimeout\(cardTimer\)/);
+  for (const call of ['glide(cards);', 'afterRender();']) assert.ok(render.includes(call), `render() calls ${call}`);
+  const after = main.slice(main.indexOf('function afterRender'), main.indexOf('\n}\n', main.indexOf('function afterRender')));
+  assert.match(after, /for \(const foot of dash\.querySelectorAll\('\.b-card \.b-foot'\)\) fitFooter\(foot\);/);
+  const fit = main.slice(main.indexOf('function fitFooter'), main.indexOf('\n}\n', main.indexOf('function fitFooter')));
+  assert.ok(fit.includes('foldFooter({'), 'the order lives in foldFooter, which the model tests cover');
+});
+
+test('the Finished section toggles in place and stays as left across updates', () => {
+  const main = readFileSync(file('main.mjs'), 'utf8');
+  assert.match(main, /finishedOpen: false,/);
+  assert.match(main, /\} else if \(el\.dataset\.finished !== undefined\) \{\n {4}view\.finishedOpen = !view\.finishedOpen;/);
+  assert.ok(main.includes('[data-finished]'));
+});
+
+test('a disconnected page stops its clocks where it lost the connection', () => {
+  const main = readFileSync(file('main.mjs'), 'utf8');
+  assert.match(main, /if \(view\.connection !== 'retrying'\) view\.staleSince = now\(\);/);
+  assert.match(main, /view\.connection = 'open';\n {4}view\.staleSince = null;/);
+  assert.ok(main.includes('morph(dash, renderApp({ ...view, now: shownNow(),'));
+  const tick = main.slice(main.indexOf('setInterval('), main.indexOf('}, 1000);'));
+  assert.match(tick, /^setInterval\(\(\) => \{\n {2}\/\/ [^\n]*\n {2}if \(isStale\(view\)\) return;/);
 });
 
 test('an open page reloads once into new dashboard files, remembering the attempt and waiting while hidden', () => {

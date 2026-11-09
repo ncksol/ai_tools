@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, compareVersions, historyReloadWanted, isNarrow, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, retryBudget, staleChoice, staleShown, startShown, startSwarm, versionNotice } from '../ui/app.mjs';
+import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, compareVersions, historyReloadWanted, isNarrow, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, retryBudget, staleChoice, staleShown, startShown, startSwarm, versionNotice, waitingHtml } from '../ui/app.mjs';
 import { NOW, deepFreeze, exampleSnapshot, fixture } from './helpers/ui.mjs';
 
 const view = (overrides = {}) => ({
@@ -242,11 +242,12 @@ test('after a trigger, at most three automatic retries run, even when a retry co
   assert.equal(history.waiting(), 0);
 });
 
-test('the wide Live page has the header, Needs you, four tabs and the activity rail', () => {
+test('the wide Live page has the header, four tabs and the activity rail, and no Needs you band', () => {
   const html = renderApp(view());
   assert.match(html, /<button type="button" data-page="live" aria-pressed="true">Live<\/button>/);
   assert.match(html, /class="d-head"/);
-  assert.match(html, /aria-label="Needs you"/);
+  assert.doesNotMatch(html, /Needs you|class="needs/);
+  assert.doesNotMatch(html, /o-wait/, 'the Cards tab shows what waits on you on its cards');
   assert.deepEqual(tabs(html), ['cards*', 'timeline', 'plan', 'board']);
   assert.match(html, /<div class="d-body"><div class="d-main">/);
   assert.match(html, /<aside class="d-side"><section class="rail" aria-label="Activity">/);
@@ -279,6 +280,28 @@ test('rendering never changes the snapshot, because the live engine hands out it
   assert.doesNotThrow(() => renderApp(view({ snapshot, detail: 'ws-0005-i1' })));
 });
 
+test('off the Cards tab, one line says how much waits on you and since when, and opens the Cards tab', () => {
+  for (const tab of ['timeline', 'plan', 'board']) {
+    const html = renderApp(view({ tab }));
+    assert.match(html, /<\/div><button type="button" class="o-wait" data-tab="cards"><span class="dot"><\/span><span class="o-wait-n">2 waiting on you<\/span><span class="o-wait-t"> · oldest <span data-t="1792063320000" data-f="short">38m<\/span><\/span><span class="o-go">Show on Cards →<\/span><\/button><div class="d-body">/, tab);
+  }
+  assert.match(renderApp(view({ tab: 'activity', narrow: true })), /class="o-wait"/);
+  const stalled = exampleSnapshot();
+  stalled.run.stalled = { since: NOW - 3 * 3600000, reason: 'Stalled.' };
+  assert.match(renderApp(view({ tab: 'board', snapshot: stalled })), /3 waiting on you<\/span><span class="o-wait-t"> · oldest <span[^>]*>3h 00m<\/span>/);
+  const calm = exampleSnapshot();
+  calm.needs = [];
+  assert.doesNotMatch(renderApp(view({ tab: 'board', snapshot: calm })), /o-wait/);
+  assert.equal(waitingHtml(calm, NOW), '');
+});
+
+test('the Finished section stays as the page left it, and a disconnected page marks its cards stale', () => {
+  assert.match(renderApp(view({ finishedOpen: true })), /aria-expanded="true"/);
+  assert.match(renderApp(view()), /aria-expanded="false"/);
+  assert.match(renderApp(view({ connection: 'retrying' })), /<div class="b-zone is-stale">/);
+  assert.match(renderApp(view()), /<div class="b-zone">/);
+});
+
 test('each tab renders its view container, and Activity falls back to Cards when wide', () => {
   assert.match(renderApp(view({ tab: 'timeline' })), /data-timeline/);
   assert.match(renderApp(view({ tab: 'plan' })), /<div data-plan data-drawn><\/div>/);
@@ -304,6 +327,9 @@ test('the top bar shows a swarm picker, connection trouble, data warnings and sa
   assert.match(renderApp(view({ swarms })), /<select data-swarm aria-label="Swarm"><option value="ws-0000-root" selected>Sample story B<\/option><option value="ws-1000-root">Sample story A<\/option><\/select>/);
   assert.doesNotMatch(renderApp(view()), /data-swarm/);
   assert.match(renderApp(view({ connection: 'retrying' })), /<span class="small warn">Disconnected · retrying<\/span>/);
+  const since = new Date(2026, 10, 9, 14, 0).getTime();
+  assert.match(renderApp(view({ connection: 'retrying', staleSince: since })), /<span class="small warn">Disconnected · retrying · showing data from 14:00, clocks stopped<\/span>/);
+  assert.match(renderApp(view({ connection: 'retrying', staleSince: since, snapshot: null })), /<span class="small warn">Disconnected · retrying<\/span>/, 'no data to show');
   const retrying = topBar(renderApp(view({ connection: 'retrying' })));
   assert.match(retrying, /Disconnected · retrying/);
   assert.doesNotMatch(retrying, /Watch-only/i);

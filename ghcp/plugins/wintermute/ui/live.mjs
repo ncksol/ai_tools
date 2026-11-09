@@ -1,86 +1,112 @@
-import { ago, costHtml, costText, dur, elapsed, esc, liveTime, plainText, runningFor, timeOfDay } from './format.mjs';
+import { ago, costHtml, costText, dollars, dur, esc, liveTime, plainText, runningFor, timeOfDay } from './format.mjs';
 import {
-  CARD_FADE_MS, COUNT_TILES, MODE_WORDS, NEED_CLASS, NEED_LABELS, STAGE_NAMES, cardTimeLeft, cardUnits, closedNotMerged, isSubagent, needItems,
-  omittedSubagents, progressPercent, reportKind, reportTitle, runClockEnd, runEnd, sharePercent, unitClockEnd, unitEnd,
+  MODE_WORDS, STAGE_NAMES, activeSubagents, cardZones, closedNotMerged, countTiles, effortOf, finishedOutcome, isSubagent, needMark, nowLine,
+  omittedSubagents, orchestratorView, prWords, progressPercent, reportKind, reportTitle, runClockEnd, runEnd, shortModel, stateWords, unitClockEnd, unitEnd,
 } from './model.mjs';
-import { badge, bar, chipsHtml, closedBadge, feedList, meter, monitorHtml, reportClass, ring, stageTrack, stateLineHtml } from './parts.mjs';
+import { badge, bar, closedBadge, feedList, fill, monitorHtml, reportClass, ring, stateLineHtml, statusMark, warnMark } from './parts.mjs';
 
 /**
  * @typedef {{ snapshot: object, now: number, phaseMs: number, detail: string|null,
- *   fresh: { feed: Set<string>, reports: Set<string>, chips: Set<string> } }} RenderContext
+ *   fresh: { feed: Set<string>, reports: Set<string>, chips: Set<string> }, finishedOpen?: boolean, stale?: boolean }} RenderContext
  *   fresh holds ids that changed since the previous snapshot: feed item ids, unit ids with a new report, sub-agent ids.
+ *   finishedOpen: the Finished section is open. stale: the page is disconnected, so the data may be out of date.
  */
 
-export function headerHtml({ snapshot, now, phaseMs }) {
-  const { run, orchestrator, counts, cost } = snapshot;
+export function headerHtml({ snapshot, now, phaseMs, stale = false }) {
+  const { run, cost } = snapshot;
   const ended = runEnd(snapshot);
   // A live run with nothing active stops its clock at its last activity and says so; it ticks again once work resumes.
   const stopped = runClockEnd(snapshot);
   const clock = stopped === null ? liveTime(run.startedAt, now, 'clock') : dur(stopped - run.startedAt, 'clock');
   const quiet = ended === null && stopped !== null ? `<span class="v-note"> · quiet since ${timeOfDay(stopped)}</span>` : '';
-  const tiles = COUNT_TILES.map(([bucket, state]) => `<div class="tile st-${state}"><span class="v">${counts[bucket]}</span><span class="k"><span class="dot"></span>${bucket}</span></div>`).join('');
-  return `<div class="d-head">`
-    + `<div class="d-id">${ring(orchestrator.status, orchestrator.label, phaseMs)}<div class="b-who"><div class="d-name">${esc(run.name)}</div><div class="small muted">Orchestrator${run.project ? ` · ${esc(run.project.name)}` : ''}</div></div></div>`
+  const view = orchestratorView(snapshot);
+  const tiles = countTiles(snapshot).map(({ key, state, count }) => `<div class="tile st-${state}"><span class="v">${count}</span><span class="k"><span class="dot"></span>${key}</span></div>`).join('');
+  return `<div class="d-head${stale ? ' is-stale' : ''}">`
+    + `<div class="d-id">${statusMark(view.status, view.detail, phaseMs, 44)}<div class="o-who st-${view.status}">`
+    + `<div class="o-l1"><span class="d-name" title="${esc(run.name)}">${esc(run.name)}</span><span class="o-role">Orchestrator${run.project ? ` · ${esc(run.project.name)}` : ''}</span></div>`
+    + `<div class="o-state">${fill(view.words, view.at, now)}</div>`
+    + `<div class="o-now${view.muted ? ' is-muted' : ''}" title="${esc(view.text)}">${esc(view.text)}</div></div></div>`
     + `<div class="d-facts"><div class="kv"><span class="k">${ended ? 'Ran' : 'Running'}</span><span class="v l">${clock}${quiet}</span></div>`
-    + `<div class="kv"><span class="k">Swarm cost</span><span class="v l">${costHtml(cost.credits, true)}</span></div></div>`
-    + `<div class="d-counts" role="group" aria-label="Child sessions and sub-agents by state">${tiles}</div></div>`;
+    + `<div class="kv"><span class="k">Swarm cost</span><span class="v l" title="${esc(costText(cost.credits))}">${dollars(cost.credits)}</span></div></div>`
+    + `<div class="d-counts" role="group" aria-label="Units by state">${tiles}</div></div>`;
 }
 
-export function needsHtml({ snapshot, now }) {
-  const items = needItems(snapshot);
-  const head = `<div class="sec-h"><h3>Needs you</h3><span class="small muted">${items.length ? `${items.length} waiting, longest first` : 'Nothing waiting'}</span></div>`;
-  if (!items.length) return `<section class="needs" aria-label="Needs you">${head}</section>`;
-  const list = items.map(item => `<div class="need st-${NEED_CLASS[item.kind]}" data-key="${esc(item.id)}"><span class="small need-k"><span class="dot"></span>${NEED_LABELS[item.kind]}</span>`
-    + `<span class="need-t" title="${esc(plainText(item.text))}">${esc(plainText(item.text))}</span>`
-    + `<span class="small muted">${esc(item.from)} · ${item.verb} ${elapsed(item.since, now)}</span></div>`).join('');
-  return `<section class="needs" aria-label="Needs you">${head}<div class="needs-list">${list}</div></section>`;
+/** Line 2's right side: the PR and its state, or an orchestrator sub-agent's type. */
+function sideHtml(unit) {
+  if (isSubagent(unit)) {
+    const type = unit.agent?.type ?? 'sub-agent';
+    return `<span class="b-tag" title="Orchestrator sub-agent · ${esc(type)} · ${esc(MODE_WORDS[unit.agent?.mode]?.toLowerCase() ?? 'mode unknown')}">${esc(type)}</span>`;
+  }
+  return unit.pr ? `<span class="b-pr">${esc(prWords(unit.pr))}</span>` : '';
 }
 
-function reportRow(unit, now, fresh) {
-  const report = unit.report;
-  if (!report) return '<div class="b-rep"><span class="b-rep-t muted">No report yet</span></div>';
-  const kind = reportKind(report);
-  return `<div class="b-rep ${reportClass(kind)}${fresh.reports.has(unit.id) ? ' is-new' : ''}">${badge(kind)}`
-    + `<span class="b-rep-t" title="${esc(reportTitle(report))}">${esc(reportTitle(report))}</span><span class="b-age">${ago(report.at, now)}</span></div>`;
+/** The footer: Needs you marker, sub-agent chips and todos on the left; model, effort and cost on the right. */
+function footHtml(unit, ctx, end) {
+  const { snapshot, now, fresh } = ctx;
+  const mark = needMark(unit, snapshot);
+  const need = mark
+    ? `<span class="b-need" title="${esc(plainText(mark.need.text))}"><span class="b-need-l">${esc(mark.label)}</span><span class="b-need-s" hidden>${esc(mark.short)}</span></span>`
+    : '';
+  const subs = activeSubagents(unit);
+  const chips = subs.map(sub => `<span class="chip st-${sub.status === 'stuck' ? 'stuck' : 'busy'}${fresh.chips.has(sub.id) ? ' is-new' : ''}" data-key="${esc(sub.id)}" title="${esc(sub.task ?? sub.name)}"><span class="dot"></span><span class="chip-t">${esc(sub.type)} ${runningFor(sub.startedAt, end, now)}</span></span>`).join('');
+  // The fold (main.mjs) shows "+N" for chips it hides, or this one count chip in place of them all.
+  const folds = subs.length
+    ? `<span class="b-more" hidden></span><span class="chip b-count st-${subs.some(sub => sub.status === 'stuck') ? 'stuck' : 'busy'}" hidden title="${esc(subs.map(sub => `${sub.type}: ${sub.task ?? sub.name}`).join('\n'))}"><span class="dot"></span><span class="chip-t">${subs.length}</span></span>`
+    : '';
+  const progress = progressPercent(unit);
+  const todos = progress === null ? '' : `<span class="b-prog" title="${unit.progress.done} of ${unit.progress.total} todos done">${bar(progress)}${unit.progress.done}/${unit.progress.total}</span>`;
+  const name = shortModel(unit.model);
+  const effort = effortOf(unit);
+  const model = name ? `<span class="b-model" title="${esc(`Model ${unit.model}${effort ? `, reasoning effort ${effort}` : ''}`)}">${esc(name)}${effort ? ` · ${esc(effort)}` : ''}</span>` : '';
+  return `<div class="b-foot">${need}<div class="b-left">${chips}${folds}${todos}</div>`
+    + `<div class="b-right">${model}<span class="b-cost" title="${esc(costText(unit.cost.credits))}">${dollars(unit.cost.credits)}</span></div></div>`;
 }
 
-const sessionRows = (unit, now) => `<span class="k">Stage</span>${stageTrack(unit.stage)}<span class="r">${STAGE_NAMES[unit.stage]}</span>`
-  + `<span class="k">Monitor</span><span class="mon mon-${unit.monitor.state}">${monitorHtml(unit, now)}${closedNotMerged(unit) ? closedBadge : ''}</span>`;
-/** A sub-agent has no stage track or PR monitor: its card shows its type and mode in those two rows, so cards line up. */
-const subagentRows = unit => `<span class="k">Type</span><span class="none-r">Sub-agent · ${esc(unit.agent?.type ?? 'unknown')}</span>`
-  + `<span class="k">Mode</span><span class="none-r">${MODE_WORDS[unit.agent?.mode] ?? 'Unknown'}</span>`;
-
+/** An active unit's card: head (status mark, label and name, state and PR), the now line and the footer, 162 px high. */
 export function cardHtml(unit, ctx) {
   const { snapshot, now, phaseMs, detail, fresh } = ctx;
-  const end = unitEnd(unit, snapshot);
-  // While the run is quiet its runtimes stop at its last activity, without reading as ended.
-  const stopped = unitClockEnd(unit, snapshot);
-  const progress = progressPercent(unit);
-  const progressRow = progress === null
-    ? '<span class="k">Progress</span><span class="none-r">No task list</span>'
-    : `<span class="k">Progress</span>${bar(progress)}<span class="r">${progress}%</span>`;
-  // A finished sub-agent's card fades out in the last CARD_FADE_MS of its grace period. The negative delay starts the fade
-  // where it should be now, and data-phase keeps that delay on later renders so the fade does not restart.
-  const left = cardTimeLeft(unit, now);
-  const leaving = left !== null && left <= CARD_FADE_MS;
-  const fade = leaving ? ` data-phase style="animation-delay:-${((CARD_FADE_MS - left) / 1000).toFixed(2)}s"` : '';
-  return `<article class="b-card st-${unit.status}${detail === unit.id ? ' is-sel' : ''}${leaving ? ' is-leaving' : ''}" data-open="${esc(unit.id)}" tabindex="0" role="button" aria-label="Open details for ${esc(unit.label)} ${esc(unit.name)}" data-kind="${esc(unit.kind)}"${fade}>`
-    + `<div class="b-head">${ring(unit.status, unit.label, phaseMs)}<div class="b-who st-${unit.status}"><div class="b-name">${esc(unit.name)}</div><div class="b-state">${stateLineHtml(unit, now)}</div></div>${unit.pr ? `<span class="b-pr">PR #${unit.pr.id}</span>` : ''}</div>`
-    + `<div class="b-metrics"><span class="k">${end ? 'Ran' : 'Running'}</span><span class="v">${stopped ? dur(stopped - unit.startedAt, 'clock') : liveTime(unit.startedAt, now, 'clock')}</span>`
-    + `<span class="k">Cost</span><span class="v">${costHtml(unit.cost.credits)}</span><span></span>${meter(sharePercent(unit.cost.credits, snapshot.cost.maxUnitCredits))}</div>`
-    + reportRow(unit, now, fresh)
-    + `<div class="b-rows st-${unit.status}">${progressRow}${isSubagent(unit) ? subagentRows(unit) : sessionRows(unit, now)}</div>`
-    + `<div class="chips">${chipsHtml(unit, now, fresh.chips, stopped)}</div></article>`;
+  // While the run is quiet, or once the unit or the run has ended, its sub-agent clocks stop there.
+  const end = unitClockEnd(unit, snapshot);
+  const line = nowLine(unit, snapshot);
+  const title = `${unit.label} ${unit.name}`;
+  return `<article class="b-card st-${unit.status}${detail === unit.id ? ' is-sel' : ''}" data-open="${esc(unit.id)}" tabindex="0" role="button" aria-label="Open details for ${esc(title)}" data-kind="${esc(unit.kind)}">`
+    + `<div class="b-head">${statusMark(unit.status, unit.statusDetail, phaseMs)}<div class="b-who st-${unit.status}">`
+    + `<div class="b-l1"><span class="b-lab" title="${esc(title)}">${esc(unit.label)}</span><span class="b-name" title="${esc(title)}">${esc(unit.name)}</span>${unit.dataWarning ? warnMark(unit.dataWarning) : ''}</div>`
+    + `<div class="b-l2"><span class="b-st">${fill(stateWords(unit), unit.since, now)}</span>${sideHtml(unit)}</div></div></div>`
+    + `<div class="b-now${line.muted ? ' is-muted' : ''}${line.at !== undefined && fresh.reports.has(unit.id) ? ' is-new' : ''}" title="${esc(line.text)}">${esc(line.text)}${line.at !== undefined ? `<span class="b-ago"> · ${ago(line.at, now)}</span>` : ''}</div>`
+    + footHtml(unit, ctx, end)
+    + '</article>';
+}
+
+/** A finished unit as a Board-style mini card with no tint: its outcome dot, label and name, outcome and age, and cost. */
+function finishedCard(unit, ctx) {
+  const { words, tone, at } = finishedOutcome(unit);
+  const title = `${unit.label} ${unit.name}`;
+  return `<div class="mc tone-${tone}${ctx.detail === unit.id ? ' is-sel' : ''}" data-open="${esc(unit.id)}" tabindex="0" role="button" aria-label="Open details for ${esc(title)}" data-kind="${esc(unit.kind)}">`
+    + `<div class="mc-1"><span class="dot"></span><span class="tx" title="${esc(title)}">${esc(title)}</span></div>`
+    + `<div class="mc-2">${fill(words, at, ctx.now)}</div><div class="mc-3" title="${esc(costText(unit.cost.credits))}">${dollars(unit.cost.credits)}</div></div>`;
+}
+
+const CARET = '<svg class="b-caret" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2.5 8 6l-4 3.5z"/></svg>';
+
+/** The Finished section below the active cards, closed by default; the open state is kept across updates (main.mjs). */
+function finishedHtml(units, ctx) {
+  if (!units.length) return '';
+  const open = Boolean(ctx.finishedOpen);
+  return `<section class="b-fin" aria-label="Finished">`
+    + `<button type="button" class="b-fin-h" data-finished aria-expanded="${open}">${CARET}<span class="b-fin-t">Finished</span><span class="b-fin-n">${units.length}</span><span class="b-fin-s">stopped, merged, done and failed · latest first</span></button>`
+    + (open ? `<div class="b-fin-list">${units.map(unit => finishedCard(unit, ctx)).join('')}</div>` : '')
+    + '</section>';
 }
 
 export function cardsHtml(ctx) {
-  const units = cardUnits(ctx.snapshot, ctx.now);
-  // The Cards tab leaves out archived units and finished sub-agents past their grace period, and the snapshot itself
-  // leaves out older finished sub-agents; the Board shows every unit in its stage column and counts the sub-agents left out.
-  const note = units.length < ctx.snapshot.units.length || omittedSubagents(ctx.snapshot) > 0 ? '<p class="cards-note">Archived and hidden sessions are on the <button type="button" class="link" data-tab="board">Board tab</button>.</p>' : '';
-  if (!units.length) return `<p class="none">No active child sessions.</p>${note}`;
-  // Inside the grid the note sits one card gap below the last row of cards.
-  return `<div class="b-grid">${units.map(unit => cardHtml(unit, ctx)).join('')}${note}</div>`;
+  const { active, finished } = cardZones(ctx.snapshot);
+  // The Cards tab leaves out archived units, and the snapshot itself leaves out older finished sub-agents; the Board
+  // shows every unit in its stage column and counts the sub-agents left out.
+  const hidden = ctx.snapshot.units.length > active.length + finished.length || omittedSubagents(ctx.snapshot) > 0;
+  const note = hidden ? '<p class="cards-note">Archived and hidden sessions are on the <button type="button" class="link" data-tab="board">Board tab</button>.</p>' : '';
+  const grid = active.length ? `<div class="b-grid">${active.map(unit => cardHtml(unit, ctx)).join('')}</div>` : '<p class="none">Nothing is running.</p>';
+  return `<div class="b-zone${ctx.stale ? ' is-stale' : ''}">${grid}${finishedHtml(finished, ctx)}${note}</div>`;
 }
 
 export const railHtml = ctx => `<section class="rail" aria-label="Activity"><div class="sec-h"><h3>Activity</h3><span class="small muted">all units, latest first</span></div>${feedList(ctx.snapshot.feed, 16, ctx.now, ctx.fresh.feed)}</section>`;

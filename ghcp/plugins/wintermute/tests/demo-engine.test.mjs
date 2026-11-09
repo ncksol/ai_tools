@@ -4,7 +4,7 @@ import { MAX_FINISHED_SUBAGENT_UNITS, validateRunListItem, validateRunSummary, v
 import { createDemoEngine, loadFixtures, shiftTimes, simulateStep } from '../server/demo-engine.mjs';
 import { createDefaultEngine } from '../server/engines.mjs';
 import { createSwarmEngine } from '../engine/engine.mjs';
-import { cardUnits, reportKind } from '../ui/model.mjs';
+import { cardZones, reportKind } from '../ui/model.mjs';
 
 const seeded = seed => () => {
   seed = (seed * 16807) % 2147483647;
@@ -137,7 +137,7 @@ test('the stress scenario is valid and covers every status, a stalled and quiet 
   // The orchestrator's sub-agents: 30 units after every session unit, oldest first, and the orchestrator's view of them.
   const kinds = snapshot.units.map(unit => unit.kind);
   const firstSubagent = kinds.indexOf('subagent');
-  assert.deepEqual([kinds.filter(kind => kind !== 'subagent').length, kinds.filter(kind => kind === 'subagent').length], [18, 30]);
+  assert.deepEqual([kinds.filter(kind => kind !== 'subagent').length, kinds.filter(kind => kind === 'subagent').length], [21, 30]);
   assert.ok(kinds.slice(firstSubagent).every(kind => kind === 'subagent'), 'every session unit comes first');
   const subagents = snapshot.units.slice(firstSubagent);
   subagents.slice(1).forEach((unit, index) => assert.ok(unit.startedAt >= subagents[index].startedAt, `${unit.label} starts after the one before`));
@@ -163,6 +163,23 @@ test('the stress scenario is valid and covers every status, a stalled and quiet 
   assert.equal(snapshot.cost.credits, sessionTotal(snapshot));
 });
 
+test('the demos show what units are doing, incomplete data, and every outcome in the Finished section', async () => {
+  const example = await createDemoEngine({ now: () => T, simulate: false }).getSnapshot();
+  const label = (snapshot, name) => snapshot.units.find(unit => unit.label === name);
+  assert.equal(typeof label(example, 'B1').todo, 'string');
+  assert.equal(typeof label(example, 'I1').toolDesc, 'string');
+  assert.equal(label(example, 'I1').statusDetail, 'stuck_tool');
+  assert.ok(example.units.some(unit => unit.dataWarning));
+  const stress = await createDemoEngine({ scenario: 'stress', now: () => T, simulate: false }).getSnapshot();
+  assert.deepEqual(validateSnapshot(stress), []);
+  const { finished } = cardZones(stress);
+  const outcomes = new Set(finished.map(unit => (unit.closedWithoutMerge ? (unit.pr ? 'closed, not merged' : 'closed') : unit.statusDetail)));
+  for (const outcome of ['idle', 'stopped', 'merged', 'completed', 'failed', 'crashed', 'cancelled', 'closed', 'closed, not merged']) assert.ok(outcomes.has(outcome), outcome);
+  assert.ok(stress.units.some(unit => unit.kind === 'subagent' && unit.dataWarning) && stress.units.some(unit => unit.kind !== 'subagent' && unit.dataWarning));
+  const c6 = label(stress, 'C6');
+  assert.ok(stress.needs.some(need => need.unitIds.includes(c6.id) && need.fromId !== c6.id), 'C6\'s footer has a marker to fold with its chips');
+});
+
 test('every reference in a scenario swarm points inside that swarm', async () => {
   for (const scenario of ['example', 'stress']) {
     const engine = createDemoEngine({ scenario, now: () => T, simulate: false });
@@ -180,10 +197,10 @@ test('every reference in a scenario swarm points inside that swarm', async () =>
   }
 });
 
-/** Session units on the Cards tab, by how their report badge reads, as [label, status] pairs. */
+/** Session units on the Cards tab's active grid, by how their report badge reads in their details, as [label, status] pairs. */
 function cardLooks(snapshot) {
   const looks = { replied_question: [], needs_input: [], replied_blocker: [], blocked: [] };
-  for (const unit of cardUnits(snapshot, snapshot.generatedAt)) {
+  for (const unit of cardZones(snapshot).active) {
     if (unit.kind === 'subagent' || !unit.report) continue;
     looks[reportKind(unit.report)]?.push([unit.label, unit.status]);
   }
