@@ -13,7 +13,7 @@ import { buildForest, resolveNodeId, treeNodes } from './model/forest.mjs';
 import { parseQuestionTag } from './model/contract.mjs';
 import { createHistoryStore, listItemOf, summarizeRun } from './model/history.mjs';
 import { createPrLookup } from './model/pr-lookup.mjs';
-import { UI_EVENT_TYPES, applyLine, applyRecovered, createSessionState } from './model/session-state.mjs';
+import { applyLine, applyRecovered, createSessionState, isWorkEvent } from './model/session-state.mjs';
 import { buildSnapshot } from './model/swarm.mjs';
 
 const LIVENESS_TTL_MS = 15_000;
@@ -48,9 +48,11 @@ function summaryDigest(summary) {
  * resumed and finished again while no engine ran. Both credit values are rounded to 0.1. Lower cost alone is not stale: logs
  * can be cleaned up, and the stored summary is then kept. A run that is not listed (its logs are gone) keeps its stored summary.
  *
- * The one exception is a summary from an older cost source (no `costSource`, see COST_SOURCE): session-store.db counted a
- * resumed session's calls again. It is stale whenever `costsComplete` is true, meaning every session of the run had its log
- * read in full for cost on the listing's refresh, so it is rebuilt even when the corrected cost is lower.
+ * Complete logs can also correct an older summary downwards: an older cost source (see COST_SOURCE) counted a resumed
+ * session's calls again, and a finish time beyond the listing's work time plus the slack can come from app bookkeeping.
+ * Both are stale only when `costsComplete` is true, meaning every session's log was read in full on this refresh; incomplete
+ * logs keep the last good summary. A finish-time correction also requires that cost has not fallen: `costsComplete` covers
+ * only sessions still in the forest, so deleting a child workspace must not replace its saved cost, units and finish time.
  *
  * `verified` is the stamp of the last check that rebuilt the run (see the engine's `verified` map). When the listing still
  * shows that check's activity time and cost, and the stored summary is the one that check confirmed, nothing is newer: the
@@ -59,7 +61,9 @@ function summaryDigest(summary) {
 function isStale(stored, swarm, verified = null, costsComplete = false) {
   if (!swarm) return false;
   const oldSource = stored.costSource !== COST_SOURCE && costsComplete;
-  if (!(oldSource || swarm.credits > stored.credits || swarm.lastActivityAt > stored.finishedAt + STALE_SLACK_MS)) return false;
+  const olderWork = costsComplete && swarm.credits >= stored.credits
+    && stored.finishedAt > swarm.lastActivityAt + STALE_SLACK_MS;
+  if (!(oldSource || olderWork || swarm.credits > stored.credits || swarm.lastActivityAt > stored.finishedAt + STALE_SLACK_MS)) return false;
   return !(verified && swarm.lastActivityAt === verified.lastActivityAt && swarm.credits === verified.credits
     && summaryDigest(stored) === verified.digest);
 }
@@ -181,8 +185,8 @@ export function createSwarmEngine(options = {}) {
   }
 
   /**
-   * When a CLI session last did work, from its log's end (see lastWorkTime), or null when its log is missing. App UI events,
-   * such as opening the dashboard canvas, are not work, so they do not make an old run look live (issue #30). A log that
+   * When a CLI session last did work, from its log's end (see lastWorkTime), or null when its log is missing. App UI and
+   * lifecycle bookkeeping are not work, so they do not make an old run look live (issues #30 and #106). A log that
    * cannot be read gives its mtime, so its run is still rebuilt and the failed read is reported. The end of the log is read
    * again whenever its fileStamp changed: a new size, mtime or ctime, or another file in its place.
    */
@@ -203,7 +207,7 @@ export function createSwarmEngine(options = {}) {
     }
     let found;
     try {
-      found = await lastWorkTime(file, UI_EVENT_TYPES);
+      found = await lastWorkTime(file, isWorkEvent);
     } catch {
       workTimes.delete(cliId);
       return mtimeMs;

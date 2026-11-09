@@ -464,6 +464,91 @@ test('a stored summary is rebuilt when cost for the time it covers arrives later
   engine.stop();
 });
 
+test('a summary with a bookkeeping finish time is rebuilt when complete logs show older work', async () => {
+  const { stored, reopen } = await storedOldRun();
+  const old = readSummary(stored);
+  old.finishedAt += 3 * HOUR;
+  old.tookMs += 3 * HOUR;
+  writeFileSync(stored, `${JSON.stringify(old)}\n`);
+  const engine = reopen();
+  try {
+    await engine.refresh();
+    assert.deepEqual(await oldItem(engine), [OLD_LAST, 1, false], 'History uses the corrected work time until rebuilt');
+    assert.equal((await engine.getRunSummary('ws-old')).finishedAt, OLD_LAST);
+    assert.equal(readSummary(stored).finishedAt, OLD_LAST);
+    assert.deepEqual(await oldItem(engine), [OLD_LAST, 1, true]);
+    const before = stat(stored);
+    await engine.refresh();
+    await engine.getRunSummary('ws-old');
+    assert.deepEqual(stat(stored), before, 'a verified summary is not rewritten on the next refresh');
+  } finally {
+    engine.stop();
+  }
+});
+
+test('an overestimated summary finish time is kept when a log is missing', async () => {
+  const { home, stored, reopen } = await storedOldRun();
+  const old = readSummary(stored);
+  old.finishedAt += 3 * HOUR;
+  old.tookMs += 3 * HOUR;
+  writeFileSync(stored, `${JSON.stringify(old)}\n`);
+  rmSync(path.join(home.stateDir, 'cli-old-child', 'events.jsonl'));
+  const before = stat(stored);
+  const engine = reopen();
+  try {
+    await engine.refresh();
+    assert.deepEqual(await oldItem(engine), [old.finishedAt, 1, true]);
+    assert.equal((await engine.getRunSummary('ws-old')).finishedAt, old.finishedAt);
+    assert.deepEqual(stat(stored), before, 'incomplete logs never replace the stored summary');
+  } finally {
+    engine.stop();
+  }
+});
+
+test('a stored summary keeps its cost, children and finish time after a later child workspace is deleted', async () => {
+  const home = scenario();
+  const finishedAt = OLD_LAST + 19 * MINUTE;
+  home.workspace({
+    id: 'ws-old-later', name: 'Later child', createdAt: OLD_LAST + MINUTE, sessionId: 'cli-old-later',
+    parentId: 'ws-old', creatorSessionId: 'cli-old',
+  });
+  const later = new EventLog(OLD_LAST + MINUTE);
+  later.start(); later.turnStart(); later.at(finishedAt); later.turnEnd();
+  home.writeEvents('cli-old-later', later.events);
+  home.usage([
+    { sessionId: 'cli-old', nanoAiu: 1e9, createdAt: OLD_LAST - 30_000 },
+    { sessionId: 'cli-old-later', nanoAiu: 5e9, createdAt: finishedAt - 30_000 },
+  ]);
+  const historyDir = path.join(tempDir('swarm-engine-'), 'history');
+  const stored = path.join(historyDir, 'runs', 'ws-old.json');
+  const reopen = () => createSwarmEngine({ copilotHome: home.root, historyDir, now: () => at(0), processProbe: alwaysAlive, prLookup: 'off' });
+  const first = reopen();
+  try {
+    const summary = await first.getRunSummary('ws-old');
+    assert.deepEqual([summary.credits, summary.children.total, summary.finishedAt], [6, 2, finishedAt]);
+  } finally {
+    first.stop();
+  }
+  const before = stat(stored);
+  execSql(home.dataDb, `
+    DELETE FROM workspace_parent_links WHERE child_workspace_id = 'ws-old-later';
+    DELETE FROM workspace_session_aliases WHERE workspace_id = 'ws-old-later';
+    DELETE FROM workspaces WHERE id = 'ws-old-later';
+    DELETE FROM sessions WHERE id = 'cli-old-later';`);
+  const engine = reopen();
+  try {
+    await engine.refresh();
+    const listed = engine.listSwarms().find(swarm => swarm.id === 'ws-old');
+    assert.deepEqual([listed.credits, listed.units, listed.lastActivityAt], [1, 1, OLD_LAST]);
+    const summary = await engine.getRunSummary('ws-old');
+    assert.deepEqual([summary.credits, summary.children.total, summary.finishedAt], [6, 2, finishedAt]);
+    assert.deepEqual(await oldItem(engine), [finishedAt, 6, true]);
+    assert.deepEqual(stat(stored), before, 'a smaller forest never overwrites the saved summary');
+  } finally {
+    engine.stop();
+  }
+});
+
 test('a resumed session that writes an earlier usage record again counts it once, and its one new call adds only its own cost', async () => {
   const { home, stored, reopen } = await storedOldRun();
   const resumeAt = OLD_LAST + 10 * MINUTE;

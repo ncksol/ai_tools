@@ -155,7 +155,9 @@ export function evaluateStatus(input) {
   if (archivedAt !== null && archivedAt !== undefined) return input.merged ? result('merged', input.mergedAt ?? archivedAt) : result('archived', archivedAt);
   if (input.merged && !turnOpen) return result('merged', input.mergedAt ?? lastAt);
   if (alive === false) {
-    if (state?.lastEventType === 'session.shutdown') return result('stopped', state.shutdownAt ?? lastAt, 'The session process exited normally.');
+    if (state?.shutdownAt != null && state.shutdownAt >= (state.lastEventAt ?? state.shutdownAt)) {
+      return result('stopped', state.shutdownAt, 'The session process exited normally.');
+    }
     return result('crashed', lastAt, `The session process ended without a shutdown event${turnOpen || input.isRunningFlag ? ' while it was working' : ''}.`);
   }
   if (!input.hasRegistry && !turnOpen && lastTask && lastTask.success === false) {

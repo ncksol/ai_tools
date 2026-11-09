@@ -287,7 +287,7 @@ test('an oversized event inside a sub-agent moves that sub-agent\'s last event t
 
 test('a recovered event of a skipped large type only moves the clock, as applyLine does', () => {
   const state = createSessionState('cli-1');
-  applyRecovered(state, { type: 'session.usage_checkpoint', timestamp: new Date(T0).toISOString(), data: {} });
+  applyRecovered(state, { type: 'session.binary_asset', timestamp: new Date(T0).toISOString(), data: {} });
   assert.equal(state.lastEventAt, T0);
   assert.equal(state.lastMainAt, null);
   assert.equal(state.lines, 1);

@@ -183,7 +183,7 @@ export function fileStamp(info) {
   return `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
 }
 
-/** Longest line taken for a skipped type: a longer line is taken as one that is not, without parsing it. */
+/** Longer lines use the bounded metadata scanner instead of parsing their full payload. */
 const MAX_SKIPPED_LINE_BYTES = 64 * 1024;
 const TIMESTAMP_KEY = '"timestamp":"';
 
@@ -213,12 +213,12 @@ function lineTime(line) {
 /**
  * When a session last did work, from the end of its log, reading backwards in chunks. Resolves { stamp, mtimeMs, at }, or
  * null when the log is missing; `stamp` is the fileStamp of the file that was read. `at` is the file's mtime, as before,
- * unless the log ends with lines whose top-level type is in `skipTypes` (app UI events, such as opening a canvas, that are
- * not work), in any key order; it is then the time of the last line before them, or null when every line is one of them.
- * A line that is not a JSON object, or is longer than any UI event, is work. An unfinished last line is work being
+ * unless the log ends with events that `isWorkEvent` classifies as bookkeeping, in any key order; it is then the time
+ * of the last line before them, or null when every line is bookkeeping.
+ * Longer lines use the metadata scanner, including large shutdown accounting payloads. An unreadable line is work. An unfinished last line is work being
  * written, so `at` is the mtime. When more than maxBytes would have to be read, `at` is the mtime.
  */
-export async function lastWorkTime(file, skipTypes, { chunkSize = 16 * 1024, maxBytes = 1024 * 1024 } = {}) {
+export async function lastWorkTime(file, isWorkEvent, { chunkSize = 16 * 1024, maxBytes = 1024 * 1024 } = {}) {
   let handle;
   try {
     handle = await open(file, 'r');
@@ -238,7 +238,7 @@ export async function lastWorkTime(file, skipTypes, { chunkSize = 16 * 1024, max
     let start = size;
     let cursor = size;
     const more = async () => {
-      const length = Math.min(chunkSize, start);
+      const length = Math.min(chunkSize, start, maxBytes - (size - start));
       const chunk = Buffer.alloc(length);
       const { bytesRead } = await handle.read(chunk, 0, length, start - length);
       start -= length;
@@ -250,15 +250,21 @@ export async function lastWorkTime(file, skipTypes, { chunkSize = 16 * 1024, max
     for (;;) {
       const newline = cursor > start ? buffer.lastIndexOf(NEWLINE, cursor - start - 1) : -1;
       if (newline < 0 && start > 0) {
-        if (cursor - start > MAX_SKIPPED_LINE_BYTES) return result(cursor === size - 1 ? mtimeMs : lineTime(buffer.subarray(0, cursor - start)) ?? mtimeMs);
         if (size - start >= maxBytes) return result(mtimeMs);
         await more();
         continue;
       }
       let line = buffer.subarray(newline + 1, cursor - start);
       if (line[line.length - 1] === CARRIAGE_RETURN) line = line.subarray(0, -1);
-      const event = line.length <= MAX_SKIPPED_LINE_BYTES ? parseObject(line) : null;
-      if (event !== BLANK && (!event || !skipTypes.has(event.type))) {
+      let event;
+      if (line.length <= MAX_SKIPPED_LINE_BYTES) {
+        event = parseObject(line);
+      } else {
+        const scanner = createJsonScanner();
+        scanner.write(line, 0, line.length);
+        event = scanner.finish();
+      }
+      if (event !== BLANK && (!event || isWorkEvent(event))) {
         return result(cursor === size - 1 ? mtimeMs : parseTime(event?.timestamp) ?? lineTime(line) ?? mtimeMs);
       }
       if (newline < 0) return result(null);

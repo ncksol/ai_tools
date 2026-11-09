@@ -6,6 +6,14 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace still follows main. See [Releases](README.md#releases) for prerequisites, checks and recovery after a partial publish.
 
+## 0.9.1 — 2026-11-09
+
+### Fixed
+
+- Restarting the Copilot app no longer brings finished swarms back to Live or makes normally stopped sessions look crashed and stalled (#106). Shutdown, resume, remote connection notices (`session.info` with `infoType: remote`), remote-steerable changes, main-session settings changes, session-start/end hooks and cumulative usage checkpoints do not count as work in session snapshots or the run list. Other info types, work-related hooks and sub-agent settings still count as activity. Resumes and settings still apply their model, mode and reasoning effort; new work still moves the clock and clears the previous shutdown outcome.
+- Large shutdown accounting payloads use the same event classification in the run list, including lines above 64 KiB. Repeated bookkeeping shutdowns keep the first stopped time after the last work.
+- History summaries whose finish time came from bookkeeping are rebuilt when complete logs show an earlier work time without a drop in cost. Missing or unreadable logs and cost lost through deleted child workspaces keep the saved summary.
+
 ## 0.9.0 — 2026-11-09
 
 ### Added

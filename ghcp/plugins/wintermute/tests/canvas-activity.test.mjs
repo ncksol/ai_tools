@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, renameSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createSwarmEngine } from '../engine/engine.mjs';
-import { UI_EVENT_TYPES, applyLine, applyRecovered, createSessionState } from '../engine/model/session-state.mjs';
+import { applyLine, applyRecovered, createSessionState, isWorkEvent } from '../engine/model/session-state.mjs';
 import { createTail, lastWorkTime, readNewLines } from '../engine/readers/events.mjs';
 import { createDashboardServer } from '../server/http.mjs';
 import { EventLog } from './helpers/event-log.mjs';
@@ -41,7 +41,7 @@ function logFile(text) {
   return file;
 }
 
-const workAt = async (text, options) => (await lastWorkTime(logFile(text), UI_EVENT_TYPES, options)).at;
+const workAt = async (text, options) => (await lastWorkTime(logFile(text), isWorkEvent, options)).at;
 
 test('a log\'s work time is its mtime unless it ends with UI events, then the time of the last line before them', async () => {
   assert.equal(await workAt(line('assistant.turn_end', at(5))), MTIME);
@@ -49,7 +49,7 @@ test('a log\'s work time is its mtime unless it ends with UI events, then the ti
   assert.equal(await workAt(line('assistant.turn_end', at(5)) + canvasLine(at(50)) + line('user.message', at(51))), MTIME);
   assert.equal(await workAt(canvasLine(at(50)) + canvasLine(at(51))), null, 'a log with only UI events shows no work');
   assert.equal(await workAt(''), null);
-  assert.equal(await lastWorkTime(path.join(tempDir('canvas-activity-log-'), 'missing.jsonl'), UI_EVENT_TYPES), null);
+  assert.equal(await lastWorkTime(path.join(tempDir('canvas-activity-log-'), 'missing.jsonl'), isWorkEvent), null);
   assert.equal(await workAt(line('assistant.turn_end', at(5)) + canvasLine(at(50)).replace('\n', '\r\n') + '\n'), at(5), 'CRLF and blank lines');
   assert.equal(await workAt(line('assistant.turn_end', at(5)) + canvasLine(at(50)) + '{"type":"assistant.mess'), MTIME, 'a line being written is work');
   assert.equal(await workAt('not json\n' + canvasLine(at(50))), MTIME, 'a line with no type and no time falls back to the mtime');
