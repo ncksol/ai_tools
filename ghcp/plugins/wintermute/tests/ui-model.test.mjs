@@ -175,41 +175,53 @@ function engineSwarm(write, now) {
   return { unit: snapshot.units.find(unit => unit.id === 'ws-api'), snapshot, at };
 }
 
-test('a report from the busy stretch stays on the now line when the stretch turns stuck; one from an earlier stretch does not', () => {
-  const sameStretch = api => {
-    api.at(api.t + 2 * MINUTE);
-    api.turnStart();
-    api.at(api.t + 3 * MINUTE);
-    api.report('ws-root', 'Found the failing retry case.', 'progress');
-    api.at(api.t + MINUTE);
-    api.message('Looking at the retry policy');
+test('the now line keeps a report from the engine\'s busy period and drops one from an earlier period', () => {
+  const report = api => api.report('ws-root', 'Found the failing retry case.', 'progress');
+  const minutes = (api, n) => api.at(api.t + n * MINUTE);
+  const line = (write, now) => {
+    const { unit, snapshot, at } = engineSwarm(write, now);
+    return { detail: unit.statusDetail, since: unit.since, busySince: unit.busySince, line: nowLine(unit, snapshot), at };
   };
-  let { unit, snapshot, at } = engineSwarm(sameStretch, 7);
-  assert.equal(unit.statusDetail, 'busy');
-  assert.deepEqual(nowLine(unit, snapshot), { text: 'Found the failing retry case.', at: at(5) });
-  ({ unit, snapshot } = engineSwarm(sameStretch, 17));
-  assert.equal(unit.statusDetail, 'stuck_model_call');
-  assert.equal(unit.since, at(6), 'its state counts from the last model output');
-  assert.deepEqual(nowLine(unit, snapshot), { text: 'Found the failing retry case.', at: at(5) });
+  const thinking = { text: 'Thinking', muted: true };
 
-  const earlierStretch = api => {
-    api.at(api.t + 2 * MINUTE);
-    api.turnStart();
-    api.at(api.t + 2 * MINUTE);
-    api.report('ws-root', 'Found the failing retry case.', 'progress');
-    api.at(api.t + MINUTE);
-    api.turnEnd();
-    api.at(api.t + 5 * MINUTE);
-    api.turnStart();
-    api.at(api.t + MINUTE);
-    api.message('Looking at the retry policy');
+  // One turn from 12:02, a report at 12:05, model output at 12:06: busy at 12:07, stuck_model_call at 12:17.
+  const sameTurn = api => { minutes(api, 2); api.turnStart(); minutes(api, 3); report(api); minutes(api, 1); api.message('Looking at the retry policy'); };
+  let got = line(sameTurn, 7);
+  assert.deepEqual([got.detail, got.busySince, got.line], ['busy', got.at(2), { text: 'Found the failing retry case.', at: got.at(5) }]);
+  got = line(sameTurn, 17);
+  assert.deepEqual([got.detail, got.since, got.busySince], ['stuck_model_call', got.at(6), got.at(2)], 'since moves to the stall, busySince stays');
+  assert.deepEqual(got.line, { text: 'Found the failing retry case.', at: got.at(5) });
+
+  // The report's turn ends at 12:05; the next starts 30 s later, more than the engine's 5 s join, so a new busy period.
+  const shortGap = api => {
+    minutes(api, 2); api.turnStart(); minutes(api, 2); report(api); minutes(api, 1); api.turnEnd();
+    minutes(api, 0.5); api.turnStart(); minutes(api, 1); api.message('Looking at the retry policy');
   };
-  ({ unit, snapshot } = engineSwarm(earlierStretch, 12));
-  assert.equal(unit.statusDetail, 'busy');
-  assert.deepEqual(nowLine(unit, snapshot), { text: 'Thinking', muted: true });
-  ({ unit, snapshot } = engineSwarm(earlierStretch, 22));
-  assert.equal(unit.statusDetail, 'stuck_model_call');
-  assert.deepEqual(nowLine(unit, snapshot), { text: 'Thinking', muted: true }, 'the idle gap ended the stretch that sent it');
+  got = line(shortGap, 17);
+  assert.deepEqual([got.detail, got.busySince, got.line], ['stuck_model_call', got.at(5.5), thinking]);
+  got = line(shortGap, 7);
+  assert.deepEqual([got.detail, got.line], ['busy', thinking]);
+
+  // A question inside the turn: the report before it stays when the session goes on, and when it then stalls.
+  const afterQuestion = api => {
+    minutes(api, 2); api.turnStart(); minutes(api, 1); report(api); minutes(api, 1);
+    const ask = api.ask('Keep the v1 header?'); minutes(api, 2); api.done(ask, { result: 'Yes' }); minutes(api, 1); api.message('Keeping it');
+  };
+  got = line(afterQuestion, 8);
+  assert.deepEqual([got.detail, got.busySince, got.line], ['busy', got.at(2), { text: 'Found the failing retry case.', at: got.at(3) }]);
+  got = line(afterQuestion, 18);
+  assert.deepEqual([got.detail, got.busySince, got.line], ['stuck_model_call', got.at(2), { text: 'Found the failing retry case.', at: got.at(3) }]);
+
+  // Spinning counts failures over 30 busy minutes, across turns, so its since reaches into the turn before the idle gap.
+  const spinning = api => {
+    minutes(api, 2); api.turnStart(); minutes(api, 1); report(api); minutes(api, 1); api.turnEnd();
+    minutes(api, 6); api.turnStart();
+    for (let k = 0; k < 6; k += 1) { minutes(api, 0.1); api.done(api.tool('bash', { command: `npm test -- ${k}` }), { success: false, result: 'failed' }); }
+  };
+  got = line(spinning, 12);
+  assert.equal(got.detail, 'spinning');
+  assert.ok(got.since <= got.at(3), 'its since starts before the old report');
+  assert.deepEqual([got.busySince, got.line], [got.at(10), thinking]);
 });
 
 test('a waiting unit\'s now line is its question or plan; any other unit with one of its own says "Asks you"; else its latest report', () => {

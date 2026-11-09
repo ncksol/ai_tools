@@ -38,7 +38,20 @@ body { margin: 0; padding: 16px; font: 400 14px/20px system-ui, -apple-system, "
   <article class="b-card narrow" style="display: block"><span style="white-space: nowrap">This inline text runs past the card edge</span></article>
   <article class="b-card narrow"><div style="height: 20px; overflow: hidden">These words wrap onto lines that the box hides</div></article>
   <article class="b-card narrow"><div style="display: flex; overflow: hidden"><span style="flex: none">Its row cuts this text off</span></div></article>
-  <article class="b-card narrow"><div class="b-foot"><span class="chip" style="max-width: 100px"><span class="chip-t" style="min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">code-review 6m and more</span></span></div></article>
+  <article class="b-card"><div class="b-foot"><span class="chip"><span class="chip-t" id="fraction-cut" style="flex: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">code-review 6m</span></span></div></article>
+  <script>
+    // Cut the chip text by a fraction of a pixel that scrollWidth and clientWidth round away: only a fractional measure sees it.
+    {
+      const text = document.getElementById('fraction-cut');
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      const need = range.getBoundingClientRect().width;
+      for (const cut of [0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875]) {
+        text.style.width = `${need - cut}px`;
+        if (text.scrollWidth <= text.clientWidth) break;
+      }
+    }
+  </script>
   <div class="board"><div class="mc" data-open="bad-kind" data-kind="subagent" style="border: 1px solid #888"><span>A Board sub-agent card with a grey border</span></div></div>
   <div class="b-zone"><div class="b-grid"><article class="b-card" data-open="bad-border" data-kind="subagent" style="border: 1px solid var(--busy)"><span>A Cards tab card with a kind border</span></article></div>
   <p class="cards-note" style="margin-top: 4px; padding-left: 4px">A note too close to the cards and not lined up with them</p></div>

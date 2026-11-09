@@ -288,12 +288,18 @@ export function auditPage(options) {
       if (got !== undefined) report('neutral-border', el, `border ${got} instead of ${want}`);
     }
   }
-  // A card footer folds its chips into "+N" or a count chip rather than cutting a chip's text.
+  // A card footer folds its chips into "+N" or a count chip rather than cutting a chip's text. Measured in fractional
+  // pixels: scrollWidth and clientWidth round to whole ones and miss a cut of a fraction of a pixel. 1/64 px is layout rounding.
   if (options.folds) {
     for (const el of root.querySelectorAll(options.folds)) {
       if (!shown.has(el)) continue;
       checks += 1;
-      if (el.scrollWidth > el.clientWidth) report('fold', el, `${el.scrollWidth}px of chip text in ${el.clientWidth}px; the footer should fold it`);
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const style = getComputedStyle(el);
+      const need = range.getBoundingClientRect().width;
+      const room = el.getBoundingClientRect().width - ['paddingLeft', 'paddingRight', 'borderLeftWidth', 'borderRightWidth'].reduce((sum, prop) => sum + parseFloat(style[prop]), 0);
+      if (need > room + 1 / 64) report('fold', el, `${need.toFixed(3)}px of chip text in ${room.toFixed(3)}px; the footer should fold it`);
     }
   }
 

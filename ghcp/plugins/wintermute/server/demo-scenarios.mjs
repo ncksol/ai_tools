@@ -3,6 +3,8 @@ const round1 = value => Math.round(value * 10) / 10;
 const BUCKETS = ['working', 'stuck', 'waiting', 'idle', 'done', 'failed'];
 const SEGMENT = { busy: 'busy', idle: 'idle', plan: 'plan', question: 'question', stuck: 'stuck' };
 const TYPES = ['explore', 'task', 'code-review', 'rubber-duck', 'research', 'general-purpose'];
+/** Details with an open turn, so a busy period the engine would track. */
+const BUSY_DETAILS = new Set(['busy', 'slow_model_call', 'silent', 'stuck_tool', 'stuck_model_call', 'stuck_subagent', 'spinning', 'waiting_question', 'waiting_plan']);
 /**
  * Extra units for the stress scenario: every status detail, long names and labels (C6-1 fits its ring whole, MM-1 does
  * not), crowded chips, a PR closed without merging and a deep plan. A unit without its own effort keeps B1's (xhigh).
@@ -91,7 +93,7 @@ function subagentUnit(template, spec, index, t, parentId) {
     monitor: { state: 'none', lastCheckAt: null, nextCheckAt: null, everyMinutes: null, since: null },
     progress: null, outcome: null, closedWithoutMerge: false, dependsOn: null, todoId: null,
     agent: { type: spec.type, mode: spec.mode, effort: spec.effort },
-    todo: null, toolDesc: spec.toolDesc ?? null, dataWarning: spec.dataWarning ?? null,
+    todo: null, toolDesc: spec.toolDesc ?? null, dataWarning: spec.dataWarning ?? null, busySince: endedAt === null ? startedAt : null,
   });
   unit.activity = spec.tool
     ? { label: 'Running grep: ImportService', tool: { id: `${id}-tool`, name: 'grep', summary: 'grep: ImportService', startedAt: lastEventAt, limitMs: 120000 }, lastEventAt }
@@ -164,7 +166,7 @@ function stressUnit(template, spec, index, t, parentId) {
     startedAt, endedAt, lastEventAt, alive: spec.alive ?? true, cost: { credits: spec.credits ?? round1(1500 + index * 2333.3), calls: 100 + index * 10 },
     model: spec.model ?? template.model, effort: 'effort' in spec ? spec.effort : template.effort,
     parentId, depth: 1, stage, closedWithoutMerge: spec.outcome === 'closed', outcome: spec.outcome ?? null, dependsOn: spec.dependsOn ?? null, todoId: null,
-    todo: spec.todo ?? null, toolDesc: null, dataWarning: spec.dataWarning ?? null,
+    todo: spec.todo ?? null, toolDesc: null, dataWarning: spec.dataWarning ?? null, busySince: BUSY_DETAILS.has(spec.statusDetail) ? t - (5 + index * 7) * MIN : null,
   });
   unit.pr = stage === 'coding' ? null : {
     ...template.pr, id: 500 + index, title: `${spec.name} PR`, url: `https://github.com/sample-org/sample-repo/pull/${500 + index}`,

@@ -8,6 +8,10 @@ After merging, run `npm run release:publish -- --dry-run`, then `npm run release
 
 ## 0.9.0 — 2026-11-09
 
+### Added
+
+- Session snapshots now include `busySince`: the start of the current busy period, which is the open turn or turns that followed each other within 5 s, or for a sub-agent unit the open run; null when nothing is open. Unlike `since`, it stays put when a busy session stalls, so a card keeps the report it sent earlier in the same busy period.
+
 ### Changed
 
 - The Cards tab is redesigned (#103). Every active card has three rows and the same height, 162 px. The head has a status mark (the ring with a state icon inside), the unit's label and name, its state in words with its time, and its PR with the PR's state or a sub-agent's type. A now line, up to two lines, says what the unit is doing or said last: its own question or plan, the stuck tool call, the todo in progress, the sync sub-agent it waits for, the tool call's description, or its latest report and its age. The footer has a Needs you marker when an item names the unit, running and stuck sub-agent chips, todos done, the model and reasoning effort, and the cost in dollars. When the footer runs out of space its left side folds; the marker, the model and the cost never hide. Running time, the cost bar, the Progress, Stage, Monitor, Type and Mode rows, the report badge and the tool chip move to the details view only.

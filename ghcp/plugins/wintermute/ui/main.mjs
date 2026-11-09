@@ -1,8 +1,9 @@
 import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, historyReloadWanted, isNarrow, isStale, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, retryBudget, staleChoice, staleShown, startShown, startSwarm } from './app.mjs';
 import { copyAddress, openCockpit, showRequest } from './cockpit-link.mjs';
+import { fitFooter } from './footer.mjs';
 import { tickText } from './format.mjs';
 import { morph } from './morph.mjs';
-import { foldFooter, runEnd, unitEnd } from './model.mjs';
+import { runEnd, unitEnd } from './model.mjs';
 import { shortLabel } from './parts.mjs';
 import { planFits, planGraphHtml, planListHtml } from './plan.mjs';
 import { createThemeChoice } from './theme.mjs';
@@ -395,61 +396,6 @@ function fitRingLabels() {
   for (const label of dash.querySelectorAll('.ring-l[data-fit]')) {
     if (label.scrollWidth > label.clientWidth + 1) label.textContent = shortLabel(label.textContent);
   }
-}
-
-/**
- * Whether the footer's left side does not fit: a shown child reaches past its padding box (scrollWidth is rounded and
- * misses a 1 px spill), or a shown chip cuts its text, which a lone chip does because .chip caps its width at 100%.
- */
-function spills(el) {
-  const right = el.getBoundingClientRect().left + el.clientLeft + el.clientWidth;
-  if ([...el.children].some(child => !child.hidden && child.getBoundingClientRect().right > right + 0.5)) return true;
-  return [...el.querySelectorAll(':scope > .chip:not([hidden]) > .chip-t')].some(text => text.scrollWidth > text.clientWidth);
-}
-
-/**
- * Fold a card footer whose left side does not fit (foldFooter in ui/model.mjs has the order). It starts from the footer
- * as rendered, so it can run again after a clock in it changes width.
- */
-function fitFooter(foot) {
-  const left = foot.querySelector('.b-left');
-  const model = foot.querySelector('.b-model');
-  const chips = [...left.querySelectorAll(':scope > .chip[data-key]')];
-  const more = left.querySelector('.b-more');
-  const count = left.querySelector('.b-count');
-  const progress = left.querySelector('.b-prog');
-  const need = foot.querySelector('.b-need');
-  const [long, short] = need ? need.children : [];
-  for (const chip of chips) chip.hidden = false;
-  if (more) more.hidden = true;
-  if (count) count.hidden = true;
-  if (progress) progress.hidden = false;
-  if (need) {
-    long.hidden = false;
-    short.hidden = true;
-  }
-  foldFooter({
-    over: () => spills(left) || Boolean(model && model.scrollWidth > model.clientWidth + 1),
-    progress: Boolean(progress),
-    chips: chips.length,
-    need: Boolean(need),
-    hideProgress: () => { progress.hidden = true; },
-    showChips: shown => {
-      chips.forEach((chip, index) => { chip.hidden = index >= shown; });
-      more.textContent = `+${chips.length - shown}`;
-      more.hidden = false;
-    },
-    countChips: () => {
-      for (const chip of chips) chip.hidden = true;
-      more.hidden = true;
-      count.hidden = false;
-    },
-    shortenNeed: () => {
-      long.hidden = true;
-      short.hidden = false;
-    },
-    hideCount: () => { count.hidden = true; },
-  });
 }
 
 /** After a failed History load, try again after HISTORY_RETRY_MS, at most HISTORY_RETRIES times per success or trigger. */

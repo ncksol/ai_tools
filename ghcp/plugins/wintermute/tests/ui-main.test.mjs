@@ -52,8 +52,11 @@ test('cards glide unless motion is reduced, and every render folds the card foot
   for (const call of ['glide(cards);', 'afterRender();']) assert.ok(render.includes(call), `render() calls ${call}`);
   const after = main.slice(main.indexOf('function afterRender'), main.indexOf('\n}\n', main.indexOf('function afterRender')));
   assert.match(after, /for \(const foot of dash\.querySelectorAll\('\.b-card \.b-foot'\)\) fitFooter\(foot\);/);
-  const fit = main.slice(main.indexOf('function fitFooter'), main.indexOf('\n}\n', main.indexOf('function fitFooter')));
+  assert.match(main, /^import \{ fitFooter \} from '\.\/footer\.mjs';$/m);
+  const footer = readFileSync(file('footer.mjs'), 'utf8');
+  const fit = footer.slice(footer.indexOf('export function fitFooter'), footer.indexOf('\n}\n', footer.indexOf('export function fitFooter')));
   assert.ok(fit.includes('foldFooter({'), 'the order lives in foldFooter, which the model tests cover');
+  assert.ok(fit.includes('over: () => spills(left) || Boolean(model && cutsText(model)),'), 'chip and model text are measured in fractional pixels');
 });
 
 test('the Finished section toggles in place and stays as left across updates', () => {
