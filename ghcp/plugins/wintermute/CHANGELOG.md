@@ -6,6 +6,12 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace still follows main. See [Releases](README.md#releases) for prerequisites, checks and recovery after a partial publish.
 
+## 0.8.0 — 2026-11-09
+
+### Added
+
+- Session snapshots now include `todo`, `toolDesc` and `dataWarning` for the Cards tab and orchestrator header redesign. The current todo uses the latest known update time, then the smallest id to break ties. Tool descriptions follow the displayed tool call without replacing its command-first summary. Data warnings identify missing or unreadable logs and incomplete usage, stay within the affected sessions and sub-agent source logs, and clear once the data can be read in full. Log warnings keep the first failure time in local 24-hour format until recovery. Sub-agent usage warnings say the cost may be incomplete because a bad line cannot always be attributed to one sub-agent.
+
 ## 0.7.1 — 2026-11-09
 
 ### Changed

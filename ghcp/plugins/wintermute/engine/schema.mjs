@@ -94,6 +94,16 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  * @property {boolean|null} alive        Process liveness; null when unknown
  * @property {{ credits: number, calls: number }} cost   Sub-agent costs are included
  * @property {{ label: string, tool: ToolCallView|null, lastEventAt: EpochMs|null }} activity
+ * @property {string|null} todo          Title of its own in-progress todo with the latest known updated_at (UTC); ties,
+ *   or no known times, use the smallest id in lexical order. Known times precede unknown ones. Null without an in-progress
+ *   todo, or for sub-agent units, which have no separate todo list.
+ * @property {string|null} toolDesc      Description argument of activity.tool, one line clipped to 160 characters;
+ *   null without that tool or a non-blank description. activity.tool.summary remains command-first.
+ * @property {string|null} dataWarning   Log read failure or incomplete usage warning, else null. A log warning includes the
+ *   first failed read of the current streak in local 24-hour HH:MM; for several failing CLI aliases, use the earliest time.
+ *   A session covers all its CLI aliases; a sub-agent covers only the CLI log that holds it. Unreadable usage cannot be
+ *   attributed reliably, so every sub-agent from that log is warned that its cost may be incomplete. A log failure takes
+ *   priority over an incomplete-usage warning.
  * @property {ReportView|null} report    Latest report to its parent (always null for the orchestrator)
  * @property {{ done: number, total: number }|null} progress  Own todos; null when it keeps none
  * @property {SubagentView[]} subagents  Running first, then latest first
@@ -331,6 +341,7 @@ const SESSION = {
   startedAt: TIME, endedAt: OPT_TIME, lastEventAt: OPT_TIME, busyMs: is.count, waitingOnUserMs: is.count, alive: nullable(is.bool),
   cost: { credits: is.number, calls: is.count },
   activity: { label: is.text, tool: nullable(TOOL_CALL), lastEventAt: OPT_TIME },
+  todo: OPT_TEXT, toolDesc: OPT_TEXT, dataWarning: OPT_TEXT,
   report: nullable(REPORT),
   progress: nullable({ done: is.count, total: is.count }),
   subagents: arrayOf(SUBAGENT),

@@ -16,6 +16,24 @@ test('the example snapshot matches the schema', () => {
   assert.deepEqual(validateSnapshot(snapshot), []);
 });
 
+test('every session requires nullable todo, toolDesc and dataWarning fields', () => {
+  for (const target of ['orchestrator', 'session', 'subagent']) {
+    for (const field of ['todo', 'toolDesc', 'dataWarning']) {
+      const snapshot = fixture('example-snapshot.json');
+      const session = target === 'orchestrator' ? snapshot.orchestrator
+        : snapshot.units.find(unit => (unit.kind === 'subagent') === (target === 'subagent'));
+      session[field] = 'Current detail';
+      assert.deepEqual(validateSnapshot(snapshot), []);
+      session[field] = null;
+      assert.deepEqual(validateSnapshot(snapshot), []);
+      delete session[field];
+      assert.ok(validateSnapshot(snapshot).some(error => error.endsWith(`.${field}: missing`)), `${target}.${field}`);
+      session[field] = 42;
+      assert.ok(validateSnapshot(snapshot).some(error => error.includes(`.${field}: invalid value`)), `${target}.${field}`);
+    }
+  }
+});
+
 test('the example swarm list, history and run summary match the schema', () => {
   assert.deepEqual(fixture('example-swarms.json').flatMap(validateSwarmListItem), []);
   assert.deepEqual(fixture('example-history.json').flatMap(validateRunListItem), []);

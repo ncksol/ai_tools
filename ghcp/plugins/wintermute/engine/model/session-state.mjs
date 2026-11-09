@@ -501,6 +501,7 @@ function toolArgs(name, args) {
     .find(value => typeof value === 'string' && value.trim());
   return {
     summary: oneLine(pick ? `${name}: ${pick}` : name, 160),
+    description: typeof args.description === 'string' ? oneLine(args.description, 160) || null : null,
     mode: typeof args.mode === 'string' ? args.mode : null,
     initialWait: numberOrNull(args.initial_wait),
     delay: numberOrNull(args.delay),

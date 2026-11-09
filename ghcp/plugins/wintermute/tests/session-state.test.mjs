@@ -34,7 +34,7 @@ test('open tools, questions and plans are tracked until they complete', () => {
   const question = log.ask('[unit=api] Ship it?', ['Yes', 'No']);
   let state = fold(log);
   assert.deepEqual([...state.openTools.keys()], [bash, patch, question]);
-  assert.deepEqual(state.openTools.get(bash).args, { summary: 'bash: npm test', mode: 'sync', initialWait: 600, delay: null, timeout: null, wait: false });
+  assert.deepEqual(state.openTools.get(bash).args, { summary: 'bash: npm test', description: null, mode: 'sync', initialWait: 600, delay: null, timeout: null, wait: false });
   assert.equal(state.openTools.get(patch).args.summary, 'apply_patch: *** Begin Patch *** Update File: a.txt');
   assert.deepEqual(state.waits.get(question), { id: question, kind: 'question', text: '[unit=api] Ship it?', startedAt: T0 });
   log.wait(120_000); log.done(question, { result: 'Yes' });
