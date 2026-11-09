@@ -192,6 +192,32 @@ test('a contract-following swarm becomes a valid snapshot', () => {
   assert.ok(data.requests.some(request => request.id === 4711));
 });
 
+test('current todos prefer the latest known update, then the smallest id, without changing progress', () => {
+  const data = input(true);
+  const todos = [
+    { id: 'b', title: 'Second tie', status: 'in_progress', updatedAt: at(20) },
+    { id: 'a', title: 'First tie', status: 'in_progress', updatedAt: at(20) },
+    { id: 'c', title: 'Older update', status: 'in_progress', updatedAt: at(10) },
+    { id: '0', title: 'Unknown update', status: 'in_progress', updatedAt: null },
+    { id: 'done', title: 'Finished', status: 'done', updatedAt: at(30) },
+    { id: 'pending', title: 'Not started', status: 'pending', updatedAt: at(40) },
+  ];
+  data.sessionDbs.set('cli-root', { todos, deps: [], children: null });
+  data.sessionDbs.set('cli-api', { todos: [{ id: 'own', title: 'API work', status: 'in_progress' }], deps: [], children: null });
+  let snapshot = buildSnapshot(data);
+  assert.equal(snapshot.orchestrator.todo, 'First tie');
+  assert.deepEqual(snapshot.orchestrator.progress, { done: 1, total: 6 });
+  assert.equal(snapshot.units.find(unit => unit.id === 'ws-api').todo, 'API work');
+  assert.equal(snapshot.units.find(unit => unit.id === 'ws-ui').todo, null);
+  todos.reverse();
+  assert.equal(buildSnapshot(data).orchestrator.todo, 'First tie', 'ties do not depend on database row order');
+  for (const todo of todos) todo.updatedAt = null;
+  assert.equal(buildSnapshot(data).orchestrator.todo, 'Unknown update');
+  for (const todo of todos) todo.status = 'done';
+  snapshot = buildSnapshot(data);
+  assert.equal(snapshot.orchestrator.todo, null);
+});
+
 test('a unit with an outcome stops its clock at the outcome time, even while its process runs', () => {
   const data = input(true);
   const lookup = data.prInfo;
@@ -629,6 +655,75 @@ function assertFixed(unit, agent) {
     unit.label,
   );
 }
+
+test('tool descriptions follow the selected call, including stuck and sub-agent tools, without replacing commands', () => {
+  const { data, ids } = withSubagents(root => {
+    root.at(at(110));
+    root.turnStart();
+    const sub = root.subagent({ name: 'check', mode: 'background' });
+    const first = root.tool('custom_tool', { description: 'Read\n the inputs' });
+    root.at(at(119));
+    const bash = root.tool('bash', { command: 'npm test', description: 'Run\n the tests', initial_wait: 60 });
+    root.sub(sub, 'tool.execution_start', {
+      toolCallId: 'sub-bash', toolName: 'bash',
+      arguments: { command: 'npm run check', description: `Check\n ${'x'.repeat(200)}`, initial_wait: 60 },
+    });
+    return { sub, first, bash };
+  });
+  let snapshot = buildSnapshot(data);
+  assert.equal(snapshot.orchestrator.activity.tool.id, ids.first);
+  assert.equal(snapshot.orchestrator.toolDesc, 'Read the inputs');
+  assert.equal(snapshot.units.find(unit => unit.id === 'ws-ui').toolDesc, null, 'a command without a description stays null');
+  const sub = snapshot.units.find(unit => unit.id === ids.sub);
+  assert.equal(sub.todo, null);
+  assert.equal(sub.activity.tool.id, 'sub-bash');
+  assert.equal(sub.activity.tool.summary, 'bash: npm run check');
+  assert.ok(sub.toolDesc.startsWith('Check x'));
+  assert.equal(sub.toolDesc.length, 160);
+  assert.doesNotMatch(sub.toolDesc, /\s{2}|\n/);
+  data.now = at(130);
+  snapshot = buildSnapshot(data);
+  assert.equal(snapshot.orchestrator.statusDetail, 'stuck_tool');
+  assert.equal(snapshot.orchestrator.activity.tool.id, ids.bash);
+  assert.equal(snapshot.orchestrator.activity.tool.summary, 'bash: npm test');
+  assert.equal(snapshot.orchestrator.toolDesc, 'Run the tests', 'use the stuck tool, not the oldest tool');
+  for (const unit of [snapshot.orchestrator, ...snapshot.units]) {
+    if (!unit.activity.tool) assert.equal(unit.toolDesc, null);
+  }
+});
+
+test('empty descriptions stay null and finished sub-agent units do not retain a tool description', () => {
+  for (const description of [undefined, '', ' \n ', 42]) {
+    const { data, ids } = withSubagents(root => {
+      const call = root.tool('bash', { command: 'npm test', description });
+      const sub = root.subagent({ name: 'finished', mode: 'background' });
+      root.sub(sub, 'tool.execution_start', { toolCallId: 'unfinished-tool', toolName: 'bash', arguments: { description: 'Old work' } });
+      root.subagentDone(sub);
+      return { call, sub };
+    });
+    const snapshot = buildSnapshot(data);
+    assert.equal(snapshot.orchestrator.toolDesc, null);
+    assert.equal(snapshot.units.find(unit => unit.id === ids.sub).toolDesc, null);
+  }
+});
+
+test('sub-agent data warnings follow their source CLI log, not another alias of the orchestrator', () => {
+  const { data, ids } = withSubagents(root => root.subagent({ name: 'current', mode: 'background' }));
+  const old = new EventLog(at(-20));
+  old.calls = 200;
+  old.start();
+  const oldSub = old.subagent({ name: 'old', mode: 'background' });
+  data.app.aliases.push({ sessionId: 'cli-previous', workspaceId: 'ws-root', createdAt: at(-20) });
+  data.forest = buildForest(data.app);
+  data.states.set('cli-previous', fold(old, 'cli-previous', ROOT_STATE));
+  data.logsUnreadable = new Set(['cli-previous']);
+  data.costsIncomplete = new Set(['cli-previous']);
+  const snapshot = buildSnapshot(data);
+  assert.match(snapshot.orchestrator.dataWarning, /log could not be read.*Cost and state/s);
+  assert.equal(snapshot.units.find(unit => unit.id === oldSub).dataWarning, snapshot.orchestrator.dataWarning);
+  assert.equal(snapshot.units.find(unit => unit.id === ids).dataWarning, null);
+  assert.ok(snapshot.units.filter(unit => unit.kind !== 'subagent').every(unit => unit.dataWarning === null));
+});
 
 test('sub-agent units show the orchestrator\'s one-off sub-agents in each state, after the session units, oldest start first', () => {
   const { data, ids } = withSubagents(root => {

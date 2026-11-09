@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { withReadOnly } from '../sqlite.mjs';
+import { parseTime } from '../time.mjs';
 
 export function readWorkspaceYaml(dir) {
   let text;
@@ -40,7 +41,7 @@ export function listLocks(dir) {
   return locks;
 }
 
-/** Each data query's table and the columns it selects (the data contract's shape of session.db). */
+/** Each data query's table and required columns (the data contract's shape of session.db). */
 export const SESSION_DB_TABLES = Object.freeze({
   todos: Object.freeze({ table: 'todos', columns: Object.freeze(['id', 'title', 'description', 'status']) }),
   deps: Object.freeze({ table: 'todo_deps', columns: Object.freeze(['todo_id', 'depends_on']) }),
@@ -57,6 +58,7 @@ const columnsOf = ({ table }) => `SELECT name FROM pragma_table_info('${table}')
 
 export const SESSION_DB_QUERIES = Object.freeze({
   todos: selectFrom(SESSION_DB_TABLES.todos),
+  todosWithUpdatedAt: selectFrom({ table: 'todos', columns: [...SESSION_DB_TABLES.todos.columns, 'updated_at'] }),
   deps: selectFrom(SESSION_DB_TABLES.deps),
   tables: "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('todos', 'todo_deps', 'children')",
   children: selectFrom(SESSION_DB_TABLES.children),
@@ -71,6 +73,7 @@ export const SESSION_DB_QUERIES = Object.freeze({
  * selects, such as a children table that another orchestrator version wrote; the result then has a `notes` array that names
  * each ignored table (`notes` is present only when there is a note). A query that fails, such as one that finds the database
  * busy or locked, rejects with an Error naming the query, so a caller never takes a failed read for empty tables.
+ * Todo updated_at is optional for older databases; when present it becomes updatedAt in epoch milliseconds, else null.
  */
 export async function readSessionDb(file, source = {}) {
   const run = typeof source.read === 'function' ? fn => source.read(file, fn) : fn => withReadOnly(file, source, fn);
@@ -94,7 +97,7 @@ export async function readSessionDb(file, source = {}) {
         notes.push(`its ${table} table is not in the data-contract format, so it is ignored`);
         return empty;
       }
-      return query(name);
+      return query(name === 'todos' && has.has('updated_at') ? 'todosWithUpdatedAt' : name);
     };
     const todos = await read('todos', []);
     const deps = await read('deps', []);
@@ -102,7 +105,7 @@ export async function readSessionDb(file, source = {}) {
     return {
       todos: todos.map(todo => ({
         id: String(todo.id), title: String(todo.title ?? ''), description: typeof todo.description === 'string' ? todo.description : '',
-        status: String(todo.status ?? 'pending'),
+        status: String(todo.status ?? 'pending'), updatedAt: parseTime(todo.updated_at),
       })),
       deps: deps.map(dep => ({ todoId: String(dep.todo_id), dependsOn: String(dep.depends_on) })),
       children,

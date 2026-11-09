@@ -159,6 +159,18 @@ function progressOf(db) {
   return { done: db.todos.filter(todo => todo.status === 'done').length, total: db.todos.length };
 }
 
+function todoOf(db) {
+  const active = (db?.todos ?? []).filter(todo => todo.status === 'in_progress');
+  active.sort((a, b) => (b.updatedAt ?? -Infinity) - (a.updatedAt ?? -Infinity) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return active[0]?.title ?? null;
+}
+
+function dataWarningOf(input, cliIds) {
+  if (cliIds.some(id => input.logsUnreadable?.has(id))) return 'Its log could not be read. Cost and state may be out of date.';
+  if (cliIds.some(id => input.costsIncomplete?.has(id))) return 'Some usage lines could not be read, so the cost is incomplete.';
+  return null;
+}
+
 function subagentView(sub, nanoAiu, stuck) {
   return {
     id: sub.id, name: sub.name, type: sub.type, model: sub.model, effort: sub.effort ?? null, mode: sub.mode,
@@ -305,6 +317,9 @@ function sessionView(input, c, label, evaluation, report, title, extraMarks, out
     alive: c.alive,
     cost: { credits: credits(c.cost.nanoAiu), calls: c.cost.calls },
     activity: { label: activityLabel(evaluation.detail, tool, current), tool, lastEventAt: all.lastEventAt },
+    todo: todoOf(c.sessionDb),
+    toolDesc: tool ? current?.openTools.get(tool.id)?.args.description ?? null : null,
+    dataWarning: dataWarningOf(input, node.cliSessionIds),
     report,
     progress: progressOf(c.sessionDb),
     subagents: subagentViews(all, c.cost, evaluation.stuckSubagents),
@@ -536,7 +551,7 @@ function rollupCost(byParentToolCall, nested) {
 
 const SUBAGENT_DONE_ACTIVITY = { crashed: 'Process ended unexpectedly', completed: 'Done', failed: 'Failed', cancelled: 'Cancelled' };
 
-function subagentUnitView(input, rootContext, root, sub, evaluation, label, rollup) {
+function subagentUnitView(input, rootContext, root, sub, evaluation, label, rollup, cliId) {
   const { now, thresholds } = input;
   const { unit } = sub;
   const { status, bucket } = displayOf(evaluation.detail);
@@ -564,6 +579,9 @@ function subagentUnitView(input, rootContext, root, sub, evaluation, label, roll
     busyMs: Math.max(0, Math.round(unit.droppedBusyMs + spans.reduce((sum, [start, end]) => sum + end - start, 0))), waitingOnUserMs: 0, alive: rootContext.alive,
     cost: { credits: credits(rollup.get(sub.id)?.nanoAiu ?? 0), calls: rollup.get(sub.id)?.calls ?? 0 },
     activity: { label: activity, tool, lastEventAt: sub.lastEventAt },
+    todo: null,
+    toolDesc: tool ? unit.openTools.get(tool.id)?.args.description ?? null : null,
+    dataWarning: dataWarningOf(input, [cliId]),
     report, progress: null,
     subagents: sortSubagentViews(unit.children.map(child => subagentView(child, rollup.get(child.id)?.nanoAiu ?? 0, stuckIds.has(child.id)))),
     timeline: {
@@ -643,7 +661,7 @@ function buildSubagentUnits(input, rootContext, root, takenLabels, extraFeed, me
     if (isFinished(entry) && !kept.has(entry.sub.id)) omitted[entry.bucket] += 1;
   }
   return {
-    units: listed.map(entry => subagentUnitView(input, rootContext, root, entry.sub, entry.evaluation, labels.get(entry.sub.id), rollup)),
+    units: listed.map(entry => subagentUnitView(input, rootContext, root, entry.sub, entry.evaluation, labels.get(entry.sub.id), rollup, holder.get(entry.sub.id))),
     omitted,
   };
 }

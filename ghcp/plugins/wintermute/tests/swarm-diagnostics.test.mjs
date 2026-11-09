@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, rmSync, symlinkSync } from 'node:fs';
+import { appendFileSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createSwarmEngine } from '../engine/engine.mjs';
 import { createDashboardServer } from '../server/http.mjs';
@@ -8,6 +8,7 @@ import { get, openEvents } from './helpers/http.mjs';
 import { alwaysAlive, at, scenario } from './helpers/scenario.mjs';
 import { execSql } from './helpers/sqlite-writer.mjs';
 import { tempDir } from './helpers/temp.mjs';
+import { EventLog } from './helpers/event-log.mjs';
 
 const FOREIGN_TABLE = "CREATE TABLE children (name TEXT, status TEXT, session_id TEXT); INSERT INTO children VALUES ('x', 'running', 'ws-x')";
 const note = cliId => `${cliId}: its children table is not in the data-contract format, so it is ignored`;
@@ -32,6 +33,10 @@ for (const { role, cliId, warning } of [
       assert.deepEqual(messages(await engine.getSnapshot('ws-root'), 'events'), [], 'an untracked run must not warn another swarm');
       const affected = await engine.getSnapshot('ws-old');
       assert.deepEqual(messages(affected, 'events'), [warning]);
+      const warned = role === 'child' ? affected.units[0] : affected.orchestrator;
+      const clean = role === 'child' ? affected.orchestrator : affected.units[0];
+      assert.match(warned.dataWarning, /log could not be read.*Cost and state/s);
+      assert.equal(clean.dataWarning, null);
       await engine.refresh();
       for (const id of ['ws-root', 'ws-old']) {
         const snapshot = await engine.getSnapshot(id);
@@ -69,6 +74,60 @@ for (const problem of ['unreadable log', 'invalid usage line']) {
     }
   });
 }
+
+for (const problem of ['unreadable log', 'invalid usage line']) {
+  test(`${problem}: per-unit warnings persist, preserve last good data and clear after recovery`, async () => {
+    const home = scenario();
+    const root = new EventLog(at(51));
+    root.calls = 100;
+    const sub = root.subagent({ name: 'helper', mode: 'background' });
+    home.writeEvents('cli-root', root.events, { append: true });
+    const file = path.join(home.stateDir, 'cli-root', 'events.jsonl');
+    const original = readFileSync(file, 'utf8');
+    const engine = createSwarmEngine({ copilotHome: home.root, persistHistory: false, now: () => at(60), processProbe: alwaysAlive, prLookup: 'off' });
+    try {
+      const before = await engine.getSnapshot('ws-root');
+      assert.equal(before.orchestrator.dataWarning, null);
+      if (problem === 'unreadable log') {
+        rmSync(file);
+        symlinkSync('events.jsonl', file);
+      } else {
+        appendFileSync(file, '{"type":"session.usage_record",invalid}\n');
+      }
+      for (let i = 0; i < 2; i += 1) {
+        await engine.refresh();
+        const snapshot = await engine.getSnapshot('ws-root');
+        const warning = snapshot.orchestrator.dataWarning;
+        assert.match(warning, problem === 'unreadable log' ? /log could not be read.*Cost and state/s : /usage lines.*cost is incomplete/);
+        assert.equal(snapshot.units.find(unit => unit.id === sub).dataWarning, warning);
+        assert.ok(snapshot.units.filter(unit => unit.kind !== 'subagent').every(unit => unit.dataWarning === null));
+        assert.equal(snapshot.orchestrator.cost.credits, before.orchestrator.cost.credits);
+      }
+      rmSync(file);
+      writeFileSync(file, original);
+      await engine.refresh();
+      const recovered = await engine.getSnapshot('ws-root');
+      for (const unit of [recovered.orchestrator, ...recovered.units]) assert.equal(unit.dataWarning, null);
+    } finally {
+      engine.stop();
+    }
+  });
+}
+
+test('todo titles reach session snapshots from their own databases', async () => {
+  const home = scenario();
+  home.sessionDb('cli-root', { todos: [{ id: 'root', title: 'Coordinate the work', status: 'in_progress' }] });
+  execSql(path.join(home.stateDir, 'cli-api', 'session.db'), "UPDATE todos SET status = 'in_progress', title = 'Implement the API' WHERE id = 'b'");
+  const engine = createSwarmEngine({ copilotHome: home.root, persistHistory: false, now: () => at(60), processProbe: alwaysAlive, prLookup: 'off' });
+  try {
+    const snapshot = await engine.getSnapshot('ws-root');
+    assert.equal(snapshot.orchestrator.todo, 'Coordinate the work');
+    assert.equal(snapshot.units.find(unit => unit.id === 'ws-api').todo, 'Implement the API');
+    assert.equal(snapshot.units.find(unit => unit.id === 'ws-ui').todo, null);
+  } finally {
+    engine.stop();
+  }
+});
 
 test('REST and live snapshots scope cost warnings; run summaries and listings carry none', async () => {
   const home = scenario();

@@ -36,10 +36,11 @@ for (const backend of TEST_BACKENDS) {
       deps: [['b', 'a']],
       children: [{ unit: 'api', session_id: 'ws-123', title: 'API', created_at: '2026-10-15T08:00:00Z', updated_at: '2026-10-15T09:00:00Z' }],
     });
+    execSql(file, "UPDATE todos SET updated_at = '2026-10-15 08:00:00'");
     const result = await readSessionDb(file, { backend });
     assert.deepEqual(result.todos, [
-      { id: 'a', title: 'First', description: '', status: 'done' },
-      { id: 'b', title: 'b', description: 'Uses ws-123', status: 'pending' },
+      { id: 'a', title: 'First', description: '', status: 'done', updatedAt: Date.UTC(2026, 9, 15, 8) },
+      { id: 'b', title: 'b', description: 'Uses ws-123', status: 'pending', updatedAt: Date.UTC(2026, 9, 15, 8) },
     ]);
     assert.deepEqual(result.deps, [{ todoId: 'b', dependsOn: 'a' }]);
     assert.equal(result.children.length, 1);
@@ -50,6 +51,23 @@ for (const backend of TEST_BACKENDS) {
   test(`${backend}: a session.db without a registry has children null`, async () => {
     const file = home.sessionDb(`cli-plain-${backend}`, { todos: [] });
     assert.deepEqual(await readSessionDb(file, { backend }), { todos: [], deps: [], children: null });
+  });
+
+  test(`${backend}: todo update times are UTC and optional in older databases`, async () => {
+    const file = home.sessionDb(`cli-todo-times-${backend}`, { todos: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] });
+    execSql(file, `UPDATE todos SET updated_at = CASE id
+      WHEN 'a' THEN '2026-10-15 08:00:00' WHEN 'b' THEN '2026-10-15T09:00:00Z' ELSE 'unknown' END`);
+    const result = await readSessionDb(file, { backend });
+    assert.deepEqual(result.todos.map(todo => [todo.id, todo.updatedAt]), [
+      ['a', Date.UTC(2026, 9, 15, 8)], ['b', Date.UTC(2026, 9, 15, 9)], ['c', null],
+    ]);
+    const legacy = path.join(home.dir(`cli-legacy-times-${backend}`), 'session.db');
+    execSql(legacy, `CREATE TABLE todos (id TEXT PRIMARY KEY, title TEXT, description TEXT, status TEXT);
+      INSERT INTO todos VALUES ('a', 'Still doing this', '', 'in_progress')`);
+    const old = await readSessionDb(legacy, { backend });
+    assert.equal(old.todos[0].title, 'Still doing this');
+    assert.equal(old.todos[0].updatedAt, null);
+    assert.equal(old.notes, undefined);
   });
 
   test(`${backend}: a session.db that a writer holds locked rejects instead of reading as empty`, { skip: !canWriteWithNode }, async () => {
@@ -153,11 +171,11 @@ test('a failed session.db query rejects with the query name instead of giving em
 
 test('a missing optional session.db table is not an error', async () => {
   assert.deepEqual(await readSessionDb('session.db', failingSource(null, ['todos', 'todo_deps'])), {
-    todos: [{ id: 'a', title: 'First', description: '', status: 'done' }], deps: [], children: null,
+    todos: [{ id: 'a', title: 'First', description: '', status: 'done', updatedAt: null }], deps: [], children: null,
   });
   // A query for an absent table never runs, so its failure cannot show.
   assert.deepEqual(await readSessionDb('session.db', failingSource('children', ['todos'])), {
-    todos: [{ id: 'a', title: 'First', description: '', status: 'done' }], deps: [], children: null,
+    todos: [{ id: 'a', title: 'First', description: '', status: 'done', updatedAt: null }], deps: [], children: null,
   });
 });
 

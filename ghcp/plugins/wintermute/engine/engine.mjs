@@ -143,6 +143,8 @@ export function createSwarmEngine(options = {}) {
   let refreshes = 0;
   // The CLI sessions whose cost the latest refresh could not read in full (see readCosts).
   let costsIncomplete = new Set();
+  // The subset whose log was missing or unreadable, rather than only having invalid usage lines.
+  const logsUnreadable = new Set();
 
   const projectOf = node => {
     const project = node.projectId ? app.projects.get(node.projectId) : null;
@@ -330,6 +332,7 @@ export function createSwarmEngine(options = {}) {
    * warning on every refresh, until its log is read again from the start. `diagnostics` collects notes by CLI session.
    */
   async function readCosts(cliIds, diagnostics) {
+    logsUnreadable.clear();
     for (const cliId of [...usageTails.keys()]) if (!cliIds.has(cliId)) usageTails.delete(cliId);
     ledger.retain(cliIds);
     const incomplete = new Set();
@@ -350,10 +353,12 @@ export function createSwarmEngine(options = {}) {
         }
         if (result.missing) {
           incomplete.add(cliId);
+          logsUnreadable.add(cliId);
           diag.push({ level: 'warn', source: 'events', message: `${shortId(cliId)}: the session's log is missing, so its cost is unknown.` });
         }
       } catch (error) {
         incomplete.add(cliId);
+        logsUnreadable.add(cliId);
         diag.push({ level: 'warn', source: 'events', message: `${shortId(cliId)}: ${error.message}` });
       }
       if (entry.failed) {
@@ -454,11 +459,13 @@ export function createSwarmEngine(options = {}) {
     const states = new Map();
     const alive = new Map();
     const workspaceFiles = new Map();
+    const unreadable = new Set(logsUnreadable);
     const rootCliIds = new Set(nodes[0].cliSessionIds);
     let complete = globalsRead;
     for (const cliId of new Set(nodes.flatMap(node => node.cliSessionIds))) {
       const { state, read } = await tailSession(cliId, diag, rootCliIds.has(cliId));
       if (!read || costsIncomplete.has(cliId)) complete = false;
+      if (!read || !state) unreadable.add(cliId);
       if (state) states.set(cliId, state);
       alive.set(cliId, await livenessOf(cliId, at));
       workspaceFiles.set(cliId, readWorkspaceYaml(path.join(paths.stateDir, cliId)));
@@ -483,6 +490,7 @@ export function createSwarmEngine(options = {}) {
     if (!subagentLabels.has(rootId)) subagentLabels.set(rootId, new Map());
     const snapshot = buildSnapshot({
       forest, rootId, app, states, alive, workspaceFiles, ledger, sessionDbs, now: at, thresholds, revision: 0, diagnostics: [...shared, ...diag],
+      costsIncomplete, logsUnreadable: unreadable,
       subagentLabels: subagentLabels.get(rootId),
       prInfo: (pr, { cwd }) => {
         if (!lookup) return null;
