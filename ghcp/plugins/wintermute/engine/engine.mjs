@@ -51,7 +51,8 @@ function summaryDigest(summary) {
  * Complete logs can also correct an older summary downwards: an older cost source (see COST_SOURCE) counted a resumed
  * session's calls again, and a finish time beyond the listing's work time plus the slack can come from app bookkeeping.
  * Both are stale only when `costsComplete` is true, meaning every session's log was read in full on this refresh; incomplete
- * or removed logs keep the last good summary.
+ * logs keep the last good summary. A finish-time correction also requires that cost has not fallen: `costsComplete` covers
+ * only sessions still in the forest, so deleting a child workspace must not replace its saved cost, units and finish time.
  *
  * `verified` is the stamp of the last check that rebuilt the run (see the engine's `verified` map). When the listing still
  * shows that check's activity time and cost, and the stored summary is the one that check confirmed, nothing is newer: the
@@ -60,7 +61,8 @@ function summaryDigest(summary) {
 function isStale(stored, swarm, verified = null, costsComplete = false) {
   if (!swarm) return false;
   const oldSource = stored.costSource !== COST_SOURCE && costsComplete;
-  const olderWork = costsComplete && stored.finishedAt > swarm.lastActivityAt + STALE_SLACK_MS;
+  const olderWork = costsComplete && swarm.credits >= stored.credits
+    && stored.finishedAt > swarm.lastActivityAt + STALE_SLACK_MS;
   if (!(oldSource || olderWork || swarm.credits > stored.credits || swarm.lastActivityAt > stored.finishedAt + STALE_SLACK_MS)) return false;
   return !(verified && swarm.lastActivityAt === verified.lastActivityAt && swarm.credits === verified.credits
     && summaryDigest(stored) === verified.digest);
