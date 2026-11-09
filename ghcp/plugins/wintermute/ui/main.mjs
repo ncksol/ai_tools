@@ -397,10 +397,14 @@ function fitRingLabels() {
   }
 }
 
-/** Whether a shown child reaches past the element's padding box; scrollWidth is rounded and misses a 1 px spill. */
+/**
+ * Whether the footer's left side does not fit: a shown child reaches past its padding box (scrollWidth is rounded and
+ * misses a 1 px spill), or a shown chip cuts its text, which a lone chip does because .chip caps its width at 100%.
+ */
 function spills(el) {
   const right = el.getBoundingClientRect().left + el.clientLeft + el.clientWidth;
-  return [...el.children].some(child => !child.hidden && child.getBoundingClientRect().right > right + 0.5);
+  if ([...el.children].some(child => !child.hidden && child.getBoundingClientRect().right > right + 0.5)) return true;
+  return [...el.querySelectorAll(':scope > .chip:not([hidden]) > .chip-t')].some(text => text.scrollWidth > text.clientWidth);
 }
 
 /**

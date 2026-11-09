@@ -137,7 +137,7 @@ test('the stress scenario is valid and covers every status, a stalled and quiet 
   // The orchestrator's sub-agents: 30 units after every session unit, oldest first, and the orchestrator's view of them.
   const kinds = snapshot.units.map(unit => unit.kind);
   const firstSubagent = kinds.indexOf('subagent');
-  assert.deepEqual([kinds.filter(kind => kind !== 'subagent').length, kinds.filter(kind => kind === 'subagent').length], [21, 30]);
+  assert.deepEqual([kinds.filter(kind => kind !== 'subagent').length, kinds.filter(kind => kind === 'subagent').length], [22, 30]);
   assert.ok(kinds.slice(firstSubagent).every(kind => kind === 'subagent'), 'every session unit comes first');
   const subagents = snapshot.units.slice(firstSubagent);
   subagents.slice(1).forEach((unit, index) => assert.ok(unit.startedAt >= subagents[index].startedAt, `${unit.label} starts after the one before`));

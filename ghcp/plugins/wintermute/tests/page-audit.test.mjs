@@ -81,6 +81,11 @@ test('the dashboard audit holds every Cards tab card, active or finished, to the
   assert.ok(auditScript(AUDIT_DEFAULTS).includes("'neutral-border'"));
 });
 
+test('the dashboard audit reports a card footer chip that cuts its text instead of folding', () => {
+  assert.equal(AUDIT_DEFAULTS.folds, '.b-foot .chip > .chip-t');
+  assert.ok(auditScript(AUDIT_DEFAULTS).includes("'fold'"));
+});
+
 test('the dashboard audit holds active cards to 162 px and their marks to 32 px, and sets unit labels in monospace', () => {
   assert.equal(AUDIT_DEFAULTS.heights['.b-zone .b-card'], 162);
   assert.equal(AUDIT_DEFAULTS.heights['.b-card .mark'], 32);

@@ -288,6 +288,14 @@ export function auditPage(options) {
       if (got !== undefined) report('neutral-border', el, `border ${got} instead of ${want}`);
     }
   }
+  // A card footer folds its chips into "+N" or a count chip rather than cutting a chip's text.
+  if (options.folds) {
+    for (const el of root.querySelectorAll(options.folds)) {
+      if (!shown.has(el)) continue;
+      checks += 1;
+      if (el.scrollWidth > el.clientWidth) report('fold', el, `${el.scrollWidth}px of chip text in ${el.clientWidth}px; the footer should fold it`);
+    }
+  }
 
   checks += 1;
   if (document.documentElement.scrollWidth > window.innerWidth + 1) report('hscroll', document.documentElement, `${document.documentElement.scrollWidth}px wide in a ${window.innerWidth}px window`);
@@ -332,6 +340,7 @@ export const AUDIT_DEFAULTS = Object.freeze({
   follows: [{ item: '.b-zone > .cards-note', ref: '.b-zone > :not(.cards-note)', gapOf: '.b-zone' }],
   kindBorders: { selector: '.board .mc[data-open]', skip: '.is-sel', colours: { subagent: 'var(--busy)', project: 'var(--merged)', chat: 'var(--merged)' } },
   neutralBorders: { selector: '.b-card[data-open], .b-fin .mc[data-open]', skip: '.is-sel', colour: 'var(--line)' },
+  folds: '.b-foot .chip > .chip-t',
   padding: { '.dash': 16, '.b-card': 16, '.rail': 16, '.detail': 16, '.pn': 12, '.pl-row': 12, '.mc': 12 },
   heights: {
     '.chip': 24, '.badge': 20, '.pill': 20, '.d-top .seg > button': 28, '.c-bar .seg > button': 24, '.x': 28, '.pick select': 28, '.ck-open > button': 28,

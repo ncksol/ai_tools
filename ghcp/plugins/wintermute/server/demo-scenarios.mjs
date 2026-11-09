@@ -9,6 +9,7 @@ const TYPES = ['explore', 'task', 'code-review', 'rubber-duck', 'research', 'gen
  * Q1 has a long model name with xhigh and two finished sub-agents, one with an effort and one without, and its data
  * could not all be read. C6 works on a todo long enough to need its two lines. K7 has done its job (idle, complete
  * report, no PR), J8 closed with no PR and T0 stopped with no outcome, so the Finished section has every outcome.
+ * G4's long model name and cost leave its one sub-agent chip too little room on a narrow card, so the chip folds.
  */
 const EXTRA = [
   { label: 'Q1', name: 'Export format questions for the reporting service, with a name long enough to need an ellipsis', status: 'question', statusDetail: 'waiting_question', bucket: 'waiting', stage: 'pr_open', dependsOn: 'B1', model: 'claude-sonnet-5-1m-context-preview-20261001', effort: 'xhigh', finished: 2, dataWarning: 'Its log could not be read at 14:00. Cost and state may be out of date.' },
@@ -25,6 +26,7 @@ const EXTRA = [
   { label: 'K7', name: 'cost analysis that reported complete', status: 'idle', statusDetail: 'idle', bucket: 'idle', reportStatus: 'complete' },
   { label: 'J8', name: 'one-off job closed with no PR', status: 'idle', statusDetail: 'idle', bucket: 'idle', outcome: 'closed' },
   { label: 'T0', name: 'stopped with no outcome', status: 'idle', statusDetail: 'stopped', bucket: 'idle', alive: false },
+  { label: 'G4', name: 'one chip beside a long model name', status: 'busy', statusDetail: 'busy', bucket: 'working', model: 'gemini-4-argon', effort: 'high', credits: 34100, chip: 'general-purpose' },
 ];
 
 /**
@@ -142,6 +144,7 @@ function subagentsFor(spec, n, t) {
   });
   if (spec.crowd) return Array.from({ length: spec.crowd }, (_, k) => make(k, 'running', TYPES[k % TYPES.length]));
   if (spec.stuckSubagent) return [make(0, 'stuck', 'code-review')];
+  if (spec.chip) return [make(0, 'running', spec.chip)];
   if (spec.finished) {
     return Array.from({ length: spec.finished }, (_, k) => ({ ...make(k, 'completed', TYPES[k % TYPES.length]), endedAt: t - (k + 1) * MIN, durationMs: 2 * k * MIN + 2 * MIN }));
   }
@@ -158,7 +161,7 @@ function stressUnit(template, spec, index, t, parentId) {
   Object.assign(unit, {
     id: `ws-90${n}-stress`, label: spec.label, name: spec.name, cliSessionIds: [`cli-90${n}-stress`], branch: `feature/stress-${n}`,
     status: spec.status, statusDetail: spec.statusDetail, bucket: spec.bucket, since: t - (5 + index * 7) * MIN, reason: spec.reason ?? null,
-    startedAt, endedAt, lastEventAt, alive: spec.alive ?? true, cost: { credits: round1(1500 + index * 2333.3), calls: 100 + index * 10 },
+    startedAt, endedAt, lastEventAt, alive: spec.alive ?? true, cost: { credits: spec.credits ?? round1(1500 + index * 2333.3), calls: 100 + index * 10 },
     model: spec.model ?? template.model, effort: 'effort' in spec ? spec.effort : template.effort,
     parentId, depth: 1, stage, closedWithoutMerge: spec.outcome === 'closed', outcome: spec.outcome ?? null, dependsOn: spec.dependsOn ?? null, todoId: null,
     todo: spec.todo ?? null, toolDesc: null, dataWarning: spec.dataWarning ?? null,

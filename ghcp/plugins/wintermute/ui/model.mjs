@@ -199,6 +199,21 @@ export function ownNeed(snapshot, session) {
   return [...own].reverse().find(need => kinds.includes(need.kind)) ?? own[own.length - 1] ?? null;
 }
 
+/** Live details whose `since` is the start of the busy stretch; the others count from their own cause's clock. */
+const STRETCH_SINCE = new Set(['busy', 'slow_model_call']);
+
+/**
+ * When the current busy stretch started. A stuck, silent or spinning session's `since` is when that cause began, so the
+ * stretch is read from the timeline instead: the trailing run of busy and stuck segments.
+ */
+export function busyStretchStart(session) {
+  if (STRETCH_SINCE.has(session.statusDetail)) return session.since;
+  const segments = session.timeline?.segments ?? [];
+  let start = null;
+  for (let i = segments.length - 1; i >= 0 && (segments[i].state === 'busy' || segments[i].state === 'stuck'); i -= 1) start = segments[i].start;
+  return start === null ? session.since : Math.min(start, session.since);
+}
+
 /**
  * What a working session is doing. `at` is set when the text is a report, whose age then follows it; `muted` marks the
  * fallback. The engine's `todo` and `toolDesc` may be missing on older snapshots, which reads as null.
@@ -213,7 +228,7 @@ export function doing(session) {
   const label = session.activity?.label;
   if (label && label !== 'Thinking') return { text: label };
   // Between tool calls, a report sent during this busy stretch says more than "Thinking".
-  if (session.report && session.report.at >= session.since) return { text: reportTitle(session.report), at: session.report.at };
+  if (session.report && session.report.at >= busyStretchStart(session)) return { text: reportTitle(session.report), at: session.report.at };
   return { text: 'Thinking', muted: true };
 }
 

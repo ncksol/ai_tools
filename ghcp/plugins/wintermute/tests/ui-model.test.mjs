@@ -6,6 +6,14 @@ import {
   prWords, progressPercent, reportKind, reportTitle, runClockEnd, runEnd, sharePercent, shortModel, stateLine, stateWords, unitClockEnd, unitEnd, waitingOnYou, withoutStatusPrefix,
 } from '../ui/model.mjs';
 import { createDemoEngine } from '../server/demo-engine.mjs';
+import { DEFAULT_THRESHOLDS } from '../engine/config.mjs';
+import { createLedger } from '../engine/readers/ledger.mjs';
+import { buildForest } from '../engine/model/forest.mjs';
+import { buildSnapshot } from '../engine/model/swarm.mjs';
+import { validateSnapshot } from '../engine/schema.mjs';
+import { MINUTE } from '../engine/time.mjs';
+import { EventLog } from './helpers/event-log.mjs';
+import { fold } from './helpers/fold.mjs';
 import { NOW, closedSnapshot, exampleSnapshot } from './helpers/ui.mjs';
 
 const labels = units => units.map(unit => unit.label);
@@ -134,6 +142,74 @@ test('a working unit\'s now line: the stuck tool call, else its todo, the sync s
   assert.deepEqual(line({}), { text: 'Thinking', muted: true });
   assert.deepEqual(nowLine({ ...liveUnit({}), todo: undefined, toolDesc: undefined }, noNeeds), { text: 'Thinking', muted: true }, 'a snapshot without the new fields');
   for (const statusDetail of ['slow_model_call', 'silent', 'stuck_model_call', 'stuck_subagent', 'spinning']) assert.deepEqual(line({ statusDetail, todo: 'A todo' }), { text: 'A todo' }, statusDetail);
+});
+
+/** A swarm with one child session whose log `write` fills, built by the real engine at `now`. Times are minutes after 12:00. */
+function engineSwarm(write, now) {
+  const T = Date.UTC(2026, 10, 9, 12, 0, 0);
+  const at = minutes => T + minutes * MINUTE;
+  const workspace = (id, name, sessionId) => [id, {
+    id, projectId: 'p', worktreeId: null, name, branch: null, createdAt: T, archivedAt: null, sessionId,
+    creatorSessionId: null, coordinatingCreatorSessionId: null, createdPr: null,
+  }];
+  const app = {
+    projects: new Map([['p', { id: 'p', name: 'sample', githubOwner: null, githubRepo: null }]]),
+    worktrees: new Map(),
+    workspaces: new Map([workspace('ws-root', 'Sample story', 'cli-root'), workspace('ws-api', 'Sample a1 api', 'cli-api')]),
+    parentLinks: [{ childId: 'ws-api', parentId: 'ws-root' }],
+    aliases: [['cli-root', 'ws-root'], ['cli-api', 'ws-api']].map(([sessionId, workspaceId]) => ({ sessionId, workspaceId, createdAt: T })),
+    chatLinks: [], sessions: new Map(), automations: [], diagnostics: [],
+  };
+  const root = new EventLog(T);
+  root.start();
+  const api = new EventLog(T);
+  api.start();
+  write(api, at);
+  const snapshot = buildSnapshot({
+    forest: buildForest(app), rootId: 'ws-root', app, ledger: createLedger(), requests: [],
+    states: new Map([['cli-root', fold(root, 'cli-root')], ['cli-api', fold(api, 'cli-api')]]),
+    alive: new Map([['cli-root', true], ['cli-api', true]]), workspaceFiles: new Map(), sessionDbs: new Map(), prInfo: () => null,
+    now: at(now), thresholds: DEFAULT_THRESHOLDS, revision: 1, diagnostics: [],
+  });
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  return { unit: snapshot.units.find(unit => unit.id === 'ws-api'), snapshot, at };
+}
+
+test('a report from the busy stretch stays on the now line when the stretch turns stuck; one from an earlier stretch does not', () => {
+  const sameStretch = api => {
+    api.at(api.t + 2 * MINUTE);
+    api.turnStart();
+    api.at(api.t + 3 * MINUTE);
+    api.report('ws-root', 'Found the failing retry case.', 'progress');
+    api.at(api.t + MINUTE);
+    api.message('Looking at the retry policy');
+  };
+  let { unit, snapshot, at } = engineSwarm(sameStretch, 7);
+  assert.equal(unit.statusDetail, 'busy');
+  assert.deepEqual(nowLine(unit, snapshot), { text: 'Found the failing retry case.', at: at(5) });
+  ({ unit, snapshot } = engineSwarm(sameStretch, 17));
+  assert.equal(unit.statusDetail, 'stuck_model_call');
+  assert.equal(unit.since, at(6), 'its state counts from the last model output');
+  assert.deepEqual(nowLine(unit, snapshot), { text: 'Found the failing retry case.', at: at(5) });
+
+  const earlierStretch = api => {
+    api.at(api.t + 2 * MINUTE);
+    api.turnStart();
+    api.at(api.t + 2 * MINUTE);
+    api.report('ws-root', 'Found the failing retry case.', 'progress');
+    api.at(api.t + MINUTE);
+    api.turnEnd();
+    api.at(api.t + 5 * MINUTE);
+    api.turnStart();
+    api.at(api.t + MINUTE);
+    api.message('Looking at the retry policy');
+  };
+  ({ unit, snapshot } = engineSwarm(earlierStretch, 12));
+  assert.equal(unit.statusDetail, 'busy');
+  assert.deepEqual(nowLine(unit, snapshot), { text: 'Thinking', muted: true });
+  ({ unit, snapshot } = engineSwarm(earlierStretch, 22));
+  assert.equal(unit.statusDetail, 'stuck_model_call');
+  assert.deepEqual(nowLine(unit, snapshot), { text: 'Thinking', muted: true }, 'the idle gap ended the stretch that sent it');
 });
 
 test('a waiting unit\'s now line is its question or plan; any other unit with one of its own says "Asks you"; else its latest report', () => {
