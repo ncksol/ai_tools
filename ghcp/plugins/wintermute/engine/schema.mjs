@@ -99,9 +99,11 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  *   todo, or for sub-agent units, which have no separate todo list.
  * @property {string|null} toolDesc      Description argument of activity.tool, one line clipped to 160 characters;
  *   null without that tool or a non-blank description. activity.tool.summary remains command-first.
- * @property {string|null} dataWarning   Log read failure or incomplete usage warning, else null. A session covers all its
- *   CLI aliases; a sub-agent covers only the CLI log that holds it. Unreadable usage cannot be attributed reliably, so every
- *   sub-agent from that log is warned. A log failure takes priority over an incomplete-usage warning.
+ * @property {string|null} dataWarning   Log read failure or incomplete usage warning, else null. A log warning includes the
+ *   first failed read of the current streak in local 24-hour HH:MM; for several failing CLI aliases, use the earliest time.
+ *   A session covers all its CLI aliases; a sub-agent covers only the CLI log that holds it. Unreadable usage cannot be
+ *   attributed reliably, so every sub-agent from that log is warned that its cost may be incomplete. A log failure takes
+ *   priority over an incomplete-usage warning.
  * @property {ReportView|null} report    Latest report to its parent (always null for the orchestrator)
  * @property {{ done: number, total: number }|null} progress  Own todos; null when it keeps none
  * @property {SubagentView[]} subagents  Running first, then latest first

@@ -165,9 +165,16 @@ function todoOf(db) {
   return active[0]?.title ?? null;
 }
 
-function dataWarningOf(input, cliIds) {
-  if (cliIds.some(id => input.logsUnreadable?.has(id))) return 'Its log could not be read. Cost and state may be out of date.';
-  if (cliIds.some(id => input.costsIncomplete?.has(id))) return 'Some usage lines could not be read, so the cost is incomplete.';
+function dataWarningOf(input, cliIds, isSubagent = false) {
+  const since = minTime(...cliIds.map(id => input.logsUnreadable?.get(id)));
+  if (since !== null) {
+    const date = new Date(since);
+    const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+    return `Its log could not be read at ${time}. Cost and state may be out of date.`;
+  }
+  if (cliIds.some(id => input.costsIncomplete?.has(id))) {
+    return `Some usage lines could not be read, so the cost ${isSubagent ? 'may be' : 'is'} incomplete.`;
+  }
   return null;
 }
 
@@ -581,7 +588,7 @@ function subagentUnitView(input, rootContext, root, sub, evaluation, label, roll
     activity: { label: activity, tool, lastEventAt: sub.lastEventAt },
     todo: null,
     toolDesc: tool ? unit.openTools.get(tool.id)?.args.description ?? null : null,
-    dataWarning: dataWarningOf(input, [cliId]),
+    dataWarning: dataWarningOf(input, [cliId], true),
     report, progress: null,
     subagents: sortSubagentViews(unit.children.map(child => subagentView(child, rollup.get(child.id)?.nanoAiu ?? 0, stuckIds.has(child.id)))),
     timeline: {

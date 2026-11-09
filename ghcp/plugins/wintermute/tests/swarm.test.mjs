@@ -716,13 +716,18 @@ test('sub-agent data warnings follow their source CLI log, not another alias of 
   data.app.aliases.push({ sessionId: 'cli-previous', workspaceId: 'ws-root', createdAt: at(-20) });
   data.forest = buildForest(data.app);
   data.states.set('cli-previous', fold(old, 'cli-previous', ROOT_STATE));
-  data.logsUnreadable = new Set(['cli-previous']);
+  data.logsUnreadable = new Map([['cli-previous', at(100)]]);
   data.costsIncomplete = new Set(['cli-previous']);
   const snapshot = buildSnapshot(data);
   assert.match(snapshot.orchestrator.dataWarning, /log could not be read.*Cost and state/s);
   assert.equal(snapshot.units.find(unit => unit.id === oldSub).dataWarning, snapshot.orchestrator.dataWarning);
   assert.equal(snapshot.units.find(unit => unit.id === ids).dataWarning, null);
   assert.ok(snapshot.units.filter(unit => unit.kind !== 'subagent').every(unit => unit.dataWarning === null));
+  data.logsUnreadable.set('cli-root', at(110));
+  const both = buildSnapshot(data);
+  assert.equal(both.orchestrator.dataWarning, snapshot.orchestrator.dataWarning, 'the earliest failing alias supplies the time');
+  assert.notEqual(both.units.find(unit => unit.id === ids).dataWarning, snapshot.orchestrator.dataWarning,
+    'a sub-agent uses only its own source log time');
 });
 
 test('sub-agent units show the orchestrator\'s one-off sub-agents in each state, after the session units, oldest start first', () => {

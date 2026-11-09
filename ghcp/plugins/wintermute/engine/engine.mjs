@@ -143,8 +143,10 @@ export function createSwarmEngine(options = {}) {
   let refreshes = 0;
   // The CLI sessions whose cost the latest refresh could not read in full (see readCosts).
   let costsIncomplete = new Set();
-  // The subset whose log was missing or unreadable, rather than only having invalid usage lines.
+  // CLI sessions whose log was missing or unreadable this refresh, rather than only having invalid usage lines.
   const logsUnreadable = new Set();
+  // First failed read of the current streak, cleared only after all of a refresh's log reads succeed.
+  const logFailureSince = new Map();
 
   const projectOf = node => {
     const project = node.projectId ? app.projects.get(node.projectId) : null;
@@ -324,6 +326,11 @@ export function createSwarmEngine(options = {}) {
     return waiting;
   }
 
+  function markLogUnreadable(cliId, at) {
+    logsUnreadable.add(cliId);
+    if (!logFailureSince.has(cliId)) logFailureSince.set(cliId, at);
+  }
+
   /**
    * Feeds the ledger from the logs of `cliIds`, the CLI sessions of every swarm, reading only bytes appended since the last
    * refresh (see readUsage). Sessions that are no longer in a swarm are forgotten. Resolves the CLI sessions whose cost is not
@@ -331,7 +338,7 @@ export function createSwarmEngine(options = {}) {
    * or has usage lines that could not be applied. Such a line is skipped for good, so its session stays incomplete, with a
    * warning on every refresh, until its log is read again from the start. `diagnostics` collects notes by CLI session.
    */
-  async function readCosts(cliIds, diagnostics) {
+  async function readCosts(cliIds, diagnostics, at) {
     logsUnreadable.clear();
     for (const cliId of [...usageTails.keys()]) if (!cliIds.has(cliId)) usageTails.delete(cliId);
     ledger.retain(cliIds);
@@ -353,12 +360,12 @@ export function createSwarmEngine(options = {}) {
         }
         if (result.missing) {
           incomplete.add(cliId);
-          logsUnreadable.add(cliId);
+          markLogUnreadable(cliId, at);
           diag.push({ level: 'warn', source: 'events', message: `${shortId(cliId)}: the session's log is missing, so its cost is unknown.` });
         }
       } catch (error) {
         incomplete.add(cliId);
-        logsUnreadable.add(cliId);
+        markLogUnreadable(cliId, at);
         diag.push({ level: 'warn', source: 'events', message: `${shortId(cliId)}: ${error.message}` });
       }
       if (entry.failed) {
@@ -459,13 +466,14 @@ export function createSwarmEngine(options = {}) {
     const states = new Map();
     const alive = new Map();
     const workspaceFiles = new Map();
-    const unreadable = new Set(logsUnreadable);
+    const unreadable = new Map();
     const rootCliIds = new Set(nodes[0].cliSessionIds);
     let complete = globalsRead;
     for (const cliId of new Set(nodes.flatMap(node => node.cliSessionIds))) {
       const { state, read } = await tailSession(cliId, diag, rootCliIds.has(cliId));
       if (!read || costsIncomplete.has(cliId)) complete = false;
-      if (!read || !state) unreadable.add(cliId);
+      if (!read || !state) markLogUnreadable(cliId, at);
+      if (logsUnreadable.has(cliId)) unreadable.set(cliId, logFailureSince.get(cliId));
       if (state) states.set(cliId, state);
       alive.set(cliId, await livenessOf(cliId, at));
       workspaceFiles.set(cliId, readWorkspaceYaml(path.join(paths.stateDir, cliId)));
@@ -597,7 +605,7 @@ export function createSwarmEngine(options = {}) {
 
     const costIds = new Set(forest.roots.flatMap(root => treeNodes(forest, root.id).flatMap(node => node.cliSessionIds)));
     const costDiagnostics = new Map();
-    costsIncomplete = await readCosts(costIds, costDiagnostics);
+    costsIncomplete = await readCosts(costIds, costDiagnostics, at);
     swarms = await listRoots(at, diag);
     const rootIds = new Set(forest.roots.map(root => root.id));
     const tracked = new Set([
@@ -641,6 +649,7 @@ export function createSwarmEngine(options = {}) {
         diag.push({ level: 'warn', source: 'snapshot', message: `${shortId(rootId)}: ${error.message}` });
       }
     }
+    for (const cliId of logFailureSince.keys()) if (!logsUnreadable.has(cliId)) logFailureSince.delete(cliId);
     const keep = new Set(candidateCliIds);
     for (const rootId of tracked) for (const node of treeNodes(forest, rootId)) for (const cliId of node.cliSessionIds) keep.add(cliId);
     for (const cliId of [...sessions.keys()]) if (!keep.has(cliId)) sessions.delete(cliId);

@@ -10,6 +10,8 @@ import { execSql } from './helpers/sqlite-writer.mjs';
 import { tempDir } from './helpers/temp.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 
+process.env.TZ = 'Asia/Kolkata';
+
 const FOREIGN_TABLE = "CREATE TABLE children (name TEXT, status TEXT, session_id TEXT); INSERT INTO children VALUES ('x', 'running', 'ws-x')";
 const note = cliId => `${cliId}: its children table is not in the data-contract format, so it is ignored`;
 const OVERSIZED = 'cli-api: 1 log line over the size limit was not read in full; 0 were applied from its type and ids.';
@@ -27,15 +29,17 @@ for (const { role, cliId, warning } of [
     if (role === 'older alias') home.alias(cliId, 'ws-old', at(-1));
     else rmSync(path.join(home.stateDir, cliId, 'events.jsonl'));
     execSql(home.dataDb, 'DROP TABLE session_automations');
-    const engine = createSwarmEngine({ copilotHome: home.root, persistHistory: false, now: () => at(60), processProbe: alwaysAlive, prLookup: 'off' });
+    let clock = at(60);
+    const engine = createSwarmEngine({ copilotHome: home.root, persistHistory: false, now: () => clock, processProbe: alwaysAlive, prLookup: 'off' });
     try {
       await engine.refresh();
+      clock = at(65);
       assert.deepEqual(messages(await engine.getSnapshot('ws-root'), 'events'), [], 'an untracked run must not warn another swarm');
       const affected = await engine.getSnapshot('ws-old');
       assert.deepEqual(messages(affected, 'events'), [warning]);
       const warned = role === 'child' ? affected.units[0] : affected.orchestrator;
       const clean = role === 'child' ? affected.orchestrator : affected.units[0];
-      assert.match(warned.dataWarning, /log could not be read.*Cost and state/s);
+      assert.equal(warned.dataWarning, 'Its log could not be read at 14:30. Cost and state may be out of date.');
       assert.equal(clean.dataWarning, null);
       await engine.refresh();
       for (const id of ['ws-root', 'ws-old']) {
@@ -84,7 +88,8 @@ for (const problem of ['unreadable log', 'invalid usage line']) {
     home.writeEvents('cli-root', root.events, { append: true });
     const file = path.join(home.stateDir, 'cli-root', 'events.jsonl');
     const original = readFileSync(file, 'utf8');
-    const engine = createSwarmEngine({ copilotHome: home.root, persistHistory: false, now: () => at(60), processProbe: alwaysAlive, prLookup: 'off' });
+    let clock = at(60);
+    const engine = createSwarmEngine({ copilotHome: home.root, persistHistory: false, now: () => clock, processProbe: alwaysAlive, prLookup: 'off' });
     try {
       const before = await engine.getSnapshot('ws-root');
       assert.equal(before.orchestrator.dataWarning, null);
@@ -95,19 +100,32 @@ for (const problem of ['unreadable log', 'invalid usage line']) {
         appendFileSync(file, '{"type":"session.usage_record",invalid}\n');
       }
       for (let i = 0; i < 2; i += 1) {
+        clock = at(61 + i);
         await engine.refresh();
         const snapshot = await engine.getSnapshot('ws-root');
         const warning = snapshot.orchestrator.dataWarning;
-        assert.match(warning, problem === 'unreadable log' ? /log could not be read.*Cost and state/s : /usage lines.*cost is incomplete/);
-        assert.equal(snapshot.units.find(unit => unit.id === sub).dataWarning, warning);
+        assert.equal(warning, problem === 'unreadable log'
+          ? 'Its log could not be read at 14:31. Cost and state may be out of date.'
+          : 'Some usage lines could not be read, so the cost is incomplete.');
+        assert.equal(snapshot.units.find(unit => unit.id === sub).dataWarning, problem === 'unreadable log'
+          ? warning : 'Some usage lines could not be read, so the cost may be incomplete.');
         assert.ok(snapshot.units.filter(unit => unit.kind !== 'subagent').every(unit => unit.dataWarning === null));
         assert.equal(snapshot.orchestrator.cost.credits, before.orchestrator.cost.credits);
       }
       rmSync(file);
       writeFileSync(file, original);
+      clock = at(70);
       await engine.refresh();
       const recovered = await engine.getSnapshot('ws-root');
       for (const unit of [recovered.orchestrator, ...recovered.units]) assert.equal(unit.dataWarning, null);
+      if (problem === 'unreadable log') {
+        rmSync(file);
+        symlinkSync('events.jsonl', file);
+        clock = at(1115);
+        await engine.refresh();
+        assert.equal((await engine.getSnapshot('ws-root')).orchestrator.dataWarning,
+          'Its log could not be read at 08:05. Cost and state may be out of date.', 'a new failure streak has its own padded local time');
+      }
     } finally {
       engine.stop();
     }
