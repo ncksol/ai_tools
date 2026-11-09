@@ -184,7 +184,7 @@ test('each orchestrator keeps a unit\'s claims checker for its later claims chec
   assert.ok(agent('hands-on-session-orchestrator').includes('created with `base_branch` set to that branch. Keep it until the unit merges, so that it can take the unit\'s later claims checks.'));
 });
 
-const RECHECK_RUN_LIMIT = 'A reviewer who re-checks it checks only the new diff. The re-check brief says so, and says to run code only to settle a possible finding, with the smallest check that settles it, such as one test file. The reviewer doesn\'t repeat the owner\'s test runs, full test suites or mutation checks, even when a project\'s test rules ask authors for them: the owner\'s evidence, CI and the claims check cover those.';
+const RECHECK_RUN_LIMIT = 'A reviewer who re-checks it checks only the new diff. The re-check brief says so, and says to run code only to settle a possible finding, with the smallest check that settles it, such as one test file. The reviewer doesn\'t repeat the owner\'s test runs, full test suites or mutation checks, even when a project\'s test rules ask authors for them: the owner\'s evidence and CI cover those, and so does the claims check when one runs.';
 
 test('both orchestrators limit what a re-checking reviewer runs, with the same words', () => {
   for (const name of ORCHESTRATORS) {

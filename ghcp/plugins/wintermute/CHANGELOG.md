@@ -10,7 +10,7 @@ After merging, run `npm run release:publish -- --dry-run`, then `npm run release
 
 ### Changed
 
-- A re-check stays small. In `hands-on-orchestrator` and `hands-on-session-orchestrator`, a re-check brief now tells the reviewer to run code only to settle a possible finding, with the smallest check that settles it. The reviewer doesn't repeat the owner's test runs, full test suites or mutation checks, even when a project's test rules ask authors for them. The owner's evidence, CI and the claims check cover those. Before this, a reviewer could rerun mutation checks and full suites for a 14-line follow-up.
+- A re-check stays small. In `hands-on-orchestrator` and `hands-on-session-orchestrator`, a re-check brief now tells the reviewer to run code only to settle a possible finding, with the smallest check that settles it. The reviewer doesn't repeat the owner's test runs, full test suites or mutation checks, even when a project's test rules ask authors for them. The owner's evidence and CI cover those, and so does the claims check when one runs. Before this, a reviewer could rerun mutation checks and full suites for a 14-line follow-up.
 
 ### Upgrading
 
