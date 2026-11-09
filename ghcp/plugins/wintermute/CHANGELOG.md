@@ -10,7 +10,9 @@ After merging, run `npm run release:publish -- --dry-run`, then `npm run release
 
 ### Fixed
 
-- Restarting the Copilot app no longer brings finished swarms back to Live or makes normally stopped sessions look crashed and stalled (#106). Shutdown, resume, remote connection notices (`session.info` with `infoType: remote`) and remote-steerable changes do not count as work in session snapshots or the run list. Other info types still count as activity. A resume still ends the previous process and applies its model and reasoning effort; new work after it still moves the clock.
+- Restarting the Copilot app no longer brings finished swarms back to Live or makes normally stopped sessions look crashed and stalled (#106). Shutdown, resume, remote connection notices (`session.info` with `infoType: remote`), remote-steerable changes, main-session settings changes, session-start/end hooks and cumulative usage checkpoints do not count as work in session snapshots or the run list. Other info types, work-related hooks and sub-agent settings still count as activity. Resumes and settings still apply their model, mode and reasoning effort; new work still moves the clock and clears the previous shutdown outcome.
+- Large shutdown accounting payloads use the same event classification in the run list, including lines above 64 KiB. Repeated bookkeeping shutdowns keep the first stopped time after the last work.
+- History summaries whose finish time came from bookkeeping are rebuilt when complete logs show an earlier work time. Missing or unreadable logs keep the saved summary.
 
 ## 0.9.0 — 2026-11-09
 

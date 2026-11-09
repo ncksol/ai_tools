@@ -48,9 +48,10 @@ function summaryDigest(summary) {
  * resumed and finished again while no engine ran. Both credit values are rounded to 0.1. Lower cost alone is not stale: logs
  * can be cleaned up, and the stored summary is then kept. A run that is not listed (its logs are gone) keeps its stored summary.
  *
- * The one exception is a summary from an older cost source (no `costSource`, see COST_SOURCE): session-store.db counted a
- * resumed session's calls again. It is stale whenever `costsComplete` is true, meaning every session of the run had its log
- * read in full for cost on the listing's refresh, so it is rebuilt even when the corrected cost is lower.
+ * Complete logs can also correct an older summary downwards: an older cost source (see COST_SOURCE) counted a resumed
+ * session's calls again, and a finish time beyond the listing's work time plus the slack can come from app bookkeeping.
+ * Both are stale only when `costsComplete` is true, meaning every session's log was read in full on this refresh; incomplete
+ * or removed logs keep the last good summary.
  *
  * `verified` is the stamp of the last check that rebuilt the run (see the engine's `verified` map). When the listing still
  * shows that check's activity time and cost, and the stored summary is the one that check confirmed, nothing is newer: the
@@ -59,7 +60,8 @@ function summaryDigest(summary) {
 function isStale(stored, swarm, verified = null, costsComplete = false) {
   if (!swarm) return false;
   const oldSource = stored.costSource !== COST_SOURCE && costsComplete;
-  if (!(oldSource || swarm.credits > stored.credits || swarm.lastActivityAt > stored.finishedAt + STALE_SLACK_MS)) return false;
+  const olderWork = costsComplete && stored.finishedAt > swarm.lastActivityAt + STALE_SLACK_MS;
+  if (!(oldSource || olderWork || swarm.credits > stored.credits || swarm.lastActivityAt > stored.finishedAt + STALE_SLACK_MS)) return false;
   return !(verified && swarm.lastActivityAt === verified.lastActivityAt && swarm.credits === verified.credits
     && summaryDigest(stored) === verified.digest);
 }

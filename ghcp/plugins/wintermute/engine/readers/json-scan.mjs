@@ -10,7 +10,7 @@ const MAX_DEPTH = 256;
 const TOP_KEYS = new Set(['type', 'id', 'timestamp', 'parentId', 'agentId']);
 const DATA_KEYS = new Set([
   'toolCallId', 'toolName', 'success', 'cancelled', 'parentToolCallId', 'agentId', 'durationMs',
-  'infoType', 'selectedModel', 'reasoningEffort', 'copilotVersion',
+  'infoType', 'selectedModel', 'reasoningEffort', 'copilotVersion', 'newModel', 'newMode', 'hookType',
 ]);
 
 const QUOTE = 0x22;
@@ -39,7 +39,7 @@ function decodeString(raw) {
  * captures. What it captures is fixed by an allowlist, so its memory does not grow with the width of the line: primitive
  * values (strings of at most MAX_VALUE_BYTES, numbers, true, false, null) of the keys type, id, timestamp, parentId and
  * agentId at depth 1, and toolCallId, toolName, success, cancelled, parentToolCallId, agentId, durationMs, infoType,
- * selectedModel, reasoningEffort and copilotVersion directly under the
+ * selectedModel, reasoningEffort, copilotVersion, newModel, newMode and hookType directly under the
  * top-level key `data`. toolName lets the engine see that an oversized tool start is a `task` call (see engine.mjs, scanTaskStarts). A repeated key overwrites. Other keys, and keys at any other depth, are read only far enough to know which object
  * is `data` and are then dropped, so a nested "type":"text" never counts. Structural characters are ASCII and never occur
  * inside a UTF-8 sequence, so it works on bytes; a captured string is decoded once, when it ends.

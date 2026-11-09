@@ -183,7 +183,7 @@ export function fileStamp(info) {
   return `${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
 }
 
-/** Longest line taken for a skipped type: a longer line is taken as one that is not, without parsing it. */
+/** Longer lines use the bounded metadata scanner instead of parsing their full payload. */
 const MAX_SKIPPED_LINE_BYTES = 64 * 1024;
 const TIMESTAMP_KEY = '"timestamp":"';
 
@@ -215,7 +215,7 @@ function lineTime(line) {
  * null when the log is missing; `stamp` is the fileStamp of the file that was read. `at` is the file's mtime, as before,
  * unless the log ends with events that `isWorkEvent` classifies as bookkeeping, in any key order; it is then the time
  * of the last line before them, or null when every line is bookkeeping.
- * A line that is not a JSON object, or is longer than the classification limit, is work. An unfinished last line is work being
+ * Longer lines use the metadata scanner, including large shutdown accounting payloads. An unreadable line is work. An unfinished last line is work being
  * written, so `at` is the mtime. When more than maxBytes would have to be read, `at` is the mtime.
  */
 export async function lastWorkTime(file, isWorkEvent, { chunkSize = 16 * 1024, maxBytes = 1024 * 1024 } = {}) {
@@ -238,7 +238,7 @@ export async function lastWorkTime(file, isWorkEvent, { chunkSize = 16 * 1024, m
     let start = size;
     let cursor = size;
     const more = async () => {
-      const length = Math.min(chunkSize, start);
+      const length = Math.min(chunkSize, start, maxBytes - (size - start));
       const chunk = Buffer.alloc(length);
       const { bytesRead } = await handle.read(chunk, 0, length, start - length);
       start -= length;
@@ -250,14 +250,20 @@ export async function lastWorkTime(file, isWorkEvent, { chunkSize = 16 * 1024, m
     for (;;) {
       const newline = cursor > start ? buffer.lastIndexOf(NEWLINE, cursor - start - 1) : -1;
       if (newline < 0 && start > 0) {
-        if (cursor - start > MAX_SKIPPED_LINE_BYTES) return result(cursor === size - 1 ? mtimeMs : lineTime(buffer.subarray(0, cursor - start)) ?? mtimeMs);
         if (size - start >= maxBytes) return result(mtimeMs);
         await more();
         continue;
       }
       let line = buffer.subarray(newline + 1, cursor - start);
       if (line[line.length - 1] === CARRIAGE_RETURN) line = line.subarray(0, -1);
-      const event = line.length <= MAX_SKIPPED_LINE_BYTES ? parseObject(line) : null;
+      let event;
+      if (line.length <= MAX_SKIPPED_LINE_BYTES) {
+        event = parseObject(line);
+      } else {
+        const scanner = createJsonScanner();
+        scanner.write(line, 0, line.length);
+        event = scanner.finish();
+      }
       if (event !== BLANK && (!event || isWorkEvent(event))) {
         return result(cursor === size - 1 ? mtimeMs : parseTime(event?.timestamp) ?? lineTime(line) ?? mtimeMs);
       }

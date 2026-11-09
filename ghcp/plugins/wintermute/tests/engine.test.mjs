@@ -464,6 +464,47 @@ test('a stored summary is rebuilt when cost for the time it covers arrives later
   engine.stop();
 });
 
+test('a summary with a bookkeeping finish time is rebuilt when complete logs show older work', async () => {
+  const { stored, reopen } = await storedOldRun();
+  const old = readSummary(stored);
+  old.finishedAt += 3 * HOUR;
+  old.tookMs += 3 * HOUR;
+  writeFileSync(stored, `${JSON.stringify(old)}\n`);
+  const engine = reopen();
+  try {
+    await engine.refresh();
+    assert.deepEqual(await oldItem(engine), [OLD_LAST, 1, false], 'History uses the corrected work time until rebuilt');
+    assert.equal((await engine.getRunSummary('ws-old')).finishedAt, OLD_LAST);
+    assert.equal(readSummary(stored).finishedAt, OLD_LAST);
+    assert.deepEqual(await oldItem(engine), [OLD_LAST, 1, true]);
+    const before = stat(stored);
+    await engine.refresh();
+    await engine.getRunSummary('ws-old');
+    assert.deepEqual(stat(stored), before, 'a verified summary is not rewritten on the next refresh');
+  } finally {
+    engine.stop();
+  }
+});
+
+test('an overestimated summary finish time is kept when a log is missing', async () => {
+  const { home, stored, reopen } = await storedOldRun();
+  const old = readSummary(stored);
+  old.finishedAt += 3 * HOUR;
+  old.tookMs += 3 * HOUR;
+  writeFileSync(stored, `${JSON.stringify(old)}\n`);
+  rmSync(path.join(home.stateDir, 'cli-old-child', 'events.jsonl'));
+  const before = stat(stored);
+  const engine = reopen();
+  try {
+    await engine.refresh();
+    assert.deepEqual(await oldItem(engine), [old.finishedAt, 1, true]);
+    assert.equal((await engine.getRunSummary('ws-old')).finishedAt, old.finishedAt);
+    assert.deepEqual(stat(stored), before, 'incomplete logs never replace the stored summary');
+  } finally {
+    engine.stop();
+  }
+});
+
 test('a resumed session that writes an earlier usage record again counts it once, and its one new call adds only its own cost', async () => {
   const { home, stored, reopen } = await storedOldRun();
   const resumeAt = OLD_LAST + 10 * MINUTE;

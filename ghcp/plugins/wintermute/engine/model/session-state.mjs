@@ -15,12 +15,18 @@ export const SKIP_TYPES = new Set([
  * never move the session's clock, so opening the dashboard in an old session does not make its run look active (issue #30).
  */
 export const UI_EVENT_TYPES = new Set(['session.canvas.recorded', 'session.canvas.removed']);
-const LIFECYCLE_EVENT_TYPES = new Set(['session.shutdown', 'session.resume', 'session.remote_steerable_changed']);
+const BOOKKEEPING_EVENT_TYPES = new Set([
+  'session.shutdown', 'session.resume', 'session.remote_steerable_changed', 'session.usage_checkpoint',
+]);
+const SETTINGS_EVENT_TYPES = new Set(['session.model_change', 'session.mode_changed', 'session.permissions_changed']);
 
-/** Remote attach notices are bookkeeping; other info types include model changes and snapshot restores, so remain work. */
+/** Settings and lifecycle telemetry are not work; owned settings still go through sub-agent routing. */
 export function isWorkEvent(event) {
-  return !UI_EVENT_TYPES.has(event.type) && !LIFECYCLE_EVENT_TYPES.has(event.type)
-    && !(event.type === 'session.info' && event.data?.infoType === 'remote');
+  if (UI_EVENT_TYPES.has(event.type) || BOOKKEEPING_EVENT_TYPES.has(event.type)) return false;
+  if (event.type === 'session.info' && event.data?.infoType === 'remote') return false;
+  if (event.agentId != null || event.data?.parentToolCallId != null) return true;
+  return !SETTINGS_EVENT_TYPES.has(event.type)
+    && !(['hook.start', 'hook.end'].includes(event.type) && ['sessionStart', 'sessionEnd'].includes(event.data?.hookType));
 }
 
 /** Each skip type mapped to its own constant: keeping head[1], a slice of the line, would pin the whole read chunk. */
@@ -51,7 +57,7 @@ const numberOrNull = value => (value === null || value === undefined || value ==
  */
 export function createSessionState(id, { subagentUnits = false } = {}) {
   return {
-    // lastEventAt is the work clock; lastObservedAt orders lastEventType without moving that clock.
+    // lastEventAt is the work clock; lastObservedAt and lastEventType are diagnostic event metadata.
     id, subagentUnits, lines: 0, parseErrors: 0, firstEventAt: null, lastEventAt: null, lastObservedAt: null, lastEventType: null, lastMainAt: null,
     copilotVersion: null, model: null, effort: null, mode: null,
     turn: null, busySince: null, lastTurnEndAt: null, busySpans: [], busyMs: 0,
@@ -93,7 +99,7 @@ export function applyLine(state, line) {
   const skipped = head ? SKIP_NAMES.get(head[1]) : undefined;
   if (skipped) {
     const at = UI_EVENT_TYPES.has(skipped) ? null : sniffTimestamp(line);
-    if (at !== null) touch(state, at, skipped);
+    if (at !== null) touch(state, at, skipped, isWorkEvent({ type: skipped }));
     return;
   }
   let event;
@@ -268,7 +274,7 @@ function onMainEvent(state, type, data, at) {
       recordTaskComplete(state, data, at);
       break;
     case 'session.shutdown':
-      state.shutdownAt = at;
+      state.shutdownAt ??= at;
       endProcess(state, at);
       break;
     case 'abort':

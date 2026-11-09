@@ -189,10 +189,10 @@ test('feed entries carry a stable source: the tool call, else the event id, else
 
 test('large irrelevant lines only move the clock, and malformed lines are counted', () => {
   const state = createSessionState('cli-1');
-  applyLine(state, JSON.stringify({ type: 'session.usage_checkpoint', data: { huge: 'x'.repeat(1000) }, id: 'a', timestamp: new Date(T0).toISOString(), parentId: null }));
+  applyLine(state, JSON.stringify({ type: 'session.binary_asset', data: { huge: 'x'.repeat(1000) }, id: 'a', timestamp: new Date(T0).toISOString(), parentId: null }));
   applyLine(state, '{"type":"assistant.turn_start",');
   assert.equal(state.lastEventAt, T0);
-  assert.equal(state.lastEventType, 'session.usage_checkpoint');
+  assert.equal(state.lastEventType, 'session.binary_asset');
   assert.equal(state.parseErrors, 1);
   assert.equal(state.lines, 2);
 });
