@@ -148,7 +148,6 @@ a { color: var(--busy-ink); }
 .kv .v { font-size: 14px; line-height: 20px; font-weight: 500; white-space: nowrap; }
 .kv .v.l { font-size: 18px; line-height: 24px; }
 .sec-h { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.chips { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
 .chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; height: 24px; padding: 0 8px; border: 1px solid var(--line); border-radius: 4px; font-size: 12px; line-height: 16px; color: var(--ink-2); background: var(--surface); white-space: nowrap; }
 .chip .dot { width: 6px; height: 6px; }
 .chip-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -180,18 +179,26 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 :root[data-theme="dark"] .th-moon, :root:not([data-theme="dark"]) .th-sun { opacity: 0; transform: rotate(90deg) scale(.5); }
 .v-out { padding: 8px 12px; border: 1px solid var(--blocked); border-radius: 8px; background: var(--blocked-soft); color: var(--ink); font-size: 12px; line-height: 16px; overflow-wrap: anywhere; }
 .d-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px 32px; }
-.d-id { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.d-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The header is the orchestrator's card: its status mark, the run name, its state in words and a now line. */
+.d-id { display: flex; align-items: flex-start; gap: 16px; flex: 1 1 440px; min-width: 0; }
+.o-who { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.o-l1 { display: flex; align-items: baseline; gap: 8px; min-width: 0; white-space: nowrap; }
+.d-name { flex: 0 1 auto; min-width: 0; font-size: 18px; line-height: 24px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.o-role { flex: 0 1 auto; min-width: 0; font-size: 12px; line-height: 16px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
+.o-state { font-size: 14px; line-height: 20px; font-weight: 500; color: var(--c-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.o-now { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; max-width: 640px; overflow: hidden; overflow-wrap: anywhere; }
+.o-now.is-muted { color: var(--ink-2); }
+/* Off the Cards tab: how much waits on you, and the way back to the cards that show it. */
+.o-wait { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; width: 100%; padding: 8px 12px; border: 1px solid var(--question); border-radius: 8px; background: var(--question-soft); cursor: pointer; text-align: left; }
+.o-wait .dot { background: var(--question-ink); }
+.o-wait-n { font-weight: 500; }
+.o-wait-t { color: var(--ink-2); }
+.o-go { margin-left: auto; font-size: 12px; line-height: 16px; color: var(--question-ink); white-space: nowrap; }
 .d-facts { display: flex; flex-wrap: wrap; gap: 8px 32px; }
 .d-counts { display: grid; grid-template-columns: repeat(6, auto); gap: 8px 24px; }
 .tile { display: flex; flex-direction: column; }
 .tile .v { font-size: 18px; line-height: 24px; font-weight: 500; }
 .tile .k { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; line-height: 16px; color: var(--ink-2); white-space: nowrap; }
-.needs { display: flex; flex-direction: column; gap: 8px; }
-.needs-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; }
-.need { display: flex; flex-direction: column; gap: 4px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
-.need-k { display: inline-flex; align-items: center; gap: 4px; color: var(--c-ink); }
-.need-t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .empty { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }
 .d-body { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
 .d-body.has-detail { grid-template-columns: minmax(0, 1fr) 440px; }
@@ -203,53 +210,63 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 .tabs button[aria-selected="true"] { border-bottom-color: var(--ink); }
 @container dash (max-width: 720px) {
   .d-counts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .needs-list { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* cards */
+.b-zone { display: flex; flex-direction: column; gap: 16px; }
 .b-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(296px, 1fr)); gap: 12px; }
-.b-card { display: flex; flex-direction: column; gap: 12px; padding: var(--card-pad); min-width: 0; border: var(--card-border) solid var(--line); border-radius: 8px; background: var(--surface); cursor: pointer; }
+/* Three rows, one height: 16 px of padding, the head (40), a 12 px gap, the now line (40), a 12 px gap, the footer (24), 16 px of padding and a 1 px border make 162 px. */
+.b-card { display: grid; grid-template-rows: 40px 40px 24px; row-gap: 12px; padding: var(--card-pad); min-width: 0; border: var(--card-border) solid var(--line); border-radius: 8px; background: var(--surface); cursor: pointer; }
+/* Every card has the neutral border; tint marks only the states that need someone. A sub-agent card is marked by its type tag. */
 .b-card.st-plan, .b-card.st-question, .b-card.st-stuck, .b-card.st-blocked { background: var(--c-soft); }
-/* The border says what a card is: a one-off sub-agent (blue) or a child session (green). An inset line in the same colour gives it a 2 px look without moving the content, so it reads on tinted cards too. Status shows through the ring, the state line and the tint. */
-.b-card[data-kind="subagent"], .mc[data-kind="subagent"] { border-color: var(--busy); box-shadow: inset 0 0 0 1px var(--busy); }
-.b-card[data-kind="project"], .b-card[data-kind="chat"], .mc[data-kind="project"], .mc[data-kind="chat"] { border-color: var(--merged); box-shadow: inset 0 0 0 1px var(--merged); }
 .b-card:hover { border-color: var(--ink-3); }
 .b-card.is-sel { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
-/* A finished sub-agent's card fades out at the end of its grace period (CARD_FADE_MS in ui/model.mjs). */
-.b-card.is-leaving { animation: card-leave 1.2s ease-in forwards; }
-@keyframes card-leave { to { opacity: 0; } }
 .b-head { display: flex; align-items: center; gap: 12px; height: 40px; min-width: 0; }
 .b-who { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .b-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .b-state { font-size: 12px; line-height: 16px; color: var(--c-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .b-pr { font-size: 12px; line-height: 16px; color: var(--ink-2); white-space: nowrap; }
-.ring { position: relative; flex: none; }
-.ring svg { display: block; }
-.ring .trk { fill: none; stroke: var(--line); stroke-width: 4; }
-.ring .arc { fill: none; stroke: var(--c); stroke-width: 4; stroke-linecap: round; }
-.ring .arc.spin { transform-origin: 20px 20px; animation: spin 4s linear infinite; }
-.ring .arc.stuck { stroke-dasharray: 4 4; stroke-linecap: butt; animation: blink 2.4s ease-in-out infinite; }
+.b-l1, .b-l2 { display: flex; align-items: center; gap: 8px; height: 20px; min-width: 0; }
+/* The label and the state keep their width; the name, the PR and the type tag give way, with an ellipsis. */
+.b-lab { flex: none; max-width: 50%; font: 500 12px/20px var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.b-l1 .b-name { flex: 1 1 auto; min-width: 0; }
+/* Some of the unit's data could not be read: a mark in the text colour, so status colours keep their meaning. */
+.b-warn { display: block; flex: none; margin-left: auto; color: var(--ink); }
+.b-warn svg { display: block; fill: currentColor; }
+.b-st { flex: none; max-width: 100%; font-size: 14px; line-height: 20px; font-weight: 500; color: var(--c-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.b-l2 .b-pr, .b-tag { flex: 0 1 auto; min-width: 0; margin-left: auto; overflow: hidden; text-overflow: ellipsis; }
+.b-tag { height: 20px; padding: 0 4px; border-radius: 4px; box-shadow: inset 0 0 0 1px var(--line); font-size: 12px; line-height: 20px; color: var(--ink-2); white-space: nowrap; }
+.b-now { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.b-now.is-muted { color: var(--ink-2); }
+.b-now.is-new { animation: flash 1.6s cubic-bezier(.25, 1, .5, 1); }
+.b-ago { font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+/* The footer's left side folds (foldFooter in ui/model.mjs); the Needs you marker, the model and the cost never hide. */
+.b-foot { display: flex; align-items: center; gap: 8px; height: 24px; min-width: 0; }
+.b-left { display: flex; flex: 1 1 0; align-items: center; gap: 8px; height: 24px; min-width: 0; overflow: hidden; }
+.b-left > * { flex: none; }
+.b-right { display: flex; flex: 0 1 auto; align-items: center; gap: 8px; min-width: 0; }
+.b-need { display: inline-flex; flex: none; align-items: center; height: 24px; padding: 0 8px; border-radius: 4px; font-size: 12px; line-height: 16px; color: var(--question-ink); background: var(--question-soft); box-shadow: inset 0 0 0 1px var(--question); white-space: nowrap; }
+.b-more { font-size: 12px; line-height: 16px; color: var(--ink-2); }
+.b-prog { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; line-height: 16px; color: var(--ink-2); white-space: nowrap; }
+.b-prog .bar { width: 32px; }
+.b-prog .bar i { background: var(--ink-3); }
+.b-model { flex: 0 1 auto; min-width: 0; font-size: 12px; line-height: 16px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.b-cost { flex: none; font-size: 12px; line-height: 16px; font-weight: 500; white-space: nowrap; }
+.ring, .mark { position: relative; flex: none; }
+.ring svg, .mark svg { display: block; }
+.ring .trk, .mark .trk { fill: none; stroke: var(--line); stroke-width: 4; }
+.ring .arc, .mark .arc { fill: none; stroke: var(--c); stroke-width: 4; stroke-linecap: round; }
+.ring .arc.spin, .mark .arc.spin { transform-origin: 20px 20px; animation: spin 4s linear infinite; }
+.ring .arc.stuck, .mark .arc.stuck { stroke-dasharray: 4 4; stroke-linecap: butt; animation: blink 2.4s ease-in-out infinite; }
 .ring-l { position: absolute; left: 5px; top: 12px; width: 30px; font-size: 12px; line-height: 16px; font-weight: 500; color: var(--ink); text-align: center; white-space: nowrap; overflow: hidden; }
-.b-metrics { display: grid; grid-template-columns: 56px minmax(0, 1fr); row-gap: 4px; column-gap: 8px; align-items: baseline; }
-.b-metrics .k, .b-rows .k { font-size: 12px; line-height: 16px; color: var(--ink-2); }
-.b-metrics .v { font-size: 18px; line-height: 24px; font-weight: 500; white-space: nowrap; }
-.b-metrics .meter { align-self: center; }
-.meter, .bar { height: 4px; border-radius: 2px; background: var(--line-2); overflow: hidden; }
-.meter i, .bar i { display: block; height: 100%; border-radius: 2px; }
-.meter i { background: var(--meter); }
-.bar i { background: var(--c); }
-.b-rep { display: flex; align-items: center; gap: 8px; height: 20px; min-width: 0; }
+/* The status mark's state icon: dots, "!", "?", lines, pause bars, a moon, a tick or a cross. */
+.mark .g { fill: var(--c-ink); }
+.mark .g-line { fill: none; stroke: var(--c-ink); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.mark .g-dots circle { animation: dot 1.4s ease-in-out infinite; }
+@keyframes dot { 0%, 60%, 100% { opacity: .3; } 30% { opacity: 1; } }
+.bar { height: 4px; border-radius: 2px; background: var(--line-2); overflow: hidden; }
+.bar i { display: block; height: 100%; border-radius: 2px; background: var(--c); }
 .badge { display: inline-flex; flex: none; height: 20px; padding: 0 8px; border-radius: 4px; font-size: 12px; line-height: 20px; color: var(--r); background: color-mix(in oklch, var(--r) 12%, var(--surface)); }
-.b-rep-t { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.b-age { flex: none; font-size: 12px; line-height: 16px; color: var(--ink-2); }
-.b-rep.is-new { animation: flash 1.6s cubic-bezier(.25, 1, .5, 1); }
-.b-rows { display: grid; grid-template-columns: 56px minmax(0, 1fr) 64px; column-gap: 8px; row-gap: 8px; align-items: center; }
-.b-rows .r { font-size: 12px; line-height: 16px; color: var(--ink-2); text-align: right; white-space: nowrap; }
-.b-rows .mon, .b-rows .none-r { grid-column: 2 / 4; }
-.none-r { font-size: 12px; line-height: 16px; color: var(--ink-2); }
-.stage { display: flex; gap: 4px; height: 4px; }
-.stage i { flex: 1; border-radius: 2px; background: var(--line-2); }
-.stage i.on { background: var(--stg-ink); }
 .mon { display: flex; align-items: center; gap: 4px; font-size: 12px; line-height: 16px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .mon .badge { margin-left: 4px; }
 .mon .dot { width: 6px; height: 6px; }
@@ -257,11 +274,23 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 .mon-missing, .mon-paused { color: var(--blocked-ink); }
 .mon-missing .dot, .mon-paused .dot { background: var(--blocked-ink); }
 .mon-ended .dot, .mon-none .dot { background: var(--line); }
-.b-card .chips { height: 24px; overflow: hidden; }
+/* Finished units, closed by default: Board-style mini cards with no tint, latest finish first. */
+.b-fin { display: flex; flex-direction: column; gap: 12px; }
+.b-fin-h { display: flex; align-items: center; gap: 8px; padding: 8px 0; border: 0; border-top: 1px solid var(--line); background: none; cursor: pointer; text-align: left; }
+.b-caret { flex: none; fill: var(--ink-2); transition: transform .15s ease; }
+.b-fin-h[aria-expanded="true"] .b-caret { transform: rotate(90deg); }
+.b-fin-t { font-weight: 500; }
+.b-fin-n { color: var(--ink-2); }
+.b-fin-s { min-width: 0; font-size: 12px; line-height: 16px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.b-fin-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+.mc.tone-ok { --c-ink: var(--merged-ink); }
+.mc.tone-bad { --c-ink: var(--stuck-ink); }
+.mc.tone-off { --c-ink: var(--ink-2); }
 .cards-note { font-size: 12px; line-height: 16px; color: var(--ink-2); }
 .cards-note .link { text-decoration: underline; text-underline-offset: 2px; }
-/* In the grid, the note sits one card gap below the last row, and its box mirrors a card's so its text lines up with theirs. */
-.b-grid > .cards-note { grid-column: 1 / -1; padding: 0 var(--card-pad); border-left: var(--card-border) solid transparent; border-right: var(--card-border) solid transparent; }
+/* Disconnected: the cards and the Finished section dim and every mark stops, so old data never looks live. */
+.b-zone.is-stale > * { opacity: .55; filter: saturate(.4); }
+.is-stale .arc, .is-stale .g-dots circle { animation: none; }
 
 /* activity rail and feed */
 .rail { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }
@@ -332,8 +361,12 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 .bcol-h b { font-weight: 500; color: var(--ink); }
 .bcol-more { font-size: 12px; line-height: 16px; color: var(--ink-2); }
 .mc { display: flex; flex-direction: column; padding: 12px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; background: var(--surface); }
+/* The Board's border says what a card is: a one-off sub-agent (blue) or a child session (green). An inset line in the same colour gives it a 2 px look without moving the content, so it reads on tinted cards too. */
+.board .mc[data-kind="subagent"] { border-color: var(--busy); box-shadow: inset 0 0 0 1px var(--busy); }
+.board .mc[data-kind="project"], .board .mc[data-kind="chat"] { border-color: var(--merged); box-shadow: inset 0 0 0 1px var(--merged); }
 .mc[data-open] { cursor: pointer; }
 .mc[data-open]:hover { border-color: var(--ink-3); }
+.mc.is-sel { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
 .mc.st-plan, .mc.st-question, .mc.st-stuck, .mc.st-blocked { background: var(--c-soft); }
 .mc.planned { border-style: dashed; border-color: var(--ink-3); }
 .mc.planned.can { border-style: solid; border-color: var(--busy-ink); }

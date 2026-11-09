@@ -692,6 +692,24 @@ test('tool descriptions follow the selected call, including stuck and sub-agent 
   }
 });
 
+test('busySince is the open turn\'s busy period for sessions and the open run for sub-agent units, else null', () => {
+  const { data, ids } = withSubagents(root => {
+    root.at(at(110));
+    root.turnStart();
+    const running = root.subagent({ name: 'running', mode: 'background' });
+    const finished = root.subagent({ name: 'finished', mode: 'background' });
+    root.at(at(112));
+    root.subagentDone(finished);
+    return { running, finished };
+  });
+  const snapshot = buildSnapshot(data);
+  const unit = id => snapshot.units.find(candidate => candidate.id === id);
+  assert.equal(snapshot.orchestrator.busySince, at(110));
+  assert.equal(unit(ids.running).busySince, at(110));
+  assert.equal(unit(ids.finished).busySince, null);
+  assert.equal(unit('ws-docs').busySince, null, 'no open turn');
+});
+
 test('empty descriptions stay null and finished sub-agent units do not retain a tool description', () => {
   for (const description of [undefined, '', ' \n ', 42]) {
     const { data, ids } = withSubagents(root => {

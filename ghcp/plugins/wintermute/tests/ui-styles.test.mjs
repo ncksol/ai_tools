@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { CARD_FADE_MS } from '../ui/model.mjs';
 
 const css = readFileSync(new URL('../ui/styles.css', import.meta.url), 'utf8');
 const declarations = [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([a-z-]+)\s*:\s*([^;{}]+)[;}]/g)].map(([, prop, value]) => [prop, value.trim()]);
@@ -66,18 +65,17 @@ test('the font comes from the host with the approved fallback, motion stops on r
   assert.match(css, /html\[data-host="canvas"\] \.dash \{/);
 });
 
-test('the Cards note takes its inset from the same tokens as a card and adds no margin', () => {
+test('a card is three fixed rows, 162 px high with its padding and border, and the Cards note adds no inset or margin', () => {
   assert.match(css, /--card-pad: 16px;/);
   assert.match(css, /--card-border: 1px;/);
   const card = block('.b-card');
+  assert.match(card, /grid-template-rows: 40px 40px 24px; row-gap: 12px;/);
   assert.match(card, /padding: var\(--card-pad\);/);
   assert.match(card, /border: var\(--card-border\) solid var\(--line\);/);
-  const note = block('.b-grid > .cards-note');
-  assert.match(note, /grid-column: 1 \/ -1;/);
-  assert.match(note, /padding: 0 var\(--card-pad\);/);
-  assert.match(note, /border-left: var\(--card-border\) solid transparent;/);
-  assert.match(note, /border-right: var\(--card-border\) solid transparent;/);
-  assert.doesNotMatch(note, /margin/);
+  assert.equal(40 + 12 + 40 + 12 + 24 + 2 * 16 + 2 * 1, 162);
+  assert.match(block('.b-now'), /-webkit-line-clamp: 2;/);
+  const note = block('.cards-note');
+  assert.doesNotMatch(note, /margin|padding/);
 });
 
 test('finished sub-agents use the merged mint, and the Sub-agents column a neutral swatch', () => {
@@ -94,34 +92,31 @@ test('the row of sub-agents outside the window spans the whole row in both Timel
   assert.match(wide.slice(0, wide.indexOf('\n}')), /\n  \.c-row\.c-more \{ grid-template-areas: "who who who"; \}/);
 });
 
-const SUBAGENT_BORDER = '.b-card[data-kind="subagent"], .mc[data-kind="subagent"]';
-const SESSION_BORDER = '.b-card[data-kind="project"], .b-card[data-kind="chat"], .mc[data-kind="project"], .mc[data-kind="chat"]';
-
-test('a card\'s border is blue for a one-off sub-agent and green for a child session, and status no longer sets it', () => {
-  assert.equal(block(SUBAGENT_BORDER).trim(), 'border-color: var(--busy); box-shadow: inset 0 0 0 1px var(--busy);');
-  assert.equal(block(SESSION_BORDER).trim(), 'border-color: var(--merged); box-shadow: inset 0 0 0 1px var(--merged);');
+test('Cards tab cards have the neutral border whatever their kind; the Board keeps its kind borders; tint only where someone is needed', () => {
+  assert.doesNotMatch(css, /\.b-card\[data-kind/);
+  assert.equal(block('.board .mc[data-kind="subagent"]').trim(), 'border-color: var(--busy); box-shadow: inset 0 0 0 1px var(--busy);');
+  assert.equal(block('.board .mc[data-kind="project"], .board .mc[data-kind="chat"]').trim(), 'border-color: var(--merged); box-shadow: inset 0 0 0 1px var(--merged);');
+  assert.doesNotMatch(css, /\n\.mc\[data-kind/, 'the Finished mini cards get no kind border');
   assert.equal(block('.b-card.st-plan, .b-card.st-question, .b-card.st-stuck, .b-card.st-blocked').trim(), 'background: var(--c-soft);');
   assert.equal(block('.mc.st-plan, .mc.st-question, .mc.st-stuck, .mc.st-blocked').trim(), 'background: var(--c-soft);');
 });
 
-test('hover and the selected card still show over the kind colour', () => {
+test('hover and the selected card show over the neutral border', () => {
   const at = selector => css.indexOf(`\n${selector} {`);
-  const hover = at('.b-card:hover');
-  for (const selector of ['.b-card:hover', SUBAGENT_BORDER, SESSION_BORDER, '.b-card.is-sel']) assert.notEqual(at(selector), -1, selector);
-  assert.ok(hover > at(SUBAGENT_BORDER) && hover > at(SESSION_BORDER), 'hover after the kind rules');
-  assert.ok(hover < at('.b-card.is-sel'), 'hover before the selected card');
+  assert.ok(at('.b-card:hover') < at('.b-card.is-sel'), 'hover before the selected card');
   assert.equal(block('.b-card:hover').trim(), 'border-color: var(--ink-3);');
-  // The selected card's ink inset replaces the kind's inset line: same specificity, later in the file.
   assert.equal(block('.b-card.is-sel').trim(), 'border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink);');
   assert.equal(block('.mc[data-open]:hover').trim(), 'border-color: var(--ink-3);');
 });
 
-test('a leaving card fades to transparent over CARD_FADE_MS', () => {
-  const rule = block('.b-card.is-leaving').trim();
-  const match = rule.match(/^animation: card-leave ([\d.]+)s ease-in forwards;$/);
-  assert.ok(match, rule);
-  assert.equal(Number(match[1]) * 1000, CARD_FADE_MS);
-  assert.equal(block('@keyframes card-leave').trim(), 'to { opacity: 0;');
+test('the warning mark is in the text colour, and unit labels are monospace', () => {
+  assert.match(block('.b-warn'), /color: var\(--ink\);/);
+  assert.match(block('.b-lab'), /font: 500 12px\/20px var\(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace\);/);
+});
+
+test('a disconnected page dims its cards and Finished section and stops every mark', () => {
+  assert.equal(block('.b-zone.is-stale > *').trim(), 'opacity: .55; filter: saturate(.4);');
+  assert.equal(block('.is-stale .arc, .is-stale .g-dots circle').trim(), 'animation: none;');
 });
 
 test('a replied report\'s badge and dot take the neutral idle ink', () => {

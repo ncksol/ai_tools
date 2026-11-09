@@ -112,28 +112,14 @@ export const closedNotMerged = unit => Boolean(unit.closedWithoutMerge && unit.s
 
 export const stateLine = session => STATE_LINES[session.statusDetail] ?? STATE_LINES[session.status] ?? '{t}';
 
-/** How long a finished sub-agent keeps its card on the Cards tab. */
-export const SUBAGENT_CARD_GRACE_MS = 10 * 60 * 1000;
-/** The last part of the grace period, in which the card fades out. */
-export const CARD_FADE_MS = 1200;
-/** A sub-agent unit that is no longer running or stuck: done, failed, cancelled or crashed. */
-export const isFinishedSubagent = unit => isSubagent(unit) && unit.status !== 'busy' && unit.status !== 'stuck';
-/** Milliseconds a finished sub-agent's card has left (0 or less once it has left); null for every other unit. */
-export function cardTimeLeft(unit, now) {
-  if (!isFinishedSubagent(unit)) return null;
-  const end = unit.endedAt ?? unit.since ?? unit.lastEventAt;
-  return end == null ? 0 : end + SUBAGENT_CARD_GRACE_MS - now;
-}
-/** Milliseconds until the Cards tab next changes by itself: a card starts to fade, or leaves. Null when nothing is due. */
-export function nextCardChange(snapshot, now) {
-  let next = null;
-  for (const unit of snapshot.units) {
-    const left = cardTimeLeft(unit, now);
-    if (left === null || left <= 0) continue;
-    const wait = left > CARD_FADE_MS ? left - CARD_FADE_MS : left;
-    next = next === null ? wait : Math.min(next, wait);
-  }
-  return next;
+/**
+ * The state in words on a card and in the header: a stuck line names its cause ("tool call", "silent"), and a sub-agent's
+ * own card says "silent" rather than "sub-agent silent". Other states use STATE_LINES, as the detail panel does.
+ */
+export function stateWords(session) {
+  if (session.statusDetail === 'stuck_tool') return 'Stuck · tool call {t}';
+  if (session.statusDetail === 'silent' || (session.statusDetail === 'stuck_subagent' && isSubagent(session))) return 'Stuck · silent {t}';
+  return stateLine(session);
 }
 
 /**
@@ -142,17 +128,219 @@ export function nextCardChange(snapshot, now) {
  */
 export const isArchived = unit => unit.status === 'archived' || Boolean(unit.timeline?.marks?.some(mark => mark.kind === 'archived'));
 
+/** Details in which a session is working right now, so its now line says what it is doing. */
+export const LIVE_DETAILS = Object.freeze(new Set(['busy', 'slow_model_call', 'silent', 'stuck_tool', 'stuck_model_call', 'stuck_subagent', 'spinning']));
+/** Details that end a unit's work, a stop with no outcome included. */
+const FINISHED_DETAILS = new Set(['stopped', 'merged', 'completed', 'failed', 'crashed', 'cancelled']);
+
+/** Ids of the sessions with an open question or plan of their own: the ones that asked a Needs you item. */
+export const askingIds = snapshot => new Set(snapshot.needs.map(need => need.fromId).filter(Boolean));
+
 /**
- * Units shown as cards at `now`: attention first, then creation order. Archived units leave the Cards tab. Sub-agent
- * units stay on it while they run or are stuck, and a finished one for SUBAGENT_CARD_GRACE_MS after it ended; the Board
- * shows them all.
+ * The done rule: an idle unit whose latest report is complete and that has no PR still open (none, merged or closed) has
+ * done its job, whether or not it wrote code. A PR whose state is not known keeps it active. It turns busy again, and
+ * comes back to the grid, if it is given more work.
  */
-export function cardUnits(snapshot, now) {
-  return snapshot.units
-    .map((unit, index) => ({ unit, index }))
-    .filter(({ unit }) => !isArchived(unit) && (!isFinishedSubagent(unit) || cardTimeLeft(unit, now) > 0))
-    .sort((a, b) => (STATUS_ORDER[a.unit.status] ?? 9) - (STATUS_ORDER[b.unit.status] ?? 9) || a.index - b.index)
+export const isDone = unit => unit.status === 'idle' && unit.report?.status === 'complete'
+  && (!unit.pr || unit.pr.state === 'merged' || unit.pr.state === 'closed');
+
+/** A unit that goes to the Finished section, unless it has an open question or plan of its own (`asking`). */
+export function isFinished(unit, asking) {
+  if (asking.has(unit.id)) return false;
+  return FINISHED_DETAILS.has(unit.statusDetail) || unit.status === 'merged' || unit.status === 'done' || closedNotMerged(unit) || isDone(unit);
+}
+
+/** When a finished unit finished: its end, else its complete report under the done rule, else the start of its state. */
+export const finishedAt = unit => unit.endedAt ?? (unit.statusDetail === 'idle' && isDone(unit) ? unit.report.at : unit.since);
+
+/** How long a question or plan has waited, for the oldest-first order inside those states; 0 for other states. */
+const waitStart = unit => (unit.status === 'question' || unit.status === 'plan' ? unit.since : 0);
+
+/**
+ * The Cards tab's two zones. Archived units leave the tab. Active: every other unit that has not finished, stuck first,
+ * then question, plan, blocked, busy and idle; question and plan oldest wait first; then creation order. Finished: the
+ * rest, latest finish first.
+ */
+export function cardZones(snapshot) {
+  const asking = askingIds(snapshot);
+  const shown = snapshot.units.map((unit, index) => ({ unit, index })).filter(({ unit }) => !isArchived(unit));
+  const active = shown
+    .filter(({ unit }) => !isFinished(unit, asking))
+    .sort((a, b) => (STATUS_ORDER[a.unit.status] ?? 9) - (STATUS_ORDER[b.unit.status] ?? 9) || waitStart(a.unit) - waitStart(b.unit) || a.index - b.index)
     .map(({ unit }) => unit);
+  const finished = shown
+    .filter(({ unit }) => isFinished(unit, asking))
+    .sort((a, b) => finishedAt(b.unit) - finishedAt(a.unit) || a.index - b.index)
+    .map(({ unit }) => unit);
+  return { active, finished };
+}
+
+const FINISHED_WORDS = Object.freeze({
+  stopped: ['stopped {a}', 'off'], merged: ['merged {a}', 'ok'], completed: ['done {a}', 'ok'],
+  failed: ['failed {a}', 'bad'], crashed: ['crashed {a}', 'bad'], cancelled: ['cancelled {a}', 'off'],
+});
+/**
+ * A finished unit's outcome in words ({a}: its age) and its tone: ok (green) for merged or done, bad (red) for failed or
+ * crashed, off (grey) for stopped, cancelled or closed. "closed, not merged" only for a unit that had a PR.
+ */
+export function finishedOutcome(unit) {
+  if (closedNotMerged(unit)) return { words: unit.pr ? 'closed, not merged {a}' : 'closed {a}', tone: 'off', at: finishedAt(unit) };
+  const [words, tone] = FINISHED_WORDS[unit.statusDetail] ?? (unit.status === 'merged' ? FINISHED_WORDS.merged : FINISHED_WORDS.completed);
+  return { words, tone, at: finishedAt(unit) };
+}
+
+/**
+ * The Needs you item a session asked itself: one that matches its waiting state (a question or a PR approval while it
+ * waits on a question, a plan while it waits on a plan), else any of its own; the newest when there are several.
+ */
+export function ownNeed(snapshot, session) {
+  const own = snapshot.needs.filter(need => need.fromId === session.id);
+  const kinds = session.status === 'plan' ? ['plan'] : session.status === 'question' ? ['question', 'pr'] : [];
+  return [...own].reverse().find(need => kinds.includes(need.kind)) ?? own[own.length - 1] ?? null;
+}
+
+/**
+ * What a working session is doing. `at` is set when the text is a report, whose age then follows it; `muted` marks the
+ * fallback. The engine's `todo`, `toolDesc` and `busySince` may be missing on older snapshots, which reads as null.
+ */
+export function doing(session) {
+  const tool = session.activity?.tool ?? null;
+  const toolText = tool ? (session.toolDesc ? plainText(session.toolDesc) : `Running ${tool.summary}`) : null;
+  if (session.statusDetail === 'stuck_tool' && toolText) return { text: toolText };
+  if (session.todo) return { text: plainText(session.todo) };
+  if (tool?.name === 'task') return { text: session.activity.label };
+  if (toolText) return { text: toolText };
+  const label = session.activity?.label;
+  if (label && label !== 'Thinking') return { text: label };
+  // Between tool calls, a report sent during this busy period says more than "Thinking". busySince is the engine's start
+  // of that period. since, the start of the current state, comes later in a stall; it is the fallback only when busySince
+  // is null or missing.
+  if (session.report && session.report.at >= (session.busySince ?? session.since)) return { text: reportTitle(session.report), at: session.report.at };
+  return { text: 'Thinking', muted: true };
+}
+
+/** A card's now line: { text, at?, muted? }. The first rule that applies wins (issue #103, section 3). */
+export function nowLine(unit, snapshot) {
+  const own = ownNeed(snapshot, unit);
+  if ((unit.status === 'question' || unit.status === 'plan') && own) return { text: plainText(own.text) };
+  // A higher rule (the orchestrator marked it failed) can hide its open question from its state; the card still shows it.
+  if (own) return { text: `Asks you: ${plainText(own.text)}` };
+  if (LIVE_DETAILS.has(unit.statusDetail)) return doing(unit);
+  if (unit.report) return { text: reportTitle(unit.report), at: unit.report.at };
+  return { text: 'No report yet', muted: true };
+}
+
+/** A Needs you item that names this unit, when the unit is not the one asking. Its short label is for narrow footers. */
+export function needMark(unit, snapshot) {
+  const need = snapshot.needs.find(item => item.unitIds.includes(unit.id) && item.fromId !== unit.id);
+  if (!need) return null;
+  return { need, label: NEED_LABELS[need.kind] ?? 'Needs you', short: need.kind === 'question' ? 'Question' : 'Approve' };
+}
+
+/** Running and stuck sub-agents for the footer chips, stuck first. */
+export const activeSubagents = session => session.subagents
+  .filter(sub => sub.status === 'running' || sub.status === 'stuck')
+  .sort((a, b) => Number(b.status === 'stuck') - Number(a.status === 'stuck'));
+
+/** The PR and its state in words: "PR #418 · in review", "draft", "merged" or "closed"; the number alone when unknown. */
+export function prWords(pr) {
+  const word = { open: 'in review', draft: 'draft', merged: 'merged', closed: 'closed' }[pr.state];
+  return word ? `PR #${pr.id} · ${word}` : `PR #${pr.id}`;
+}
+
+const capital = word => word.charAt(0).toUpperCase() + word.slice(1);
+/** A short model name: "claude-opus-5.5" is "Opus 5.5", "gpt-6.1-sol" "GPT-6.1 Sol", "gemini-4-argon" "Gemini 4 Argon". */
+export function shortModel(id) {
+  if (!id) return null;
+  const parts = String(id).replace(/^claude-/, '').split('-').filter(Boolean);
+  if (parts[0] === 'gpt') return [`GPT-${parts[1] ?? ''}`.replace(/-$/, ''), ...parts.slice(2).map(capital)].join(' ');
+  return parts.map(part => (/^\d/.test(part) ? part : capital(part))).join(' ');
+}
+/** The reasoning effort a unit runs with: its own, else its agent's (a sub-agent unit). */
+export const effortOf = unit => unit.effort ?? unit.agent?.effort ?? null;
+
+/**
+ * Fold a card footer's left side until it fits, in the agreed order: the progress count hides; sub-agent chips fold from
+ * the end into "+N", keeping the first; then all of them into one count chip; then the Needs you marker shortens; last,
+ * the count chip hides. The marker, the model and the cost never hide. `ui` measures and changes one footer: over() says
+ * whether it still overflows, progress, chips and need say what it holds, and each other method applies one step.
+ * Returns the steps applied, in order.
+ */
+export function foldFooter(ui) {
+  const steps = [];
+  const step = (name, apply) => {
+    apply();
+    steps.push(name);
+  };
+  if (!ui.over()) return steps;
+  if (ui.progress) step('progress', () => ui.hideProgress());
+  let counted = false;
+  if (ui.chips > 0 && ui.over()) {
+    for (let shown = ui.chips - 1; shown >= 1 && ui.over(); shown -= 1) step(`+${ui.chips - shown}`, () => ui.showChips(shown));
+    if (ui.over()) {
+      step('count', () => ui.countChips());
+      counted = true;
+    }
+  }
+  if (ui.need && ui.over()) step('need', () => ui.shortenNeed());
+  if (counted && ui.over()) step('no count', () => ui.hideCount());
+  return steps;
+}
+
+/** What waits on you: the Needs you items plus a swarm stall, and when the oldest of them started. */
+export function waitingOnYou(snapshot) {
+  const since = snapshot.needs.map(need => need.since);
+  if (snapshot.run.stalled) since.push(snapshot.run.stalled.since);
+  return { count: since.length, oldest: since.length ? Math.min(...since) : null };
+}
+
+/**
+ * Header tiles that follow the grid: active units by state, everything that waits on you, and the Finished section.
+ * Units waiting on a question or plan count only under "waiting on you"; a unit can count there and in its state tile.
+ */
+export function countTiles(snapshot) {
+  const { active, finished } = cardZones(snapshot);
+  const by = status => active.filter(unit => unit.status === status).length;
+  return [
+    { key: 'working', state: 'busy', count: by('busy') },
+    { key: 'stuck', state: 'stuck', count: by('stuck') },
+    { key: 'waiting on you', state: 'question', count: waitingOnYou(snapshot).count },
+    { key: 'blocked', state: 'blocked', count: by('blocked') },
+    { key: 'idle', state: 'idle', count: by('idle') },
+    { key: 'finished', state: 'merged', count: finished.length },
+  ];
+}
+
+const counted = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+/**
+ * The orchestrator's state for the header: status and detail for its mark, the state in words with the time it counts
+ * from, and a now line. A finished or stalled run says so instead of the orchestrator's own state; an idle orchestrator
+ * says what it waits for, counted from the active units.
+ */
+export function orchestratorView(snapshot) {
+  const { run, orchestrator } = snapshot;
+  if (run.lifecycle === 'finished') {
+    return { status: 'done', detail: 'completed', words: 'Swarm finished · {a}', at: run.finishedAt ?? run.lastActivityAt, text: 'Nothing left to run.', muted: true };
+  }
+  if (run.stalled) return { status: 'stuck', detail: 'stalled', words: 'Swarm stalled · {t}', at: run.stalled.since, text: plainText(run.stalled.reason) };
+  const state = { status: orchestrator.status, detail: orchestrator.statusDetail, words: stateWords(orchestrator), at: orchestrator.since };
+  if (orchestrator.status === 'question' || orchestrator.status === 'plan') {
+    const need = ownNeed(snapshot, orchestrator) ?? snapshot.needs.find(item => !item.unitIds.length);
+    return { ...state, text: need ? plainText(need.text) : orchestrator.activity.label };
+  }
+  if (LIVE_DETAILS.has(orchestrator.statusDetail)) {
+    const line = doing(orchestrator);
+    return { ...state, text: line.text, muted: line.muted };
+  }
+  const { active } = cardZones(snapshot);
+  const working = active.filter(unit => unit.status === 'busy' || unit.status === 'stuck');
+  const sessions = working.filter(unit => !isSubagent(unit)).length;
+  const subagents = working.length - sessions;
+  const asking = active.filter(unit => unit.status === 'question' || unit.status === 'plan').length;
+  const parts = [sessions && counted(sessions, 'session'), subagents && counted(subagents, 'sub-agent')].filter(Boolean);
+  const waits = asking ? `${counted(asking, 'unit')} waiting on you` : '';
+  if (parts.length) return { ...state, text: `Waiting for ${parts.join(' and ')} to report${waits ? `; ${waits}` : ''}` };
+  return waits ? { ...state, text: waits } : { ...state, text: 'Nothing is running.', muted: true };
 }
 export const archivedUnits = snapshot => snapshot.units.filter(isArchived);
 export const findUnit = (snapshot, id) => snapshot.units.find(unit => unit.id === id) ?? null;

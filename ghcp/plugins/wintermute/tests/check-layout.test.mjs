@@ -17,12 +17,12 @@ test('every view is checked in both themes at the nine widths in the browser lay
   assert.deepEqual(THEMES, ['light', 'dark']);
   assert.deepEqual(WIDTHS, [480, 560, 640, 800, 1024, 1280, 1440, 1600, 1920]);
   assert.deepEqual(CANVAS_WIDTHS, [480, 560, 640]);
-  assert.deepEqual(VIEWS.map(view => view.name), ['cards', 'detail', 'detail-subagent', 'activity', 'timeline', 'timeline-run', 'plan', 'board', 'history', 'run']);
+  assert.deepEqual(VIEWS.map(view => view.name), ['cards', 'cards-finished', 'detail', 'detail-subagent', 'activity', 'timeline', 'timeline-run', 'plan', 'board', 'history', 'run']);
   const example = buildStates({ scenarios: ['example'], widths: WIDTHS, canvasWidths: CANVAS_WIDTHS });
-  assert.equal(example.length, 240);
-  assert.equal(example.filter(state => state.theme === 'dark').length, 120);
+  assert.equal(example.length, 264);
+  assert.equal(example.filter(state => state.theme === 'dark').length, 132);
   const stress = buildStates({ scenarios: ['stress'], widths: WIDTHS, canvasWidths: CANVAS_WIDTHS });
-  assert.equal(stress.length, 216, 'the stress scenario has no finished run, so only its History list is checked, with History failing');
+  assert.equal(stress.length, 240, 'the stress scenario has no finished run, so only its History list is checked, with History failing');
   assert.deepEqual(stress.filter(state => state.view === 'history').length, 24);
   assert.equal(stress.some(state => state.view === 'run'), false);
   assert.deepEqual(stress.find(state => state.view === 'history' && state.host === 'canvas' && state.width === 480).params, { host: 'canvas', page: 'history' });
@@ -32,6 +32,8 @@ test('every view is checked in both themes at the nine widths in the browser lay
   assert.deepEqual(subagent.params, { host: 'canvas', detail: 'call-root-24' });
   assert.deepEqual(stress.find(state => state.view === 'detail-subagent' && state.host === 'browser' && state.width === 480).params, { host: 'browser', detail: 'call-9101-sub' });
   assert.equal(example.find(state => state.view === 'activity').narrowOnly, true);
+  const finished = example.find(state => state.view === 'cards-finished');
+  assert.deepEqual([finished.click, finished.params], ['[data-finished]', { host: 'browser' }], 'the Cards tab with its Finished section opened');
 });
 
 test('only the deliberately failing History request is dropped from the console errors, and only where it is expected', () => {
@@ -74,12 +76,12 @@ test('a running dashboard is checked with the swarm, unit and run it shows', () 
   assert.throws(() => parseArguments(['--live', 'http://127.0.0.1:7927/', '--screenshots', '/tmp/shots']), /--screenshots/);
   const targets = { live: { swarm: 'ws-a', detail: 'ws-b', subagent: 'call-c', run: null } };
   const states = buildStates({ scenarios: ['live'], widths: [1280], canvasWidths: [], targets });
-  assert.deepEqual(states.filter(state => state.theme === 'light').map(state => state.view), ['cards', 'detail', 'detail-subagent', 'activity', 'timeline', 'timeline-run', 'plan', 'board']);
-  assert.deepEqual(states.filter(state => state.theme === 'dark').map(state => state.view), ['cards', 'detail', 'detail-subagent', 'activity', 'timeline', 'timeline-run', 'plan', 'board']);
+  assert.deepEqual(states.filter(state => state.theme === 'light').map(state => state.view), ['cards', 'cards-finished', 'detail', 'detail-subagent', 'activity', 'timeline', 'timeline-run', 'plan', 'board']);
+  assert.deepEqual(states.filter(state => state.theme === 'dark').map(state => state.view), ['cards', 'cards-finished', 'detail', 'detail-subagent', 'activity', 'timeline', 'timeline-run', 'plan', 'board']);
   assert.deepEqual(states.find(state => state.view === 'detail').params, { host: 'browser', swarm: 'ws-a', detail: 'ws-b' });
   assert.deepEqual(states.find(state => state.view === 'detail-subagent').params, { host: 'browser', swarm: 'ws-a', detail: 'call-c' });
   const empty = buildStates({ scenarios: ['live'], widths: [1280], canvasWidths: [], targets: { live: { swarm: null, detail: null, run: 'ws-r' } } });
-  assert.deepEqual(empty.filter(state => state.theme === 'dark').map(state => state.view), ['cards', 'activity', 'timeline', 'timeline-run', 'plan', 'board', 'history', 'run']);
+  assert.deepEqual(empty.filter(state => state.theme === 'dark').map(state => state.view), ['cards', 'cards-finished', 'activity', 'timeline', 'timeline-run', 'plan', 'board', 'history', 'run']);
   assert.deepEqual(empty.find(state => state.view === 'run').params, { host: 'browser', page: 'run', run: 'ws-r' });
 });
 

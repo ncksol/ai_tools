@@ -1,8 +1,9 @@
-import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, historyReloadWanted, isNarrow, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, retryBudget, staleChoice, staleShown, startShown, startSwarm } from './app.mjs';
+import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, historyReloadWanted, isNarrow, isStale, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, retryBudget, staleChoice, staleShown, startShown, startSwarm } from './app.mjs';
 import { copyAddress, openCockpit, showRequest } from './cockpit-link.mjs';
+import { fitFooter } from './footer.mjs';
 import { tickText } from './format.mjs';
 import { morph } from './morph.mjs';
-import { nextCardChange, runEnd, unitEnd } from './model.mjs';
+import { runEnd, unitEnd } from './model.mjs';
 import { shortLabel } from './parts.mjs';
 import { planFits, planGraphHtml, planListHtml } from './plan.mjs';
 import { createThemeChoice } from './theme.mjs';
@@ -65,6 +66,10 @@ const view = {
   historyError: false,
   run: null,
   connection: 'connecting',
+  /** When the page lost its connection; its clocks stop there until it reconnects. */
+  staleSince: null,
+  /** The Cards tab's Finished section is open; kept across updates, closed on each visit. */
+  finishedOpen: false,
   demo: false,
   fresh: emptyFresh(),
   host: document.documentElement.dataset.host,
@@ -87,8 +92,6 @@ let shownSwarm = startShown({ urlSwarm, restoredPick, restoredShown, session: ur
 let offset = 0;
 let source = null;
 let reconnectTimer = null;
-/** Renders when a finished sub-agent's card is due to start its fade or to leave, even if no snapshot arrives. */
-let cardTimer = null;
 let justConnected = true;
 let renderQueued = false;
 let lastWidth = 0;
@@ -103,6 +106,8 @@ let historyAsked = false;
 const ownUi = document.querySelector('meta[name="swarm-ui"]')?.content || null;
 let servedUi = null;
 const now = () => Date.now() + offset;
+/** The time the page shows: now, or, while it is disconnected, when it lost its connection, so old data never looks live. */
+const shownNow = () => (isStale(view) && view.staleSince !== null ? view.staleSince : now());
 
 function save() {
   try {
@@ -156,6 +161,7 @@ function connect() {
   source.addEventListener('open', () => {
     justConnected = true;
     view.connection = 'open';
+    view.staleSince = null;
     // After a reconnect the server may know runs that finished meanwhile.
     if (wasOpen && historyAsked) reloadHistory();
     wasOpen = true;
@@ -165,6 +171,7 @@ function connect() {
   source.addEventListener('error', () => {
     // A late error from a connection that has since been replaced must never close the new one.
     if (source !== own) return;
+    if (view.connection !== 'retrying') view.staleSince = now();
     view.connection = 'retrying';
     // The server may be down or replaced; wait for the next hello before deciding to reload.
     servedUi = null;
@@ -280,7 +287,7 @@ function scheduleRender() {
 }
 
 function focusSelector(el) {
-  for (const name of ['open', 'run', 'tab', 'page', 'span']) {
+  for (const name of ['open', 'run', 'tab', 'page', 'span', 'finished']) {
     if (el.dataset[name] !== undefined) return `[data-${name}="${CSS.escape(el.dataset[name])}"]`;
   }
   return null;
@@ -301,13 +308,12 @@ function render() {
   const focused = document.activeElement && dash.contains(document.activeElement) ? focusSelector(document.activeElement) : null;
   const { scrollX, scrollY } = window;
   const cards = cardRects();
-  morph(dash, renderApp({ ...view, now: now(), phaseMs: performance.now() }));
+  morph(dash, renderApp({ ...view, now: shownNow(), phaseMs: performance.now() }));
   lastWidth = width;
   afterRender();
   if (focused && !dash.contains(document.activeElement)) dash.querySelector(focused)?.focus({ preventScroll: true });
   if (window.scrollX !== scrollX || window.scrollY !== scrollY) window.scrollTo(scrollX, scrollY);
   glide(cards);
-  scheduleCardChange();
   document.documentElement.dataset.narrow = view.narrow ? '1' : '0';
   document.documentElement.dataset.ready = isReady() ? '1' : '0';
   if (parseMs !== null) {
@@ -350,22 +356,13 @@ function glide(before) {
   }
 }
 
-/** Render again when a finished sub-agent's card starts to fade or leaves, since no snapshot may arrive then. */
-function scheduleCardChange() {
-  clearTimeout(cardTimer);
-  cardTimer = null;
-  if (view.page !== 'live' || !view.snapshot) return;
-  const wait = nextCardChange(view.snapshot, now());
-  if (wait !== null) cardTimer = setTimeout(scheduleRender, wait + 50);
-}
-
 function afterRender() {
   if (!view.snapshot || view.page !== 'live') return;
   const timeline = dash.querySelector('[data-timeline]');
   if (timeline) drawTimeline(timeline);
   const plan = dash.querySelector('[data-plan]');
   if (plan) drawPlan(plan);
-  for (const box of dash.querySelectorAll('.b-card .chips')) fitChips(box);
+  for (const foot of dash.querySelectorAll('.b-card .b-foot')) fitFooter(foot);
   fitRingLabels();
 }
 
@@ -374,7 +371,7 @@ function drawTimeline(root) {
   if (!first) return;
   const width = Math.floor(first.getBoundingClientRect().width);
   if (!width) return;
-  const t = now();
+  const t = shownNow();
   const { t0, t1 } = timelineWindow(view.snapshot, view.span, t);
   const phaseMs = performance.now();
   const sessions = new Map([view.snapshot.orchestrator, ...view.snapshot.units].map(session => [session.id, session]));
@@ -391,7 +388,7 @@ function drawTimeline(root) {
 
 function drawPlan(el) {
   const width = Math.floor(el.getBoundingClientRect().width);
-  morph(el, planFits(view.snapshot, width) ? planGraphHtml(view.snapshot, now()) : planListHtml(view.snapshot, now()));
+  morph(el, planFits(view.snapshot, width) ? planGraphHtml(view.snapshot, shownNow()) : planListHtml(view.snapshot, shownNow()));
 }
 
 /** A four-character ring label shows whole only when it fits inside the ring; otherwise it is cut like longer labels. */
@@ -399,21 +396,6 @@ function fitRingLabels() {
   for (const label of dash.querySelectorAll('.ring-l[data-fit]')) {
     if (label.scrollWidth > label.clientWidth + 1) label.textContent = shortLabel(label.textContent);
   }
-}
-
-/** Hide sub-agent chips that do not fit on the card's single chip row and say how many are hidden. */
-function fitChips(box) {
-  if (box.scrollHeight <= box.clientHeight + 1) return;
-  const chips = [...box.querySelectorAll(':scope > .chip')];
-  const more = document.createElement('span');
-  more.className = 'chip';
-  box.append(more);
-  let hidden = 0;
-  do {
-    hidden += 1;
-    chips[chips.length - hidden].hidden = true;
-    more.textContent = `+${hidden}`;
-  } while (box.scrollHeight > box.clientHeight + 1 && hidden < chips.length);
 }
 
 /** After a failed History load, try again after HISTORY_RETRY_MS, at most HISTORY_RETRIES times per success or trigger. */
@@ -470,7 +452,7 @@ async function loadRun(id) {
 }
 
 function act(target) {
-  const el = target.closest('[data-page],[data-tab],[data-span],[data-close],[data-open],[data-run],[data-cockpit],[data-cockpit-copy],[data-theme-toggle]');
+  const el = target.closest('[data-page],[data-tab],[data-span],[data-close],[data-open],[data-run],[data-finished],[data-cockpit],[data-cockpit-copy],[data-theme-toggle]');
   if (!el || !dash.contains(el)) return;
   if (el.dataset.page) {
     view.page = el.dataset.page;
@@ -478,6 +460,12 @@ function act(target) {
     if (view.page === 'history') reloadHistory();
   } else if (el.dataset.tab) {
     view.tab = el.dataset.tab;
+    // In narrow mode an open detail takes the tabs' place, so a link to a tab closes it.
+    if (view.narrow) view.detail = null;
+  } else if (el.dataset.finished !== undefined) {
+    view.finishedOpen = !view.finishedOpen;
+    render();
+    return;
   } else if (el.dataset.span) {
     view.span = el.dataset.span;
   } else if (el.dataset.close !== undefined) {
@@ -548,11 +536,19 @@ new ResizeObserver(() => {
   if (dash.clientWidth !== lastWidth) scheduleRender();
 }).observe(dash);
 setInterval(() => {
+  // Disconnected, the clocks stay where they stopped.
+  if (isStale(view)) return;
   const t = now();
+  const refit = new Set();
   for (const el of dash.querySelectorAll('[data-t]')) {
     const text = tickText(Number(el.dataset.t), el.dataset.f, t);
-    if (el.textContent !== text) el.textContent = text;
+    if (el.textContent === text) continue;
+    el.textContent = text;
+    const foot = el.closest('.b-foot');
+    if (foot) refit.add(foot);
   }
+  // A chip's clock can grow wide enough to need another fold.
+  for (const foot of refit) fitFooter(foot);
   ticks += 1;
   // A full render, not only a redraw of the lanes: which sub-agent rows exist depends on the window, which moves with now.
   if (ticks % 15 === 0 && view.page === 'live' && view.tab === 'timeline' && view.snapshot) scheduleRender();
@@ -582,7 +578,6 @@ window.addEventListener('message', event => {
 // Browsers allow few connections per host, so free the live connection when the page is unloaded or kept in the back-forward cache.
 window.addEventListener('pagehide', () => {
   clearTimeout(reconnectTimer);
-  clearTimeout(cardTimer);
   historyRetry.stop();
   source?.close();
 });

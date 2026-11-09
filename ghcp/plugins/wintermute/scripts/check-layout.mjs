@@ -23,11 +23,12 @@ const SCENARIOS = {
   stress: { detail: 'ws-9001-stress', subagent: 'call-9101-sub', run: null, historyError: true },
 };
 /**
- * Every dashboard view as URL parameters. Activity exists only in narrow mode; history views need a finished run,
- * except the History list of a scenario served with History failing.
+ * Every dashboard view as URL parameters, and a control to click once the page is ready. Activity exists only in narrow
+ * mode; history views need a finished run, except the History list of a scenario served with History failing.
  */
 export const VIEWS = [
   { name: 'cards', params: {} },
+  { name: 'cards-finished', params: {}, click: '[data-finished]' },
   { name: 'detail', params: { detail: 'DETAIL' } },
   { name: 'detail-subagent', params: { detail: 'SUBAGENT' } },
   { name: 'activity', params: { tab: 'activity' }, narrowOnly: true },
@@ -38,7 +39,7 @@ export const VIEWS = [
   { name: 'history', params: { page: 'history' }, history: true },
   { name: 'run', params: { page: 'run', run: 'RUN' }, history: true },
 ];
-export const SELF_TEST_RULES = ['overlap', 'font-family', 'font-size', 'font-style', 'text-transform', 'font-weight', 'letter-spacing', 'line-height', 'contrast', 'colour', 'grid', 'padding', 'height', 'spill', 'clipped', 'hidden-lines', 'cut', 'outside', 'gap', 'align', 'kind-border', 'hscroll'];
+export const SELF_TEST_RULES = ['overlap', 'font-family', 'font-size', 'font-style', 'text-transform', 'font-weight', 'letter-spacing', 'line-height', 'contrast', 'colour', 'grid', 'padding', 'height', 'spill', 'clipped', 'hidden-lines', 'cut', 'outside', 'gap', 'align', 'kind-border', 'neutral-border', 'fold', 'hscroll'];
 export const USAGE = `Usage: check-layout [--scenario example|stress | --live <url>] [--width <px>] [--screenshots <dir>] [--engine chrome|webkit]
 
 Checks every dashboard view, in the light and the dark theme, for overlap, clipped text, type, spacing, sizes,
@@ -113,7 +114,7 @@ export function buildStates({ scenarios, widths, canvasWidths, targets = SCENARI
             if (params.detail === 'DETAIL') params.detail = target.detail;
             if (params.detail === 'SUBAGENT') params.detail = target.subagent;
             if (params.run === 'RUN') params.run = target.run;
-            states.push({ theme, scenario, host, width, view: view.name, narrowOnly: Boolean(view.narrowOnly), params });
+            states.push({ theme, scenario, host, width, view: view.name, narrowOnly: Boolean(view.narrowOnly), click: view.click ?? null, params });
           }
         }
       }
@@ -269,7 +270,7 @@ function inspectPage() {
   if (Math.abs(window.scrollY - state.scrollY) > 1) issues.push(`the page scrolled from ${state.scrollY} to ${window.scrollY} px`);
   const now = document.timeline.currentTime;
   let rings = 0;
-  for (const arc of document.querySelectorAll('.ring .arc.spin')) {
+  for (const arc of document.querySelectorAll('.ring .arc.spin, .mark .arc.spin')) {
     const animation = arc.getAnimations()[0];
     if (!animation) continue;
     rings += 1;
@@ -955,6 +956,53 @@ async function watchTheme(page, url) {
   }
 }
 
+/**
+ * Runs in the page: the regular view's own fitFooter, imported from footerUrl, on the first card with one sub-agent chip. Capped short of its
+ * text, by a fraction of a pixel that scrollWidth and clientWidth round away and then by 3 px, the chip folds into the
+ * count chip; uncapped, it shows again. Returns the problems found.
+ */
+async function footerFoldProbe(footerUrl) {
+  const { fitFooter } = await import(footerUrl);
+  const card = [...document.querySelectorAll('.b-zone .b-card')].find(el => el.querySelectorAll('.b-foot .chip[data-key]').length === 1);
+  if (!card) return ['no card has exactly one sub-agent chip'];
+  const foot = card.querySelector('.b-foot');
+  const chip = foot.querySelector('.chip[data-key]');
+  const text = chip.querySelector('.chip-t');
+  const count = foot.querySelector('.b-count');
+  const problems = [];
+  const fit = maxWidth => {
+    chip.hidden = false;
+    chip.style.maxWidth = maxWidth;
+    fitFooter(foot);
+  };
+  fit('');
+  if (chip.hidden || !count.hidden) problems.push('the chip did not show while its text fitted');
+  const range = document.createRange();
+  range.selectNodeContents(text);
+  const need = range.getBoundingClientRect().width;
+  const frame = chip.getBoundingClientRect().width - text.getBoundingClientRect().width;
+  const fractions = [0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875];
+  const fraction = fractions.find(cut => {
+    chip.style.maxWidth = `${frame + need - cut}px`;
+    return text.scrollWidth <= text.clientWidth;
+  });
+  if (fraction === undefined) problems.push('no cut of a fraction of a pixel was rounded away, so the case could not be set up');
+  for (const cut of [fraction, 3].filter(value => value !== undefined)) {
+    fit(`${frame + need - cut}px`);
+    if (!chip.hidden || count.hidden) problems.push(`a chip whose text was cut by ${cut}px did not fold into the count chip`);
+  }
+  fit('');
+  if (chip.hidden || !count.hidden) problems.push('the chip did not show again once its text fitted');
+  return problems;
+}
+
+/** The footer fold on the example demo at 1440 px, where B1's lone chip fits until the probe caps it. */
+async function watchFooterFold(page, url) {
+  await page.goto(url, 1440);
+  await page.waitFor(`location.href === ${JSON.stringify(url)} && document.documentElement.dataset.ready === '1'`);
+  return { issues: await page.evaluate(`(${footerFoldProbe})(${JSON.stringify(new URL('/ui/footer.mjs', url).href)})`) };
+}
+
 async function selfTest(page) {
   const problems = [];
   for (const [name, broken] of [['layout-bad.html', true], ['layout-good.html', false]]) {
@@ -1068,6 +1116,13 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
       await page.waitFor(`location.href === ${JSON.stringify(url)} && document.documentElement.dataset.ready === '1'`);
       await page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
       if (state.narrowOnly && await page.evaluate('document.documentElement.dataset.narrow') !== '1') continue;
+      if (state.click) {
+        const clicked = await page.evaluate(`(() => { const el = document.querySelector(${JSON.stringify(state.click)}); el?.click(); return Boolean(el); })()`);
+        // A live swarm may have nothing finished yet; the synthetic ones always do.
+        if (!clicked && options.live) continue;
+        if (!clicked) failures.push({ state, issues: [{ rule: 'click', target: state.click, detail: 'not found' }] });
+        await page.evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      }
       const shownTheme = await page.evaluate('document.documentElement.dataset.theme');
       const result = await page.evaluate(auditScript(AUDIT_DEFAULTS));
       views += 1;
@@ -1144,8 +1199,14 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
       if (!themeIssues.length) stdout.write(`Theme switch (example): with nothing saved the page followed the system setting; a click switched the theme, the icon and the button's name and saved the choice, which outlasted a reload and a change of the system setting, and another tab's choice applied; with ${Object.keys(BROKEN_STORAGE).join(', with ')}, a click still switched the theme without errors and the choice outlasted system changes.\n`);
       for (const issue of themeIssues) stderr.write(`theme: ${issue}\n`);
     }
+    let foldIssues = [];
+    if (!options.live) {
+      foldIssues = (await watchFooterFold(page, `${urls.example ?? first}?host=browser`)).issues;
+      if (!foldIssues.length) stdout.write('Footer fold (example): a lone sub-agent chip whose text is cut by a fraction of a pixel, which whole-pixel widths round away, or by 3 px folds into the count chip, and shows again once it fits.\n');
+      for (const issue of foldIssues) stderr.write(`fold: ${issue}\n`);
+    }
     const cockpit = await runCockpitChecks({ page, browser, engine: options.engine, urls, options: { only: null, printMetrics: false, screenshots: options.screenshots }, stdout, stderr });
-    return failures.length || updateIssues.length || historyIssues.length || reloadIssues.length || reconnectIssues.length || nothingIssues.length || historyErrorIssues.length || themeIssues.length || cockpit.issues ? 1 : 0;
+    return failures.length || updateIssues.length || historyIssues.length || reloadIssues.length || reconnectIssues.length || nothingIssues.length || historyErrorIssues.length || themeIssues.length || foldIssues.length || cockpit.issues ? 1 : 0;
   } finally {
     process.off('SIGINT', interrupt);
     process.off('SIGTERM', interrupt);

@@ -34,6 +34,22 @@ test('every session requires nullable todo, toolDesc and dataWarning fields', ()
   }
 });
 
+test('every session requires a nullable busySince time', () => {
+  for (const target of ['orchestrator', 'session', 'subagent']) {
+    const snapshot = fixture('example-snapshot.json');
+    const session = target === 'orchestrator' ? snapshot.orchestrator
+      : snapshot.units.find(unit => (unit.kind === 'subagent') === (target === 'subagent'));
+    session.busySince = snapshot.generatedAt - 60000;
+    assert.deepEqual(validateSnapshot(snapshot), []);
+    session.busySince = null;
+    assert.deepEqual(validateSnapshot(snapshot), []);
+    delete session.busySince;
+    assert.ok(validateSnapshot(snapshot).some(error => error.endsWith('.busySince: missing')), target);
+    session.busySince = 'soon';
+    assert.ok(validateSnapshot(snapshot).some(error => error.includes('.busySince: invalid value')), target);
+  }
+});
+
 test('the example swarm list, history and run summary match the schema', () => {
   assert.deepEqual(fixture('example-swarms.json').flatMap(validateSwarmListItem), []);
   assert.deepEqual(fixture('example-history.json').flatMap(validateRunListItem), []);

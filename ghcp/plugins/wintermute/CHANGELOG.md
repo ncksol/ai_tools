@@ -6,6 +6,27 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace still follows main. See [Releases](README.md#releases) for prerequisites, checks and recovery after a partial publish.
 
+## 0.9.0 — 2026-11-09
+
+### Added
+
+- Session snapshots now include `busySince`: the start of the current busy period, which is the open turn or turns that followed each other within 5 s, or for a sub-agent unit the open run; null when nothing is open. Unlike `since`, it stays put when a busy session stalls, so a card keeps the report it sent earlier in the same busy period.
+
+### Changed
+
+- The Cards tab is redesigned (#103). Every active card has three rows and the same height, 162 px. The head has a status mark (the ring with a state icon inside), the unit's label and name, its state in words with its time, and its PR with the PR's state or a sub-agent's type. A now line, up to two lines, says what the unit is doing or said last: its own question or plan, the stuck tool call, the todo in progress, the sync sub-agent it waits for, the tool call's description, or its latest report and its age. The footer has a Needs you marker when an item names the unit, running and stuck sub-agent chips, todos done, the model and reasoning effort, and the cost in dollars. When the footer runs out of space its left side folds; the marker, the model and the cost never hide. Running time, the cost bar, the Progress, Stage, Monitor, Type and Mode rows, the report badge and the tool chip move to the details view only.
+- Stuck states name their cause on cards and in the header: "Stuck · tool call" and "Stuck · silent". A sub-agent's own card says "silent". The details view and the cockpit keep their words.
+- Finished units leave the grid for a Finished section below it, closed by default. A unit is finished when it stopped, merged, completed, failed, crashed, was cancelled or closed without merging, or when it is idle with a complete latest report and no PR still open. A unit with an open question or plan of its own stays on the grid. Orchestrator sub-agents move there as soon as they end, instead of staying on the grid for 10 minutes. The section shows mini cards, latest first, that say "closed" for a unit that never had a PR and "closed, not merged" for one that had.
+- The orchestrator header is the orchestrator's card: a status mark, the run name, its state in words, and a now line that says what it is doing, its question or plan, a stall, or what it waits for. The swarm cost shows in dollars. The count tiles follow the grid: working, stuck, waiting on you, blocked, idle and finished.
+- The Needs you band is gone from the regular view. Its items show on the cards and in the header, and the Timeline, Plan, Board and Activity tabs show one line with how much waits on you and the oldest wait, which opens the Cards tab. The cockpit's Needs panel is unchanged.
+- Every card on the Cards tab has the neutral border. The Board keeps its kind borders.
+- A card whose data could not all be read shows a warning mark; its tooltip says what failed.
+- While the page is disconnected, the cards and the Finished section dim, the marks stop moving and the clocks stop. The status says since when the data is shown.
+
+### Upgrading
+
+- A shared dashboard server that is already running keeps its version. Reload extensions in every session or restart the app to get this one.
+
 ## 0.8.0 — 2026-11-09
 
 ### Added

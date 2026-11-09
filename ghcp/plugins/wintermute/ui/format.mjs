@@ -55,6 +55,8 @@ export const usdRounded = value => `≈$${NUMBER.format(Math.round(value * CREDI
 export const costText = value => `${credits(value)} · ${usd(value)}`;
 /** Credits, then dollars in a smaller muted span; totals round the dollars to whole numbers. */
 export const costHtml = (value, total = false) => `${credits(value)}<span class="usd"> · ${total ? usdRounded(value) : usd(value)}</span>`;
+/** Dollars only: cents under $10 ("≈$8.60"), whole dollars from $10 ("≈$42"). */
+export const dollars = value => (Math.round(value * CREDIT_USD * 100) < 1000 ? usd(value) : usdRounded(value));
 
 /** Local date and time, for example "8 Oct 09:12". */
 export function dateTime(ms) {

@@ -327,6 +327,7 @@ function sessionView(input, c, label, evaluation, report, title, extraMarks, out
     todo: todoOf(c.sessionDb),
     toolDesc: tool ? current?.openTools.get(tool.id)?.args.description ?? null : null,
     dataWarning: dataWarningOf(input, node.cliSessionIds),
+    busySince: current?.turn ? current.busySince ?? current.turn.startedAt : null,
     report,
     progress: progressOf(c.sessionDb),
     subagents: subagentViews(all, c.cost, evaluation.stuckSubagents),
@@ -589,6 +590,7 @@ function subagentUnitView(input, rootContext, root, sub, evaluation, label, roll
     todo: null,
     toolDesc: tool ? unit.openTools.get(tool.id)?.args.description ?? null : null,
     dataWarning: dataWarningOf(input, [cliId], true),
+    busySince: running && unit.runs.length && unit.runs[unit.runs.length - 1][1] === null ? unit.runs[unit.runs.length - 1][0] : null,
     report, progress: null,
     subagents: sortSubagentViews(unit.children.map(child => subagentView(child, rollup.get(child.id)?.nanoAiu ?? 0, stuckIds.has(child.id)))),
     timeline: {

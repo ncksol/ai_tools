@@ -104,6 +104,9 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  *   A session covers all its CLI aliases; a sub-agent covers only the CLI log that holds it. Unreadable usage cannot be
  *   attributed reliably, so every sub-agent from that log is warned that its cost may be incomplete. A log failure takes
  *   priority over an incomplete-usage warning.
+ * @property {EpochMs|null} busySince    Start of the current busy period: for a session, the start of its open turn, or of
+ *   the first of the turns that followed each other within 5 s; for a sub-agent unit, the start of its open run. Null
+ *   when no turn or run is open. Unlike since, it does not move when the state changes within that period.
  * @property {ReportView|null} report    Latest report to its parent (always null for the orchestrator)
  * @property {{ done: number, total: number }|null} progress  Own todos; null when it keeps none
  * @property {SubagentView[]} subagents  Running first, then latest first
@@ -341,7 +344,7 @@ const SESSION = {
   startedAt: TIME, endedAt: OPT_TIME, lastEventAt: OPT_TIME, busyMs: is.count, waitingOnUserMs: is.count, alive: nullable(is.bool),
   cost: { credits: is.number, calls: is.count },
   activity: { label: is.text, tool: nullable(TOOL_CALL), lastEventAt: OPT_TIME },
-  todo: OPT_TEXT, toolDesc: OPT_TEXT, dataWarning: OPT_TEXT,
+  todo: OPT_TEXT, toolDesc: OPT_TEXT, dataWarning: OPT_TEXT, busySince: OPT_TIME,
   report: nullable(REPORT),
   progress: nullable({ done: is.count, total: is.count }),
   subagents: arrayOf(SUBAGENT),
