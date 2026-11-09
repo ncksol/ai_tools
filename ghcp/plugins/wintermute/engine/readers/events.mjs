@@ -213,12 +213,12 @@ function lineTime(line) {
 /**
  * When a session last did work, from the end of its log, reading backwards in chunks. Resolves { stamp, mtimeMs, at }, or
  * null when the log is missing; `stamp` is the fileStamp of the file that was read. `at` is the file's mtime, as before,
- * unless the log ends with lines whose top-level type is in `skipTypes` (app UI events, such as opening a canvas, that are
- * not work), in any key order; it is then the time of the last line before them, or null when every line is one of them.
- * A line that is not a JSON object, or is longer than any UI event, is work. An unfinished last line is work being
+ * unless the log ends with events that `isWorkEvent` classifies as bookkeeping, in any key order; it is then the time
+ * of the last line before them, or null when every line is bookkeeping.
+ * A line that is not a JSON object, or is longer than the classification limit, is work. An unfinished last line is work being
  * written, so `at` is the mtime. When more than maxBytes would have to be read, `at` is the mtime.
  */
-export async function lastWorkTime(file, skipTypes, { chunkSize = 16 * 1024, maxBytes = 1024 * 1024 } = {}) {
+export async function lastWorkTime(file, isWorkEvent, { chunkSize = 16 * 1024, maxBytes = 1024 * 1024 } = {}) {
   let handle;
   try {
     handle = await open(file, 'r');
@@ -258,7 +258,7 @@ export async function lastWorkTime(file, skipTypes, { chunkSize = 16 * 1024, max
       let line = buffer.subarray(newline + 1, cursor - start);
       if (line[line.length - 1] === CARRIAGE_RETURN) line = line.subarray(0, -1);
       const event = line.length <= MAX_SKIPPED_LINE_BYTES ? parseObject(line) : null;
-      if (event !== BLANK && (!event || !skipTypes.has(event.type))) {
+      if (event !== BLANK && (!event || isWorkEvent(event))) {
         return result(cursor === size - 1 ? mtimeMs : parseTime(event?.timestamp) ?? lineTime(line) ?? mtimeMs);
       }
       if (newline < 0) return result(null);

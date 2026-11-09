@@ -15,6 +15,14 @@ export const SKIP_TYPES = new Set([
  * never move the session's clock, so opening the dashboard in an old session does not make its run look active (issue #30).
  */
 export const UI_EVENT_TYPES = new Set(['session.canvas.recorded', 'session.canvas.removed']);
+const LIFECYCLE_EVENT_TYPES = new Set(['session.shutdown', 'session.resume', 'session.remote_steerable_changed']);
+
+/** Remote attach notices are bookkeeping; other info types include model changes and snapshot restores, so remain work. */
+export function isWorkEvent(event) {
+  return !UI_EVENT_TYPES.has(event.type) && !LIFECYCLE_EVENT_TYPES.has(event.type)
+    && !(event.type === 'session.info' && event.data?.infoType === 'remote');
+}
+
 /** Each skip type mapped to its own constant: keeping head[1], a slice of the line, would pin the whole read chunk. */
 const SKIP_NAMES = new Map([...SKIP_TYPES].map(type => [type, type]));
 const WAIT_TOOLS = new Map([['ask_user', 'question'], ['exit_plan_mode', 'plan']]);
@@ -43,7 +51,8 @@ const numberOrNull = value => (value === null || value === undefined || value ==
  */
 export function createSessionState(id, { subagentUnits = false } = {}) {
   return {
-    id, subagentUnits, lines: 0, parseErrors: 0, firstEventAt: null, lastEventAt: null, lastEventType: null, lastMainAt: null,
+    // lastEventAt is the work clock; lastObservedAt orders lastEventType without moving that clock.
+    id, subagentUnits, lines: 0, parseErrors: 0, firstEventAt: null, lastEventAt: null, lastObservedAt: null, lastEventType: null, lastMainAt: null,
     copilotVersion: null, model: null, effort: null, mode: null,
     turn: null, busySince: null, lastTurnEndAt: null, busySpans: [], busyMs: 0,
     openTools: new Map(), waits: new Map(), waitSpans: [], waitingMs: 0,
@@ -70,6 +79,7 @@ export function createSessionState(id, { subagentUnits = false } = {}) {
     // Unlike the rolling `inbound` list, later messages never push a recorded reply out (see messages.mjs).
     outboundSeq: 0, replyIndex: new Map(),
     automation: { saves: [], wakes: [] },
+    // A normal shutdown stays visible across bookkeeping, but new work starts a new process outcome.
     shutdownAt: null, abortAt: null, lastErrorAt: null,
     recent: { failures: [], calls: [], compactions: [], denials: [] }, prompts: 0,
     feed: [], marks: [], prMentions: new Map(), source: null,
@@ -108,13 +118,18 @@ const RECOVERED_DATA = new Map([
  * Applies an event recovered from an oversized line (see readers/json-scan.mjs). It counts the line like applyLine and applies
  * metadata only, never text: a tool completion or a sub-agent completion or failure is applied with just the ids, success and
  * cancelled flags and duration it needs to close its tool call, wait or sub-agent. Any other event only moves the session's clock, and the
- * clock of the sub-agent it belongs to (by data.parentToolCallId, or a top-level agentId that is known). A UI event moves no clock.
+ * clock of the sub-agent it belongs to (by data.parentToolCallId, or a top-level agentId that is known). Bookkeeping moves no clock;
+ * lifecycle events still apply their process and model metadata.
  */
 export function applyRecovered(state, event) {
   state.lines += 1;
   if (!event || UI_EVENT_TYPES.has(event.type)) return;
   const at = parseTime(event.timestamp);
   if (at === null) return;
+  if (!isWorkEvent(event)) {
+    applyEvent(state, event);
+    return;
+  }
   const keys = RECOVERED_DATA.get(event.type);
   if (keys) {
     const data = {};
@@ -140,11 +155,15 @@ function sniffTimestamp(line) {
   return end < 0 ? null : parseTime(line.slice(index + key.length, end));
 }
 
-function touch(state, at, type) {
+function touch(state, at, type, work = true) {
   if (state.firstEventAt === null || at < state.firstEventAt) state.firstEventAt = at;
-  if (state.lastEventAt === null || at >= state.lastEventAt) {
-    state.lastEventAt = at;
+  if (state.lastObservedAt === null || at >= state.lastObservedAt) {
+    state.lastObservedAt = at;
     state.lastEventType = type;
+  }
+  if (work && (state.lastEventAt === null || at >= state.lastEventAt)) {
+    state.lastEventAt = at;
+    state.shutdownAt = null;
   }
 }
 
@@ -159,9 +178,14 @@ export function applyEvent(state, event) {
   if (UI_EVENT_TYPES.has(event.type)) return;
   const at = parseTime(event.timestamp);
   if (at === null) return;
-  touch(state, at, event.type);
+  const work = isWorkEvent(event);
+  touch(state, at, event.type, work);
   const data = event.data && typeof event.data === 'object' ? event.data : {};
   state.source = eventSource(state, event, data);
+  if (!work) {
+    onMainEvent(state, event.type, data, at);
+    return;
+  }
   if (event.type.startsWith('subagent.')) {
     onSubagentLifecycle(state, event, data, at);
     return;
@@ -982,8 +1006,9 @@ export function mergeStates(states) {
     merged.lines += state.lines;
     merged.parseErrors += state.parseErrors;
     merged.firstEventAt = minTime(merged.firstEventAt, state.firstEventAt);
-    if (state.lastEventAt !== null && (merged.lastEventAt === null || state.lastEventAt >= merged.lastEventAt)) {
-      merged.lastEventAt = state.lastEventAt;
+    merged.lastEventAt = maxTime(merged.lastEventAt, state.lastEventAt);
+    if (state.lastObservedAt !== null && (merged.lastObservedAt === null || state.lastObservedAt >= merged.lastObservedAt)) {
+      merged.lastObservedAt = state.lastObservedAt;
       merged.lastEventType = state.lastEventType;
     }
     merged.copilotVersion = state.copilotVersion ?? merged.copilotVersion;

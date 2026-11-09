@@ -6,6 +6,12 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace still follows main. See [Releases](README.md#releases) for prerequisites, checks and recovery after a partial publish.
 
+## 0.9.1 — 2026-11-09
+
+### Fixed
+
+- Restarting the Copilot app no longer brings finished swarms back to Live or makes normally stopped sessions look crashed and stalled (#106). Shutdown, resume, remote connection notices (`session.info` with `infoType: remote`) and remote-steerable changes do not count as work in session snapshots or the run list. Other info types still count as activity. A resume still ends the previous process and applies its model and reasoning effort; new work after it still moves the clock.
+
 ## 0.9.0 — 2026-11-09
 
 ### Added

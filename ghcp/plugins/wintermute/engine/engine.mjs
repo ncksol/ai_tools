@@ -13,7 +13,7 @@ import { buildForest, resolveNodeId, treeNodes } from './model/forest.mjs';
 import { parseQuestionTag } from './model/contract.mjs';
 import { createHistoryStore, listItemOf, summarizeRun } from './model/history.mjs';
 import { createPrLookup } from './model/pr-lookup.mjs';
-import { UI_EVENT_TYPES, applyLine, applyRecovered, createSessionState } from './model/session-state.mjs';
+import { applyLine, applyRecovered, createSessionState, isWorkEvent } from './model/session-state.mjs';
 import { buildSnapshot } from './model/swarm.mjs';
 
 const LIVENESS_TTL_MS = 15_000;
@@ -181,8 +181,8 @@ export function createSwarmEngine(options = {}) {
   }
 
   /**
-   * When a CLI session last did work, from its log's end (see lastWorkTime), or null when its log is missing. App UI events,
-   * such as opening the dashboard canvas, are not work, so they do not make an old run look live (issue #30). A log that
+   * When a CLI session last did work, from its log's end (see lastWorkTime), or null when its log is missing. App UI and
+   * lifecycle bookkeeping are not work, so they do not make an old run look live (issues #30 and #106). A log that
    * cannot be read gives its mtime, so its run is still rebuilt and the failed read is reported. The end of the log is read
    * again whenever its fileStamp changed: a new size, mtime or ctime, or another file in its place.
    */
@@ -203,7 +203,7 @@ export function createSwarmEngine(options = {}) {
     }
     let found;
     try {
-      found = await lastWorkTime(file, UI_EVENT_TYPES);
+      found = await lastWorkTime(file, isWorkEvent);
     } catch {
       workTimes.delete(cliId);
       return mtimeMs;
