@@ -12,7 +12,7 @@ function sources(dir) {
   });
 }
 const engineFiles = sources(path.join(root, 'engine'));
-const shipped = [...engineFiles, ...sources(path.join(root, 'scripts'))];
+const shipped = [...engineFiles, ...sources(path.join(root, 'scripts')), ...sources(path.join(root, 'shared'))];
 const name = file => path.relative(root, file);
 
 test('the engine never writes to stdout', () => {

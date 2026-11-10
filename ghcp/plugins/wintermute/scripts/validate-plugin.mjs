@@ -13,6 +13,7 @@ export const REQUIRED_FILES = [
   'engine/readers/app-db.mjs', 'engine/readers/events.mjs', 'engine/readers/ledger.mjs', 'engine/readers/process-probe.mjs', 'engine/readers/session-files.mjs',
   'engine/model/contract.mjs', 'engine/model/forest.mjs', 'engine/model/history.mjs', 'engine/model/messages.mjs', 'engine/model/pr-lookup.mjs',
   'engine/model/session-state.mjs', 'engine/model/stage.mjs', 'engine/model/state-utils.mjs', 'engine/model/status.mjs', 'engine/model/swarm.mjs',
+  'shared/unit-state.mjs',
   'tests/fixtures/example-snapshot.json', 'tests/fixtures/example-swarms.json', 'tests/fixtures/example-history.json', 'tests/fixtures/example-run-summary.json',
 ];
 const TEST_SCRIPT = 'node --test tests/*.test.mjs';

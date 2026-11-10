@@ -21,12 +21,16 @@ async function started(createEngine, options = {}) {
   return server;
 }
 
-test('only the files in ui/ are served', () => {
+test('only UI files and the named shared unit-state module are served', () => {
   const assets = loadAssets();
   assert.ok(assets.has('/index.html'));
   assert.equal(assets.get('/ui/styles.css').type, 'text/css; charset=utf-8');
   assert.equal(assets.get('/ui/app.mjs').type, 'text/javascript; charset=utf-8');
-  for (const path of assets.keys()) assert.match(path, /^\/(index\.html|ui\/[\w.-]+\.(css|mjs|html))$/);
+  assert.equal(assets.get('/shared/unit-state.mjs')?.type, 'text/javascript; charset=utf-8');
+  for (const path of assets.keys()) assert.match(path, /^\/(index\.html|ui\/[\w.-]+\.(css|mjs|html)|shared\/unit-state\.mjs)$/);
+  const changed = new Map(assets);
+  changed.set('/shared/unit-state.mjs', { ...assets.get('/shared/unit-state.mjs'), body: Buffer.from('changed') });
+  assert.notEqual(assetsFingerprint(assets), assetsFingerprint(changed));
 });
 
 test('the page, its assets and health answer only to the dashboard\'s own host', async () => {
@@ -41,6 +45,10 @@ test('the page, its assets and health answer only to the dashboard\'s own host',
     assert.equal(page.headers['x-frame-options'], undefined);
     assert.equal(page.headers['x-content-type-options'], 'nosniff');
     assert.equal((await get(server.port, '/ui/styles.css')).status, 200);
+    const shared = await get(server.port, '/shared/unit-state.mjs');
+    assert.equal(shared.status, 200);
+    assert.equal(shared.headers['content-type'], 'text/javascript; charset=utf-8');
+    assert.equal((await get(server.port, '/shared/unlisted.mjs')).status, 404);
     assert.equal((await get(server.port, '/ui/../engine/schema.mjs')).status, 404);
     assert.equal((await get(server.port, '/engine/schema.mjs')).status, 404);
     const health = JSON.parse((await get(server.port, '/api/health')).body);

@@ -1,5 +1,8 @@
 /** Data derivations for the views: no HTML and no DOM. Words and orders follow the approved mockup. */
 import { plainText } from './format.mjs';
+import { closedNotMerged, isArchived, isDone, isFinished } from '../shared/unit-state.mjs';
+
+export { closedNotMerged, isArchived, isDone, isFinished };
 
 export const STATUS_ORDER = Object.freeze({ stuck: 0, question: 1, plan: 2, blocked: 3, busy: 4, idle: 5, merged: 6, done: 6, archived: 7 });
 export const UNIT_STAGES = Object.freeze(['coding', 'pr_open', 'in_review', 'merged', 'archived']);
@@ -104,12 +107,6 @@ export function feedText(item) {
   return item.kind.startsWith('subagent-') && item.label && once.endsWith(ending) ? once.slice(0, -ending.length) : once;
 }
 
-/**
- * It closed without merging (its PR closed, or the registry outcome is closed, with or without a PR): it stays in its
- * stage, with a badge (approved decision 5), archived or not.
- */
-export const closedNotMerged = unit => Boolean(unit.closedWithoutMerge && unit.stage !== 'archived' && (unit.pr?.state === 'closed' || unit.outcome === 'closed'));
-
 export const stateLine = session => STATE_LINES[session.statusDetail] ?? STATE_LINES[session.status] ?? '{t}';
 
 /**
@@ -122,33 +119,11 @@ export function stateWords(session) {
   return stateLine(session);
 }
 
-/**
- * The unit is archived: its status says so, or its timeline has the archived mark, which the engine always keeps. Its
- * status and stage show its outcome when one is known (merged, failed), so they cannot tell on their own.
- */
-export const isArchived = unit => unit.status === 'archived' || Boolean(unit.timeline?.marks?.some(mark => mark.kind === 'archived'));
-
 /** Details in which a session is working right now, so its now line says what it is doing. */
 export const LIVE_DETAILS = Object.freeze(new Set(['busy', 'slow_model_call', 'silent', 'stuck_tool', 'stuck_model_call', 'stuck_subagent', 'spinning']));
-/** Details that end a unit's work, a stop with no outcome included. */
-const FINISHED_DETAILS = new Set(['stopped', 'merged', 'completed', 'failed', 'crashed', 'cancelled']);
 
 /** Ids of the sessions with an open question or plan of their own: the ones that asked a Needs you item. */
 export const askingIds = snapshot => new Set(snapshot.needs.map(need => need.fromId).filter(Boolean));
-
-/**
- * The done rule: an idle unit whose latest report is complete and that has no PR still open (none, merged or closed) has
- * done its job, whether or not it wrote code. A PR whose state is not known keeps it active. It turns busy again, and
- * comes back to the grid, if it is given more work.
- */
-export const isDone = unit => unit.status === 'idle' && unit.report?.status === 'complete'
-  && (!unit.pr || unit.pr.state === 'merged' || unit.pr.state === 'closed');
-
-/** A unit that goes to the Finished section, unless it has an open question or plan of its own (`asking`). */
-export function isFinished(unit, asking) {
-  if (asking.has(unit.id)) return false;
-  return FINISHED_DETAILS.has(unit.statusDetail) || unit.status === 'merged' || unit.status === 'done' || closedNotMerged(unit) || isDone(unit);
-}
 
 /** When a finished unit finished: its end, else its complete report under the done rule, else the start of its state. */
 export const finishedAt = unit => unit.endedAt ?? (unit.statusDetail === 'idle' && isDone(unit) ? unit.report.at : unit.since);

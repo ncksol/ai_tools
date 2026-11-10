@@ -7,6 +7,7 @@ import { setRunStats } from './run-stats.mjs';
 import { effortOf, mergeStates } from './session-state.mjs';
 import { deriveMonitor, deriveStage, hostOf, mentionFits, prView, resolvePr } from './stage.mjs';
 import { ACTIVE_DETAILS, AWAITING_REVIEW, awaitingReview, displayOf, evaluateStatus, evaluateSubagentUnit, subagentLimitMs, swarmStalled, toolLimitMs, toolView } from './status.mjs';
+import { isArchived, isFinished } from '../../shared/unit-state.mjs';
 
 /** Units built by buildUnit that have done their part and wait on PR reviewers; kept out of the snapshot. */
 const WAITING_ON_REVIEW = new WeakSet();
@@ -790,10 +791,13 @@ export function buildSnapshot(input) {
   const { lifecycle, finishedAt } = runLifecycle({ lastActivityAt, anyActive, now, thresholds });
   const monitorDue = units.some(unit => unit.monitor.state === 'alive') || app.automations.some(item => rootContext.ids.has(item.sessionId)
     && item.pausedAt === null && item.nextRunAt !== null && item.nextRunAt > now - thresholds.monitorGraceMs);
-  // An archived unit is over, whatever its status shows (an archived failed unit shows failed).
-  const archivedIds = new Set(nodes.filter(node => node.archivedAt !== null && node.archivedAt !== undefined).map(node => node.id));
+  const asking = new Set(needs.map(need => need.fromId).filter(Boolean));
+  const unitDetails = everyUnit
+    .filter(unit => !isArchived(unit) && !isFinished(unit, asking))
+    // A failed outcome can mask a wait in the unit's status; the wait still prevents a swarm stall.
+    .map(unit => asking.has(unit.id) ? 'waiting_question' : WAITING_ON_REVIEW.has(unit) ? AWAITING_REVIEW : unit.statusDetail);
   const stalled = lifecycle === 'live'
-    ? swarmStalled({ orchestratorDetail: orchestrator.statusDetail, unitDetails: everyUnit.map(unit => (archivedIds.has(unit.id) ? 'archived' : WAITING_ON_REVIEW.has(unit) ? AWAITING_REVIEW : unit.statusDetail)), monitorDue, lastActivityAt })
+    ? swarmStalled({ orchestratorDetail: orchestrator.statusDetail, unitDetails, monitorDue, lastActivityAt })
     : null;
   const { feed, recent } = buildFeed(contexts, labels, extraFeed, flags);
   for (const view of [orchestrator, ...everyUnit]) view.recent = recent.get(view.id) ?? [];
