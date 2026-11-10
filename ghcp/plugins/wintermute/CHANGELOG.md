@@ -6,6 +6,12 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace still follows main. See [Releases](README.md#releases) for prerequisites, checks and recovery after a partial publish.
 
+## 0.9.3 — 2026-11-10
+
+### Fixed
+
+- A session whose process ended while it was idle, with no `session.shutdown` event, shows as stopped instead of crashed. Quitting the Copilot app can end idle session processes without writing that event; on 2026-11-10 one quit wrote it for none of 16 sessions, and the dashboard then showed the orchestrator and its idle children as "Crashed · Process ended unexpectedly". A session still counts as crashed when its process ended with work open: a turn, tool call, question or plan, or running sub-agent, or the app marks it as running. A resume that closes that open work keeps the crash until the session does new work.
+
 ## 0.9.2 — 2026-11-10
 
 ### Fixed

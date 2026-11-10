@@ -1,4 +1,5 @@
 import { formatDuration } from '../time.mjs';
+import { hasOpenWork } from './session-state.mjs';
 
 /** Details that keep a run live: real work, a hang, or a wait on the user inside an open turn. */
 export const ACTIVE_DETAILS = new Set([
@@ -158,7 +159,12 @@ export function evaluateStatus(input) {
     if (state?.shutdownAt != null && state.shutdownAt >= (state.lastEventAt ?? state.shutdownAt)) {
       return result('stopped', state.shutdownAt, 'The session process exited normally.');
     }
-    return result('crashed', lastAt, `The session process ended without a shutdown event${turnOpen || input.isRunningFlag ? ' while it was working' : ''}.`);
+    // No shutdown event: a crash only when the process cut off work. An app quit can end an idle process without one.
+    const cutOff = state?.cutOffAt != null && state.cutOffAt >= (state.lastEventAt ?? state.cutOffAt);
+    if (!cutOff && !hasOpenWork(state) && !input.isRunningFlag) {
+      return result('stopped', lastAt, 'The session process ended while it was idle, without a shutdown event (for example, when the app quit).');
+    }
+    return result('crashed', lastAt, 'The session process ended without a shutdown event while it was working.');
   }
   if (!input.hasRegistry && !turnOpen && lastTask && lastTask.success === false) {
     return result('failed', lastTask.at, 'Its last task ended unsuccessfully.');

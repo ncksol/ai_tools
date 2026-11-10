@@ -97,7 +97,8 @@ test('AT2: a user message and completed turn after a resume advance both work cl
     assert.deepEqual([listed.lifecycle, listed.lastActivityAt], ['live', RECENT_WORK]);
     const snapshot = await engine.getSnapshot('root');
     assert.deepEqual([snapshot.run.lifecycle, snapshot.run.lastActivityAt], ['live', RECENT_WORK]);
-    for (const session of [snapshot.orchestrator, ...snapshot.units]) assert.equal(session.statusDetail, 'crashed');
+    // Its process has gone with no shutdown since that work, but the turn had ended, so nothing was cut off.
+    for (const session of [snapshot.orchestrator, ...snapshot.units]) assert.equal(session.statusDetail, 'stopped');
   } finally {
     engine.stop();
   }

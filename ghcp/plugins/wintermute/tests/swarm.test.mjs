@@ -1086,7 +1086,7 @@ function quietSwarm(build, now) {
   return { data, ids };
 }
 
-function finishedUnitSwarm({ outcome = null, archived = false, alive = true, stopped = false, report = 'complete', wait = null, prState = null, replied = false } = {}) {
+function finishedUnitSwarm({ outcome = null, archived = false, alive = true, stopped = false, working = false, report = 'complete', wait = null, prState = null, replied = false } = {}) {
   const { data } = quietSwarm(() => {}, at(120));
   const rows = data.sessionDbs.get('cli-root').children;
   rows.find(row => row.unit === 'api').outcome = 'merged';
@@ -1107,6 +1107,7 @@ function finishedUnitSwarm({ outcome = null, archived = false, alive = true, sto
     if (wait === 'plan') ui.plan('Approve the UI plan.');
     else ui.ask('Which UI option?');
   }
+  if (working) { ui.at(at(112)); ui.turnStart(); }
   if (stopped) { ui.at(at(113)); ui.shutdown(); }
   data.states.set('cli-ui', fold(ui, 'cli-ui'));
   data.alive.set('cli-ui', alive);
@@ -1119,7 +1120,8 @@ function finishedUnitSwarm({ outcome = null, archived = false, alive = true, sto
 
 for (const [name, options, detail] of [
   ['stopped', { alive: false, stopped: true }, 'stopped'],
-  ['crashed', { alive: false }, 'crashed'],
+  ['crashed', { alive: false, working: true }, 'crashed'],
+  ['ended while idle without a shutdown', { alive: false }, 'stopped'],
   ['failed', { outcome: 'failed' }, 'failed'],
   ['merged', { outcome: 'merged' }, 'merged'],
   ['archived', { archived: true }, 'archived'],

@@ -87,6 +87,9 @@ export function createSessionState(id, { subagentUnits = false } = {}) {
     automation: { saves: [], wakes: [] },
     // A normal shutdown stays visible across bookkeeping, but new work starts a new process outcome.
     shutdownAt: null, abortAt: null, lastErrorAt: null,
+    // The last work of a process that a later start or resume found with work open: it ended mid-work with no shutdown.
+    // Like shutdownAt, it holds only while no work follows it (see evaluateStatus).
+    cutOffAt: null,
     recent: { failures: [], calls: [], compactions: [], denials: [] }, prompts: 0,
     feed: [], marks: [], prMentions: new Map(), source: null,
   };
@@ -230,6 +233,8 @@ function onMainEvent(state, type, data, at) {
   switch (type) {
     case 'session.start':
     case 'session.resume':
+      // endProcess closes the open work, so note first that the previous process ended in the middle of it.
+      if (hasOpenWork(state) && state.lastEventAt !== null) state.cutOffAt = state.lastEventAt;
       endProcess(state, state.lastMainAt ?? at);
       if (typeof data.copilotVersion === 'string') state.copilotVersion = data.copilotVersion;
       if (typeof data.selectedModel === 'string') state.model = data.selectedModel;
@@ -518,6 +523,18 @@ function endOpenWork(state, at, keepBackground) {
     if (keepBackground && record.mode === 'background') continue;
     finishEvicted(state, record, at, null, status);
   }
+}
+
+/**
+ * Whether the session has work in flight that the end of its process would cut off: a turn, a tool call, a wait, an open
+ * sub-agent (running, or a unit whose follow-up run is open) or a running nested sub-agent.
+ */
+export function hasOpenWork(state) {
+  if (!state) return false;
+  if (state.turn || state.openTools.size || state.waits.size || state.evictedRunning.size) return true;
+  for (const sub of state.subagents.values()) if (isOpen(sub)) return true;
+  for (const entry of state.descendants.values()) if (entry.status === 'running') return true;
+  return false;
 }
 
 function endProcess(state, at) {
@@ -1063,6 +1080,7 @@ export function mergeStates(states) {
     merged.lastHumanAt = maxTime(merged.lastHumanAt, state.lastHumanAt);
     merged.lastTurnEndAt = maxTime(merged.lastTurnEndAt, state.lastTurnEndAt);
     merged.shutdownAt = maxTime(merged.shutdownAt, state.shutdownAt);
+    merged.cutOffAt = maxTime(merged.cutOffAt, state.cutOffAt);
     merged.abortAt = maxTime(merged.abortAt, state.abortAt);
     merged.lastErrorAt = maxTime(merged.lastErrorAt, state.lastErrorAt);
   }

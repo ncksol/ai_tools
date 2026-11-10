@@ -173,7 +173,7 @@ He handed the stack to us. These are choices made on his behalf, not decisions h
 
    | Rule | Condition | Result |
    | --- | --- | --- |
-   | Ended | `workspaces.archived_at` is set; or no live process: stopped if the last event is `session.shutdown`, else crashed (worse if a turn was open) | archived, stopped or crashed |
+   | Ended | `workspaces.archived_at` is set; or no live process: stopped if a `session.shutdown` follows the last work; else crashed if work was cut off (a turn, tool call, question or plan, or running sub-agent was open, also when a later resume closed it, or the app marks the session running); else stopped, because an app quit can end an idle process without writing `session.shutdown` | archived, stopped or crashed |
    | Model call | Main turn open, and no `session.usage_record` or `assistant.message` since the last turn start, tool completion or user message for 5 min, then 10 min | warn, then stuck |
    | Tool | Open longer than its limit: bash `initial_wait` + 5 min (10 min without one); `read_bash` delay + 2 min; `read_agent` timeout + 2 min; app, file and search tools 2 min | stuck |
    | Sub-agent | Started, not completed, and no event with its `parentToolCallId` for 10 min (15 for general-purpose on Opus at max effort) | stuck |
