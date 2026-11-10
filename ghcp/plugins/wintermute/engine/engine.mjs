@@ -52,8 +52,9 @@ function summaryDigest(summary) {
  * calls again, older summary rules (see SUMMARY_RULES) gave outcomes that are wrong today, and a finish time beyond the
  * listing's work time plus the slack can come from app bookkeeping. Each is stale only when `costsComplete` is true,
  * meaning every session's log was read in full on this refresh; incomplete logs keep the last good summary. A
- * finish-time correction also requires that cost has not fallen: `costsComplete` covers only sessions still in the
- * forest, so deleting a child workspace must not replace its saved cost, units and finish time.
+ * finish-time correction also requires that cost has not fallen, and a rules rebuild that neither cost nor the child
+ * count has fallen: `costsComplete` covers only sessions still in the forest, so deleting a child workspace must not
+ * replace its saved cost, units and finish time.
  *
  * `verified` is the stamp of the last check that rebuilt the run (see the engine's `verified` map). When the listing still
  * shows that check's activity time and cost, and the stored summary is the one that check confirmed, nothing is newer: the
@@ -62,7 +63,8 @@ function summaryDigest(summary) {
 function isStale(stored, swarm, verified = null, costsComplete = false) {
   if (!swarm) return false;
   const oldSource = stored.costSource !== COST_SOURCE && costsComplete;
-  const oldRules = (stored.rules ?? 1) < SUMMARY_RULES && costsComplete;
+  const oldRules = (stored.rules ?? 1) < SUMMARY_RULES && costsComplete && swarm.credits >= stored.credits
+    && swarm.units >= stored.children.total;
   const olderWork = costsComplete && swarm.credits >= stored.credits
     && stored.finishedAt > swarm.lastActivityAt + STALE_SLACK_MS;
   if (!(oldSource || oldRules || olderWork || swarm.credits > stored.credits || swarm.lastActivityAt > stored.finishedAt + STALE_SLACK_MS)) return false;
