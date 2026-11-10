@@ -1,4 +1,4 @@
-import { OUTCOMES, PR_PROVIDERS, REPORT_STATUSES } from '../schema.mjs';
+import { PR_PROVIDERS, REGISTRY_OUTCOMES, REPORT_STATUSES } from '../schema.mjs';
 import { parseTime } from '../time.mjs';
 
 export const UNIT_LABEL_RE = /^[A-Za-z0-9._-]{1,32}$/;
@@ -102,7 +102,7 @@ function registryRow(raw) {
   if (!UNIT_LABEL_RE.test(unit) || !sessionId || !title || createdAt === null || updatedAt === null) return null;
   const prId = raw.pr_id === null || raw.pr_id === undefined || raw.pr_id === '' ? null : Number(raw.pr_id);
   const validPr = PR_PROVIDERS.includes(raw.pr_provider) && Number.isInteger(prId) && prId > 0;
-  const outcome = OUTCOMES.includes(raw.outcome) ? raw.outcome : null;
+  const outcome = REGISTRY_OUTCOMES.includes(raw.outcome) ? raw.outcome : null;
   return {
     unit, sessionId, title, todoId: textOrNull(raw.todo_id), branch: textOrNull(raw.branch), baseBranch: textOrNull(raw.base_branch),
     prProvider: validPr ? raw.pr_provider : null, prRepo: textOrNull(raw.pr_repo), prId: validPr ? prId : null, prUrl: textOrNull(raw.pr_url),

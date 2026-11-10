@@ -5,7 +5,7 @@ import { UNIT_LABEL_RE, normaliseRegistry, parseQuestionTag, parseReportBody, pa
 import { descendants, resolveNodeId } from './forest.mjs';
 import { setRunStats } from './run-stats.mjs';
 import { effortOf, mergeStates } from './session-state.mjs';
-import { deriveMonitor, deriveStage, hostOf, mentionFits, prView, resolvePr } from './stage.mjs';
+import { deriveMonitor, deriveStage, hostOf, mentionFits, prView, registryPrs, resolveOutcome, resolvePr, splitReviewed } from './stage.mjs';
 import { ACTIVE_DETAILS, AWAITING_REVIEW, awaitingReview, displayOf, evaluateStatus, evaluateSubagentUnit, subagentLimitMs, swarmStalled, toolLimitMs, toolView } from './status.mjs';
 import { isArchived, isFinished } from '../../shared/unit-state.mjs';
 
@@ -257,7 +257,7 @@ function readRegistry(input, root) {
     const id = resolveNodeId(input.forest, row.sessionId);
     if (id && id !== root.id) byNode.set(id, row);
   }
-  return { present: units.size > 0, rows: units, byNode, invalid };
+  return { present: units.size > 0, rows: units, byNode, invalid, prs: registryPrs(units.values()) };
 }
 
 /**
@@ -393,21 +393,23 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
     return lookups.get(identity);
   };
   const branch = row?.branch ?? node.branch ?? c.workspaceFile?.branch ?? null;
+  const { own, reviewedPr } = splitReviewed(statusLines, registry.prs, row, host);
   const identity = resolvePr({
-    registry: row, statusLines, createdPr: node.createdPr, mentions: c.all.prMentions, host,
+    registry: row, statusLines: own, createdPr: node.createdPr, mentions: c.all.prMentions, host,
     accepts: candidate => mentionFits(lookup(candidate), { startedAt, branch }),
   });
   const pr = identity ? prView(identity, lookup(identity), node.createdPr) : null;
   const automations = input.app.automations.filter(item => c.ids.has(item.sessionId));
   const monitorEver = automations.length > 0 || c.all.automation.wakes.length > 0 || c.all.automation.saves.some(save => !save.clear);
-  const { stage, merged, closedWithoutMerge } = deriveStage({ archivedAt: node.archivedAt, outcome: row?.outcome ?? null, pr, monitorEver });
+  const recorded = resolveOutcome(row?.outcome ?? null, { pr, report });
+  const { stage, merged, closedWithoutMerge } = deriveStage({ archivedAt: node.archivedAt, outcome: recorded, pr, monitorEver });
   const monitor = deriveMonitor({
     stage, hasPr: Boolean(pr), closedWithoutMerge, automations, wakes: c.all.automation.wakes, saves: c.all.automation.saves,
     now: input.now, thresholds: input.thresholds,
   });
   const evaluation = evaluateStatus({
     state: c.current, alive: c.alive, archivedAt: node.archivedAt, merged, mergedAt: pr?.mergedAt ?? row?.endedAt ?? null,
-    outcome: row?.outcome ?? null, hasRegistry: registry.present, report: report ? { status: report.status, at: report.at } : null,
+    outcome: recorded, hasRegistry: registry.present, report: report ? { status: report.status, at: report.at } : null,
     parentRepliedAt, monitorDueAt: monitor.state === 'alive' ? monitor.nextCheckAt : null, isRunningFlag: Boolean(c.sessionRow?.isRunning),
     startedAt, now: input.now, thresholds: input.thresholds,
   });
@@ -418,13 +420,13 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
   if (node.archivedAt) marks.push({ at: node.archivedAt, kind: 'archived', text: 'Archived', status: null });
   if (evaluation.detail === 'stuck_tool' && evaluation.tool) marks.push({ at: evaluation.tool.startedAt, kind: 'tool', text: 'Tool call started, no events since', status: null });
 
-  const outcome = row?.outcome ?? (merged ? 'merged' : closedWithoutMerge ? 'closed' : evaluation.detail === 'failed' ? 'failed' : null);
+  const outcome = recorded ?? (merged ? 'merged' : closedWithoutMerge ? 'closed' : evaluation.detail === 'failed' ? 'failed' : null);
   const outcomeAt = outcome ? row?.endedAt ?? pr?.mergedAt ?? pr?.closedAt ?? null : null;
   const unit = {
     ...sessionView(input, c, label, evaluation, report, row?.title ?? null, marks, outcomeAt),
     // The registry's branch wins over the app's, which can be missing or stale; assignDependencies matches base branches on it.
     branch: row?.branch ?? node.branch ?? null,
-    parentId: node.parentId, depth: node.depth, stage, closedWithoutMerge, outcome, pr, monitor, dependsOn: null, todoId: row?.todoId ?? null,
+    parentId: node.parentId, depth: node.depth, stage, closedWithoutMerge, outcome, pr, reviewedPr, monitor, dependsOn: null, todoId: row?.todoId ?? null,
     agent: null,
   };
   const waiting = !node.archivedAt && !merged && !closedWithoutMerge
@@ -599,7 +601,7 @@ function subagentUnitView(input, rootContext, root, sub, evaluation, label, roll
       subagents: unit.children.map(child => ({ id: child.id, start: child.startedAt ?? child.launchedAt, end: child.endedAt ?? evaluation.endedAt, type: child.type })),
       marks: report && !running ? [{ at: evaluation.endedAt, kind: 'report', text: report.title || 'Report', status: report.status }] : [],
     },
-    parentId: root.id, depth: 1, stage: 'subagent', closedWithoutMerge: false, outcome: null, pr: null,
+    parentId: root.id, depth: 1, stage: 'subagent', closedWithoutMerge: false, outcome: null, pr: null, reviewedPr: null,
     monitor: { state: 'none', lastCheckAt: null, nextCheckAt: null, everyMinutes: null, since: null }, dependsOn: null, todoId: null,
     agent: { type: sub.type, mode: sub.mode, effort: sub.effort },
   };

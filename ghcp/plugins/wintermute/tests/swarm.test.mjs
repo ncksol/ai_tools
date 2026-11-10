@@ -470,14 +470,53 @@ test('a running unit that mentions another unit\'s PR merged before it started k
   }
 });
 
-test('a unit that mentions another unit\'s PR and ends with registry outcome closed shows closed, not merged', () => {
+test('a unit that mentions another unit\'s PR and ends with registry outcome closed after a complete report is done', () => {
   const ui = uiOf(mentionsOtherPr(MERGED_BEFORE_START, { finished: true }));
   assert.equal(ui.pr, null);
-  assert.equal(ui.outcome, 'closed');
-  assert.equal(ui.closedWithoutMerge, true);
+  assert.equal(ui.outcome, 'done');
+  assert.equal(ui.closedWithoutMerge, false);
   assert.equal(ui.stage, 'coding');
   assert.notEqual(ui.status, 'merged');
   assert.equal(ui.endedAt, at(119));
+});
+
+/** Issue #112: the ui unit's one report has a status line naming `pr` (or none); with `outcome`, the registry records it ended. */
+function reportsPr(pr, { status = 'complete', outcome = null } = {}) {
+  const data = input(true);
+  const ui = new EventLog(at(6));
+  ui.start(); ui.turnStart(); ui.at(at(100));
+  ui.report('ws-root', `swarm-status: ${status} unit=ui${pr ? ` pr=${pr}` : ''}\nSummary: UI report.`, status === 'complete' ? 'handoff' : 'progress');
+  ui.at(at(101)); ui.turnEnd();
+  data.states.set('cli-ui', fold(ui, 'cli-ui'));
+  if (outcome) Object.assign(data.sessionDbs.get('cli-root').children.find(item => item.unit === 'ui'), { outcome, ended_at: iso(101), updated_at: iso(101) });
+  return data;
+}
+
+test('a unit whose status line names another unit\'s registry PR reviews it: pr is null and reviewedPr holds it', () => {
+  const snapshot = buildSnapshot(reportsPr('ado:4711'));
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  const ui = snapshot.units.find(unit => unit.id === 'ws-ui');
+  assert.equal(ui.pr, null);
+  assert.deepEqual(ui.reviewedPr, { provider: 'ado', id: 4711, repo: 'org/project/repo', url: null });
+  assert.equal(ui.stage, 'coding', 'a reviewer is not in review');
+  const api = snapshot.units.find(unit => unit.id === 'ws-api');
+  assert.deepEqual([api.pr.id, api.pr.source, api.reviewedPr], [4711, 'registry', null]);
+});
+
+test('a status-line PR that no other unit records stays the unit\'s own PR', () => {
+  const ui = uiOf(reportsPr('ado:4999'));
+  assert.deepEqual([ui.pr.id, ui.pr.source, ui.reviewedPr], [4999, 'status_line', null]);
+});
+
+test('a registry closed unit is done with no own PR and a complete report, else closed', () => {
+  const reviewer = uiOf(reportsPr('ado:4711', { outcome: 'closed' }));
+  assert.deepEqual([reviewer.outcome, reviewer.closedWithoutMerge, reviewer.pr, reviewer.reviewedPr.id, reviewer.endedAt], ['done', false, null, 4711, at(101)]);
+  const job = uiOf(reportsPr(null, { outcome: 'closed' }));
+  assert.deepEqual([job.outcome, job.closedWithoutMerge, job.pr], ['done', false, null]);
+  const ownPr = uiOf(reportsPr('ado:4999', { outcome: 'closed' }));
+  assert.deepEqual([ownPr.outcome, ownPr.closedWithoutMerge, ownPr.pr.id], ['closed', true, 4999]);
+  const unfinished = uiOf(reportsPr(null, { status: 'progress', outcome: 'closed' }));
+  assert.deepEqual([unfinished.outcome, unfinished.closedWithoutMerge, unfinished.pr], ['closed', true, null]);
 });
 
 test('a unit with a registry row gets no PR from mentions, even one from its own branch', () => {
@@ -1127,6 +1166,7 @@ for (const [name, options, detail] of [
   ['archived', { archived: true }, 'archived'],
   ['archived failed', { archived: true, outcome: 'failed' }, 'failed'],
   ['closed without a PR', { outcome: 'closed', report: 'progress' }, 'idle'],
+  ['done: closed without a PR after a complete report', { outcome: 'closed' }, 'idle'],
   ['closed PR', { prState: 'closed', report: 'progress' }, 'idle'],
   ['idle complete without a PR', {}, 'idle'],
 ]) {

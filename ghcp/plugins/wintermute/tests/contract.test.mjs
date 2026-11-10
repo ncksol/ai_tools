@@ -89,3 +89,9 @@ test('the registry keeps valid rows and the latest update per unit across sessio
   assert.equal(web.prProvider, null);
   assert.equal(web.outcome, null);
 });
+
+test('a registry row cannot record done, which only the engine infers', () => {
+  const row = { unit: 'ui', session_id: 'ws-1', title: 'UI', created_at: '2026-10-15T08:00:00Z', updated_at: '2026-10-15T09:00:00Z', outcome: 'done', ended_at: '2026-10-15T09:00:00Z' };
+  const ui = normaliseRegistry([[row]]).units.get('ui');
+  assert.deepEqual([ui.outcome, ui.endedAt], [null, null]);
+});

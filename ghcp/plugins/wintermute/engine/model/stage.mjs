@@ -15,6 +15,55 @@ export const MENTION_CANDIDATES = 3;
 
 const branchName = branch => (typeof branch === 'string' && branch ? branch.replace(/^refs\/heads\//, '') : null);
 
+const prKey = pr => `${pr.provider}:${pr.id}`;
+
+/** A registry row's PR repository: its own when valid for its provider, else the host's repository for that provider. */
+function registryRepo(row, host) {
+  const valid = row.prProvider === 'ado' ? ADO_REPO : row.prProvider === 'github' ? GITHUB_REPO : null;
+  if (valid && typeof row.prRepo === 'string' && valid.test(row.prRepo)) return row.prRepo;
+  return host?.provider === row.prProvider ? host.repo : null;
+}
+
+/** The registry rows that record each PR, keyed `provider:id`. */
+export function registryPrs(rows) {
+  const prs = new Map();
+  for (const row of rows) {
+    if (!row.prProvider || !row.prId) continue;
+    const key = prKey({ provider: row.prProvider, id: row.prId });
+    if (!prs.has(key)) prs.set(key, []);
+    prs.get(key).push(row);
+  }
+  return prs;
+}
+
+/**
+ * Issue #112: a status line that names a PR the registry records for another unit names the PR this unit reviews, not its
+ * own. `own` keeps the other lines, latest first. `reviewedPr` is the latest such PR, with the owner's repository and URL,
+ * else null. A PR that no other unit records stays in `own`, and so does one that the unit's own row records.
+ */
+export function splitReviewed(statusLines, prs, row = null, host = null) {
+  const ownerOf = item => {
+    const rows = item.pr ? prs.get(prKey(item.pr)) ?? [] : [];
+    return rows.includes(row) ? null : rows[0] ?? null;
+  };
+  const own = [];
+  let reviewedPr = null;
+  for (const item of statusLines) {
+    const owner = ownerOf(item);
+    if (!owner) own.push(item);
+    else if (!reviewedPr) reviewedPr = { provider: owner.prProvider, id: owner.prId, repo: registryRepo(owner, host), url: owner.prUrl ?? null };
+  }
+  return { own, reviewedPr };
+}
+
+/**
+ * The outcome a unit shows (issue #112). A registry `closed` unit with no PR of its own and a `complete` latest report has
+ * finished its work: `done`. Every other outcome is shown as recorded.
+ */
+export function resolveOutcome(recorded, { pr = null, report = null } = {}) {
+  return recorded === 'closed' && !pr && report?.status === 'complete' ? 'done' : recorded;
+}
+
 /**
  * A mentioned PR can be another unit's PR named as background. It is not the unit's own when its lookup shows it merged or closed
  * before the unit started. Otherwise, when the PR's source branch and the unit's branch are both known, they must be equal; a unit
@@ -62,9 +111,7 @@ export function resolvePr({ registry = null, statusLines = [], createdPr = null,
     return same.length ? Math.min(...same.map(item => item.at)) : null;
   };
   if (registry?.prProvider && registry.prId) {
-    const valid = registry.prProvider === 'ado' ? ADO_REPO : registry.prProvider === 'github' ? GITHUB_REPO : null;
-    const repo = valid && typeof registry.prRepo === 'string' && valid.test(registry.prRepo) ? registry.prRepo : repoFor(registry.prProvider);
-    return { provider: registry.prProvider, id: registry.prId, repo, url: registry.prUrl ?? null, source: 'registry', knownAt: firstReported(registry.prProvider, registry.prId) };
+    return { provider: registry.prProvider, id: registry.prId, repo: registryRepo(registry, host), url: registry.prUrl ?? null, source: 'registry', knownAt: firstReported(registry.prProvider, registry.prId) };
   }
   const line = statusLines.find(item => item.pr);
   if (line) {
@@ -109,6 +156,7 @@ export function prView(pr, info, createdPr) {
  * coding → PR open → in review → merged → archived (builder decision 4). A known outcome places a unit even once it is
  * archived (the orchestrator archives each unit when it ends): merged under merged, closed or failed in its PR stage.
  * Archived is only for archived units with no known outcome.
+ * A `done` outcome is neither merged nor closed without merging, so a done unit is archived once archived, else in its PR stage.
  */
 export function deriveStage({ archivedAt = null, outcome = null, pr = null, monitorEver = false }) {
   const merged = outcome === 'merged' || pr?.state === 'merged';
