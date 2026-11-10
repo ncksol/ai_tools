@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   DENSITIES, activityRows, clockText, costView, dateText, hourlyRate, legend, needRows, nextCheckAt, prRows, runLine, stateWord, tileGrid, tileWord, timeText, unitCounts,
 } from '../ui/cockpit-model.mjs';
-import { NOW, deepFreeze, exampleSnapshot } from './helpers/ui.mjs';
+import { NOW, closedSnapshot, deepFreeze, doneSnapshot, exampleSnapshot } from './helpers/ui.mjs';
 
 const example = () => deepFreeze(exampleSnapshot());
 const withSessions = n => {
@@ -118,4 +118,12 @@ test('clock, date, times, the next monitor check and the run line', () => {
   assert.equal(timeText(at), '09:06');
   assert.equal(nextCheckAt(example()), NOW + 60000);
   assert.equal(runLine(example()), 'Sample story B · sample-project');
+});
+
+test('a done unit\'s tile reads its state, not Closed, and a reviewer has no PR row', () => {
+  const done = doneSnapshot();
+  const tile = tileGrid(done).tiles.find(item => item.label === 'D5');
+  assert.equal(tile.word, tileWord('idle'));
+  assert.equal(tileGrid(closedSnapshot()).tiles.find(item => item.label === 'D5').word, 'Closed');
+  assert.ok(!prRows(done).rows.some(row => row.unitId === 'ws-0007-d5'));
 });

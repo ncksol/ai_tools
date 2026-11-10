@@ -29,7 +29,8 @@ function planLine(node, snapshot, now) {
     return `waits on ${esc(label)}${target ? ` (${STAGE_NAMES[target.stage].toLowerCase()})` : ''}`;
   }
   const unit = node.unit;
-  if (closedNotMerged(unit)) return `<span class="pr-closed">${unit.pr ? 'PR closed' : 'closed'}, not merged</span>`;
+  if (unit.outcome === 'done') return 'Done';
+  if (closedNotMerged(unit)) return `<span class="pr-closed">${unit.pr ? 'PR closed, not merged' : 'closed'}</span>`;
   if (unit.status === 'merged' || unit.status === 'archived') return STAGE_NAMES[unit.stage];
   const words = PLAN_WORDS[unit.status];
   return `${STAGE_NAMES[unit.stage]}${words ? ` · <span class="s">${fill(words, unit.since, now)}</span>` : ''}`;

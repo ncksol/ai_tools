@@ -80,3 +80,13 @@ test('loading, missing and empty summaries', () => {
   assert.match(words, /No sub-agents in this run\./);
   assert.match(words, /First child none/);
 });
+
+test('the run summary counts done children, and done units are not peach', () => {
+  const summary = fixture('example-run-summary.json');
+  summary.children = { ...summary.children, closed: 0, done: 1 };
+  summary.units[4] = { ...summary.units[4], outcome: 'done' };
+  const html = runHtml(summary);
+  assert.match(text(html), /Children 4, 3 merged, 1 done Sub-agents/);
+  assert.doesNotMatch(html, /g-span no/);
+  assert.doesNotMatch(text(html), /not merged/);
+});

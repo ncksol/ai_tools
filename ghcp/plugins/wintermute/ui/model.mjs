@@ -156,9 +156,11 @@ const FINISHED_WORDS = Object.freeze({
 });
 /**
  * A finished unit's outcome in words ({a}: its age) and its tone: ok (green) for merged or done, bad (red) for failed or
- * crashed, off (grey) for stopped, cancelled or closed. "closed, not merged" only for a unit that had a PR.
+ * crashed, off (grey) for stopped, cancelled or closed. Outcome `done` comes before the state words, so a stopped unit that
+ * finished its work reads "done". "closed, not merged" only for a unit with a PR of its own.
  */
 export function finishedOutcome(unit) {
+  if (unit.outcome === 'done') return { words: 'done {a}', tone: 'ok', at: finishedAt(unit) };
   if (closedNotMerged(unit)) return { words: unit.pr ? 'closed, not merged {a}' : 'closed {a}', tone: 'off', at: finishedAt(unit) };
   const [words, tone] = FINISHED_WORDS[unit.statusDetail] ?? (unit.status === 'merged' ? FINISHED_WORDS.merged : FINISHED_WORDS.completed);
   return { words, tone, at: finishedAt(unit) };
@@ -222,6 +224,9 @@ export function prWords(pr) {
   const word = { open: 'in review', draft: 'draft', merged: 'merged', closed: 'closed' }[pr.state];
   return word ? `PR #${pr.id} · ${word}` : `PR #${pr.id}`;
 }
+
+/** The PR a unit reviews, when its status lines name another unit's PR (issue #112): "reviews PR #10887". */
+export const reviewsWords = reviewed => `reviews PR #${reviewed.id}`;
 
 const capital = word => word.charAt(0).toUpperCase() + word.slice(1);
 /** A short model name: "claude-opus-5.5" is "Opus 5.5", "gpt-6.1-sol" "GPT-6.1 Sol", "gemini-4-argon" "Gemini 4 Argon". */

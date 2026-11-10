@@ -1,7 +1,7 @@
 import { ago, costHtml, costText, dollars, dur, esc, liveTime, plainText, runningFor, timeOfDay } from './format.mjs';
 import {
   MODE_WORDS, STAGE_NAMES, activeSubagents, cardZones, closedNotMerged, countTiles, effortOf, finishedOutcome, isSubagent, needMark, nowLine,
-  omittedSubagents, orchestratorView, prWords, progressPercent, reportKind, reportTitle, runClockEnd, runEnd, shortModel, stateWords, unitClockEnd, unitEnd,
+  omittedSubagents, orchestratorView, prWords, progressPercent, reportKind, reportTitle, reviewsWords, runClockEnd, runEnd, shortModel, stateWords, unitClockEnd, unitEnd,
 } from './model.mjs';
 import { badge, bar, closedBadge, feedList, fill, monitorHtml, reportClass, ring, stateLineHtml, statusMark, warnMark } from './parts.mjs';
 
@@ -31,13 +31,14 @@ export function headerHtml({ snapshot, now, phaseMs, stale = false }) {
     + `<div class="d-counts" role="group" aria-label="Units by state">${tiles}</div></div>`;
 }
 
-/** Line 2's right side: the PR and its state, or an orchestrator sub-agent's type. */
+/** Line 2's right side: the PR and its state, the PR it reviews, or an orchestrator sub-agent's type. */
 function sideHtml(unit) {
   if (isSubagent(unit)) {
     const type = unit.agent?.type ?? 'sub-agent';
     return `<span class="b-tag" title="Orchestrator sub-agent · ${esc(type)} · ${esc(MODE_WORDS[unit.agent?.mode]?.toLowerCase() ?? 'mode unknown')}">${esc(type)}</span>`;
   }
-  return unit.pr ? `<span class="b-pr">${esc(prWords(unit.pr))}</span>` : '';
+  if (unit.pr) return `<span class="b-pr">${esc(prWords(unit.pr))}</span>`;
+  return unit.reviewedPr ? `<span class="b-pr">${esc(reviewsWords(unit.reviewedPr))}</span>` : '';
 }
 
 /** The footer: Needs you marker, sub-agent chips and todos on the left; model, effort and cost on the right. */
@@ -158,7 +159,7 @@ function prState(pr, now) {
 
 function prHtml(unit, now) {
   const { pr, monitor } = unit;
-  if (!pr) return '<p class="small muted">No PR yet.</p>';
+  if (!pr) return unit.reviewedPr ? `<p class="small">Reviews PR #${unit.reviewedPr.id}. No PR of its own.</p>` : '<p class="small muted">No PR yet.</p>';
   const state = closedNotMerged(unit)
     ? `<span class="pr-state">${closedBadge}${pr.closedAt ? `<span>${ago(pr.closedAt, now)}</span>` : ''}</span>`
     : `<span>${prState(pr, now)}</span>`;

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { activityHtml, detailHtml, railHtml } from '../ui/live.mjs';
 import { findByLabel } from '../ui/model.mjs';
-import { closedSnapshot, context, exampleSnapshot } from './helpers/ui.mjs';
+import { closedSnapshot, context, doneSnapshot, exampleSnapshot } from './helpers/ui.mjs';
 
 const text = html => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 const items = html => (html.match(/<li class="fi/g) ?? []).length;
@@ -105,4 +105,10 @@ test('the detail panel\'s latest report shows a replied question as "question" a
   b1.report.status = 'blocked';
   assert.match(latest(detailHtml(f1.id, false, context(snapshot))), /<div class="dt-rep-h rp-blocked"><span class="badge">blocked<\/span>/);
   assert.match(latest(detailHtml(b1.id, false, context(snapshot))), /<div class="dt-rep-h rp-replied"><span class="badge">blocker<\/span>/);
+});
+
+test('the detail panel names the PR a reviewer reviews when it has none of its own', () => {
+  const words = text(detailHtml('ws-0007-d5', false, context(doneSnapshot())));
+  assert.match(words, /PR and monitor Reviews PR #418\. No PR of its own\./);
+  assert.doesNotMatch(words, /No PR yet/);
 });

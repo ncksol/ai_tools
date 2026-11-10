@@ -27,3 +27,15 @@ export function closedSnapshot() {
   unit.monitor = { ...unit.monitor, state: 'ended', nextCheckAt: null, since: null };
   return snapshot;
 }
+
+/** The example with D5 as a finished reviewer: outcome done, no PR of its own, and B1's PR #418 as the one it reviewed. */
+export function doneSnapshot() {
+  const snapshot = exampleSnapshot();
+  const unit = snapshot.units.find(item => item.label === 'D5');
+  Object.assign(unit, {
+    stage: 'coding', closedWithoutMerge: false, outcome: 'done', endedAt: NOW - 20 * 60000, pr: null,
+    reviewedPr: { provider: 'github', id: 418, repo: 'sample-org/sample-repo', url: 'https://github.com/sample-org/sample-repo/pull/418' },
+  });
+  unit.monitor = { ...unit.monitor, state: 'none', nextCheckAt: null, since: null };
+  return snapshot;
+}

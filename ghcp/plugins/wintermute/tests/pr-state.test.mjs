@@ -166,7 +166,8 @@ test('a closed unit shows its outcome on the Board, in Plan and on its cockpit t
   const plan = planListHtml(snapshot, at(60));
   const row = label => words(plan.split(/<li class="pl-row /).find(part => part.includes(`<span class="tx">${label} `)));
   assert.match(row('close'), /PR closed, not merged/);
-  assert.match(row('drop'), /closed, not merged/);
+  assert.match(row('drop'), /closed/);
+  assert.doesNotMatch(row('drop'), /not merged/, 'Plan says "closed" when there was no PR');
   assert.doesNotMatch(row('drop'), /PR closed|Coding/);
   const tile = label => tileGrid(snapshot).tiles.find(entry => entry.label === label).word;
   assert.deepEqual(['close', 'drop', 'live', 'merge'].map(tile), ['Closed', 'Closed', 'Closed', 'Merged']);
