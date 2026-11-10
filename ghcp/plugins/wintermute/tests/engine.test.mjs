@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createSwarmEngine } from '../engine/engine.mjs';
 import { createHistoryStore } from '../engine/model/history.mjs';
 import { createPrLookup } from '../engine/model/pr-lookup.mjs';
-import { validateRunListItem, validateRunSummary, validateSnapshot, validateSwarmListItem } from '../engine/schema.mjs';
+import { SUMMARY_RULES, validateRunListItem, validateRunSummary, validateSnapshot, validateSwarmListItem } from '../engine/schema.mjs';
 import { HOUR, MINUTE } from '../engine/time.mjs';
 import { CopilotHome } from './helpers/copilot-home.mjs';
 import { EventLog } from './helpers/event-log.mjs';
@@ -605,6 +605,39 @@ test('a summary from session-store.db is kept while a log of its run is missing'
   assert.ok(engine.diagnostics().some(item => item.source === 'events' && item.message === 'cli-old-: the session\'s log is missing, so its cost is unknown.'));
   assert.deepEqual(await oldItem(engine), [OLD_LAST, 2, true]);
   assert.equal((await engine.getRunSummary('ws-old')).credits, 2);
+  assert.deepEqual(stat(stored), before);
+  engine.stop();
+});
+
+/** Rewrites the stored summary as 0.9.3 saved it: no rules and no done count. */
+function writeOldRulesSummary(stored) {
+  const old = readSummary(stored);
+  delete old.rules;
+  delete old.children.done;
+  writeFileSync(stored, `${JSON.stringify(old, null, 2)}\n`);
+}
+
+test('a summary saved under older rules is rebuilt from complete logs', async () => {
+  const { stored, reopen } = await storedOldRun();
+  writeOldRulesSummary(stored);
+  const engine = reopen();
+  await engine.refresh();
+  assert.deepEqual(await oldItem(engine), [OLD_LAST, 1, false], 'listed from the listing until it is rebuilt');
+  assert.equal((await engine.getRunSummary('ws-old')).rules, SUMMARY_RULES);
+  assert.deepEqual([readSummary(stored).rules, readSummary(stored).children.done], [SUMMARY_RULES, 0], 'the stored summary is replaced');
+  assert.deepEqual(await oldItem(engine), [OLD_LAST, 1, true]);
+  engine.stop();
+});
+
+test('a summary saved under older rules is kept while a log of its run is missing', async () => {
+  const { home, stored, reopen } = await storedOldRun();
+  writeOldRulesSummary(stored);
+  rmSync(path.join(home.stateDir, 'cli-old-child', 'events.jsonl'));
+  const before = stat(stored);
+  const engine = reopen();
+  await engine.refresh();
+  assert.deepEqual(await oldItem(engine), [OLD_LAST, 1, true]);
+  assert.equal((await engine.getRunSummary('ws-old')).rules, undefined);
   assert.deepEqual(stat(stored), before);
   engine.stop();
 });

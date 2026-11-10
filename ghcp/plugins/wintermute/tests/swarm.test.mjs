@@ -1406,7 +1406,7 @@ test('the run summary leaves sub-agent units out of its children, units and busy
   assert.deepEqual(validateRunSummary(summary), []);
   const sessions = [snapshot.orchestrator, ...snapshot.units.filter(unit => unit.kind !== 'subagent')];
   assert.equal(summary.busyMs, sessions.reduce((sum, session) => sum + session.busyMs, 0));
-  assert.deepEqual(summary.children, { total: 3, merged: 1, closed: 0, failed: 0, noOutcome: 2 });
+  assert.deepEqual(summary.children, { total: 3, merged: 1, done: 0, closed: 0, failed: 0, noOutcome: 2 });
   assert.deepEqual(summary.units.map(unit => unit.id), ['ws-root', 'ws-api', 'ws-ui', 'ws-docs']);
   assert.equal(summary.subagents, 1 + 3, 'the unit\'s session reviewer, the one-off sub-agent and its two nested ones');
   assert.deepEqual(summary.subagentTypes.map(entry => [entry.type, entry.runs, entry.credits]).sort(), [['code-review', 1, 5], ['explore', 2, 25], ['general-purpose', 1, 20]]);

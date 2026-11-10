@@ -15,6 +15,11 @@ export const NANO_AIU_PER_CREDIT = 1e9;
  * written from session-store.db, which counted a resumed session's calls again, so the engine rebuilds it (see isStale).
  */
 export const COST_SOURCE = 'events';
+/**
+ * The rules a run summary was built with. 2 (0.9.4): unit outcome `done`, and reviewers don't own the PR they review
+ * (issue #112). A summary without it, or with a lower one, is rebuilt from complete logs (see isStale).
+ */
+export const SUMMARY_RULES = 2;
 
 export const DISPLAY_STATES = Object.freeze(['busy', 'idle', 'plan', 'question', 'stuck', 'blocked', 'merged', 'archived', 'done']);
 export const STATUS_DETAILS = Object.freeze([
@@ -210,7 +215,7 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  *   tookMs: number|null, busyMs: number|null, credits: number, usd: number, children: number, merged: number|null,
  *   summarized: boolean }} RunListItem  summarized false = cheap entry; getRunSummary() computes the full summary
  * @typedef {{ id: string, label: string, name: string, isOrchestrator: boolean, startedAt: EpochMs, endedAt: EpochMs|null,
- *   busyMs: number, credits: number, outcome: 'merged'|'closed'|'failed'|null, merged: boolean }} RunUnit
+ *   busyMs: number, credits: number, outcome: 'merged'|'closed'|'failed'|'done'|null, merged: boolean }} RunUnit
  * @typedef {object} RunSummary  children, units and busyMs cover the orchestrator and its child sessions only. Every sub-agent, the orchestrator's one-off sub-agents included, is counted once in subagents and subagentTypes.
  * @property {1} schemaVersion
  * @property {string} id
@@ -224,12 +229,13 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  * @property {number} waitingOnUserMs    Union of waits on the user across sessions
  * @property {number} credits
  * @property {number} usd
- * @property {{ total: number, merged: number, closed: number, failed: number, noOutcome: number }} children  noOutcome: still active, or ended with no PR result known
+ * @property {{ total: number, merged: number, done?: number, closed: number, failed: number, noOutcome: number }} children  done: finished work with no PR of its own (absent before 0.9.4); noOutcome: still active, or ended with no PR result known
  * @property {number} subagents
  * @property {RunUnit[]} units           Orchestrator first
  * @property {{ model: string, credits: number, calls: number, apiMs: number }[]} models
  * @property {{ type: string, runs: number, durationMs: number, credits: number }[]} subagentTypes
  * @property {'events'} [costSource]   Absent in summaries written before 0.2.2, from session-store.db
+ * @property {number} [rules]       SUMMARY_RULES when it was built; absent before 0.9.4
  * @property {EpochMs} computedAt
  *
  * @typedef {object} EngineOptions
@@ -400,7 +406,7 @@ export const RUN_SUMMARY_SPEC = Object.freeze({
   schemaVersion: literal(SCHEMA_VERSION), id: is.id, name: is.text, project: PROJECT,
   startedAt: TIME, firstChildAt: OPT_TIME, finishedAt: TIME, tookMs: is.count, busyMs: is.count, waitingOnUserMs: is.count,
   credits: is.number, usd: is.number,
-  children: { total: is.count, merged: is.count, closed: is.count, failed: is.count, noOutcome: is.count },
+  children: { total: is.count, merged: is.count, done: optional(is.count), closed: is.count, failed: is.count, noOutcome: is.count },
   subagents: is.count,
   units: arrayOf({
     id: is.id, label: is.id, name: is.text, isOrchestrator: is.bool, startedAt: TIME, endedAt: OPT_TIME,
@@ -409,6 +415,7 @@ export const RUN_SUMMARY_SPEC = Object.freeze({
   models: arrayOf(MODEL_COST),
   subagentTypes: arrayOf({ type: is.id, runs: is.count, durationMs: is.count, credits: is.number }),
   costSource: optional(literal(COST_SOURCE)),
+  rules: optional(is.count),
   computedAt: TIME,
 });
 

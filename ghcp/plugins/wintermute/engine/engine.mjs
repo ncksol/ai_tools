@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import path from 'node:path';
 import { copilotPaths, resolveThresholds } from './config.mjs';
-import { COST_SOURCE, CREDIT_USD, NANO_AIU_PER_CREDIT } from './schema.mjs';
+import { COST_SOURCE, CREDIT_USD, NANO_AIU_PER_CREDIT, SUMMARY_RULES } from './schema.mjs';
 import { SqliteUnavailableError, createSqliteReader, loadNodeSqlite } from './sqlite.mjs';
 import { readAppDb } from './readers/app-db.mjs';
 import { createTail, fileStamp, lastWorkTime, readNewLines } from './readers/events.mjs';
@@ -48,11 +48,12 @@ function summaryDigest(summary) {
  * resumed and finished again while no engine ran. Both credit values are rounded to 0.1. Lower cost alone is not stale: logs
  * can be cleaned up, and the stored summary is then kept. A run that is not listed (its logs are gone) keeps its stored summary.
  *
- * Complete logs can also correct an older summary downwards: an older cost source (see COST_SOURCE) counted a resumed
- * session's calls again, and a finish time beyond the listing's work time plus the slack can come from app bookkeeping.
- * Both are stale only when `costsComplete` is true, meaning every session's log was read in full on this refresh; incomplete
- * logs keep the last good summary. A finish-time correction also requires that cost has not fallen: `costsComplete` covers
- * only sessions still in the forest, so deleting a child workspace must not replace its saved cost, units and finish time.
+ * Complete logs can also correct an older summary: an older cost source (see COST_SOURCE) counted a resumed session's
+ * calls again, older summary rules (see SUMMARY_RULES) gave outcomes that are wrong today, and a finish time beyond the
+ * listing's work time plus the slack can come from app bookkeeping. Each is stale only when `costsComplete` is true,
+ * meaning every session's log was read in full on this refresh; incomplete logs keep the last good summary. A
+ * finish-time correction also requires that cost has not fallen: `costsComplete` covers only sessions still in the
+ * forest, so deleting a child workspace must not replace its saved cost, units and finish time.
  *
  * `verified` is the stamp of the last check that rebuilt the run (see the engine's `verified` map). When the listing still
  * shows that check's activity time and cost, and the stored summary is the one that check confirmed, nothing is newer: the
@@ -61,9 +62,10 @@ function summaryDigest(summary) {
 function isStale(stored, swarm, verified = null, costsComplete = false) {
   if (!swarm) return false;
   const oldSource = stored.costSource !== COST_SOURCE && costsComplete;
+  const oldRules = (stored.rules ?? 1) < SUMMARY_RULES && costsComplete;
   const olderWork = costsComplete && swarm.credits >= stored.credits
     && stored.finishedAt > swarm.lastActivityAt + STALE_SLACK_MS;
-  if (!(oldSource || olderWork || swarm.credits > stored.credits || swarm.lastActivityAt > stored.finishedAt + STALE_SLACK_MS)) return false;
+  if (!(oldSource || oldRules || olderWork || swarm.credits > stored.credits || swarm.lastActivityAt > stored.finishedAt + STALE_SLACK_MS)) return false;
   return !(verified && swarm.lastActivityAt === verified.lastActivityAt && swarm.credits === verified.credits
     && summaryDigest(stored) === verified.digest);
 }

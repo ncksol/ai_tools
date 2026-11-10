@@ -1,6 +1,6 @@
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { COST_SOURCE, SCHEMA_VERSION, validateRunSummary } from '../schema.mjs';
+import { COST_SOURCE, SCHEMA_VERSION, SUMMARY_RULES, validateRunSummary } from '../schema.mjs';
 import { getRunStats } from './run-stats.mjs';
 
 const ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
@@ -72,6 +72,7 @@ export function summarizeRun(snapshot, { computedAt }) {
     children: {
       total: units.length,
       merged: count(unit => unit.outcome === 'merged'),
+      done: count(unit => unit.outcome === 'done'),
       closed: count(unit => unit.outcome === 'closed'),
       failed: count(unit => unit.outcome === 'failed'),
       noOutcome: count(unit => unit.outcome === null),
@@ -89,6 +90,7 @@ export function summarizeRun(snapshot, { computedAt }) {
     ],
     models: snapshot.cost.byModel.map(entry => ({ model: entry.model, credits: entry.credits, calls: entry.calls, apiMs: entry.apiMs })),
     costSource: COST_SOURCE,
+    rules: SUMMARY_RULES,
     subagentTypes: [...types.values()].sort((a, b) => b.credits - a.credits),
     computedAt,
   };
