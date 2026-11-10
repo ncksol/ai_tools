@@ -6,6 +6,12 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace still follows main. See [Releases](README.md#releases) for prerequisites, checks and recovery after a partial publish.
 
+## 0.9.2 — 2026-11-10
+
+### Fixed
+
+- Swarms with no active units no longer show a false stall or add a false "waiting on you" item (#108). Stall detection and Cards share the same finished-unit rules; open questions and plans still require attention.
+
 ## 0.9.1 — 2026-11-09
 
 ### Fixed

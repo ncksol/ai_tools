@@ -12,6 +12,7 @@ import { LIMITS } from '../engine/model/state-utils.mjs';
 import { HOUR, MINUTE } from '../engine/time.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { fold } from './helpers/fold.mjs';
+import { cardZones, waitingOnYou } from '../ui/model.mjs';
 
 const T0 = Date.UTC(2026, 9, 15, 8, 0, 0);
 const at = minutes => T0 + minutes * MINUTE;
@@ -1084,6 +1085,104 @@ function quietSwarm(build, now) {
   data.app.automations = [];
   return { data, ids };
 }
+
+function finishedUnitSwarm({ outcome = null, archived = false, alive = true, stopped = false, report = 'complete', wait = null, prState = null, replied = false } = {}) {
+  const { data } = quietSwarm(() => {}, at(120));
+  const rows = data.sessionDbs.get('cli-root').children;
+  rows.find(row => row.unit === 'api').outcome = 'merged';
+  const row = rows.find(row => row.unit === 'ui');
+  row.outcome = outcome;
+  if (prState) Object.assign(row, { pr_provider: 'ado', pr_repo: 'org/project/repo', pr_id: 4713 });
+  if (archived) data.forest.nodes.get('ws-ui').archivedAt = at(113);
+  const ui = new EventLog(at(6));
+  ui.start(); ui.turnStart(); ui.at(at(110));
+  ui.report('ws-root', `swarm-status: ${report} unit=ui\nSummary: UI report.`, 'handoff');
+  ui.at(at(111)); ui.turnEnd();
+  if (replied) {
+    ui.at(at(112));
+    ui.crossSession({ fromSessionId: 'ws-root', content: 'Please continue.' });
+  }
+  if (wait) {
+    ui.at(at(112)); ui.turnStart();
+    if (wait === 'plan') ui.plan('Approve the UI plan.');
+    else ui.ask('Which UI option?');
+  }
+  if (stopped) { ui.at(at(113)); ui.shutdown(); }
+  data.states.set('cli-ui', fold(ui, 'cli-ui'));
+  data.alive.set('cli-ui', alive);
+  const originalLookup = data.prInfo;
+  data.prInfo = (pr, options) => pr.id === 4713
+    ? { state: prState, title: 'UI', openedAt: at(109), mergedAt: null, closedAt: null, reviewNote: null, url: null, checkedAt: at(115), error: null }
+    : originalLookup(pr, options);
+  return data;
+}
+
+for (const [name, options, detail] of [
+  ['stopped', { alive: false, stopped: true }, 'stopped'],
+  ['crashed', { alive: false }, 'crashed'],
+  ['failed', { outcome: 'failed' }, 'failed'],
+  ['merged', { outcome: 'merged' }, 'merged'],
+  ['archived', { archived: true }, 'archived'],
+  ['archived failed', { archived: true, outcome: 'failed' }, 'failed'],
+  ['closed without a PR', { outcome: 'closed', report: 'progress' }, 'idle'],
+  ['closed PR', { prState: 'closed', report: 'progress' }, 'idle'],
+  ['idle complete without a PR', {}, 'idle'],
+]) {
+  test(`a swarm with only finished units does not stall: ${name}`, () => {
+    const snapshot = buildSnapshot(finishedUnitSwarm(options));
+    assert.deepEqual(validateSnapshot(snapshot), []);
+    assert.equal(snapshot.orchestrator.statusDetail, 'idle');
+    assert.equal(snapshot.run.lifecycle, 'live');
+    assert.equal(snapshot.units.find(unit => unit.id === 'ws-ui').statusDetail, detail);
+    assert.equal(cardZones(snapshot).active.length, 0);
+    assert.equal(snapshot.run.stalled, null);
+    assert.equal(waitingOnYou(snapshot).count, 0);
+  });
+}
+
+test('an unfinished idle unit with a progress report still stalls the swarm', () => {
+  const snapshot = buildSnapshot(finishedUnitSwarm({ report: 'progress' }));
+  assert.equal(snapshot.units.find(unit => unit.id === 'ws-ui').statusDetail, 'idle');
+  assert.deepEqual(cardZones(snapshot).active.map(unit => unit.id), ['ws-ui']);
+  assert.ok(snapshot.run.stalled);
+  assert.equal(waitingOnYou(snapshot).count, 1);
+});
+
+for (const prState of ['open', 'draft', 'unknown']) {
+  test(`an idle unit awaiting review of a ${prState} PR remains active without stalling`, () => {
+    const snapshot = buildSnapshot(finishedUnitSwarm({ prState }));
+    assert.deepEqual(cardZones(snapshot).active.map(unit => unit.id), ['ws-ui']);
+    assert.equal(snapshot.run.stalled, null);
+    assert.equal(waitingOnYou(snapshot).count, 0);
+    const replied = buildSnapshot(finishedUnitSwarm({ prState, replied: true }));
+    assert.ok(replied.run.stalled, 'a later parent reply removes the review exemption');
+  });
+}
+
+for (const wait of ['question', 'plan']) {
+  for (const outcome of [null, 'failed']) {
+    test(`a unit's open ${wait} prevents a stall${outcome ? ' even when its outcome is failed' : ''}`, () => {
+      const snapshot = buildSnapshot(finishedUnitSwarm({ wait, outcome }));
+      assert.equal(snapshot.units.find(unit => unit.id === 'ws-ui').statusDetail, outcome ?? `waiting_${wait}`);
+      assert.deepEqual(cardZones(snapshot).active.map(unit => unit.id), ['ws-ui']);
+      assert.equal(snapshot.needs.length, 1);
+      assert.equal(snapshot.run.stalled, null);
+      assert.equal(waitingOnYou(snapshot).count, 1);
+    });
+  }
+}
+
+test('an idle orchestrator without child units does not stall', () => {
+  const data = finishedUnitSwarm();
+  data.app.workspaces = new Map([['ws-root', data.app.workspaces.get('ws-root')]]);
+  data.app.aliases = data.app.aliases.filter(alias => alias.workspaceId === 'ws-root');
+  data.app.parentLinks = [];
+  data.forest = buildForest(data.app);
+  const snapshot = buildSnapshot(data);
+  assert.equal(snapshot.units.length, 0);
+  assert.equal(snapshot.run.stalled, null);
+  assert.equal(waitingOnYou(snapshot).count, 0);
+});
 
 test('a run whose only activity is a silent resumed sub-agent stays live, and finishes once it is not', () => {
   const build = resumed => root => {
