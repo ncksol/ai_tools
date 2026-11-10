@@ -685,6 +685,49 @@ test('a summary saved under older rules is kept after a later child workspace is
   }
 });
 
+test('a summary saved under older rules is kept after a child workspace with no cost is deleted', async () => {
+  const home = scenario();
+  // Within the stale slack of the run's last event, so the finish-time correction never applies: only the child count can keep the summary.
+  const finishedAt = OLD_LAST + 30_000;
+  home.workspace({
+    id: 'ws-old-later', name: 'Later child', createdAt: OLD_LAST, sessionId: 'cli-old-later',
+    parentId: 'ws-old', creatorSessionId: 'cli-old',
+  });
+  const later = new EventLog(OLD_LAST);
+  later.start(); later.turnStart(); later.at(finishedAt); later.turnEnd();
+  home.writeEvents('cli-old-later', later.events);
+  home.usage([{ sessionId: 'cli-old', nanoAiu: 1e9, createdAt: OLD_LAST - 30_000 }]);
+  const historyDir = path.join(tempDir('swarm-engine-'), 'history');
+  const stored = path.join(historyDir, 'runs', 'ws-old.json');
+  const reopen = () => createSwarmEngine({ copilotHome: home.root, historyDir, now: () => at(0), processProbe: alwaysAlive, prLookup: 'off' });
+  const first = reopen();
+  try {
+    const summary = await first.getRunSummary('ws-old');
+    assert.deepEqual([summary.credits, summary.children.total, summary.finishedAt], [1, 2, finishedAt]);
+  } finally {
+    first.stop();
+  }
+  writeOldRulesSummary(stored);
+  const before = stat(stored);
+  execSql(home.dataDb, `
+    DELETE FROM workspace_parent_links WHERE child_workspace_id = 'ws-old-later';
+    DELETE FROM workspace_session_aliases WHERE workspace_id = 'ws-old-later';
+    DELETE FROM workspaces WHERE id = 'ws-old-later';
+    DELETE FROM sessions WHERE id = 'cli-old-later';`);
+  const engine = reopen();
+  try {
+    await engine.refresh();
+    const listed = engine.listSwarms().find(swarm => swarm.id === 'ws-old');
+    assert.deepEqual([listed.credits, listed.units, listed.lastActivityAt], [1, 1, OLD_LAST], 'cost has not fallen, so only the child count keeps the summary');
+    assert.deepEqual(await oldItem(engine), [finishedAt, 1, true]);
+    const summary = await engine.getRunSummary('ws-old');
+    assert.deepEqual([summary.rules, summary.children.total, summary.credits, summary.finishedAt], [undefined, 2, 1, finishedAt]);
+    assert.deepEqual(stat(stored), before, 'a smaller forest never overwrites a summary saved under older rules');
+  } finally {
+    engine.stop();
+  }
+});
+
 test('a cold refresh with a child\'s log missing never replaces the stored summary with the partial cost', async () => {
   const home = scenario();
   home.usage([

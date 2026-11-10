@@ -5,7 +5,7 @@ import { UNIT_LABEL_RE, normaliseRegistry, parseQuestionTag, parseReportBody, pa
 import { descendants, resolveNodeId } from './forest.mjs';
 import { setRunStats } from './run-stats.mjs';
 import { effortOf, mergeStates } from './session-state.mjs';
-import { deriveMonitor, deriveStage, hostOf, mentionFits, prView, registryPrs, resolveOutcome, resolvePr, splitReviewed } from './stage.mjs';
+import { deriveMonitor, deriveStage, hostOf, mentionFits, otherOwner, prView, registryPrs, resolveOutcome, resolvePr, splitReviewed } from './stage.mjs';
 import { ACTIVE_DETAILS, AWAITING_REVIEW, awaitingReview, displayOf, evaluateStatus, evaluateSubagentUnit, subagentLimitMs, swarmStalled, toolLimitMs, toolView } from './status.mjs';
 import { isArchived, isFinished } from '../../shared/unit-state.mjs';
 
@@ -396,7 +396,7 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
   const { own, reviewedPr } = splitReviewed(statusLines, registry.prs, row, host);
   const identity = resolvePr({
     registry: row, statusLines: own, createdPr: node.createdPr, mentions: c.all.prMentions, host,
-    accepts: candidate => mentionFits(lookup(candidate), { startedAt, branch }),
+    accepts: candidate => !otherOwner(registry.prs, candidate, row) && mentionFits(lookup(candidate), { startedAt, branch }),
   });
   const pr = identity ? prView(identity, lookup(identity), node.createdPr) : null;
   const automations = input.app.automations.filter(item => c.ids.has(item.sessionId));

@@ -503,6 +503,27 @@ test('a unit whose status line names another unit\'s registry PR reviews it: pr 
   assert.deepEqual([api.pr.id, api.pr.source, api.reviewedPr], [4711, 'registry', null]);
 });
 
+test('a reviewer with no registry row never takes the reviewed PR from its mentions, even before the lookup answers', () => {
+  const data = input(true);
+  const ui = new EventLog(at(6));
+  ui.start(); ui.turnStart(); ui.at(at(100));
+  ui.report('ws-root', 'swarm-status: complete unit=ui pr=ado:4711\nSummary: Reviewed PR !4711 and PR !4711 is ready to merge.', 'handoff');
+  ui.at(at(101)); ui.turnEnd();
+  data.states.set('cli-ui', fold(ui, 'cli-ui'));
+  data.workspaceFiles.set('cli-ui', { cwd: '/synthetic/worktrees/ui', branch: 'feature/ui', hostType: 'ado', repository: 'org/project/repo' });
+  const db = data.sessionDbs.get('cli-root');
+  db.children = db.children.filter(item => item.unit !== 'ui');
+  const lookup = data.prInfo;
+  data.prInfo = (pr, options) => (pr.provider === 'ado' && pr.id === 4711 ? null : lookup(pr, options));
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  const reviewer = snapshot.units.find(unit => unit.id === 'ws-ui');
+  assert.equal(reviewer.pr, null);
+  assert.equal(reviewer.reviewedPr?.id, 4711);
+  const api = snapshot.units.find(unit => unit.id === 'ws-api');
+  assert.deepEqual([api.pr.id, api.reviewedPr], [4711, null]);
+});
+
 test('a status-line PR that no other unit records stays the unit\'s own PR', () => {
   const ui = uiOf(reportsPr('ado:4999'));
   assert.deepEqual([ui.pr.id, ui.pr.source, ui.reviewedPr], [4999, 'status_line', null]);

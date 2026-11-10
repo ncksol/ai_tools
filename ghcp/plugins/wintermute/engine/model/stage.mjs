@@ -37,19 +37,24 @@ export function registryPrs(rows) {
 }
 
 /**
+ * The registry row of another unit that records `pr`, or null. A PR that the unit's own `row` records is its own; a unit with
+ * no row (`row` null) has no PR in the registry, so any row that records `pr` is another unit's.
+ */
+export function otherOwner(prs, pr, row = null) {
+  const rows = pr ? prs.get(prKey(pr)) ?? [] : [];
+  return rows.includes(row) ? null : rows[0] ?? null;
+}
+
+/**
  * Issue #112: a status line that names a PR the registry records for another unit names the PR this unit reviews, not its
  * own. `own` keeps the other lines, latest first. `reviewedPr` is the latest such PR, with the owner's repository and URL,
  * else null. A PR that no other unit records stays in `own`, and so does one that the unit's own row records.
  */
 export function splitReviewed(statusLines, prs, row = null, host = null) {
-  const ownerOf = item => {
-    const rows = item.pr ? prs.get(prKey(item.pr)) ?? [] : [];
-    return rows.includes(row) ? null : rows[0] ?? null;
-  };
   const own = [];
   let reviewedPr = null;
   for (const item of statusLines) {
-    const owner = ownerOf(item);
+    const owner = otherOwner(prs, item.pr, row);
     if (!owner) own.push(item);
     else if (!reviewedPr) reviewedPr = { provider: owner.prProvider, id: owner.prId, repo: registryRepo(owner, host), url: owner.prUrl ?? null };
   }
