@@ -69,7 +69,7 @@ It opens as a canvas in the app's side panel, or in any browser through a small 
 - Timeline: each session's busy, idle and waiting time over the last hours or the whole run, with cost over time. The orchestrator's one-off sub-agents have their own lanes right under it, for those active in the chosen window.
 - Plan and Board: the planned units and what each waits on, and every unit by stage, from planned to archived, with the orchestrator's sub-agents in a column of their own.
 - Detail panel: one unit's current activity, why it counts as stuck or waiting, its latest report, sub-agents, PR and monitor (for a sub-agent: its type, mode and effort), and recent activity. The monitor shows a scheduled automation on the unit, if there is one; agents no longer start PR monitors, so an open PR without one shows "no monitor", which is normal. Only a configured schedule that is overdue shows as missing.
-- History: finished runs with their duration, cost and outcomes, and a summary of each run. Saved finish times that included app bookkeeping are corrected when complete logs are available and the run's cost has not fallen. Missing logs or a lower listed cost after a child workspace is deleted keep the saved summary.
+- History: finished runs with their duration, cost and outcomes, and a summary of each run. Saved finish times that included app bookkeeping are corrected when complete logs are available and the run's cost has not fallen. Missing logs or a lower listed cost after a child workspace is deleted keep the saved summary. Summaries saved before 0.9.4 are rebuilt with the new outcomes when their logs can be read and the run has lost no cost or child sessions since.
 
 ## Open the dashboard
 

@@ -11,8 +11,8 @@ After merging, run `npm run release:publish -- --dry-run`, then `npm run release
 ### Fixed
 
 - Finished reviewers, claims checks, research and one-off jobs read as "done", not "closed" or "closed, not merged" (#112). A registry `closed` unit with no PR of its own and a complete latest report gets the new outcome `done`: "done" in Finished, even when it stopped, and "Done" in Plan. History counts it apart from closed units and doesn't mark it in peach. Other closed units read "closed, not merged" with a PR of their own and "closed" without one, in Plan too.
-- A unit no longer owns a PR that its status lines name when the registry records that PR for another unit, as a reviewer's do. Its `pr` is empty, the new snapshot field `reviewedPr` holds the PR, and its card and details say "reviews PR #…". It no longer counts as in review. A status-line PR that no other unit records is still the unit's own.
-- Run summaries record the rules they were built with. Summaries saved before 0.9.4 are rebuilt when every log of the run can be read and the run has lost no cost or child sessions since; the others are kept as they are.
+- A unit no longer owns a PR that its status lines name when the registry records that PR for another unit, as a reviewer's do. The dashboard doesn't take that PR as the unit's own `pr`, even when its reports mention it. The new snapshot field `reviewedPr` holds it, and when the unit has no PR of its own, its card and details say "reviews PR #…" and it no longer counts as in review. A status-line PR that no other unit records is still the unit's own.
+- Run summaries record the rules they were built with. Summaries saved before 0.9.4 are rebuilt when every log of the run can be read and the run has lost no cost or child sessions since; the others are kept as they are. Until you open such a run in History, its row shows "—" for busy time and merged count; opening it rebuilds the summary. Dashboards older than 0.9.4 can't read summaries that 0.9.4 saves, so don't go back to an older version after you update.
 
 ## 0.9.3 — 2026-11-10
 
