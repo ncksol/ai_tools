@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   BOARD_STAGES, REPORT_CLASS, REPORT_LABELS, STATE_LINES, UNIT_STAGES, activeSubagents, archivedUnits, askingIds, boardColumns, cardZones, closedNotMerged, countTiles, effortOf, feedText,
   findByLabel, findPlanned, finishedOutcome, flattenPlan, foldFooter, isDone, isFinished, isSubagent, needItems, needMark, nowLine, omittedSubagents, orchestratorView, planForest, planLayout,
-  prWords, progressPercent, reportKind, reportTitle, runClockEnd, runEnd, sharePercent, shortModel, stateLine, stateWords, unitClockEnd, unitEnd, waitingOnYou, withoutStatusPrefix,
+  prWords, progressPercent, reportKind, reportTitle, reviewsWords, runClockEnd, runEnd, sharePercent, shortModel, stateLine, stateWords, unitClockEnd, unitEnd, waitingOnYou, withoutStatusPrefix,
 } from '../ui/model.mjs';
 import { createDemoEngine } from '../server/demo-engine.mjs';
 import { DEFAULT_THRESHOLDS } from '../engine/config.mjs';
@@ -53,6 +53,7 @@ test('a unit is finished once its work has ended: stopped, merged, done, failed,
   assert.equal(isFinished(unitWith({ status: 'done', statusDetail: 'idle', report: null }), none), true, 'status done');
   assert.equal(isFinished(unitWith({ report: null, closedWithoutMerge: true, outcome: 'closed' }), none), true, 'closed without a PR');
   assert.equal(isFinished(unitWith({ report: null, closedWithoutMerge: true, pr: { id: 1, state: 'closed' } }), none), true, 'PR closed');
+  assert.equal(isFinished(unitWith({ status: 'busy', statusDetail: 'busy', outcome: 'done' }), none), true, 'done, like closed, even if it turned busy');
   for (const [status, statusDetail] of [['busy', 'busy'], ['stuck', 'silent'], ['question', 'waiting_question'], ['plan', 'waiting_plan'], ['blocked', 'blocked'], ['blocked', 'blocked_on_orchestrator'], ['idle', 'idle']]) {
     assert.equal(isFinished(unitWith({ status, statusDetail, report: null }), none), false, statusDetail);
   }
@@ -104,6 +105,9 @@ test('a finished unit reads its outcome and age, with a green, red or grey tone;
   assert.deepEqual(outcome({ status: 'blocked', statusDetail: 'cancelled' }), ['cancelled {a}', 'off']);
   assert.deepEqual(outcome({ closedWithoutMerge: true, outcome: 'closed' }), ['closed {a}', 'off']);
   assert.deepEqual(outcome({ closedWithoutMerge: true, outcome: 'closed', pr: { id: 9, state: 'closed' } }), ['closed, not merged {a}', 'off']);
+  assert.deepEqual(outcome({ outcome: 'done' }), ['done {a}', 'ok']);
+  assert.deepEqual(outcome({ outcome: 'done', status: 'idle', statusDetail: 'stopped', report: null }), ['done {a}', 'ok'], 'a stopped unit that finished its work');
+  assert.equal(finishedOutcome(unitWith({ outcome: 'done', statusDetail: 'stopped', endedAt: NOW - 5000 })).at, NOW - 5000);
   assert.equal(finishedOutcome(unitWith({})).at, NOW - 120000, 'the done rule dates from the complete report');
   assert.equal(finishedOutcome(unitWith({ status: 'done', statusDetail: 'completed', endedAt: NOW - 5000 })).at, NOW - 5000);
   assert.equal(finishedOutcome(unitWith({ status: 'blocked', statusDetail: 'crashed' })).at, NOW - 60000, 'no end: the start of its state');
@@ -578,4 +582,8 @@ test('a replied question or blocker reads as a neutral "question" or "blocker"; 
     assert.equal(REPORT_LABELS[kind], label, name);
     assert.equal(REPORT_CLASS[kind], cls, name);
   }
+});
+
+test('a reviewed PR reads "reviews PR #<id>"', () => {
+  assert.equal(reviewsWords({ provider: 'github', id: 10887, repo: null, url: null }), 'reviews PR #10887');
 });

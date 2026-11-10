@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { validateRunSummary } from '../engine/schema.mjs';
+import { SUMMARY_RULES, validateRunSummary } from '../engine/schema.mjs';
 import { createHistoryStore, listItemOf, summarizeRun } from '../engine/model/history.mjs';
 import { tempDir } from './helpers/temp.mjs';
 
@@ -19,7 +19,7 @@ test('a run summary answers time and cost first, by unit, model and sub-agent ty
   const sessionUnits = snapshot.units.filter(unit => unit.kind !== 'subagent');
   assert.equal(summary.busyMs, [snapshot.orchestrator, ...sessionUnits].reduce((sum, session) => sum + session.busyMs, 0));
   assert.equal(summary.waitingOnUserMs, 2_220_000);
-  assert.deepEqual(summary.children, { total: 7, merged: 2, closed: 0, failed: 0, noOutcome: 5 });
+  assert.deepEqual(summary.children, { total: 7, merged: 2, done: 0, closed: 0, failed: 0, noOutcome: 5 });
   assert.equal(summary.units.length, 1 + sessionUnits.length, 'sub-agent units are not listed as run units');
   assert.equal(summary.subagents, 10, 'every sub-agent chip counts once, the orchestrator\'s one-off sub-agents included');
   assert.deepEqual(summary.units[0], {
@@ -73,4 +73,21 @@ test('the history store writes atomically, lists newest first and skips bad file
 
 test('an empty history folder lists nothing', async () => {
   assert.deepEqual(await createHistoryStore(path.join(tempDir('swarm-history-'), 'none')).list(), []);
+});
+
+test('a run summary counts done units apart from closed ones and records its rules', () => {
+  const snapshot = fixture('example-snapshot.json');
+  Object.assign(snapshot.units.find(item => item.label === 'D5'), { pr: null, outcome: 'done', closedWithoutMerge: false });
+  const summary = summarizeRun(snapshot, { computedAt: COMPUTED });
+  assert.deepEqual(validateRunSummary(summary), []);
+  assert.deepEqual(summary.children, { total: 7, merged: 2, done: 1, closed: 0, failed: 0, noOutcome: 4 });
+  assert.equal(summary.rules, SUMMARY_RULES);
+  assert.equal(summary.units.find(item => item.label === 'D5').outcome, 'done');
+});
+
+test('a summary saved before done existed still validates', () => {
+  const old = summarizeRun(fixture('example-snapshot.json'), { computedAt: COMPUTED });
+  delete old.children.done;
+  delete old.rules;
+  assert.deepEqual(validateRunSummary(old), []);
 });

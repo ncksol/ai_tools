@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { boardHtml, planFits, planGraphHtml, planListHtml, planSize } from '../ui/plan.mjs';
-import { NOW, closedSnapshot, context, deepFreeze, exampleSnapshot } from './helpers/ui.mjs';
+import { NOW, closedSnapshot, context, deepFreeze, doneSnapshot, exampleSnapshot } from './helpers/ui.mjs';
 
 const text = html => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 const node = (html, label) => html.split(/<(?:div|li) class="(?:pn|pl-row) /).find(part => part.includes(`<span class="tx">${label} `));
@@ -143,4 +143,14 @@ test('neither the plan graph nor the plan list shows sub-agent units', () => {
     for (const label of SUB_LABELS) assert.ok(!html.includes(label), label);
     assert.doesNotMatch(html, /call-root-/);
   }
+});
+
+test('the plan says Done for a unit that finished its work, and closed for a closed unit with no PR', () => {
+  const done = doneSnapshot();
+  assert.match(node(planGraphHtml(done, NOW), 'D5'), /<div class="pn-2">Done<\/div>/);
+  assert.match(node(planListHtml(done, NOW), 'D5'), /<div class="pn-2">Done · on B0<\/div>/);
+  assert.doesNotMatch(boardHtml(context(done)), /closed, not merged/);
+  const closed = closedSnapshot();
+  closed.units.find(unit => unit.label === 'D5').pr = null;
+  assert.match(node(planGraphHtml(closed, NOW), 'D5'), /<div class="pn-2"><span class="pr-closed">closed<\/span><\/div>/);
 });

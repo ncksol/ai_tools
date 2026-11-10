@@ -78,7 +78,7 @@ export function runHtml(run) {
     + `<div class="kv"><span class="k">Cost</span><span class="v l">${costHtml(run.credits, true)}</span><span class="small muted">orchestrator, ${plural(run.children.total, 'child', 'children')} and ${plural(run.subagents, 'sub-agent')}</span></div></div>`
     + `<div class="run-sub"><div class="kv"><span class="k">Agent busy time</span><span class="v">${dur(run.busyMs, 'hm')}</span></div>`
     + `<div class="kv"><span class="k">Waiting on you</span><span class="v">${dur(run.waitingOnUserMs, 'hm')}</span></div>`
-    + `<div class="kv"><span class="k">Children</span><span class="v">${count(run.children.total)}, ${count(run.children.merged)} merged</span></div>`
+    + `<div class="kv"><span class="k">Children</span><span class="v">${count(run.children.total)}, ${count(run.children.merged)} merged${run.children.done ? `, ${count(run.children.done)} done` : ''}</span></div>`
     + `<div class="kv"><span class="k">Sub-agents</span><span class="v">${count(run.subagents)}</span></div>`
     + `<div class="kv"><span class="k">First child</span><span class="v">${firstChild}</span></div></div></div>`
     + `<section class="sec"><h3>Time by unit</h3><p>Light bar: start to finish. Dark line: total busy time, drawn from the start. Peach: closed without merging or failed.</p>${axis}<div class="gantt">${gantt}</div></section>`

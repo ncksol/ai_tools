@@ -24,5 +24,6 @@ export const isDone = unit => unit.status === 'idle' && unit.report?.status === 
 /** A unit that goes to the Finished section, unless it has an open question or plan of its own (`asking`). */
 export function isFinished(unit, asking) {
   if (asking.has(unit.id)) return false;
-  return FINISHED_DETAILS.has(unit.statusDetail) || unit.status === 'merged' || unit.status === 'done' || closedNotMerged(unit) || isDone(unit);
+  return FINISHED_DETAILS.has(unit.statusDetail) || unit.status === 'merged' || unit.status === 'done' || unit.outcome === 'done'
+    || closedNotMerged(unit) || isDone(unit);
 }

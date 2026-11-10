@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULT_THRESHOLDS } from '../engine/config.mjs';
-import { MENTION_CANDIDATES, deriveMonitor, deriveStage, hostOf, mentionFits, prView, resolvePr } from '../engine/model/stage.mjs';
+import { MENTION_CANDIDATES, deriveMonitor, deriveStage, hostOf, mentionFits, otherOwner, prView, registryPrs, resolveOutcome, resolvePr, splitReviewed } from '../engine/model/stage.mjs';
 import { MINUTE } from '../engine/time.mjs';
 
 const T0 = Date.UTC(2026, 9, 15, 8, 0, 0);
@@ -139,4 +139,35 @@ test('a PR closed without merge ends its monitor, with no stage change', () => {
   assert.deepEqual(deriveMonitor({ ...base, stage: 'in_review', closedWithoutMerge: true, automations: [row] }).nextCheckAt, null);
   assert.equal(deriveMonitor({ ...base, stage: 'coding', hasPr: false, closedWithoutMerge: true }).state, 'none');
   assert.equal(deriveMonitor({ ...base, stage: 'pr_open', closedWithoutMerge: false }).state, 'none');
+});
+
+test('a status-line PR that the registry records for another unit is the PR this unit reviews (issue #112)', () => {
+  const host = { provider: 'ado', repo: 'org/project/repo' };
+  const owner = { unit: 'api', prProvider: 'ado', prId: 4711, prRepo: 'org/project/repo', prUrl: 'https://dev.azure.com/org/project/_git/repo/pullrequest/4711' };
+  const self = { unit: 'ui', prProvider: null, prId: null, prRepo: null, prUrl: null };
+  const prs = registryPrs([owner, self]);
+  const lines = [{ at: T0 + 2, pr: { provider: 'ado', id: 4711 } }, { at: T0 + 1, pr: { provider: 'ado', id: 9 } }, { at: T0, pr: null }];
+  const { own, reviewedPr } = splitReviewed(lines, prs, self, host);
+  assert.deepEqual(own, lines.slice(1));
+  assert.deepEqual(reviewedPr, { provider: 'ado', id: 4711, repo: 'org/project/repo', url: owner.prUrl });
+  assert.equal(resolvePr({ registry: self, statusLines: own, host }).id, 9, 'the next status line is its own PR');
+  assert.deepEqual(splitReviewed(lines, prs, owner, host), { own: lines, reviewedPr: null }, 'the owner keeps its own PR');
+  assert.equal(splitReviewed(lines, prs, null, host).reviewedPr.id, 4711, 'a unit with no registry row reviews it too');
+  assert.deepEqual(splitReviewed(lines, registryPrs([]), self, host), { own: lines, reviewedPr: null }, 'a PR no unit records stays its own');
+  assert.equal(otherOwner(prs, { provider: 'ado', id: 4711 }, null), owner, 'for a unit with no registry row, any row that records the PR owns it');
+  assert.equal(otherOwner(prs, { provider: 'ado', id: 4711 }, owner), null);
+  assert.equal(otherOwner(prs, { provider: 'github', id: 4711 }, null), null, 'the provider is part of the PR');
+  assert.equal(otherOwner(prs, null, null), null);
+});
+
+test('a registry closed unit with no PR of its own and a complete latest report is done', () => {
+  const complete = { status: 'complete' };
+  assert.equal(resolveOutcome('closed', { pr: null, report: complete }), 'done');
+  assert.equal(resolveOutcome('closed', { pr: { id: 9 }, report: complete }), 'closed');
+  for (const report of [null, { status: 'progress' }, { status: 'blocked' }, { status: 'needs_input' }]) {
+    assert.equal(resolveOutcome('closed', { pr: null, report }), 'closed', report?.status ?? 'no report');
+  }
+  for (const recorded of ['merged', 'failed', null]) assert.equal(resolveOutcome(recorded, { pr: null, report: complete }), recorded);
+  assert.deepEqual(deriveStage({ archivedAt: null, outcome: 'done', pr: null }), { stage: 'coding', merged: false, closedWithoutMerge: false });
+  assert.deepEqual(deriveStage({ archivedAt: T0, outcome: 'done', pr: null }), { stage: 'archived', merged: false, closedWithoutMerge: false });
 });

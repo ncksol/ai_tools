@@ -15,6 +15,11 @@ export const NANO_AIU_PER_CREDIT = 1e9;
  * written from session-store.db, which counted a resumed session's calls again, so the engine rebuilds it (see isStale).
  */
 export const COST_SOURCE = 'events';
+/**
+ * The rules a run summary was built with. 2 (0.9.4): unit outcome `done`, and reviewers don't own the PR they review
+ * (issue #112). A summary without it, or with a lower one, is rebuilt from complete logs (see isStale).
+ */
+export const SUMMARY_RULES = 2;
 
 export const DISPLAY_STATES = Object.freeze(['busy', 'idle', 'plan', 'question', 'stuck', 'blocked', 'merged', 'archived', 'done']);
 export const STATUS_DETAILS = Object.freeze([
@@ -35,7 +40,10 @@ export const MONITOR_STATES = Object.freeze(['none', 'alive', 'missing', 'paused
 export const PR_PROVIDERS = Object.freeze(['ado', 'github']);
 export const PR_STATES = Object.freeze(['draft', 'open', 'merged', 'closed', 'unknown']);
 export const PR_SOURCES = Object.freeze(['registry', 'status_line', 'app', 'heuristic']);
-export const OUTCOMES = Object.freeze(['merged', 'closed', 'failed']);
+/** Outcomes an orchestrator records in its `children` registry (design section 10). */
+export const REGISTRY_OUTCOMES = Object.freeze(['merged', 'closed', 'failed']);
+/** Outcomes a unit shows: the registry's, plus `done`, which the engine infers for a registry `closed` unit that finished its work (issue #112). */
+export const OUTCOMES = Object.freeze([...REGISTRY_OUTCOMES, 'done']);
 export const SEGMENT_STATES = Object.freeze(['busy', 'idle', 'plan', 'question', 'stuck']);
 export const MARK_KINDS = Object.freeze(['report', 'question', 'answer', 'plan-req', 'plan-ok', 'pr-open', 'pr-comment', 'pr-merged', 'archived', 'tool', 'monitor']);
 export const SUBAGENT_STATUSES = Object.freeze(['running', 'completed', 'failed', 'stuck', 'cancelled']);
@@ -114,10 +122,12 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  * @property {FeedItem[]} recent           This session's latest feed items, latest first, at most 6. Taken before the swarm-wide feed is cut to 200, so quiet sessions keep theirs
  *
  * @typedef {SessionView & {
- *   parentId: string, depth: number, stage: string, closedWithoutMerge: boolean, outcome: 'merged'|'closed'|'failed'|null,
- *   pr: PrView|null, monitor: MonitorView, dependsOn: string|null, todoId: string|null,
+ *   parentId: string, depth: number, stage: string, closedWithoutMerge: boolean, outcome: 'merged'|'closed'|'failed'|'done'|null,
+ *   pr: PrView|null, reviewedPr: { provider: 'ado'|'github', id: number, repo: string|null, url: string|null }|null, monitor: MonitorView, dependsOn: string|null, todoId: string|null,
  *   agent: { type: string, mode: 'sync'|'background', effort: string|null }|null }} UnitView
  *   `dependsOn` is the label of the unit or planned entry it stacks on.
+ *   `outcome` 'done': the registry says closed, the unit has no PR of its own and its latest report is complete; closedWithoutMerge is false.
+ *   `reviewedPr`: the PR its status lines name when the registry records that PR for another unit, as a reviewer's do; `pr` never holds it.
  *   `branch` of a session unit is its registry row's branch when set, else the app's.
  *   `agent` is null for session units (kind 'project' or 'chat') and set for sub-agent units (kind 'subagent').
  */
@@ -158,7 +168,7 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  *   recent          its own feed items: started, resumed by a follow-up, finished, failed or cancelled, and its own
  *                   sub-agents
  *   parentId        the orchestrator's id   depth: 1   stage: 'subagent'   closedWithoutMerge: false   outcome: null
- *   pr              null          monitor: { state: 'none', lastCheckAt: null, nextCheckAt: null, everyMinutes: null,
+ *   pr, reviewedPr  null          monitor: { state: 'none', lastCheckAt: null, nextCheckAt: null, everyMinutes: null,
  *                                 since: null }      dependsOn: null      todoId: null
  *   agent           { type, mode, effort }: its agent type, 'sync' or 'background', and its reasoning effort
  * The orchestrator's own fields do not change: its subagents, timeline.subagents and cost still include these
@@ -205,7 +215,7 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  *   tookMs: number|null, busyMs: number|null, credits: number, usd: number, children: number, merged: number|null,
  *   summarized: boolean }} RunListItem  summarized false = cheap entry; getRunSummary() computes the full summary
  * @typedef {{ id: string, label: string, name: string, isOrchestrator: boolean, startedAt: EpochMs, endedAt: EpochMs|null,
- *   busyMs: number, credits: number, outcome: 'merged'|'closed'|'failed'|null, merged: boolean }} RunUnit
+ *   busyMs: number, credits: number, outcome: 'merged'|'closed'|'failed'|'done'|null, merged: boolean }} RunUnit
  * @typedef {object} RunSummary  children, units and busyMs cover the orchestrator and its child sessions only. Every sub-agent, the orchestrator's one-off sub-agents included, is counted once in subagents and subagentTypes.
  * @property {1} schemaVersion
  * @property {string} id
@@ -219,12 +229,13 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  * @property {number} waitingOnUserMs    Union of waits on the user across sessions
  * @property {number} credits
  * @property {number} usd
- * @property {{ total: number, merged: number, closed: number, failed: number, noOutcome: number }} children  noOutcome: still active, or ended with no PR result known
+ * @property {{ total: number, merged: number, done?: number, closed: number, failed: number, noOutcome: number }} children  done: finished work with no PR of its own (absent before 0.9.4); noOutcome: still active, or ended with no PR result known
  * @property {number} subagents
  * @property {RunUnit[]} units           Orchestrator first
  * @property {{ model: string, credits: number, calls: number, apiMs: number }[]} models
  * @property {{ type: string, runs: number, durationMs: number, credits: number }[]} subagentTypes
  * @property {'events'} [costSource]   Absent in summaries written before 0.2.2, from session-store.db
+ * @property {number} [rules]       SUMMARY_RULES when it was built; absent before 0.9.4
  * @property {EpochMs} computedAt
  *
  * @typedef {object} EngineOptions
@@ -359,6 +370,7 @@ const UNIT = {
   ...SESSION,
   parentId: is.id, depth: is.count, stage: oneOf(STAGES), closedWithoutMerge: is.bool, outcome: nullable(oneOf(OUTCOMES)),
   pr: nullable(PR),
+  reviewedPr: nullable({ provider: oneOf(PR_PROVIDERS), id: is.count, repo: OPT_TEXT, url: OPT_TEXT }),
   monitor: { state: oneOf(MONITOR_STATES), lastCheckAt: OPT_TIME, nextCheckAt: OPT_TIME, everyMinutes: nullable(is.count), since: OPT_TIME },
   dependsOn: OPT_TEXT, todoId: OPT_TEXT,
   agent: nullable({ type: is.id, mode: oneOf(SUBAGENT_MODES), effort: OPT_TEXT }),
@@ -394,7 +406,7 @@ export const RUN_SUMMARY_SPEC = Object.freeze({
   schemaVersion: literal(SCHEMA_VERSION), id: is.id, name: is.text, project: PROJECT,
   startedAt: TIME, firstChildAt: OPT_TIME, finishedAt: TIME, tookMs: is.count, busyMs: is.count, waitingOnUserMs: is.count,
   credits: is.number, usd: is.number,
-  children: { total: is.count, merged: is.count, closed: is.count, failed: is.count, noOutcome: is.count },
+  children: { total: is.count, merged: is.count, done: optional(is.count), closed: is.count, failed: is.count, noOutcome: is.count },
   subagents: is.count,
   units: arrayOf({
     id: is.id, label: is.id, name: is.text, isOrchestrator: is.bool, startedAt: TIME, endedAt: OPT_TIME,
@@ -403,6 +415,7 @@ export const RUN_SUMMARY_SPEC = Object.freeze({
   models: arrayOf(MODEL_COST),
   subagentTypes: arrayOf({ type: is.id, runs: is.count, durationMs: is.count, credits: is.number }),
   costSource: optional(literal(COST_SOURCE)),
+  rules: optional(is.count),
   computedAt: TIME,
 });
 

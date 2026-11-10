@@ -137,7 +137,7 @@ test('the stress scenario is valid and covers every status, a stalled and quiet 
   // The orchestrator's sub-agents: 30 units after every session unit, oldest first, and the orchestrator's view of them.
   const kinds = snapshot.units.map(unit => unit.kind);
   const firstSubagent = kinds.indexOf('subagent');
-  assert.deepEqual([kinds.filter(kind => kind !== 'subagent').length, kinds.filter(kind => kind === 'subagent').length], [22, 30]);
+  assert.deepEqual([kinds.filter(kind => kind !== 'subagent').length, kinds.filter(kind => kind === 'subagent').length], [23, 30]);
   assert.ok(kinds.slice(firstSubagent).every(kind => kind === 'subagent'), 'every session unit comes first');
   const subagents = snapshot.units.slice(firstSubagent);
   subagents.slice(1).forEach((unit, index) => assert.ok(unit.startedAt >= subagents[index].startedAt, `${unit.label} starts after the one before`));
@@ -173,8 +173,10 @@ test('the demos show what units are doing, incomplete data, and every outcome in
   const stress = await createDemoEngine({ scenario: 'stress', now: () => T, simulate: false }).getSnapshot();
   assert.deepEqual(validateSnapshot(stress), []);
   const { finished } = cardZones(stress);
-  const outcomes = new Set(finished.map(unit => (unit.closedWithoutMerge ? (unit.pr ? 'closed, not merged' : 'closed') : unit.statusDetail)));
-  for (const outcome of ['idle', 'stopped', 'merged', 'completed', 'failed', 'crashed', 'cancelled', 'closed', 'closed, not merged']) assert.ok(outcomes.has(outcome), outcome);
+  const outcomes = new Set(finished.map(unit => (unit.outcome === 'done' ? 'done' : unit.closedWithoutMerge ? (unit.pr ? 'closed, not merged' : 'closed') : unit.statusDetail)));
+  for (const outcome of ['idle', 'stopped', 'merged', 'completed', 'failed', 'crashed', 'cancelled', 'closed', 'closed, not merged', 'done']) assert.ok(outcomes.has(outcome), outcome);
+  const v2 = label(stress, 'V2');
+  assert.deepEqual([v2.outcome, v2.closedWithoutMerge, v2.pr, v2.reviewedPr.id], ['done', false, null, label(stress, 'P4').pr.id]);
   assert.ok(stress.units.some(unit => unit.kind === 'subagent' && unit.dataWarning) && stress.units.some(unit => unit.kind !== 'subagent' && unit.dataWarning));
   const c6 = label(stress, 'C6');
   assert.ok(stress.needs.some(need => need.unitIds.includes(c6.id) && need.fromId !== c6.id), 'C6\'s footer has a marker to fold with its chips');

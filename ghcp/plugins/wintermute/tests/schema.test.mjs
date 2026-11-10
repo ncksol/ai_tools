@@ -452,3 +452,14 @@ test('the example snapshot has an answered and an unanswered needs_input report,
   }
   assert.ok(unit.timeline.marks.some(mark => mark.at === unit.report.at && mark.kind === 'question' && mark.status === 'needs_input'));
 });
+
+test('every unit requires a nullable reviewedPr, and done is a unit outcome', () => {
+  const snapshot = fixture('example-snapshot.json');
+  const unit = snapshot.units.find(item => item.label === 'D5');
+  Object.assign(unit, { pr: null, outcome: 'done', reviewedPr: { provider: 'github', id: 418, repo: 'sample-org/sample-repo', url: null } });
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  unit.reviewedPr = { provider: 'github', id: 418, repo: null, url: null, state: 'open' };
+  assert.ok(validateSnapshot(snapshot).some(error => error.endsWith('.reviewedPr.state: unexpected field')));
+  delete unit.reviewedPr;
+  assert.ok(validateSnapshot(snapshot).some(error => error.endsWith('.reviewedPr: missing')));
+});

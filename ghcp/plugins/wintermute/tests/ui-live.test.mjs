@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { dur, esc } from '../ui/format.mjs';
 import { cardHtml, cardsHtml, detailHtml, headerHtml } from '../ui/live.mjs';
 import { findByLabel } from '../ui/model.mjs';
-import { NOW, closedSnapshot, context, exampleSnapshot } from './helpers/ui.mjs';
+import { NOW, closedSnapshot, context, doneSnapshot, exampleSnapshot } from './helpers/ui.mjs';
 
 const pad = value => String(value).padStart(2, '0');
 const hm = ms => `${pad(new Date(ms).getHours())}:${pad(new Date(ms).getMinutes())}`;
@@ -443,4 +443,22 @@ test('a sub-agent unit without agent details reads "unknown" in the detail panel
   assert.match(html, /<h4>Sub-agent<\/h4><div class="dt-kv"><span class="k">Type<\/span><span>unknown<\/span><span class="k">Mode<\/span><span>Unknown<\/span><\/div>/);
   assert.doesNotMatch(html, /Effort|not set/);
   assert.match(card(cardsHtml(context(snapshot)), 'call-root-41'), /<span class="b-tag" title="Orchestrator sub-agent · sub-agent · mode unknown">sub-agent<\/span>/);
+});
+
+test('a finished reviewer, stopped or not, is a Finished mini card that says "done"', () => {
+  const snapshot = doneSnapshot();
+  Object.assign(findByLabel(snapshot, 'D5'), { statusDetail: 'stopped', alive: false });
+  const html = cardsHtml(open(snapshot));
+  assert.match(words(mini(html, 'ws-0007-d5')), /^D5 docs done 20m ago ≈\$31$/);
+  assert.match(mini(html, 'ws-0007-d5'), /^tone-ok/);
+});
+
+test('an active reviewer\'s card shows the PR it reviews where its own PR would be', () => {
+  const snapshot = doneSnapshot();
+  Object.assign(findByLabel(snapshot, 'D5'), { outcome: null, endedAt: null, status: 'busy', statusDetail: 'busy' });
+  // The fixture's "Publish PR #421 for review?" names D5, which has no PR of its own here.
+  snapshot.needs = snapshot.needs.filter(need => !need.unitIds.includes('ws-0007-d5'));
+  const html = card(cardsHtml(context(snapshot)), 'ws-0007-d5');
+  assert.match(html, /<span class="b-pr">reviews PR #418<\/span>/);
+  assert.doesNotMatch(html, /PR #421/);
 });
