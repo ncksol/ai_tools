@@ -68,12 +68,33 @@ test('a process that ended without a shutdown is crashed only when it cut off wo
   // New work after the resume ends that outcome: it went idle again, so a later silent exit is a stop.
   cut.wait(MINUTE); cut.user(); cut.turnStart(); cut.wait(MINUTE); cut.turnEnd();
   assert.equal(evaluate(fold(cut), T0 + 9 * MINUTE, { alive: false }).detail, 'stopped');
-  // Across CLI aliases: a cut-off in one log counts only while no alias has worked since.
+  // mergeStates keeps cutOffAt like shutdownAt: a cut-off counts only while no merged log has worked since.
   const before = busyLog(); before.wait(MINUTE); before.resume();
   const later = new EventLog(T0 + 2 * MINUTE); later.start(); later.turnStart(); later.wait(MINUTE); later.turnEnd();
   assert.equal(evaluate(mergeStates([fold(before, 'a'), fold(later, 'b')]), T0 + 9 * MINUTE, { alive: false }).detail, 'stopped');
   const earlier = new EventLog(T0 - 10 * MINUTE); earlier.start(); earlier.turnStart(); earlier.wait(MINUTE); earlier.turnEnd();
   assert.equal(evaluate(mergeStates([fold(before, 'a'), fold(earlier, 'b')]), T0 + 9 * MINUTE, { alive: false }).detail, 'crashed');
+});
+
+test('sub-agent work that outlives the main turn makes a silent exit a crash: a follow-up run, a running nested sub-agent', () => {
+  // A finished background sub-agent gets a follow-up after the orchestrator's turn has ended: its unit's last run is open.
+  const follow = busyLog();
+  const call = follow.subagent({ name: 'r', type: 'explore', mode: 'background', agentId: 'agent-r' });
+  follow.wait(MINUTE); follow.subagentDone(call, { durationMs: MINUTE, agentId: 'agent-r' });
+  follow.turnEnd();
+  follow.wait(MINUTE); follow.toAgent('agent-r', 'again');
+  const followed = fold(follow, 'cli-1', { subagentUnits: true });
+  assert.equal(followed.subagents.get(call).status, 'completed');
+  assert.equal(evaluate(followed, T0 + 9 * MINUTE, { alive: false }).detail, 'crashed');
+  follow.wait(MINUTE); follow.resume();
+  assert.equal(evaluate(fold(follow, 'cli-1', { subagentUnits: true }), T0 + 9 * MINUTE, { alive: false }).detail, 'crashed');
+  // A background sub-agent finished, but the child it started is still running after the main turn ended.
+  const nest = busyLog();
+  const top = nest.subagent({ name: 'top', type: 'general-purpose', mode: 'background', agentId: 'agent-top' });
+  nest.wait(MINUTE); nest.nested(top, { name: 'child', mode: 'background' });
+  nest.wait(MINUTE); nest.subagentDone(top, { durationMs: 2 * MINUTE, agentId: 'agent-top' });
+  nest.turnEnd();
+  assert.equal(evaluate(fold(nest), T0 + 9 * MINUTE, { alive: false }).detail, 'crashed');
 });
 
 test('an open question or plan is waiting, never stuck, however long it lasts', () => {

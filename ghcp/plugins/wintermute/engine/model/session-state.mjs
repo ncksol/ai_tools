@@ -525,11 +525,15 @@ function endOpenWork(state, at, keepBackground) {
   }
 }
 
-/** Whether the session has work in flight that the end of its process would cut off: a turn, a tool call, a wait or a running sub-agent. */
+/**
+ * Whether the session has work in flight that the end of its process would cut off: a turn, a tool call, a wait, an open
+ * sub-agent (running, or a unit whose follow-up run is open) or a running nested sub-agent.
+ */
 export function hasOpenWork(state) {
   if (!state) return false;
   if (state.turn || state.openTools.size || state.waits.size || state.evictedRunning.size) return true;
-  for (const sub of state.subagents.values()) if (sub.status === 'running') return true;
+  for (const sub of state.subagents.values()) if (isOpen(sub)) return true;
+  for (const entry of state.descendants.values()) if (entry.status === 'running') return true;
   return false;
 }
 
