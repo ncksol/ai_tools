@@ -10,8 +10,9 @@ const BUSY_DETAILS = new Set(['busy', 'slow_model_call', 'silent', 'stuck_tool',
  * not), crowded chips, a PR closed without merging and a deep plan. A unit without its own effort keeps B1's (xhigh).
  * Q1 has a long model name with xhigh and two finished sub-agents, one with an effort and one without, and its data
  * could not all be read. C6 works on a todo long enough to need its two lines. K7 has done its job (idle, complete
- * report, no PR), J8 closed with no PR and T0 stopped with no outcome, so the Finished section has every outcome.
- * G4's long model name and cost leave its one sub-agent chip too little room on a narrow card, so the chip folds.
+ * report, no PR), J8 closed with no PR, T0 stopped with no outcome and V2 is done after reviewing P4's PR, so the
+ * Finished section has every outcome. G4's long model name and cost leave its one sub-agent chip too little room on a
+ * narrow card, so the chip folds.
  */
 const EXTRA = [
   { label: 'Q1', name: 'Export format questions for the reporting service, with a name long enough to need an ellipsis', status: 'question', statusDetail: 'waiting_question', bucket: 'waiting', stage: 'pr_open', dependsOn: 'B1', model: 'claude-sonnet-5-1m-context-preview-20261001', effort: 'xhigh', finished: 2, dataWarning: 'Its log could not be read at 14:00. Cost and state may be out of date.' },
@@ -29,6 +30,7 @@ const EXTRA = [
   { label: 'J8', name: 'one-off job closed with no PR', status: 'idle', statusDetail: 'idle', bucket: 'idle', outcome: 'closed' },
   { label: 'T0', name: 'stopped with no outcome', status: 'idle', statusDetail: 'stopped', bucket: 'idle', alive: false },
   { label: 'G4', name: 'one chip beside a long model name', status: 'busy', statusDetail: 'busy', bucket: 'working', model: 'gemini-4-argon', effort: 'high', credits: 34100, chip: 'general-purpose' },
+  { label: 'V2', name: 'review of the paused monitor PR', status: 'idle', statusDetail: 'stopped', bucket: 'idle', alive: false, outcome: 'done', reportStatus: 'complete', reviews: 'P4' },
 ];
 
 /**
@@ -174,6 +176,8 @@ function stressUnit(template, spec, index, t, parentId) {
     mergedAt: stage === 'merged' ? endedAt : null, closedAt: stage === 'merged' || spec.outcome === 'closed' ? endedAt : null,
   };
   unit.monitor = monitorFor(spec, stage, t);
+  const reviewed = spec.reviews ? EXTRA.findIndex(entry => entry.label === spec.reviews) : -1;
+  unit.reviewedPr = reviewed < 0 ? null : { provider: 'github', id: 500 + reviewed, repo: 'sample-org/sample-repo', url: `https://github.com/sample-org/sample-repo/pull/${500 + reviewed}` };
   unit.report = 'report' in spec ? spec.report : {
     status: spec.reportStatus ?? 'progress', source: 'contract', at: t - (3 + index) * MIN,
     title: `${spec.name}: a progress report long enough to need an ellipsis on a narrow card`, summary: `${spec.name}: work continues on the branch.`,
