@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { DEFAULT_THRESHOLDS } from '../engine/config.mjs';
 import { STATUS_DETAILS } from '../engine/schema.mjs';
 import { awaitingReview, busyWindowStart, displayOf, evaluateStatus, evaluateSubagentUnit, swarmStalled, toolLimitMs } from '../engine/model/status.mjs';
+import { mergeStates } from '../engine/model/session-state.mjs';
 import { MINUTE } from '../engine/time.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { fold } from './helpers/fold.mjs';
@@ -13,6 +14,7 @@ const evaluate = (state, now, extra = {}) => evaluateStatus({
   state, alive: true, archivedAt: null, merged: false, mergedAt: null, outcome: null, hasRegistry: false, report: null,
   parentRepliedAt: null, monitorDueAt: null, isRunningFlag: false, startedAt: T0, now, thresholds: t, ...extra,
 });
+const pick = ({ detail, since, reason }) => ({ detail, since, reason });
 function busyLog() {
   const log = new EventLog(T0);
   log.start();
@@ -44,6 +46,34 @@ test('ended states come first: archived, failed, merged, stopped, crashed', () =
   const crashed = evaluate(state, T0 + 2 * MINUTE, { alive: false });
   assert.equal(crashed.detail, 'crashed');
   assert.equal(crashed.reason, 'The session process ended without a shutdown event while it was working.');
+});
+
+test('a process that ended without a shutdown is crashed only when it cut off work; an idle one is stopped', () => {
+  const STOPPED_REASON = 'The session process ended while it was idle, without a shutdown event (for example, when the app quit).';
+  const CRASHED_REASON = 'The session process ended without a shutdown event while it was working.';
+  // Idle when its process ended: the app quit without writing session.shutdown (C5, 2026-11-10).
+  const idle = busyLog(); idle.wait(MINUTE); idle.turnEnd();
+  assert.deepEqual(pick(evaluate(fold(idle), T0 + 9 * MINUTE, { alive: false })), { detail: 'stopped', since: T0 + MINUTE, reason: STOPPED_REASON });
+  // The app then resumed it and it has done no work since: still stopped at its last work.
+  idle.wait(20 * MINUTE); idle.resume();
+  assert.deepEqual(pick(evaluate(fold(idle), T0 + 30 * MINUTE, { alive: false })), { detail: 'stopped', since: T0 + MINUTE, reason: STOPPED_REASON });
+  // The app still says it is running, so its work was cut off.
+  assert.equal(evaluate(fold(idle), T0 + 30 * MINUTE, { alive: false, isRunningFlag: true }).detail, 'crashed');
+  // Mid-turn, then resumed: the resume closes the turn, but the crash stays a crash.
+  const cut = busyLog(); cut.wait(MINUTE); cut.message(); cut.wait(MINUTE); cut.resume();
+  assert.deepEqual(pick(evaluate(fold(cut), T0 + 9 * MINUTE, { alive: false })), { detail: 'crashed', since: T0 + MINUTE, reason: CRASHED_REASON });
+  // Mid-tool, with no turn open.
+  const tool = new EventLog(T0); tool.start(); tool.tool('bash', { command: 'npm test' });
+  assert.equal(evaluate(fold(tool), T0 + MINUTE, { alive: false }).detail, 'crashed');
+  // New work after the resume ends that outcome: it went idle again, so a later silent exit is a stop.
+  cut.wait(MINUTE); cut.user(); cut.turnStart(); cut.wait(MINUTE); cut.turnEnd();
+  assert.equal(evaluate(fold(cut), T0 + 9 * MINUTE, { alive: false }).detail, 'stopped');
+  // Across CLI aliases: a cut-off in one log counts only while no alias has worked since.
+  const before = busyLog(); before.wait(MINUTE); before.resume();
+  const later = new EventLog(T0 + 2 * MINUTE); later.start(); later.turnStart(); later.wait(MINUTE); later.turnEnd();
+  assert.equal(evaluate(mergeStates([fold(before, 'a'), fold(later, 'b')]), T0 + 9 * MINUTE, { alive: false }).detail, 'stopped');
+  const earlier = new EventLog(T0 - 10 * MINUTE); earlier.start(); earlier.turnStart(); earlier.wait(MINUTE); earlier.turnEnd();
+  assert.equal(evaluate(mergeStates([fold(before, 'a'), fold(earlier, 'b')]), T0 + 9 * MINUTE, { alive: false }).detail, 'crashed');
 });
 
 test('an open question or plan is waiting, never stuck, however long it lasts', () => {
