@@ -6,6 +6,12 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace still follows main. See [Releases](README.md#releases) for prerequisites, checks and recovery after a partial publish.
 
+## 0.10.0 — 2026-11-11
+
+### Changed
+
+- The Board follows the Cards tab and the header. Its columns are Planned (when there are planned units), In progress, In review (active units with an open or draft PR, shown once the swarm has had a PR) and Finished (the latest 10, with Show all). Archived units wait under one closed row below the columns. Cards show the state in words, the PR or a sub-agent's type, the Needs you marker, the warning mark and the cost in dollars, all with the neutral border. The Cards tab's link to archived units opens that row.
+
 ## 0.9.4 — 2026-11-10
 
 ### Fixed
