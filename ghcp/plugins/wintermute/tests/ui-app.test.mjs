@@ -12,6 +12,18 @@ const view = (overrides = {}) => ({
 const topBar = html => html.match(/<div class="d-top">[\s\S]*?<div class="d-top-r">[\s\S]*?<\/div><\/div>/)?.[0] ?? '';
 const tabs = html => [...html.matchAll(/data-tab="(\w+)" aria-selected="(true|false)"/g)].map(match => `${match[1]}${match[2] === 'true' ? '*' : ''}`);
 
+test('the Board keeps its Archived row and its Finished column as open as the view says', () => {
+  assert.match(renderApp(view({ tab: 'board' })), /data-archived aria-expanded="false"/);
+  const open = renderApp(view({ tab: 'board', archivedOpen: true }));
+  assert.match(open, /data-archived aria-expanded="true"/);
+  assert.match(open, /data-open="ws-0001-b0"/);
+  const many = exampleSnapshot();
+  const f2a = many.units.find(unit => unit.label === 'F2a');
+  for (let i = 0; i < 9; i += 1) many.units.push({ ...structuredClone(f2a), id: `extra-${i}`, label: `X${i}`, endedAt: f2a.endedAt - (i + 1) * 60000 });
+  assert.match(renderApp(view({ tab: 'board', snapshot: many })), /data-showall aria-expanded="false">Show all 13</);
+  assert.match(renderApp(view({ tab: 'board', snapshot: many, finishedAll: true })), /data-showall aria-expanded="true">Show fewer</);
+});
+
 test('narrow mode starts below 900 px of inner width', () => {
   assert.equal(isNarrow(932), false);
   assert.equal(isNarrow(931), true);

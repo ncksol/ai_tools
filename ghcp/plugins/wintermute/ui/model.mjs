@@ -5,11 +5,7 @@ import { closedNotMerged, isArchived, isDone, isFinished } from '../shared/unit-
 export { closedNotMerged, isArchived, isDone, isFinished };
 
 export const STATUS_ORDER = Object.freeze({ stuck: 0, question: 1, plan: 2, blocked: 3, busy: 4, idle: 5, merged: 6, done: 6, archived: 7 });
-export const UNIT_STAGES = Object.freeze(['coding', 'pr_open', 'in_review', 'merged', 'archived']);
-export const BOARD_STAGES = Object.freeze(['planned', ...UNIT_STAGES, 'subagent']);
 export const STAGE_NAMES = Object.freeze({ planned: 'Planned', coding: 'Coding', pr_open: 'PR open', in_review: 'In review', merged: 'Merged', archived: 'Archived', subagent: 'Sub-agent' });
-/** Board column headers: a stage name, but the column of sub-agents is plural. */
-export const COLUMN_NAMES = Object.freeze({ ...STAGE_NAMES, subagent: 'Sub-agents' });
 export const STAGE_CLASS = Object.freeze({ planned: 'planned', coding: 'coding', pr_open: 'pr', in_review: 'review', merged: 'merged', archived: 'archived', subagent: 'subagent' });
 export const REPORT_LABELS = Object.freeze({ complete: 'complete', progress: 'progress', needs_input: 'needs input', blocked: 'blocked', replied_question: 'question', replied_blocker: 'blocker' });
 export const REPORT_CLASS = Object.freeze({ complete: 'complete', progress: 'progress', needs_input: 'needs', blocked: 'blocked', replied_question: 'replied', replied_blocker: 'replied' });
@@ -48,8 +44,6 @@ export const STATE_LINES = Object.freeze({
 export const TIMELINE_WORDS = Object.freeze({ stuck: 'stuck {t}', plan: 'waiting on plan {t}', question: 'question {t}', blocked: 'blocked {t}', idle: 'idle {t}', merged: 'merged', done: 'done', archived: 'archived' });
 export const PLAN_WORDS = Object.freeze({ busy: 'busy', idle: 'idle', plan: 'plan waiting', question: 'question', stuck: 'stuck {t}', blocked: 'blocked' });
 export const BOARD_WORDS = Object.freeze({ busy: 'busy', idle: 'idle {t}', plan: 'plan waiting {t}', question: 'question {t}', stuck: 'stuck {t}', blocked: 'blocked', merged: 'merged {a}', done: 'done {a}', archived: 'archived {a}' });
-/** Board words for finished sub-agents, by statusDetail; other states use BOARD_WORDS. */
-export const SUBAGENT_BOARD_WORDS = Object.freeze({ completed: 'done {a}', failed: 'failed {a}', cancelled: 'cancelled {a}', crashed: 'crashed {a}' });
 export const MODE_WORDS = Object.freeze({ background: 'Background', sync: 'Sync' });
 
 /** One of the orchestrator's one-off sub-agents, listed as a unit. */
@@ -164,6 +158,38 @@ export function finishedOutcome(unit) {
   if (closedNotMerged(unit)) return { words: unit.pr ? 'closed, not merged {a}' : 'closed {a}', tone: 'off', at: finishedAt(unit) };
   const [words, tone] = FINISHED_WORDS[unit.statusDetail] ?? (unit.status === 'merged' ? FINISHED_WORDS.merged : FINISHED_WORDS.completed);
   return { words, tone, at: finishedAt(unit) };
+}
+
+const OPEN_PR_STATES = new Set(['open', 'draft', 'unknown']);
+export const inReview = unit => Boolean(unit.pr && OPEN_PR_STATES.has(unit.pr.state));
+export const isMergedUnit = unit => unit.status === 'merged' || unit.pr?.state === 'merged' || unit.outcome === 'merged';
+export const archivedAt = unit => unit.timeline?.marks?.find(mark => mark.kind === 'archived')?.at ?? unit.endedAt ?? unit.since;
+export const BOARD_FINISHED_LIMIT = 10;
+
+/** The Cards tab's groups, split by own PR and sorted by the latest finish or archive time. */
+export function boardZones(snapshot) {
+  const { active, finished } = cardZones(snapshot);
+  const archived = archivedUnits(snapshot).map((unit, index) => ({ unit, index }))
+    .sort((a, b) => archivedAt(b.unit) - archivedAt(a.unit) || a.index - b.index)
+    .map(({ unit }) => unit);
+  return {
+    planned: snapshot.planned,
+    progress: active.filter(unit => !inReview(unit)),
+    review: active.filter(inReview),
+    finished,
+    archived,
+    hasReview: snapshot.units.some(unit => unit.pr),
+  };
+}
+
+/** Archive order uses the archive time; outcome ages use the work's end time when known. */
+export function archivedOutcome(unit) {
+  const at = unit.endedAt ?? archivedAt(unit);
+  if (isMergedUnit(unit)) return { words: 'merged {a}', tone: 'ok', at };
+  if (unit.outcome === 'done') return { words: 'done {a}', tone: 'ok', at };
+  if (unit.outcome === 'failed' || unit.statusDetail === 'failed') return { words: 'failed {a}', tone: 'bad', at };
+  if (unit.closedWithoutMerge) return { words: unit.pr ? 'closed, not merged {a}' : 'closed {a}', tone: 'off', at };
+  return { words: 'archived {a}', tone: 'off', at: archivedAt(unit) };
 }
 
 /**
@@ -411,17 +437,3 @@ export function flattenPlan(roots) {
   return rows;
 }
 
-export function boardColumns(snapshot) {
-  const nodes = [
-    ...snapshot.units.map(unit => ({ stage: unit.stage, status: unit.status, unit, planned: null })),
-    ...snapshot.planned.map(entry => ({ stage: 'planned', status: 'planned', unit: null, planned: entry })),
-  ];
-  return BOARD_STAGES.map(stage => ({
-    stage,
-    nodes: nodes
-      .map((node, index) => ({ node, index }))
-      .filter(({ node }) => node.stage === stage)
-      .sort((a, b) => (STATUS_ORDER[a.node.status] ?? 9) - (STATUS_ORDER[b.node.status] ?? 9) || a.index - b.index)
-      .map(({ node }) => node),
-  }));
-}

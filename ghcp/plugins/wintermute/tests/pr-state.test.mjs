@@ -11,8 +11,9 @@ import { deriveMonitor, deriveStage, prView, resolvePr } from '../engine/model/s
 import { evaluateStatus } from '../engine/model/status.mjs';
 import { MINUTE } from '../engine/time.mjs';
 import { tileGrid } from '../ui/cockpit-model.mjs';
-import { boardColumns, cardZones, closedNotMerged, isArchived } from '../ui/model.mjs';
-import { boardHtml, planListHtml } from '../ui/plan.mjs';
+import { archivedOutcome, boardZones, cardZones, closedNotMerged, isArchived } from '../ui/model.mjs';
+import { planListHtml } from '../ui/plan.mjs';
+import { boardHtml } from '../ui/board.mjs';
 import { monitorHtml } from '../ui/parts.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { fold } from './helpers/fold.mjs';
@@ -146,8 +147,8 @@ test('archived units are placed, shown and counted by their outcome, and the hea
   assert.equal(snapshot.counts.done, 4);
   const children = summarizeRun(snapshot, { computedAt: at(60) }).children;
   assert.deepEqual({ merged: children.merged, closed: children.closed, failed: children.failed, noOutcome: children.noOutcome }, { merged: 1, closed: 2, failed: 1, noOutcome: 1 });
-  const column = stage => boardColumns(snapshot).find(entry => entry.stage === stage).nodes.map(node => node.unit.label);
-  assert.deepEqual([column('coding'), column('pr_open'), column('merged'), column('archived')], [['fail', 'drop'], ['close'], ['merge'], ['plain']]);
+  assert.deepEqual(Object.fromEntries(boardZones(snapshot).archived.map(unit => [unit.label, archivedOutcome(unit).words])),
+    { fail: 'failed {a}', close: 'closed, not merged {a}', drop: 'closed {a}', merge: 'merged {a}', plain: 'archived {a}' });
   // Archived units still leave the Cards tab, and they are over: they do not make the swarm stalled.
   assert.deepEqual(onCards(snapshot), []);
   assert.equal(snapshot.run.stalled, null);
@@ -161,8 +162,11 @@ test('a closed unit shows its outcome on the Board, in Plan and on its cockpit t
     { id: 'merge', archivedAt: at(50), row: githubPr(7) },
   ], lookup({ 7: 'merged', 11: 'closed' })));
   for (const label of ['close', 'drop', 'live']) assert.equal(closedNotMerged(unitOf(snapshot, label)), true, label);
-  const board = words(boardHtml({ snapshot, now: at(60) }));
-  for (const label of ['close', 'drop', 'live']) assert.match(board, new RegExp(`${label} ${label} closed, not merged`), label);
+  const board = words(boardHtml({ snapshot, now: at(60), detail: null, archivedOpen: true }));
+  assert.match(board, /close close closed, not merged \d+m ago/);
+  assert.match(board, /drop drop closed \d+m ago/);
+  assert.match(board, /live live closed \d+m ago/);
+  assert.doesNotMatch(board, /(drop drop|live live) closed, not merged/);
   const plan = planListHtml(snapshot, at(60));
   const row = label => words(plan.split(/<li class="pl-row /).find(part => part.includes(`<span class="tx">${label} `)));
   assert.match(row('close'), /PR closed, not merged/);

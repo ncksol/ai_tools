@@ -3,7 +3,7 @@ import { ago, elapsed, esc, timeOfDay } from './format.mjs';
 import { historyHtml, runHtml } from './history.mjs';
 import { activityHtml, cardsHtml, detailHtml, headerHtml, railHtml } from './live.mjs';
 import { waitingOnYou } from './model.mjs';
-import { boardHtml } from './plan.mjs';
+import { boardHtml } from './board.mjs';
 import { themeControlHtml } from './theme.mjs';
 import { timelineHtml } from './timeline.mjs';
 
@@ -290,7 +290,7 @@ function liveHtml(view) {
     return `<div class="empty"><h3>${heading}</h3><p class="small muted">${esc(snapshot.run.name)} finished ${ago(at, view.now)}. Finished runs are in History.</p>`
       + `<button type="button" class="link" data-run="${esc(snapshot.run.id)}">Open its summary</button></div>`;
   }
-  const ctx = { snapshot, now: view.now, phaseMs: view.phaseMs, detail: view.detail, fresh: view.fresh, finishedOpen: Boolean(view.finishedOpen), stale: isStale(view) };
+  const ctx = { snapshot, now: view.now, phaseMs: view.phaseMs, detail: view.detail, fresh: view.fresh, finishedOpen: Boolean(view.finishedOpen), archivedOpen: Boolean(view.archivedOpen), finishedAll: Boolean(view.finishedAll), stale: isStale(view) };
   return headerHtml(ctx) + bodyHtml(view, ctx);
 }
 

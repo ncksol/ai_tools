@@ -3,7 +3,7 @@ import {
   MODE_WORDS, STAGE_NAMES, activeSubagents, cardZones, closedNotMerged, countTiles, effortOf, finishedOutcome, isSubagent, needMark, nowLine,
   omittedSubagents, orchestratorView, prWords, progressPercent, reportKind, reportTitle, reviewsWords, runClockEnd, runEnd, shortModel, stateWords, unitClockEnd, unitEnd,
 } from './model.mjs';
-import { badge, bar, closedBadge, feedList, fill, monitorHtml, reportClass, ring, stateLineHtml, statusMark, warnMark } from './parts.mjs';
+import { CARET, badge, bar, closedBadge, feedList, fill, monitorHtml, outcomeCard, reportClass, ring, stateLineHtml, statusMark, warnMark } from './parts.mjs';
 
 /**
  * @typedef {{ snapshot: object, now: number, phaseMs: number, detail: string|null,
@@ -79,33 +79,22 @@ export function cardHtml(unit, ctx) {
     + '</article>';
 }
 
-/** A finished unit as a Board-style mini card with no tint: its outcome dot, label and name, outcome and age, and cost. */
-function finishedCard(unit, ctx) {
-  const { words, tone, at } = finishedOutcome(unit);
-  const title = `${unit.label} ${unit.name}`;
-  return `<div class="mc tone-${tone}${ctx.detail === unit.id ? ' is-sel' : ''}" data-open="${esc(unit.id)}" tabindex="0" role="button" aria-label="Open details for ${esc(title)}" data-kind="${esc(unit.kind)}">`
-    + `<div class="mc-1"><span class="dot"></span><span class="tx" title="${esc(title)}">${esc(title)}</span></div>`
-    + `<div class="mc-2">${fill(words, at, ctx.now)}</div><div class="mc-3" title="${esc(costText(unit.cost.credits))}">${dollars(unit.cost.credits)}</div></div>`;
-}
-
-const CARET = '<svg class="b-caret" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2.5 8 6l-4 3.5z"/></svg>';
-
 /** The Finished section below the active cards, closed by default; the open state is kept across updates (main.mjs). */
 function finishedHtml(units, ctx) {
   if (!units.length) return '';
   const open = Boolean(ctx.finishedOpen);
   return `<section class="b-fin" aria-label="Finished">`
     + `<button type="button" class="b-fin-h" data-finished aria-expanded="${open}">${CARET}<span class="b-fin-t">Finished</span><span class="b-fin-n">${units.length}</span><span class="b-fin-s">stopped, merged, done and failed · latest first</span></button>`
-    + (open ? `<div class="b-fin-list">${units.map(unit => finishedCard(unit, ctx)).join('')}</div>` : '')
+    + (open ? `<div class="b-fin-list">${units.map(unit => outcomeCard(unit, finishedOutcome(unit), ctx)).join('')}</div>` : '')
     + '</section>';
 }
 
 export function cardsHtml(ctx) {
   const { active, finished } = cardZones(ctx.snapshot);
   // The Cards tab leaves out archived units, and the snapshot itself leaves out older finished sub-agents; the Board
-  // shows every unit in its stage column and counts the sub-agents left out.
+  // shows those units in Archived and counts the sub-agents left out.
   const hidden = ctx.snapshot.units.length > active.length + finished.length || omittedSubagents(ctx.snapshot) > 0;
-  const note = hidden ? '<p class="cards-note">Archived and hidden sessions are on the <button type="button" class="link" data-tab="board">Board tab</button>.</p>' : '';
+  const note = hidden ? '<p class="cards-note">Archived and hidden sessions are on the <button type="button" class="link" data-tab="board" data-reveal="archived">Board tab</button>.</p>' : '';
   const grid = active.length ? `<div class="b-grid">${active.map(unit => cardHtml(unit, ctx)).join('')}</div>` : '<p class="none">Nothing is running.</p>';
   return `<div class="b-zone${ctx.stale ? ' is-stale' : ''}">${grid}${finishedHtml(finished, ctx)}${note}</div>`;
 }

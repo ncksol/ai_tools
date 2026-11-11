@@ -261,23 +261,7 @@ export function auditPage(options) {
     const style = getComputedStyle(el);
     return [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor].find(colour => colour !== want);
   };
-  // A Board card's border says what it is.
-  const kindBorders = options.kindBorders;
-  if (kindBorders) {
-    for (const el of root.querySelectorAll(kindBorders.selector)) {
-      if (!shown.has(el) || el.matches(kindBorders.skip) || el.matches(':hover')) continue;
-      const kind = el.getAttribute('data-kind');
-      checks += 1;
-      if (!Object.prototype.hasOwnProperty.call(kindBorders.colours, kind)) {
-        report('kind-border', el, `no border colour for kind ${kind}`);
-        continue;
-      }
-      const want = resolve(kindBorders.colours[kind]);
-      const got = otherBorder(el, want);
-      if (got !== undefined) report('kind-border', el, `border ${got} instead of ${want} for a ${kind} card`);
-    }
-  }
-  // Cards tab cards have the neutral border, whatever their kind; status shows through the mark, the words and the tint.
+  // Unit cards on the Cards tab and the Board have the neutral border, whatever their kind.
   const neutralBorders = options.neutralBorders;
   if (neutralBorders) {
     const want = resolve(neutralBorders.colour);
@@ -344,8 +328,7 @@ export const AUDIT_DEFAULTS = Object.freeze({
   atoms: '.chip,.badge,.pill,.ring,.mark,.b-warn,.b-tag,.b-need,.bar,.sw,button,select,.b-card,.mc,.pn,.pl-row,.tile,.kv,.fi,.h-row,.g-row,.g-track,.hb-row,.c-who,.c-trk,.c-sum,.tabs,.seg,.v-out',
   containers: '.b-card,.o-wait,.rail,.detail,.mc,.pn,.pl-row,.tile,.h-row,.run-answer,.empty,.v-out,.dash',
   follows: [{ item: '.b-zone > .cards-note', ref: '.b-zone > :not(.cards-note)', gapOf: '.b-zone' }],
-  kindBorders: { selector: '.board .mc[data-open]', skip: '.is-sel', colours: { subagent: 'var(--busy)', project: 'var(--merged)', chat: 'var(--merged)' } },
-  neutralBorders: { selector: '.b-card[data-open], .b-fin .mc[data-open]', skip: '.is-sel', colour: 'var(--line)' },
+  neutralBorders: { selector: '.b-card[data-open], .b-fin .mc[data-open], .board .mc[data-open]', skip: '.is-sel', colour: 'var(--line)' },
   folds: '.b-foot .chip > .chip-t',
   padding: { '.dash': 16, '.b-card': 16, '.rail': 16, '.detail': 16, '.pn': 12, '.pl-row': 12, '.mc': 12 },
   heights: {

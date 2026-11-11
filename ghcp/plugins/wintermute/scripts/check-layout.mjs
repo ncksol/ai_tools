@@ -36,10 +36,11 @@ export const VIEWS = [
   { name: 'timeline-run', params: { tab: 'timeline', span: 'run' } },
   { name: 'plan', params: { tab: 'plan' } },
   { name: 'board', params: { tab: 'board' } },
+  { name: 'board-archived', params: { tab: 'board' }, click: '[data-archived]' },
   { name: 'history', params: { page: 'history' }, history: true },
   { name: 'run', params: { page: 'run', run: 'RUN' }, history: true },
 ];
-export const SELF_TEST_RULES = ['overlap', 'font-family', 'font-size', 'font-style', 'text-transform', 'font-weight', 'letter-spacing', 'line-height', 'contrast', 'colour', 'grid', 'padding', 'height', 'spill', 'clipped', 'hidden-lines', 'cut', 'outside', 'gap', 'align', 'kind-border', 'neutral-border', 'fold', 'hscroll'];
+export const SELF_TEST_RULES = ['overlap', 'font-family', 'font-size', 'font-style', 'text-transform', 'font-weight', 'letter-spacing', 'line-height', 'contrast', 'colour', 'grid', 'padding', 'height', 'spill', 'clipped', 'hidden-lines', 'cut', 'outside', 'gap', 'align', 'neutral-border', 'fold', 'hscroll'];
 export const USAGE = `Usage: check-layout [--scenario example|stress | --live <url>] [--width <px>] [--screenshots <dir>] [--engine chrome|webkit]
 
 Checks every dashboard view, in the light and the dark theme, for overlap, clipped text, type, spacing, sizes,

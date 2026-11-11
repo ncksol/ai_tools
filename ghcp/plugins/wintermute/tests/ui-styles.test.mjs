@@ -92,13 +92,23 @@ test('the row of sub-agents outside the window spans the whole row in both Timel
   assert.match(wide.slice(0, wide.indexOf('\n}')), /\n  \.c-row\.c-more \{ grid-template-areas: "who who who"; \}/);
 });
 
-test('Cards tab cards have the neutral border whatever their kind; the Board keeps its kind borders; tint only where someone is needed', () => {
+test('Every unit card on the Cards tab and the Board has the neutral border whatever its kind; tint only where someone is needed', () => {
   assert.doesNotMatch(css, /\.b-card\[data-kind/);
-  assert.equal(block('.board .mc[data-kind="subagent"]').trim(), 'border-color: var(--busy); box-shadow: inset 0 0 0 1px var(--busy);');
-  assert.equal(block('.board .mc[data-kind="project"], .board .mc[data-kind="chat"]').trim(), 'border-color: var(--merged); box-shadow: inset 0 0 0 1px var(--merged);');
-  assert.doesNotMatch(css, /\n\.mc\[data-kind/, 'the Finished mini cards get no kind border');
+  assert.doesNotMatch(css, /\.mc\[data-kind/, 'no kind border on any mini card');
   assert.equal(block('.b-card.st-plan, .b-card.st-question, .b-card.st-stuck, .b-card.st-blocked').trim(), 'background: var(--c-soft);');
   assert.equal(block('.mc.st-plan, .mc.st-question, .mc.st-stuck, .mc.st-blocked').trim(), 'background: var(--c-soft);');
+});
+
+test('Board cards keep their cost at the right of the last line and cut the rest with an ellipsis; the Board dims when stale', () => {
+  assert.equal(block('.board').trim(), 'display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; align-items: start;');
+  assert.equal(block('.bd').trim(), 'display: flex; flex-direction: column; gap: 16px;');
+  assert.equal(block('.bcol-s').trim(), 'color: var(--ink-2);');
+  assert.equal(block('.mc-1 .tx').trim(), 'min-width: 0; overflow: hidden; text-overflow: ellipsis;');
+  assert.equal(block('.mc-row').trim(), 'display: flex; align-items: baseline; gap: 8px;');
+  assert.equal(block('.mc-side').trim(), 'flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;');
+  assert.equal(block('.mc-cost').trim(), 'flex: none;');
+  assert.equal(block('.mc-need').trim(), 'color: var(--question-ink); font-weight: 500;');
+  assert.equal(block('.b-zone.is-stale > *, .bd.is-stale > *').trim(), 'opacity: .55; filter: saturate(.4);');
 });
 
 test('hover and the selected card show over the neutral border', () => {
@@ -115,7 +125,7 @@ test('the warning mark is in the text colour, and unit labels are monospace', ()
 });
 
 test('a disconnected page dims its cards and Finished section and stops every mark', () => {
-  assert.equal(block('.b-zone.is-stale > *').trim(), 'opacity: .55; filter: saturate(.4);');
+  assert.equal(block('.b-zone.is-stale > *, .bd.is-stale > *').trim(), 'opacity: .55; filter: saturate(.4);');
   assert.equal(block('.is-stale .arc, .is-stale .g-dots circle').trim(), 'animation: none;');
 });
 
