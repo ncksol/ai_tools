@@ -65,19 +65,8 @@ test('the dashboard audit holds the Cards note one gap below what comes before i
   assert.ok(auditScript(AUDIT_DEFAULTS).includes('.cards-note'));
 });
 
-test('the dashboard audit holds a Board card\'s border to the colour of its kind, except the selected card', () => {
-  assert.deepEqual(AUDIT_DEFAULTS.kindBorders, {
-    selector: '.board .mc[data-open]',
-    skip: '.is-sel',
-    colours: { subagent: 'var(--busy)', project: 'var(--merged)', chat: 'var(--merged)' },
-  });
-  const script = auditScript(AUDIT_DEFAULTS);
-  assert.ok(script.includes('"kindBorders":{"selector":".board .mc[data-open]"'));
-  assert.ok(script.includes("'kind-border'"));
-});
-
-test('the dashboard audit holds every Cards tab card, active or finished, to the neutral border, except the selected card', () => {
-  assert.deepEqual(AUDIT_DEFAULTS.neutralBorders, { selector: '.b-card[data-open], .b-fin .mc[data-open]', skip: '.is-sel', colour: 'var(--line)' });
+test('the dashboard audit holds every unit card on the Cards tab and the Board, active or finished, to the neutral border, except the selected card', () => {
+  assert.deepEqual(AUDIT_DEFAULTS.neutralBorders, { selector: '.b-card[data-open], .b-fin .mc[data-open], .board .mc[data-open]', skip: '.is-sel', colour: 'var(--line)' });
   assert.ok(auditScript(AUDIT_DEFAULTS).includes("'neutral-border'"));
 });
 

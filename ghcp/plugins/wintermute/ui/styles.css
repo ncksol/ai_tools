@@ -288,8 +288,8 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 .mc.tone-off { --c-ink: var(--ink-2); }
 .cards-note { font-size: 12px; line-height: 16px; color: var(--ink-2); }
 .cards-note .link { text-decoration: underline; text-underline-offset: 2px; }
-/* Disconnected: the cards and the Finished section dim and every mark stops, so old data never looks live. */
-.b-zone.is-stale > * { opacity: .55; filter: saturate(.4); }
+/* Disconnected: the cards, the Finished section and the Board dim and every mark stops, so old data never looks live. */
+.b-zone.is-stale > *, .bd.is-stale > * { opacity: .55; filter: saturate(.4); }
 .is-stale .arc, .is-stale .g-dots circle { animation: none; }
 
 /* activity rail and feed */
@@ -355,15 +355,12 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 .pl-row { display: flex; flex-direction: column; padding: 12px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
 .pl-row.stg-planned { border-style: dashed; border-color: var(--ink-3); }
 .pl-row.can { border-style: solid; border-color: var(--busy-ink); }
-.board { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; align-items: start; }
+.board { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; align-items: start; }
 .bcol { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .bcol-h { display: flex; align-items: center; gap: 8px; font-size: 12px; line-height: 16px; color: var(--ink-2); white-space: nowrap; }
 .bcol-h b { font-weight: 500; color: var(--ink); }
 .bcol-more { font-size: 12px; line-height: 16px; color: var(--ink-2); }
 .mc { display: flex; flex-direction: column; padding: 12px; border: 1px solid var(--line); border-radius: 8px; min-width: 0; background: var(--surface); }
-/* The Board's border says what a card is: a one-off sub-agent (blue) or a child session (green). An inset line in the same colour gives it a 2 px look without moving the content, so it reads on tinted cards too. */
-.board .mc[data-kind="subagent"] { border-color: var(--busy); box-shadow: inset 0 0 0 1px var(--busy); }
-.board .mc[data-kind="project"], .board .mc[data-kind="chat"] { border-color: var(--merged); box-shadow: inset 0 0 0 1px var(--merged); }
 .mc[data-open] { cursor: pointer; }
 .mc[data-open]:hover { border-color: var(--ink-3); }
 .mc.is-sel { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
@@ -374,6 +371,14 @@ html[data-host="canvas"] .dash { min-height: 100vh; border: 0; border-radius: 0;
 .mc-2, .mc-3 { font-size: 12px; line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mc-2 { color: var(--c-ink); }
 .mc-3 { color: var(--ink-2); }
+/* board: the Cards tab's groups as columns, then the Archived row */
+.bd { display: flex; flex-direction: column; gap: 16px; }
+.bcol-s { color: var(--ink-2); }
+.mc-1 .tx { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.mc-row { display: flex; align-items: baseline; gap: 8px; }
+.mc-side { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.mc-cost { flex: none; }
+.mc-need { color: var(--question-ink); font-weight: 500; }
 
 /* timeline */
 .c { display: flex; flex-direction: column; gap: 12px; }
