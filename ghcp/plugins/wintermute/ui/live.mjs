@@ -94,7 +94,7 @@ export function cardsHtml(ctx) {
   // The Cards tab leaves out archived units, and the snapshot itself leaves out older finished sub-agents; the Board
   // shows those units in Archived and counts the sub-agents left out.
   const hidden = ctx.snapshot.units.length > active.length + finished.length || omittedSubagents(ctx.snapshot) > 0;
-  const note = hidden ? '<p class="cards-note">Archived and hidden sessions are on the <button type="button" class="link" data-tab="board">Board tab</button>.</p>' : '';
+  const note = hidden ? '<p class="cards-note">Archived and hidden sessions are on the <button type="button" class="link" data-tab="board" data-reveal="archived">Board tab</button>.</p>' : '';
   const grid = active.length ? `<div class="b-grid">${active.map(unit => cardHtml(unit, ctx)).join('')}</div>` : '<p class="none">Nothing is running.</p>';
   return `<div class="b-zone${ctx.stale ? ' is-stale' : ''}">${grid}${finishedHtml(finished, ctx)}${note}</div>`;
 }

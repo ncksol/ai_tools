@@ -70,6 +70,10 @@ const view = {
   staleSince: null,
   /** The Cards tab's Finished section is open; kept across updates, closed on each visit. */
   finishedOpen: false,
+  /** The Board's Archived row stays open across updates, closed on each visit. */
+  archivedOpen: false,
+  /** Show all finished Board units rather than only the latest ten. */
+  finishedAll: false,
   demo: false,
   fresh: emptyFresh(),
   host: document.documentElement.dataset.host,
@@ -287,7 +291,7 @@ function scheduleRender() {
 }
 
 function focusSelector(el) {
-  for (const name of ['open', 'run', 'tab', 'page', 'span', 'finished']) {
+  for (const name of ['open', 'run', 'tab', 'page', 'span', 'finished', 'archived', 'showall']) {
     if (el.dataset[name] !== undefined) return `[data-${name}="${CSS.escape(el.dataset[name])}"]`;
   }
   return null;
@@ -452,7 +456,7 @@ async function loadRun(id) {
 }
 
 function act(target) {
-  const el = target.closest('[data-page],[data-tab],[data-span],[data-close],[data-open],[data-run],[data-finished],[data-cockpit],[data-cockpit-copy],[data-theme-toggle]');
+  const el = target.closest('[data-page],[data-tab],[data-span],[data-close],[data-open],[data-run],[data-finished],[data-archived],[data-showall],[data-cockpit],[data-cockpit-copy],[data-theme-toggle]');
   if (!el || !dash.contains(el)) return;
   if (el.dataset.page) {
     view.page = el.dataset.page;
@@ -460,10 +464,19 @@ function act(target) {
     if (view.page === 'history') reloadHistory();
   } else if (el.dataset.tab) {
     view.tab = el.dataset.tab;
+    if (el.dataset.reveal === 'archived') view.archivedOpen = true;
     // In narrow mode an open detail takes the tabs' place, so a link to a tab closes it.
     if (view.narrow) view.detail = null;
   } else if (el.dataset.finished !== undefined) {
     view.finishedOpen = !view.finishedOpen;
+    render();
+    return;
+  } else if (el.dataset.archived !== undefined) {
+    view.archivedOpen = !view.archivedOpen;
+    render();
+    return;
+  } else if (el.dataset.showall !== undefined) {
+    view.finishedAll = !view.finishedAll;
     render();
     return;
   } else if (el.dataset.span) {

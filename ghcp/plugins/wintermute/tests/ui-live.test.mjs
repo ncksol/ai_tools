@@ -16,7 +16,7 @@ const mini = (html, id) => html.match(new RegExp(`<div class="mc ([^"]*)" data-o
 const words = part => text(part.slice(part.indexOf('>') + 1));
 const open = (snapshot, overrides = {}) => context(snapshot, { finishedOpen: true, ...overrides });
 const now = html => text(html.match(/<div class="b-now[^"]*"[^>]*>.*?<\/div>/)[0]);
-const NOTE = '<p class="cards-note">Archived and hidden sessions are on the <button type="button" class="link" data-tab="board">Board tab</button>.</p>';
+const NOTE = '<p class="cards-note">Archived and hidden sessions are on the <button type="button" class="link" data-tab="board" data-reveal="archived">Board tab</button>.</p>';
 
 test('a unit whose PR closed without merging is a Finished mini card that says "closed, not merged"', () => {
   const html = cardsHtml(open(closedSnapshot()));
