@@ -32,13 +32,13 @@ function batch(args: string[], extraEnv: NodeJS.ProcessEnv = {}) {
 }
 
 test("cleanup accepts the per-run lost-evidence flag but refuses it across all batches", async () => {
-  const result = await batch(["cleanup", "--batch", "all", "--accept-lost", "orch-eval-hands-on-orchestrator-1"]);
+  const result = await batch(["cleanup", "--batch", "all", "--accept-lost", "orch-eval-wintermute-core-1"]);
   assert.equal(result.code, 1);
   assert.match(result.stderr, /--accept-lost requires one batch, not all/);
 });
 
 test("init refuses a self-test agent that is an orchestrator", async () => {
-  for (const agent of ["hands-on-session-orchestrator", "wintermute:hands-on-session-orchestrator", "wintermute:hands-on-orchestrator"]) {
+  for (const agent of ["wintermute-core", "wintermute:wintermute-core"]) {
     const result = await batch(["init", "--dry-run", "--memory-off", "--variants", "variant-a", "--self-test-agent", agent, ...common]);
     assert.equal(result.code, 2);
     assert.ok(result.stderr.includes(`must not use the agent "${agent}"`), result.stderr);
@@ -88,15 +88,17 @@ test("init records each explicit batch-history override in its config", async ()
   assert.deepEqual(config.ignoredResultsBatches, ["abandoned", "dropped"]);
 });
 
-test("init runs the two live orchestrators in parallel by default and refuses more runs at once than variants", async () => {
-  const live = ["hands-on-orchestrator", "hands-on-session-orchestrator"];
-  for (const agent of live) writeFileSync(join(dir, "agents", `${agent}.agent.md`), `${agent}\n`);
+test("init runs the live orchestrator by default, every listed variant at once, and refuses more runs at once than variants", async () => {
+  for (const agent of ["wintermute-core", "variant-b"]) writeFileSync(join(dir, "agents", `${agent}.agent.md`), `${agent}\n`);
   const init = await batch(["init", "--dry-run", "--memory-off", "--id", "live-default", ...common]);
   assert.equal(init.code, 0, init.stdout + init.stderr);
   const config = JSON.parse(readFileSync(join(dir, "batches", "live-default", "config.json"), "utf8"));
-  assert.deepEqual(config.variants, live);
-  assert.equal(config.parallel, 2);
-  assert.match(init.stdout, /up to 2 runs at a time/);
+  assert.deepEqual(config.variants, ["wintermute-core"]);
+  assert.equal(config.parallel, 1);
+  const two = await batch(["init", "--dry-run", "--memory-off", "--variants", "wintermute-core,variant-b", "--id", "two-variants", ...common]);
+  assert.equal(two.code, 0, two.stdout + two.stderr);
+  assert.equal(JSON.parse(readFileSync(join(dir, "batches", "two-variants", "config.json"), "utf8")).parallel, 2);
+  assert.match(two.stdout, /up to 2 runs at a time/);
   for (const [parallel, error] of [["2", /--parallel can't be more than the number of variants/], ["two", /--parallel must be a positive integer/]] as const) {
     const rejected = await batch(["init", "--dry-run", "--memory-off", "--variants", "variant-a", "--parallel", parallel, "--id", "over", ...common]);
     assert.equal(rejected.code, 2);
@@ -105,14 +107,14 @@ test("init runs the two live orchestrators in parallel by default and refuses mo
 });
 
 test("prefixed live selection keeps historical labels and rejects duplicate spellings", async () => {
-  writeFileSync(join(dir, "agents", "hands-on-orchestrator.agent.md"), "live\n");
-  const init = await batch(["init", "--dry-run", "--memory-off", "--variants", "wintermute:hands-on-orchestrator", "--id", "prefixed", ...common]);
+  writeFileSync(join(dir, "agents", "wintermute-core.agent.md"), "live\n");
+  const init = await batch(["init", "--dry-run", "--memory-off", "--variants", "wintermute:wintermute-core", "--id", "prefixed", ...common]);
   assert.equal(init.code, 0, init.stdout + init.stderr);
   const config = JSON.parse(readFileSync(join(dir, "batches", "prefixed", "config.json"), "utf8"));
   const state = loadState(join(dir, "batches", "prefixed"));
-  assert.deepEqual(config.variants, ["hands-on-orchestrator"]);
-  assert.ok(state.pins.agents["wintermute:hands-on-orchestrator"]);
-  const duplicate = await batch(["init", "--dry-run", "--memory-off", "--variants", "hands-on-orchestrator,wintermute:hands-on-orchestrator", "--id", "duplicate", ...common]);
+  assert.deepEqual(config.variants, ["wintermute-core"]);
+  assert.ok(state.pins.agents["wintermute:wintermute-core"]);
+  const duplicate = await batch(["init", "--dry-run", "--memory-off", "--variants", "wintermute-core,wintermute:wintermute-core", "--id", "duplicate", ...common]);
   assert.equal(duplicate.code, 2);
   assert.match(duplicate.stderr, /listed twice/);
 });
@@ -123,10 +125,10 @@ test("live defaults read installed plugin files while manifest defaults read use
   const aliases = join(home, ".copilot", "agents");
   mkdirSync(plugin, { recursive: true });
   mkdirSync(aliases);
-  writeFileSync(join(plugin, "hands-on-orchestrator.agent.md"), 'Use wintermute:orchestrator-worker.\n');
-  writeFileSync(join(plugin, "orchestrator-worker.agent.md"), "worker\n");
+  writeFileSync(join(plugin, "wintermute-core.agent.md"), 'Use wintermute:wintermute-peon.\n');
+  writeFileSync(join(plugin, "wintermute-peon.agent.md"), "peon\n");
   const noAgentsOverride = common.filter((arg, i) => arg !== "--agents-dir" && common[i - 1] !== "--agents-dir");
-  const live = await batch(["init", "--dry-run", "--memory-off", "--variants", "hands-on-orchestrator", "--id", "default-live", ...noAgentsOverride], { HOME: home });
+  const live = await batch(["init", "--dry-run", "--memory-off", "--variants", "wintermute-core", "--id", "default-live", ...noAgentsOverride], { HOME: home });
   assert.equal(live.code, 0, live.stdout + live.stderr);
   assert.equal(JSON.parse(readFileSync(join(dir, "batches", "default-live", "config.json"), "utf8")).agentsDir, plugin);
   const manifest = join(KIT_DIR, "variants", "review-policy.json");

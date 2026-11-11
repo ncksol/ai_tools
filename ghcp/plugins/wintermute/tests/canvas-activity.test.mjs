@@ -180,7 +180,7 @@ test('a log replaced by another of the same size and mtime is read again, so res
 test('a page for a session with only task sub-agents shows that session\'s swarm, not an old swarm whose canvas was restored', async () => {
   const home = scenario();
   canvasEvents(home, 'cli-old', [at(6)]);
-  home.session({ id: 'cli-new', title: 'Folder orchestrator', createdAt: at(55), agent: 'hands-on-orchestrator' });
+  home.session({ id: 'cli-new', title: 'Folder orchestrator', createdAt: at(55), agent: 'wintermute-core' });
   const log = new EventLog(at(55));
   log.start(); log.turnStart();
   log.at(at(56));

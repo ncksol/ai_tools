@@ -6,6 +6,18 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace still follows main. See [Releases](README.md#releases) for prerequisites, checks and recovery after a partial publish.
 
+## 0.12.0 — 2026-11-11
+
+### Changed
+
+- The plugin ships one orchestrator, the one that delegates only to child sessions. `hands-on-session-orchestrator` is now `wintermute-core` (`wintermute:wintermute-core`), and its worker `session-worker` is now `wintermute-peon` (`wintermute:wintermute-peon`). Their prompts change only in these names and in dropping mentions of the removed agents. Select `wintermute:wintermute-core` for new orchestrator sessions, and update any setting, memory or script that names the old IDs.
+- A running session keeps the agent it started with, but each new child session loads its agent from the installed plugin. An orchestrator session started before this update can't create children, because `wintermute:session-worker` no longer exists. Finish or archive such sessions, and start new work with `wintermute-core`.
+
+### Removed
+
+- The `hands-on-orchestrator` agent, which handed one-off jobs to sub-agents, and its sub-agent worker `orchestrator-worker`. Use `wintermute-core` instead.
+- The swarm dashboard counts only `wintermute-core` sessions as orchestrators. Past runs of the old agents that never started a child session no longer show as swarms. Runs with child sessions still show.
+
 ## 0.11.0 — 2026-11-11
 
 ### Changed

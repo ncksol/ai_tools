@@ -31,7 +31,7 @@ test('every workspace that a chat created nests under the chat, in creation orde
     workspace('c', 30, { creator: 'chat', coordinator: 'chat' }),
     workspace('a', 10, { creator: 'chat', coordinator: 'chat' }),
     workspace('b', 20, { creator: 'chat', coordinator: 'chat' }),
-  ], { sessions: [session('chat', 'wintermute:hands-on-session-orchestrator')] }));
+  ], { sessions: [session('chat', 'wintermute:wintermute-core')] }));
   assert.deepEqual(forest.roots.map(root => root.id), ['chat']);
   assert.equal(forest.nodes.get('chat').kind, 'chat');
   assert.deepEqual(forest.nodes.get('chat').childIds, ['a', 'b', 'c']);

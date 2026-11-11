@@ -78,8 +78,7 @@ test("a run with a question and a final report: answered from the sheet, scored 
 
 test("live runs launch namespaced agents as top-level sessions and keep historical result groups", async () => {
   for (const [variant, agent] of [
-    ["hands-on-orchestrator", "wintermute:hands-on-orchestrator"],
-    ["hands-on-session-orchestrator", "wintermute:hands-on-session-orchestrator"],
+    ["wintermute-core", "wintermute:wintermute-core"],
   ]) {
     const h = await make({ scenarios: ["ask-final"], variants: [variant] });
     const action = await h.until((a) => a.action === "create_session");
@@ -105,7 +104,7 @@ test("live runs launch namespaced agents as top-level sessions and keep historic
 });
 
 test("live runs pass --agent-revision when the plugin source is a clean git checkout and flag drift if changed", async () => {
-  const h = await make({ scenarios: ["ask-final"], variants: ["hands-on-orchestrator"] });
+  const h = await make({ scenarios: ["ask-final"], variants: ["wintermute-core"] });
   for (const args of [["init", "-q", "-b", "main"], ["config", "user.name", "Test"], ["config", "user.email", "test@example.invalid"], ["add", "-A"], ["commit", "-q", "-m", "agents"]]) {
     const res = await runProc("git", args, { cwd: h.config.agentsDir });
     assert.equal(res.code, 0, res.stderr);
@@ -113,9 +112,9 @@ test("live runs pass --agent-revision when the plugin source is a clean git chec
   const head = (await runProc("git", ["rev-parse", "HEAD"], { cwd: h.config.agentsDir })).stdout.trim();
   saveState(h.config.dir, { ...h.state(), pins: currentPins(h.config) });
   await h.until((_, state) => state.runs[0]?.status === "running");
-  const expectedSha = h.state().pins.agents["wintermute:hands-on-orchestrator"].sha256;
+  const expectedSha = h.state().pins.agents["wintermute:wintermute-core"].sha256;
   const expectedBundle = agentBundleSha256(h.state().pins.agents);
-  appendFileSync(join(h.config.agentsDir, "hands-on-orchestrator-worker.agent.md"), "changed mid-run\n");
+  appendFileSync(join(h.config.agentsDir, "wintermute-core-worker.agent.md"), "changed mid-run\n");
   await h.until(() => false);
   const [row] = readResults(h.config.resultsPath);
   assert.equal(row.agent_revision, head);
@@ -127,19 +126,19 @@ test("live runs pass --agent-revision when the plugin source is a clean git chec
 test("a live bundle depends only on its variant's closure, not the batch's other variants or their bytes", async () => {
   const hash = (text: string) => createHash("sha256").update(text).digest("hex");
   const expected = hash(JSON.stringify([
-    ["wintermute:hands-on-orchestrator", hash("Uses wintermute:hands-on-orchestrator-worker.\n")],
-    ["wintermute:hands-on-orchestrator-worker", hash("worker\n")],
+    ["wintermute:wintermute-core", hash("Uses wintermute:wintermute-core-worker.\n")],
+    ["wintermute:wintermute-core-worker", hash("worker\n")],
   ]));
   for (const variants of [
-    ["hands-on-orchestrator"],
-    ["hands-on-orchestrator", "hands-on-session-orchestrator"],
+    ["wintermute-core"],
+    ["wintermute-core", "variant-b"],
   ]) {
     for (const changeOtherAgents of [false, true]) {
       if (changeOtherAgents && variants.length === 1) continue;
       const h = await make({ scenarios: ["ask-final"], variants });
       if (changeOtherAgents) {
-        appendFileSync(join(h.config.agentsDir, "hands-on-session-orchestrator-worker.agent.md"), "different worker\n");
-        appendFileSync(join(h.config.agentsDir, "hands-on-session-orchestrator.agent.md"), "different quick jobs\n");
+        appendFileSync(join(h.config.agentsDir, "variant-b-worker.agent.md"), "different worker\n");
+        appendFileSync(join(h.config.agentsDir, "variant-b.agent.md"), "different quick jobs\n");
         saveState(h.config.dir, { ...h.state(), pins: currentPins(h.config) });
       }
       const action = await h.until((a) => a.action === "create_session");
@@ -150,10 +149,10 @@ test("a live bundle depends only on its variant's closure, not the batch's other
 });
 
 test("score-time drift ignores agents outside the live run's launch closure", async () => {
-  const h = await make({ scenarios: ["ask-final"], variants: ["hands-on-orchestrator", "hands-on-session-orchestrator"] });
+  const h = await make({ scenarios: ["ask-final"], variants: ["wintermute-core", "variant-b"] });
   await h.until((_, state) => state.runs[0]?.status === "running");
   const bundle = h.state().runs[0].agentBundleSha256;
-  appendFileSync(join(h.config.agentsDir, "hands-on-session-orchestrator-worker.agent.md"), "changed mid-run\n");
+  appendFileSync(join(h.config.agentsDir, "variant-b-worker.agent.md"), "changed mid-run\n");
   await h.until(() => false);
   const [row] = readResults(h.config.resultsPath);
   assert.equal(row.agent_bundle_sha256, bundle);
@@ -161,24 +160,24 @@ test("score-time drift ignores agents outside the live run's launch closure", as
 });
 
 test("score-time drift retains a removed worker from the live run's launch closure", async () => {
-  const h = await make({ scenarios: ["ask-final"], variants: ["hands-on-orchestrator", "hands-on-session-orchestrator"] });
+  const h = await make({ scenarios: ["ask-final"], variants: ["wintermute-core", "variant-b"] });
   await h.until((_, state) => state.runs[0]?.status === "running");
-  writeFileSync(join(h.config.agentsDir, "hands-on-orchestrator.agent.md"), "No helpers.\n");
-  unlinkSync(join(h.config.agentsDir, "hands-on-orchestrator-worker.agent.md"));
+  writeFileSync(join(h.config.agentsDir, "wintermute-core.agent.md"), "No helpers.\n");
+  unlinkSync(join(h.config.agentsDir, "wintermute-core-worker.agent.md"));
   await h.until(() => false);
   const drift = h.state().runs[0].flags.find((flag) => flag.code === "agent-drift");
-  assert.match(drift?.detail ?? "", /wintermute:hands-on-orchestrator-worker/);
+  assert.match(drift?.detail ?? "", /wintermute:wintermute-core-worker/);
 });
 
 test("a legacy live run without a saved closure still scores its recorded batch-wide bundle", async () => {
-  const h = await make({ scenarios: ["ask-final"], variants: ["hands-on-orchestrator", "hands-on-session-orchestrator"] });
+  const h = await make({ scenarios: ["ask-final"], variants: ["wintermute-core", "variant-b"] });
   await h.until((_, state) => state.runs[0]?.status === "running");
   const legacy = h.state();
   delete legacy.runs[0].agentBundleNames;
   const bundle = agentBundleSha256(legacy.pins.agents);
   legacy.runs[0].agentBundleSha256 = bundle;
   saveState(h.config.dir, legacy);
-  appendFileSync(join(h.config.agentsDir, "hands-on-session-orchestrator-worker.agent.md"), "changed mid-run\n");
+  appendFileSync(join(h.config.agentsDir, "variant-b-worker.agent.md"), "changed mid-run\n");
   await h.until(() => false);
   const [row] = readResults(h.config.resultsPath);
   assert.equal(row.agent_bundle_sha256, bundle);
@@ -236,9 +235,9 @@ test("the alias file ID, name and result label agree and moving ordinary agents 
   assert.match(validateConfig({ ...h.config, selfTest: { ...h.config.selfTest, agent: "orchestrator-review-a" } }).join(), /must not use/);
   assert.match(validateConfig({ ...h.config, variants: [policyLabels[0]] }).join(), /every label/);
   assert.match(validateConfig({ ...h.config, selfTest: { ...h.config.selfTest, only: true } }).join(), /self-test-only/);
-  writeFileSync(join(h.config.agentsDir, "hands-on-orchestrator.agent.md"), "normal installed orchestrator");
+  writeFileSync(join(h.config.agentsDir, "wintermute-core.agent.md"), "normal installed orchestrator");
   saveState(h.config.dir, { ...h.state(), pins: currentPins(h.config) });
-  writeFileSync(join(h.config.agentsDir, "hands-on-orchestrator.agent.md"), "ordinary agent changed");
+  writeFileSync(join(h.config.agentsDir, "wintermute-core.agent.md"), "ordinary agent changed");
   const action = await h.until((a) => a.action === "create_session");
   assert.equal(action.action, "create_session");
   const kickoff = action.tool!.args.kickoff as Record<string, unknown>;
@@ -273,7 +272,7 @@ test("pinned variants finish all three calibrations and a three-run pilot with m
 });
 
 test("a manifest batch stops after its first wrong-agent run without counting or freezing it", async () => {
-  for (const agent of ["hands-on-orchestrator", ""]) {
+  for (const agent of ["wintermute:wintermute-core", ""]) {
     const h = await make({ scenarios: ["ask-final"], variants: policyLabels });
     pinPolicy(h);
     const action = await h.until((a) => a.action === "create_session");
@@ -560,30 +559,30 @@ test("score warnings become flags; the cross-session kickoff warning flags the k
 });
 
 test("a history of run 1 at 65.7 minutes puts every scored run on the three-feature set", async () => {
-  const h = await make({ scenarios: ["ask-final", "ask-final"], variants: ["hands-on-orchestrator", "hands-on-session-orchestrator"], results: readFileSync(RUN1_RESULTS, "utf8") });
+  const h = await make({ scenarios: ["ask-final", "ask-final"], variants: ["wintermute-core", "variant-b"], results: readFileSync(RUN1_RESULTS, "utf8") });
   await h.until(() => false);
   const rows = readResults(h.config.resultsPath).slice(1);
   assert.deepEqual(rows.map((r) => [r.variant, r.run, r.features, r.calibration]), [
-    ["hands-on-orchestrator", "2", "policy+reports+import", "no"],
-    ["hands-on-session-orchestrator", "1", "policy+reports+import", "no"],
+    ["wintermute-core", "2", "policy+reports+import", "no"],
+    ["variant-b", "1", "policy+reports+import", "no"],
   ]);
   assert.match(h.state().calibration, /over 30 minutes even if every missing calibration run took 0 minutes/);
-  for (const session of h.app.sessions.values()) assert.ok(["wintermute:hands-on-orchestrator", "wintermute:hands-on-session-orchestrator"].includes(readFileSync(eventsPath(h.config.stateDir, session.id), "utf8").match(/"agentName":"([^"]+)"/)![1]));
+  for (const session of h.app.sessions.values()) assert.ok(["wintermute:wintermute-core", "variant-b"].includes(readFileSync(eventsPath(h.config.stateDir, session.id), "utf8").match(/"agentName":"([^"]+)"/)![1]));
 });
 
 test("the self-test never uses an orchestrator or a variant under test", () => {
-  const base = { variants: ["hands-on-orchestrator", "hands-on-session-orchestrator"], runsPerVariant: 3, selfTest: { enabled: true, only: false, model: "m", effort: "low", agent: "hands-on-orchestrator" } };
-  assert.match(validateConfig(base as never).join(), /must not use the agent "hands-on-orchestrator"/);
-  assert.match(validateConfig({ ...base, selfTest: { ...base.selfTest, agent: "hands-on-session-orchestrator" } } as never).join(), /must not use/);
+  const base = { variants: ["wintermute-core", "variant-b"], runsPerVariant: 3, selfTest: { enabled: true, only: false, model: "m", effort: "low", agent: "wintermute-core" } };
+  assert.match(validateConfig(base as never).join(), /must not use the agent "wintermute-core"/);
+  assert.match(validateConfig({ ...base, selfTest: { ...base.selfTest, agent: "variant-b" } } as never).join(), /must not use/);
   assert.deepEqual(validateConfig({ ...base, selfTest: { ...base.selfTest, agent: null } } as never), []);
-  for (const agent of ["hands-on-orchestrator", "hands-on-session-orchestrator"]) {
+  for (const agent of ["wintermute-core", "wintermute:wintermute-core"]) {
     const config = { ...base, variants: ["variant-a"], selfTest: { ...base.selfTest, agent } };
     assert.match(validateConfig(config as never).join(), new RegExp(`must not use the agent "${agent}"`));
   }
 });
 
-test("a self-test session that ran a hands-on orchestrator fails its agent check", async () => {
-  for (const agent of ["hands-on-orchestrator", "hands-on-session-orchestrator"]) {
+test("a self-test session that ran the live orchestrator fails its agent check", async () => {
+  for (const agent of ["wintermute-core", "wintermute:wintermute-core"]) {
     const h = await make({ scenarios: ["ask-final"], selfTest: true });
     await h.drive(await h.until((a) => a.action === "create_session"));
     const session = [...h.app.sessions.values()][0];

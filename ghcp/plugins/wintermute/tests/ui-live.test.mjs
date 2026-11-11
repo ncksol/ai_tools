@@ -333,7 +333,7 @@ test('the detail panel shows a sub-agent\'s type and mode, with no Effort row, i
   const html = detailHtml('call-root-24', false, context(snapshot));
   const words = text(html);
   assert.match(html, /<section class="detail" aria-label="Details for scan-docs-links">/);
-  assert.match(html, /<div class="dt-sec"><h4>Sub-agent<\/h4><div class="dt-kv"><span class="k">Type<\/span><span>orchestrator-worker<\/span><span class="k">Mode<\/span><span>Background<\/span><\/div><\/div>/);
+  assert.match(html, /<div class="dt-sec"><h4>Sub-agent<\/h4><div class="dt-kv"><span class="k">Type<\/span><span>rubber-duck<\/span><span class="k">Mode<\/span><span>Background<\/span><\/div><\/div>/);
   assert.doesNotMatch(html, /PR and monitor/);
   assert.match(html, /<div class="dt-why st-blocked"><h4>Why this counts as cancelled<\/h4><p>Cancelled after 12 min\.<\/p><\/div>/);
   assert.match(words, /Stage Sub-agent Model claude-sonnet-5/);

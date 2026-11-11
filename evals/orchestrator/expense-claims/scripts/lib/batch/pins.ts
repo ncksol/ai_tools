@@ -70,7 +70,8 @@ export function agentsToPin(agentsDir: string, variants: string[], explicit = fa
       const id = `${namespace}${other}`;
       if (new RegExp(`(?<![\\w:-])${id}(?![\\w:-])`).test(text)) visit(id);
     }
-    for (const match of text.matchAll(/(?<![\w:-])(?:[a-z0-9][a-z0-9-]*:)?[a-z0-9][a-z0-9-]*-worker(?![\w:-])/g)) {
+    // A named worker counts even when its file is missing, so preflight can fail on it. Wintermute's is wintermute-peon.
+    for (const match of text.matchAll(/(?<![\w:-])(?:[a-z0-9][a-z0-9-]*:)?[a-z0-9][a-z0-9-]*-(?:worker|peon)(?![\w:-])/g)) {
       const worker = match[0];
       if (namespace ? worker.startsWith(namespace) : !worker.includes(":")) visit(worker);
     }

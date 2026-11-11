@@ -7,7 +7,7 @@ const withMemories = [
   "You are a coding agent.",
   "<memories>",
   "Recent memories from earlier interactions appear below.",
-  "## Repository memories for `ncksol/orch-eval-hands-on-orchestrator-2`",
+  "## Repository memories for `ncksol/orch-eval-wintermute-core-2`",
   "**testing**",
   "- Fact: synthetic",
   "## User memories for @someone",

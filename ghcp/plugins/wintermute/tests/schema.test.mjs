@@ -185,7 +185,7 @@ test('the example snapshot lists the orchestrator\'s one-off sub-agents as units
   assert.ok(byDetail.completed.timeline.marks.some(mark => mark.kind === 'report' && mark.at === byDetail.completed.endedAt));
   assert.equal(byDetail.failed.agent.type, 'task');
   assert.equal(byDetail.failed.reason, 'Failed: model request failed after 3 retries.');
-  assert.equal(byDetail.cancelled.agent.type, 'orchestrator-worker');
+  assert.equal(byDetail.cancelled.agent.type, 'rubber-duck');
   assert.equal(byDetail.cancelled.reason, 'Cancelled after 12 min.');
   assert.equal(byDetail.cancelled.endedAt - byDetail.cancelled.startedAt, 12 * 60 * 1000);
   // The orchestrator keeps waiting: waiting takes precedence over a stuck sub-agent.

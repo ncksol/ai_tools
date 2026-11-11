@@ -15,9 +15,9 @@ let dir: string;
 before(() => {
   dir = mkdtempSync(join(tmpdir(), "orch-eval-preflight-"));
   mkdirSync(join(dir, "agents"));
-  writeFileSync(join(dir, "agents", "hands-on-orchestrator.agent.md"), "Starts wintermute:orchestrator-worker sub-agents.");
-  writeFileSync(join(dir, "agents", "hands-on-session-orchestrator.agent.md"), "Children run as wintermute:session-worker.");
-  for (const name of ["orchestrator-worker", "session-worker"]) writeFileSync(join(dir, "agents", `${name}.agent.md`), name);
+  writeFileSync(join(dir, "agents", "wintermute-core.agent.md"), "Children run as wintermute:wintermute-peon.");
+  writeFileSync(join(dir, "agents", "variant-b.agent.md"), "Starts variant-b-worker sub-agents.");
+  for (const name of ["wintermute-peon", "variant-b-worker"]) writeFileSync(join(dir, "agents", `${name}.agent.md`), name);
   writeFileSync(join(dir, "Info.plist"), "<key>CFBundleShortVersionString</key><string>1.1.31</string>");
   writeFileSync(join(dir, "old.plist"), "<key>CFBundleShortVersionString</key><string>1.1.30</string>");
   writeFileSync(join(dir, "cli.d.ts"), 'COPILOT_CLI_VERSION = "1.0.99-2"');
@@ -32,7 +32,7 @@ function config(overrides: Partial<BatchConfig> = {}): BatchConfig {
     id: "t",
     createdAt: "",
     dir: join(dir, "batch"),
-    variants: ["hands-on-orchestrator", "hands-on-session-orchestrator"],
+    variants: ["wintermute-core", "variant-b"],
     runsPerVariant: 3,
     model: "claude-opus-5.5",
     effort: "max",
@@ -102,12 +102,12 @@ function historyConfig(): BatchConfig {
 }
 
 function historyRun(n: number, calibration = false): RunState {
-  const repo = `ncksol/orch-eval-hands-on-orchestrator-${n}`;
+  const repo = `ncksol/orch-eval-wintermute-core-${n}`;
   const row = Object.fromEntries(RESULT_COLUMNS.map((column) => [column, ""])) as ResultRow;
-  Object.assign(row, { repo, run: String(n), variant: "hands-on-orchestrator", calibration: calibration ? "yes" : "no", minutes: "50" });
+  Object.assign(row, { repo, run: String(n), variant: "wintermute-core", calibration: calibration ? "yes" : "no", minutes: "50" });
   return {
-    key: `hands-on-orchestrator-${n}`, variant: "hands-on-orchestrator", n, features: ["policy", "reports", "import"],
-    calibration, name: `orch-eval-hands-on-orchestrator-${n}`, repo, repoDir: join(dir, `run-${n}`),
+    key: `wintermute-core-${n}`, variant: "wintermute-core", n, features: ["policy", "reports", "import"],
+    calibration, name: `orch-eval-wintermute-core-${n}`, repo, repoDir: join(dir, `run-${n}`),
     status: "done", createdAt: "", judged: [], answers: [], askAttempts: {}, requestIds: {}, flags: [], row,
   };
 }
@@ -132,8 +132,8 @@ test("preflight stops on missing calibration and scored rows until both run iden
   const missing = (await runPreflight(current, host())).find((c) => c.name === "earlier batch results landed");
   assert.equal(missing?.status, "FAIL");
   assert.match(missing.detail, /earlier.*driver-earlier/);
-  assert.match(missing.detail, /orch-eval-hands-on-orchestrator-1/);
-  assert.match(missing.detail, /orch-eval-hands-on-orchestrator-2/);
+  assert.match(missing.detail, /orch-eval-wintermute-core-1/);
+  assert.match(missing.detail, /orch-eval-wintermute-core-2/);
   assert.match(missing.detail, /[Ll]and.*results.csv/);
 
   appendResult(current.resultsPath, { ...calibration.row, minutes: "49" } as ResultRow);
@@ -182,11 +182,11 @@ test("a named history override warns and cannot hide another batch's missing row
   saveHistory(current, "abandoned", [historyRun(8)]);
   const overridden = (await runPreflight(current, host())).find((c) => c.name === "earlier batch results landed");
   assert.equal(overridden?.status, "WARN");
-  assert.match(overridden.detail, /abandoned.*orch-eval-hands-on-orchestrator-8/);
+  assert.match(overridden.detail, /abandoned.*orch-eval-wintermute-core-8/);
   saveHistory(current, "unlanded", [historyRun(9)]);
   const blocked = (await runPreflight(current, host())).find((c) => c.name === "earlier batch results landed");
   assert.equal(blocked?.status, "FAIL");
-  assert.match(blocked.detail, /unlanded.*orch-eval-hands-on-orchestrator-9/);
+  assert.match(blocked.detail, /unlanded.*orch-eval-wintermute-core-9/);
 });
 
 test("unreadable batch history fails explicitly instead of looking like landed results", async () => {
@@ -201,26 +201,26 @@ test("unreadable batch history fails explicitly instead of looking like landed r
 test("a healthy machine passes every check", async () => {
   const checks = await runPreflight(config(), host());
   assert.deepEqual(failing(checks), [], JSON.stringify(checks, null, 1));
-  assert.ok(checks.some((c) => c.name === "agents under test installed" && /orchestrator-worker/.test(c.detail)));
+  assert.ok(checks.some((c) => c.name === "agents under test installed" && /wintermute:wintermute-peon/.test(c.detail)));
 });
 
 test("live preflight resolves installed plugin workers and rejects a missing prefixed dependency", async () => {
   const plugin = join(dir, "plugin-agents");
   mkdirSync(plugin);
-  writeFileSync(join(plugin, "hands-on-orchestrator.agent.md"), 'Use agent_type: "wintermute:orchestrator-worker".\n');
-  const missing = await runPreflight(config({ agentsDir: plugin, variants: ["hands-on-orchestrator"] }), host());
+  writeFileSync(join(plugin, "wintermute-core.agent.md"), 'Use kickoff.agent: "wintermute:wintermute-peon".\n');
+  const missing = await runPreflight(config({ agentsDir: plugin, variants: ["wintermute-core"] }), host());
   const failed = missing.find((check) => check.name === "agents under test installed")!;
   assert.equal(failed.status, "FAIL");
-  assert.match(failed.detail, /wintermute:orchestrator-worker/);
-  writeFileSync(join(plugin, "orchestrator-worker.agent.md"), "worker\n");
-  const ready = await runPreflight(config({ agentsDir: plugin, variants: ["hands-on-orchestrator"] }), host());
+  assert.match(failed.detail, /wintermute:wintermute-peon/);
+  writeFileSync(join(plugin, "wintermute-peon.agent.md"), "peon\n");
+  const ready = await runPreflight(config({ agentsDir: plugin, variants: ["wintermute-core"] }), host());
   assert.deepEqual(failing(ready), []);
-  assert.match(ready.find((check) => check.name === "agents under test installed")!.detail, /wintermute:orchestrator-worker/);
+  assert.match(ready.find((check) => check.name === "agents under test installed")!.detail, /wintermute:wintermute-peon/);
 });
 
 test("each problem fails its own check", async () => {
   const checks = await runPreflight(
-    config({ memoryOffConfirmed: false, appPlist: join(dir, "old.plist"), scoreScript: join(dir, "old-score.ts"), variants: ["hands-on-orchestrator", "missing-variant"] }),
+    config({ memoryOffConfirmed: false, appPlist: join(dir, "old.plist"), scoreScript: join(dir, "old-score.ts"), variants: ["wintermute-core", "missing-variant"] }),
     {
       ...host({
         "pmset -g batt": ok("Now drawing from 'Battery Power'"),

@@ -24,12 +24,12 @@ after(() => rmSync(dir, { recursive: true, force: true }));
 
 test("manual session discovery matches a namespaced live agent to its historical variant label", () => {
   const state = mkdtempSync(join(dir, "plugin-"));
-  for (const [id, agent] of [["live", "wintermute:hands-on-orchestrator"], ["other", "wintermute:hands-on-session-orchestrator"]]) {
+  for (const [id, agent] of [["live", "wintermute:wintermute-core"], ["other", "wintermute:wintermute-peon"]]) {
     writeSession(state, id, "test/plugin-run", "2026-01-01T10:00:00Z", [
       ev("subagent.selected", 0, { agentName: agent }), ev("user.message", 1, { content: "Start" }),
     ]);
   }
-  assert.equal(chooseRunSession(state, "test/plugin-run", "hands-on-orchestrator").session.id, "live");
+  assert.equal(chooseRunSession(state, "test/plugin-run", "wintermute-core").session.id, "live");
 });
 
 test("wall time runs from the kickoff to the last assistant message", () => {
@@ -41,7 +41,7 @@ test("wall time runs from the kickoff to the last assistant message", () => {
   assert.equal(timing.model, "claude-opus-5.5");
   assert.equal(timing.effort, "max");
   assert.equal(timing.copilotVersion, "1.0.99-2");
-  assert.equal(timing.agent, "hands-on-orchestrator");
+  assert.equal(timing.agent, "wintermute-core");
   assert.equal(timing.start, "2026-01-01T10:01:00.000Z");
   assert.equal(timing.end, "2026-01-01T10:21:00.000Z");
   assert.deepEqual(timing.warnings, []);
@@ -408,7 +408,7 @@ test("findRunSessions picks sessions by repository, oldest first", () => {
   );
 });
 
-const REPO = "ncksol/orch-eval-hands-on-orchestrator-1";
+const REPO = "ncksol/orch-eval-wintermute-core-1";
 
 function stateWith(name: string, sessions: [string, string, LogEvent[] | null][]): string {
   const stateDir = join(dir, name);
@@ -420,15 +420,15 @@ function stateWith(name: string, sessions: [string, string, LogEvent[] | null][]
 test("describeSession tells a session the user started from one another session started", () => {
   const stateDir = stateWith("describe", [
     ["user", "2026-01-01T10:00:00Z", basic()],
-    ["tagged", "2026-01-01T10:20:00Z", childLog("session-worker")],
+    ["tagged", "2026-01-01T10:20:00Z", childLog("wintermute:wintermute-peon")],
     ["from-agent", "2026-01-01T10:20:00Z", [ev("user.message", 21, { source: "agent-workspace-1" })]],
     ["runtime-first", "2026-01-01T10:20:00Z", [ev("user.message", 20, { source: "system" }), ev("user.message", 21)]],
     ["empty-log", "2026-01-01T10:20:00Z", [ev("session.start", 20)]],
     ["no-log", "2026-01-01T09:00:00Z", null],
   ]);
   const describe = (id: string) => describeSession(join(stateDir, id));
-  assert.deepEqual(describe("user"), { hasLog: true, startedBy: "user", agent: "hands-on-orchestrator" });
-  assert.deepEqual(describe("tagged"), { hasLog: true, startedBy: "session", agent: "session-worker" });
+  assert.deepEqual(describe("user"), { hasLog: true, startedBy: "user", agent: "wintermute-core" });
+  assert.deepEqual(describe("tagged"), { hasLog: true, startedBy: "session", agent: "wintermute:wintermute-peon" });
   assert.deepEqual(describe("from-agent"), { hasLog: true, startedBy: "session", agent: null });
   assert.deepEqual(describe("runtime-first"), { hasLog: true, startedBy: "user", agent: null });
   assert.deepEqual(describe("empty-log"), { hasLog: true, startedBy: "none", agent: null });
@@ -461,7 +461,7 @@ test("chooseRunSession skips a stray session with no log and the orchestrator's 
     ["child-3", "2026-01-01T10:30:00Z", [ev("user.message", 31, { source: "agent-workspace-1" })]],
     ["child-4", "2026-01-01T10:40:00Z", null],
   ]);
-  const chosen = chooseRunSession(stateDir, REPO, "hands-on-orchestrator");
+  const chosen = chooseRunSession(stateDir, REPO, "wintermute-core");
   assert.equal(chosen.session.id, "orch");
   assert.equal(chosen.rule, `the only session for ${REPO} that you started`);
 });
@@ -472,10 +472,10 @@ test("chooseRunSession stops and lists the sessions when none was started by the
     ["child-1", "2026-01-01T10:20:00Z", childLog()],
   ]);
   assert.throws(
-    () => chooseRunSession(stateDir, REPO, "hands-on-orchestrator"),
+    () => chooseRunSession(stateDir, REPO, "wintermute-core"),
     (error: Error) => {
       assert.ok(error instanceof SessionChoiceError);
-      assert.match(error.message, /None of the 2 session\(s\) for ncksol\/orch-eval-hands-on-orchestrator-1 was started by you/);
+      assert.match(error.message, /None of the 2 session\(s\) for ncksol\/orch-eval-wintermute-core-1 was started by you/);
       assert.match(error.message, /stray {2}created 2026-01-01T09:00:00Z {2}agent none {2}no event log/);
       assert.match(error.message, /child-1 {2}created 2026-01-01T10:20:00Z {2}agent none {2}started by another session/);
       assert.match(error.message, /Rerun with --session <id>\.$/);
@@ -483,7 +483,7 @@ test("chooseRunSession stops and lists the sessions when none was started by the
       return true;
     },
   );
-  assert.throws(() => chooseRunSession(join(dir, "none"), "ncksol/nothing", "hands-on-orchestrator"), /No session in .* has repository ncksol\/nothing/);
+  assert.throws(() => chooseRunSession(join(dir, "none"), "ncksol/nothing", "wintermute-core"), /No session in .* has repository ncksol\/nothing/);
 });
 
 test("chooseRunSession narrows several user-started sessions by the variant's agent, or stops", () => {
@@ -492,19 +492,19 @@ test("chooseRunSession narrows several user-started sessions by the variant's ag
     ["orch", "2026-01-01T10:00:00Z", basic()],
     ["helper", "2026-01-01T10:05:00Z", helper],
   ]);
-  assert.equal(chooseRunSession(stateDir, REPO, "hands-on-orchestrator").session.id, "orch");
+  assert.equal(chooseRunSession(stateDir, REPO, "wintermute-core").session.id, "orch");
   assert.throws(
-    () => chooseRunSession(stateDir, REPO, "hands-on-session-orchestrator"),
+    () => chooseRunSession(stateDir, REPO, "variant-b"),
     (error: Error) => {
       assert.ok(error instanceof SessionChoiceError);
-      assert.match(error.message, /2 sessions for .* were started by you, and none of them used agent hands-on-session-orchestrator/);
-      assert.match(error.message, /orch {2}created 2026-01-01T10:00:00Z {2}agent hands-on-orchestrator {2}started by you/);
+      assert.match(error.message, /2 sessions for .* were started by you, and none of them used agent variant-b/);
+      assert.match(error.message, /orch {2}created 2026-01-01T10:00:00Z {2}agent wintermute-core {2}started by you/);
       assert.match(error.message, /helper {2}created 2026-01-01T10:05:00Z {2}agent none {2}started by you/);
       return true;
     },
   );
   writeSession(stateDir, "orch-again", REPO, "2026-01-01T11:00:00Z", basic());
-  assert.throws(() => chooseRunSession(stateDir, REPO, "hands-on-orchestrator"), /3 sessions .* and 2 of them used agent hands-on-orchestrator/);
+  assert.throws(() => chooseRunSession(stateDir, REPO, "wintermute-core"), /3 sessions .* and 2 of them used agent wintermute-core/);
 });
 
 test("yamlScalar reads plain and quoted values", () => {

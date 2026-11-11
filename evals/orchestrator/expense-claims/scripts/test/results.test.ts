@@ -107,7 +107,7 @@ test("pinned policy calibrations stay excluded and different agent bundles are n
     row({ variant: "orchestrator-review-a", agent: "orchestrator-review-a", calibration: "yes", agent_bundle_sha256: "first", minutes: "10" }),
     row({ variant: "orchestrator-review-a", agent: "orchestrator-review-a", features: THREE, agent_bundle_sha256: "first", minutes: "15", robustness_status: "failed" }),
     row({ variant: "orchestrator-review-a", agent: "orchestrator-review-a", features: THREE, agent_bundle_sha256: "second", minutes: "25" }),
-    row({ variant: "orchestrator-review-a", agent: "hands-on-orchestrator", calibration: "yes", agent_bundle_sha256: "first", minutes: "99" }),
+    row({ variant: "orchestrator-review-a", agent: "wintermute:wintermute-core", calibration: "yes", agent_bundle_sha256: "first", minutes: "99" }),
     row({ variant: "orchestrator-review-a", features: THREE, agent_bundle_sha256: "first", minutes: "99" }),
   ]);
   assert.equal(summary.groups.find((g) => g.features === FULL)!.runs, 0);
@@ -122,18 +122,18 @@ test("pinned policy calibrations stay excluded and different agent bundles are n
 
 test("live variant rows with agent_bundle_sha256 match namespaced agents and split summary groups by bundle", () => {
   const summary = summarize([
-    row({ variant: "hands-on-orchestrator", agent: "wintermute:hands-on-orchestrator", features: THREE, agent_bundle_sha256: "bundle1111", minutes: "30" }),
-    row({ variant: "hands-on-orchestrator", agent: "wintermute:hands-on-orchestrator", features: THREE, agent_bundle_sha256: "bundle1111", minutes: "40" }),
-    row({ variant: "hands-on-orchestrator", agent: "wintermute:hands-on-orchestrator", features: THREE, agent_bundle_sha256: "bundle2222", minutes: "50" }),
+    row({ variant: "wintermute-core", agent: "wintermute:wintermute-core", features: THREE, agent_bundle_sha256: "bundle1111", minutes: "30" }),
+    row({ variant: "wintermute-core", agent: "wintermute:wintermute-core", features: THREE, agent_bundle_sha256: "bundle1111", minutes: "40" }),
+    row({ variant: "wintermute-core", agent: "wintermute:wintermute-core", features: THREE, agent_bundle_sha256: "bundle2222", minutes: "50" }),
   ]);
   assert.equal(summary.excludedAgentRuns, 0);
   assert.deepEqual(summary.groups.map((g) => [g.variant, g.agentBundle, g.runs, g.medianMinutes]), [
-    ["hands-on-orchestrator", "bundle1111", 2, 35],
-    ["hands-on-orchestrator", "bundle2222", 1, 50],
+    ["wintermute-core", "bundle1111", 2, 35],
+    ["wintermute-core", "bundle2222", 1, 50],
   ]);
   const formatted = formatSummary(summary);
-  assert.match(formatted, /hands-on-orchestrator@bundle11/);
-  assert.match(formatted, /hands-on-orchestrator@bundle22/);
+  assert.match(formatted, /wintermute-core@bundle11/);
+  assert.match(formatted, /wintermute-core@bundle22/);
 });
 
 test("median handles odd, even and empty lists", () => {

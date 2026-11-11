@@ -5,11 +5,11 @@ function makeNode(fields) {
 /** The plugin that ships the orchestrator agents; the runtime names a plugin agent `<plugin>:<file-stem>`. */
 export const AGENT_PLUGIN = 'wintermute';
 
-/** The orchestrator agents that follow the swarm dashboard data contract (com.github.copilot/agents/hands-on-orchestrator.agent.md and hands-on-session-orchestrator.agent.md). */
-export const ORCHESTRATOR_AGENT_NAMES = Object.freeze(['hands-on-orchestrator', 'hands-on-session-orchestrator']);
+/** The orchestrator agent that follows the swarm dashboard data contract (com.github.copilot/agents/wintermute-core.agent.md). */
+export const ORCHESTRATOR_AGENT_NAMES = Object.freeze(['wintermute-core']);
 
 /**
- * The agent IDs that data.db sessions.agent records for those orchestrators: the plugin's `wintermute:<name>`, and the bare
+ * The agent IDs that data.db sessions.agent records for that orchestrator: the plugin's `wintermute:<name>`, and the bare
  * `<name>`.
  */
 export const ORCHESTRATOR_AGENTS = Object.freeze([...ORCHESTRATOR_AGENT_NAMES, ...ORCHESTRATOR_AGENT_NAMES.map(name => `${AGENT_PLUGIN}:${name}`)]);

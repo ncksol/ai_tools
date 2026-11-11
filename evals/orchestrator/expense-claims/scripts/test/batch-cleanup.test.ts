@@ -21,8 +21,8 @@ function fixture(t: { after(fn: () => void): void }) {
   const home = realpathSync(mkdtempSync(join(tmpdir(), "cleanup-")));
   t.after(() => rmSync(home, { recursive: true, force: true }));
   const dir = join(home, "orch-evals/batches/20261022-2121");
-  const repoDir = join(home, "orch-evals/orch-eval-hands-on-orchestrator-5");
-  const worktree = join(home, "_src_/copilot-worktrees/orch-eval-hands-on-orchestrator-5/branch");
+  const repoDir = join(home, "orch-evals/orch-eval-wintermute-core-5");
+  const worktree = join(home, "_src_/copilot-worktrees/orch-eval-wintermute-core-5/branch");
   for (const path of [dir, repoDir, worktree, join(home, ".copilot/session-state", rootSession), join(home, ".copilot/session-state", childSession)]) mkdirSync(path, { recursive: true });
   writeFileSync(join(repoDir, "keep-until-authorized"), "clone");
   writeFileSync(`${repoDir}.kickoff.md`, "Implement v2.");
@@ -38,8 +38,8 @@ function fixture(t: { after(fn: () => void): void }) {
     activeGuard: join(home, "orch-evals/active-batch"), dryRun: false,
   } as BatchConfig;
   const record: RunState = {
-    key: "hands-on-orchestrator#5", variant: "hands-on-orchestrator", n: 5, name: "orch-eval-hands-on-orchestrator-5",
-    repo: "ncksol/orch-eval-hands-on-orchestrator-5", repoDir, projectId: "project-5", seedSha: seed,
+    key: "wintermute-core#5", variant: "wintermute-core", n: 5, name: "orch-eval-wintermute-core-5",
+    repo: "ncksol/orch-eval-wintermute-core-5", repoDir, projectId: "project-5", seedSha: seed,
     sessionId: rootSession, appSessionId: "workspace-5", status: "done", createdAt: "2026-10-22T20:00:00Z",
     features: [], calibration: false, judged: [], answers: [], askAttempts: {}, requestIds: {}, flags: [],
   };
@@ -158,7 +158,7 @@ test("Next steps requires archival before project removal and changes only after
 const gates: [string, (f: ReturnType<typeof fixture>) => void, RegExp][] = [
   ["unfinished", (f) => { f.state.phase = "runs"; }, /finished/],
   ["missing seed", (f) => { delete f.record.seedSha; f.state.provisioned = []; }, /identity|seed/i],
-  ["owner mismatch", (f) => { f.record.repo = "other/orch-eval-hands-on-orchestrator-5"; f.state.provisioned = []; }, /owner|identity/i],
+  ["owner mismatch", (f) => { f.record.repo = "other/orch-eval-wintermute-core-5"; f.state.provisioned = []; }, /owner|identity/i],
   ["name mismatch", (f) => { f.record.name = "unrelated"; f.state.provisioned = []; }, /name|identity/i],
   ["seed mismatch", (f) => { f.deps.repo = async () => ({ id: 50, seedPresent: false }); }, /seed|history/i],
   ["app lookup failure", (f) => { f.deps.app.inventory = () => { throw new Error("missing DB column"); }; }, /DB/],
@@ -738,8 +738,8 @@ for (const guard of ["results", "running session"] as const) {
 
 test("a missing result blocks its own run, not another run's archives", async (t) => {
   const f = fixture(t);
-  const second = { ...f.record, n: 6, name: "orch-eval-hands-on-orchestrator-6", repo: "ncksol/orch-eval-hands-on-orchestrator-6",
-    repoDir: join(f.config.runsDir, "orch-eval-hands-on-orchestrator-6"), projectId: "project-6", sessionId: childSession };
+  const second = { ...f.record, n: 6, name: "orch-eval-wintermute-core-6", repo: "ncksol/orch-eval-wintermute-core-6",
+    repoDir: join(f.config.runsDir, "orch-eval-wintermute-core-6"), projectId: "project-6", sessionId: childSession };
   mkdirSync(second.repoDir);
   writeFileSync(`${second.repoDir}.kickoff.md`, "Implement v2.");
   f.state.runs.push(second);
@@ -1245,9 +1245,9 @@ test("S1: a dry run keeps the project while a session is busy in the app, and na
   f.deps.app.sessionRunning = id => id === rootSession;
   const report = await cleanupBatch(f.config, f.state, {}, f.deps);
   assertKeep(report);
-  assert.match(nextSteps(report), /session "Run session" in project orch-eval-hands-on-orchestrator-5 is still busy in the app\. Wait for it to finish or stop it there, then run --yes again/);
+  assert.match(nextSteps(report), /session "Run session" in project orch-eval-wintermute-core-5 is still busy in the app\. Wait for it to finish or stop it there, then run --yes again/);
   f.deps.app.sessionRunning = id => id === childSession;
-  assert.match(nextSteps(await cleanupBatch(f.config, f.state, {}, f.deps)), new RegExp(`session ${childSession} in project orch-eval-hands-on-orchestrator-5 is still busy`));
+  assert.match(nextSteps(await cleanupBatch(f.config, f.state, {}, f.deps)), new RegExp(`session ${childSession} in project orch-eval-wintermute-core-5 is still busy`));
 });
 
 test("S1: a dry run keeps the project when a log changes during the check", async (t) => {
@@ -1761,7 +1761,7 @@ async function absentReceipt(f: ReturnType<typeof fixture>) {
 }
 for (const [name, change] of [
   ["another run identity", (e: Record<string, unknown>) => ({ ...e, identity: "another-run" })],
-  ["another repo", (e: Record<string, unknown>) => ({ ...e, target: "ncksol/orch-eval-hands-on-orchestrator-6" })],
+  ["another repo", (e: Record<string, unknown>) => ({ ...e, target: "ncksol/orch-eval-wintermute-core-6" })],
 ] as const) {
   test(`T2: an absence receipt for ${name} does not stand in for this repo in a dry run`, async (t) => {
     const f = fixture(t);
