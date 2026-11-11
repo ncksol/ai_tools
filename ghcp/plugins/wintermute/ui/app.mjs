@@ -3,7 +3,7 @@ import { ago, elapsed, esc, timeOfDay } from './format.mjs';
 import { historyHtml, runHtml } from './history.mjs';
 import { activityHtml, cardsHtml, detailHtml, headerHtml, railHtml } from './live.mjs';
 import { waitingOnYou } from './model.mjs';
-import { boardHtml } from './plan.mjs';
+import { boardHtml } from './board.mjs';
 import { themeControlHtml } from './theme.mjs';
 import { timelineHtml } from './timeline.mjs';
 

@@ -1,4 +1,4 @@
-import { ago, countdown, elapsed, esc } from './format.mjs';
+import { ago, costText, countdown, dollars, elapsed, esc } from './format.mjs';
 import { REPORT_CLASS, REPORT_LABELS, feedText, stateLine } from './model.mjs';
 
 const RING = 2 * Math.PI * 17;
@@ -16,6 +16,16 @@ export const shortLabel = label => String(label).slice(0, 3).replace(/[._-]+$/, 
 /** Escape a word template and fill {t} (time in state) and {a} (age) with live times. */
 export function fill(template, at, now) {
   return esc(template).replace('{t}', elapsed(at, now)).replace('{a}', ago(at, now));
+}
+
+export const CARET = '<svg class="b-caret" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2.5 8 6l-4 3.5z"/></svg>';
+
+/** A shared mini card for finished and archived outcomes, without an active-state tint. */
+export function outcomeCard(unit, { words, tone, at }, ctx) {
+  const title = `${unit.label} ${unit.name}`;
+  return `<div class="mc tone-${tone}${ctx.detail === unit.id ? ' is-sel' : ''}" data-open="${esc(unit.id)}" tabindex="0" role="button" aria-label="Open details for ${esc(title)}" data-kind="${esc(unit.kind)}">`
+    + `<div class="mc-1"><span class="dot"></span><span class="tx" title="${esc(title)}">${esc(title)}</span></div>`
+    + `<div class="mc-2">${fill(words, at, ctx.now)}</div><div class="mc-3" title="${esc(costText(unit.cost.credits))}">${dollars(unit.cost.credits)}</div></div>`;
 }
 
 /**
