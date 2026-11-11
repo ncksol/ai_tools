@@ -51,7 +51,7 @@ const { values } = parseArgs({
     session: { type: "string" },
     "state-dir": { type: "string", default: join(homedir(), ".copilot", "session-state") },
     "app-db": { type: "string", default: join(homedir(), ".copilot", "data.db") },
-    pricing: { type: "string", default: join(KIT_DIR, "pricing", "2026-10-20.json") },
+    pricing: { type: "string", default: join(KIT_DIR, "pricing", "2026-11-10.json") },
     "agent-revision": { type: "string" },
     "agent-sha256": { type: "string" },
     "agent-bundle-sha256": { type: "string" },

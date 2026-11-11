@@ -6,6 +6,14 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace still follows main. See [Releases](README.md#releases) for prerequisites, checks and recovery after a partial publish.
 
+## 0.11.0 — 2026-11-11
+
+### Changed
+
+- Both orchestrators use Gemini 4 Carbon at `medium` for harder Mid implementation and light review, and at `high` for hard find-and-fix debugging when quality matters more than cost. Carbon takes the Google judge seat at `medium` on regular final panels and `high` on critical final panels and disagreement panels. Code-centred consults can use Carbon at `high`, but long-document and security consults cannot. Argon stays for routine Mid work and closed-book fact-checks.
+- Argon and Carbon count as one Google vendor for author-review separation and panel selection. Neither may run at `xhigh` or `max` or do unchecked web research; Carbon at `low` is excluded.
+- Security reviews of OpenAI-written code use Opus at `xhigh`, with Argon at `high` if Opus refuses, fails or times out. All other code still goes to Astra at `xhigh`.
+
 ## 0.10.0 — 2026-11-11
 
 ### Changed

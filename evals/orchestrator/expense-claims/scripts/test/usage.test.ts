@@ -38,6 +38,16 @@ test("Argon promotion expiry is exclusive and unsupported cache writes are not f
   assert.throws(() => priceUsage(usage("gemini-4-argon"), at, pricing()), /cache write/i);
 });
 
+test("Carbon promotional rates exclude cache writes and expire at or after December 1", () => {
+  const carbonPricing = readPricing(join(KIT_DIR, "pricing", "2026-11-10.json"));
+  const u = usage("gemini-4-carbon", { cacheWriteTokens: 0 });
+  assert.equal(priceUsage(u, "2026-11-30T23:59:59Z", carbonPricing), 0.00186);
+  assert.throws(() => priceUsage(usage("gemini-4-carbon"), "2026-11-10T12:00:00Z", carbonPricing), /cache write/i);
+  for (const timestamp of ["2026-12-01T00:00:00Z", "2026-12-02T00:00:00Z"]) {
+    assert.throws(() => priceUsage(u, timestamp, carbonPricing), /expired/);
+  }
+});
+
 test("unknown models and impossible or missing counters fail explicitly", () => {
   assert.throws(() => priceUsage(usage("unknown"), at, pricing()), /price/i);
   assert.throws(() => priceUsage(usage(undefined, { isAuto: true }), at, pricing()), /discounted rate/);
