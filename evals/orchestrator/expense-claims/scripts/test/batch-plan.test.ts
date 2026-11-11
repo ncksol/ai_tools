@@ -41,13 +41,13 @@ function run(variant: string, n: number): RunState {
 
 test("a history of run 1 at 65.7 minutes forces dropping Summary for two variants, with no calibration run", () => {
   const rows = readResults(RUN1_RESULTS);
-  const decision = calibrationDecision(rows, ["hands-on-orchestrator", "hands-on-session-orchestrator"]);
+  const decision = calibrationDecision(rows, ["wintermute-core", "variant-b"]);
   assert.equal(decision.state, "drop");
   assert.deepEqual(decision.features, WITHOUT_SUMMARY);
   assert.deepEqual(decision.pending, []);
   assert.equal(decision.best, 65.7 / 2);
-  const { next } = planNext([], rows, ["hands-on-orchestrator", "hands-on-session-orchestrator"], 3);
-  assert.deepEqual(next, { variant: "hands-on-orchestrator", features: WITHOUT_SUMMARY, calibration: false });
+  const { next } = planNext([], rows, ["wintermute-core", "variant-b"], 3);
+  assert.deepEqual(next, { variant: "wintermute-core", features: WITHOUT_SUMMARY, calibration: false });
 });
 
 test("with no history, both variants run calibration first", () => {
@@ -90,7 +90,7 @@ test("after the calibration runs, the decision is made and calibration runs coun
 
 test("variants alternate A1, B1, A2, B2 and a run without a row doesn't count", () => {
   const rows = readResults(RUN1_RESULTS);
-  const variants = ["hands-on-orchestrator", "hands-on-session-orchestrator"];
+  const variants = ["wintermute-core", "variant-b"];
   const runs: RunState[] = [];
   const order: string[] = [];
   const all = [...rows];
@@ -103,10 +103,10 @@ test("variants alternate A1, B1, A2, B2 and a run without a row doesn't count", 
     runs.push(r);
     if (i !== 2) all.push(row(next.variant, n, THREE, "no", "passed", 30));
   }
-  // The third run (hands-on-orchestrator #3) wrote no row, so hands-on-orchestrator goes again.
-  assert.deepEqual(order, ["hands-on-orchestrator#2", "hands-on-session-orchestrator#1", "hands-on-orchestrator#3", "hands-on-orchestrator#4", "hands-on-session-orchestrator#2", "hands-on-orchestrator#5"]);
-  runs.push(run("hands-on-session-orchestrator", 3));
-  all.push(row("hands-on-session-orchestrator", 3, THREE, "no", "passed", 30));
+  // The third run (wintermute-core #3) wrote no row, so wintermute-core goes again.
+  assert.deepEqual(order, ["wintermute-core#2", "variant-b#1", "wintermute-core#3", "wintermute-core#4", "variant-b#2", "wintermute-core#5"]);
+  runs.push(run("variant-b", 3));
+  all.push(row("variant-b", 3, THREE, "no", "passed", 30));
   assert.equal(planNext(runs, all, variants, 3).next, null);
 });
 

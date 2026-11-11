@@ -25,7 +25,7 @@ let pids = 500;
  * worktree), 'folder' (a folder workspace), 'worktree' (a workspace with a worktree) or 'chat' (a standalone chat). `ledger`
  * adds the sub-agent's model call to the usage ledger; `alive` holds a lock for a running process.
  */
-function withSubagent(home, { id, cli = id, kind = 'project', agent = 'hands-on-orchestrator', ledger = true, alive = false, archivedAt = null, parentId = null }) {
+function withSubagent(home, { id, cli = id, kind = 'project', agent = 'wintermute-core', ledger = true, alive = false, archivedAt = null, parentId = null }) {
   if (kind === 'chat') home.chat({ id: cli, title: `Lone ${id}`, createdAt: at(55), agent });
   else {
     home.workspace({
@@ -58,9 +58,9 @@ const ids = engine => engine.listSwarms().map(swarm => swarm.id).sort();
 test('an orchestrator with only task sub-agents is a swarm root, by the ledger or by its log', async () => {
   const home = scenario();
   const folder = withSubagent(home, { id: 'cli-folder', kind: 'chat' });
-  const project = withSubagent(home, { id: 'ws-project', cli: 'cli-project', agent: 'hands-on-session-orchestrator' });
-  const handsOn = withSubagent(home, { id: 'ws-hands-on', cli: 'cli-hands-on', agent: 'hands-on-orchestrator' });
-  const handsOnSession = withSubagent(home, { id: 'ws-hands-on-session', cli: 'cli-hands-on-session', agent: 'hands-on-session-orchestrator', ledger: false, alive: true });
+  const project = withSubagent(home, { id: 'ws-project', cli: 'cli-project', agent: 'wintermute-core' });
+  const handsOn = withSubagent(home, { id: 'ws-hands-on', cli: 'cli-hands-on', agent: 'wintermute-core' });
+  const handsOnSession = withSubagent(home, { id: 'ws-hands-on-session', cli: 'cli-hands-on-session', agent: 'wintermute-core', ledger: false, alive: true });
   const logOnly = withSubagent(home, { id: 'ws-log', cli: 'cli-log', ledger: false, alive: true });
   const engine = engineFor(home, at(60));
   await engine.refresh();
@@ -80,13 +80,13 @@ test('an orchestrator with only task sub-agents is a swarm root, by the ledger o
 test('an orchestrator from the wintermute plugin with only task sub-agents is a swarm root, and its workers are not', async () => {
   const home = scenario();
   const roots = {
-    'ws-plugin-hands-on': withSubagent(home, { id: 'ws-plugin-hands-on', cli: 'cli-plugin-hands-on', agent: 'wintermute:hands-on-orchestrator', alive: true }),
-    'cli-plugin-chat': withSubagent(home, { id: 'cli-plugin-chat', kind: 'chat', agent: 'wintermute:hands-on-session-orchestrator', alive: true }),
+    'ws-plugin-hands-on': withSubagent(home, { id: 'ws-plugin-hands-on', cli: 'cli-plugin-hands-on', agent: 'wintermute:wintermute-core', alive: true }),
+    'cli-plugin-chat': withSubagent(home, { id: 'cli-plugin-chat', kind: 'chat', agent: 'wintermute:wintermute-core', alive: true }),
   };
   const others = {
-    worker: withSubagent(home, { id: 'ws-plugin-worker', cli: 'cli-plugin-worker', agent: 'wintermute:orchestrator-worker', alive: true }),
-    sessionWorker: withSubagent(home, { id: 'ws-plugin-session-worker', cli: 'cli-plugin-session-worker', agent: 'wintermute:session-worker', alive: true }),
-    otherPlugin: withSubagent(home, { id: 'ws-other-plugin', cli: 'cli-other-plugin', agent: 'other-plugin:hands-on-orchestrator', alive: true }),
+    worker: withSubagent(home, { id: 'ws-plugin-worker', cli: 'cli-plugin-worker', agent: 'wintermute:wintermute-peon', alive: true }),
+    sessionWorker: withSubagent(home, { id: 'ws-plugin-wintermute-peon', cli: 'cli-plugin-wintermute-peon', agent: 'wintermute:wintermute-peon', alive: true }),
+    otherPlugin: withSubagent(home, { id: 'ws-other-plugin', cli: 'cli-other-plugin', agent: 'other-plugin:wintermute-core', alive: true }),
   };
   const engine = engineFor(home, at(60));
   await engine.refresh();
@@ -111,11 +111,11 @@ test('sub-agent work makes no swarm of a session that does not run an orchestrat
   const plain = {
     plain: withSubagent(home, { id: 'ws-plain', cli: 'cli-plain', agent: null, alive: true }),
     other: withSubagent(home, { id: 'ws-andrej', cli: 'cli-andrej', agent: 'andrej', alive: true }),
-    worker: withSubagent(home, { id: 'ws-worker', cli: 'cli-worker', agent: 'orchestrator-worker', alive: true }),
-    sessionWorker: withSubagent(home, { id: 'ws-session-worker', cli: 'cli-session-worker', agent: 'session-worker', alive: true }),
+    worker: withSubagent(home, { id: 'ws-worker', cli: 'cli-worker', agent: 'rubber-duck', alive: true }),
+    sessionWorker: withSubagent(home, { id: 'ws-wintermute-peon', cli: 'cli-wintermute-peon', agent: 'wintermute-peon', alive: true }),
     chat: withSubagent(home, { id: 'chat-plain', kind: 'chat', agent: null, alive: true }),
     noWork: (() => {
-      home.workspace({ id: 'ws-idle', name: 'Idle orchestrator', createdAt: at(55), sessionId: 'cli-idle', agent: 'hands-on-orchestrator' });
+      home.workspace({ id: 'ws-idle', name: 'Idle orchestrator', createdAt: at(55), sessionId: 'cli-idle', agent: 'wintermute-core' });
       const log = new EventLog(at(55));
       log.start(); log.turnStart(); log.at(at(56)); log.message('Thinking.'); log.turnEnd();
       home.writeEvents('cli-idle', log.events);
@@ -157,12 +157,12 @@ test('the forest makes a childless top session a root for sub-agent work only wh
     // cli-orphan's alias names a workspace that is gone, so it is no chat and no root.
     aliases: [{ sessionId: 'cli-mixed-old', workspaceId: 'mixed', createdAt: 0 }, { sessionId: 'cli-orphan', workspaceId: 'ws-gone', createdAt: 0 }],
     sessions: new Map([
-      session('cli-hands-on', 'hands-on-orchestrator'), session('cli-plain', null),
-      session('cli-mixed-old', 'hands-on-orchestrator'), session('cli-mixed', null),
-      session('chat-hands-on', 'hands-on-session-orchestrator'),
-      session('chat-plain', 'andrej'), session('cli-orphan', 'hands-on-orchestrator'),
-      session('cli-plugin', 'wintermute:hands-on-orchestrator'), session('cli-plugin-worker', 'wintermute:orchestrator-worker'),
-      session('chat-plugin', 'wintermute:hands-on-session-orchestrator'),
+      session('cli-hands-on', 'wintermute-core'), session('cli-plain', null),
+      session('cli-mixed-old', 'wintermute-core'), session('cli-mixed', null),
+      session('chat-hands-on', 'wintermute-core'),
+      session('chat-plain', 'andrej'), session('cli-orphan', 'wintermute-core'),
+      session('cli-plugin', 'wintermute:wintermute-core'), session('cli-plugin-worker', 'wintermute:wintermute-peon'),
+      session('chat-plugin', 'wintermute:wintermute-core'),
     ]),
   };
   const worked = new Set(['cli-hands-on', 'cli-plain', 'cli-mixed', 'chat-hands-on', 'chat-plain', 'cli-orphan', 'cli-plugin', 'cli-plugin-worker', 'chat-plugin']);
@@ -208,7 +208,7 @@ test('pages for task-only orchestrators in a folder, a worktree and a chat each 
 
 test('an open page finds its session\'s swarm when the first task sub-agent starts, and keeps it when the first child joins', async () => {
   const home = new CopilotHome();
-  home.workspace({ id: 'ws-grow', name: 'Growing', createdAt: at(55), sessionId: 'cli-grow', agent: 'hands-on-orchestrator', workspaceType: 'folder' });
+  home.workspace({ id: 'ws-grow', name: 'Growing', createdAt: at(55), sessionId: 'cli-grow', agent: 'wintermute-core', workspaceType: 'folder' });
   const log = new EventLog(at(55));
   log.start(); log.turnStart(); log.at(at(56)); log.message('Planning.');
   home.writeEvents('cli-grow', log.events);
@@ -252,18 +252,18 @@ function logOnlyHome() {
     'cli-chat': withSubagent(home, { id: 'cli-chat', kind: 'chat', ledger: false }),
   };
   // An older CLI session of ws-alias ran the task; its current one has not started a sub-agent.
-  home.session({ id: 'cli-alias-old', title: 'Alias old', createdAt: at(50), agent: 'hands-on-orchestrator' });
+  home.session({ id: 'cli-alias-old', title: 'Alias old', createdAt: at(50), agent: 'wintermute-core' });
   home.alias('cli-alias-old', 'ws-alias', at(50));
   const old = new EventLog(at(50));
   old.start(); old.turnStart(); old.subagent({ name: 'scout' }); old.turnEnd();
   home.writeEvents('cli-alias-old', old.events);
-  home.workspace({ id: 'ws-alias', name: 'Alias', createdAt: at(55), sessionId: 'cli-alias', agent: 'hands-on-orchestrator' });
+  home.workspace({ id: 'ws-alias', name: 'Alias', createdAt: at(55), sessionId: 'cli-alias', agent: 'wintermute-core' });
   const current = new EventLog(at(55));
   current.start(); current.turnStart(); current.message('Resumed.'); current.turnEnd();
   home.writeEvents('cli-alias', current.events);
   roots['ws-alias'] = 'cli-alias';
   // A task start written with its type last.
-  home.workspace({ id: 'ws-reordered', name: 'Reordered', createdAt: at(55), sessionId: 'cli-reordered', agent: 'hands-on-orchestrator' });
+  home.workspace({ id: 'ws-reordered', name: 'Reordered', createdAt: at(55), sessionId: 'cli-reordered', agent: 'wintermute-core' });
   const reordered = new EventLog(at(55));
   reordered.start();
   reordered.events.push({ data: { toolCallId: 'call-r', toolName: 'task', arguments: { name: 'scout', description: 'scout work' } }, id: 'ev-r', timestamp: new Date(at(56)).toISOString(), type: 'tool.execution_start' });
@@ -322,7 +322,7 @@ test('a task start too big to read whole, its type first or last, makes a root w
   const cases = { 'ws-big-first': false, 'ws-big-last': true };
   for (const [id, typeLast] of Object.entries(cases)) {
     const cli = `cli-${id.slice(3)}`;
-    home.workspace({ id, name: id, createdAt: at(55), sessionId: cli, agent: 'hands-on-orchestrator' });
+    home.workspace({ id, name: id, createdAt: at(55), sessionId: cli, agent: 'wintermute-core' });
     const log = new EventLog(at(55));
     log.start();
     const head = { id: `ev-${id}`, timestamp: new Date(at(56)).toISOString() };

@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "wintermute",
-  "description": "Orchestrator agents for the GitHub Copilot app and a watch-only dashboard for the swarms they run: sessions, sub-agents, cost, stuck detection and run history.",
-  "version": "0.11.0",
+  "description": "An orchestrator agent for the GitHub Copilot app and a watch-only dashboard for the swarms it runs: sessions, sub-agents, cost, stuck detection and run history.",
+  "version": "0.12.0",
   "author": {
     "name": "Nick Sologoub"
   },

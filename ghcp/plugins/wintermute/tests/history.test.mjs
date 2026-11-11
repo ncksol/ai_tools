@@ -30,7 +30,7 @@ test('a run summary answers time and cost first, by unit, model and sub-agent ty
     id: 'ws-0001-b0', label: 'B0', name: 'schema', isOrchestrator: false, startedAt: 1791814200000, endedAt: 1791964200000,
     busyMs: 18000000, credits: 10912, outcome: 'merged', merged: true,
   });
-  assert.deepEqual(summary.subagentTypes.map(entry => entry.type), ['task', 'general-purpose', 'research', 'code-review', 'explore', 'orchestrator-worker']);
+  assert.deepEqual(summary.subagentTypes.map(entry => entry.type), ['task', 'general-purpose', 'research', 'code-review', 'explore', 'rubber-duck']);
   assert.deepEqual(summary.models, snapshot.cost.byModel);
   assert.deepEqual(listItemOf(summary), {
     id: summary.id, name: summary.name, project: summary.project, startedAt: summary.startedAt, finishedAt: summary.finishedAt,

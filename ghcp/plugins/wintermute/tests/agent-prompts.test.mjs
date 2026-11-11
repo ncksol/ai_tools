@@ -5,8 +5,9 @@ import { readFileSync } from 'node:fs';
 // These are static checks on prompt text. They show what the agents are told, not what a running session does.
 
 const agent = name => readFileSync(new URL(`../com.github.copilot/agents/${name}.agent.md`, import.meta.url), 'utf8');
-const ORCHESTRATORS = ['hands-on-orchestrator', 'hands-on-session-orchestrator'];
-const AGENTS = [...ORCHESTRATORS, 'session-worker', 'orchestrator-worker'];
+const ORCHESTRATOR = 'wintermute-core';
+const WORKER = 'wintermute-peon';
+const AGENTS = [ORCHESTRATOR, WORKER];
 
 const NO_WATCH_RULE = '- Don\'t have a child watch a PR after it opens or publishes one, draft or ready: no PR monitor, session automation, event subscription, polling loop, background script or heartbeat, and no other agent to do it. Don\'t watch a PR yourself either, your own unit\'s included: no polling loop, background script or heartbeat. The child reports, then goes on only with its assigned work and the required review and validation gates; don\'t keep it alive only to watch a PR. When you or the user need a PR\'s current state, CI or review comments, ask the owner for one check, or read them yourself as a quick job. A check is one read and schedules no other. The one exception is CI that a required gate needs and that is still running: the owner, or you for your own unit, may wait for it once with one blocking command that has a time limit of about 30 minutes, such as `gh pr checks --watch`, then report the result, or report CI as pending if the limit passes. Nothing reacts to new reviewer activity on its own: when you learn of review comments, send them to the owner as owned work.';
 const KICKOFF_LINE = '- tell the child to send you its evidence and wait for your go-ahead before it opens a PR, takes one out of draft, or merges, and to report as soon as it opens a PR, without setting up anything to watch it afterwards. Once its PR is open and its assigned gates are done, it sends `complete`; when asked to check a PR, it reads it once and reports;';
@@ -18,21 +19,19 @@ test('no agent prompt asks for a PR monitor to be started, kept or stopped', () 
   }
 });
 
-test('both orchestrators forbid PR watching with the same words, in the rule and in every kickoff', () => {
-  for (const name of ORCHESTRATORS) {
-    const text = agent(name);
-    assert.ok(text.includes(NO_WATCH_RULE), `${name}: no-watch rule`);
-    assert.ok(text.includes(KICKOFF_LINE), `${name}: kickoff line`);
-  }
+test('the orchestrator forbids PR watching, in the rule and in every kickoff', () => {
+  const text = agent(ORCHESTRATOR);
+  assert.ok(text.includes(NO_WATCH_RULE), 'no-watch rule');
+  assert.ok(text.includes(KICKOFF_LINE), 'kickoff line');
 });
 
-test('session-worker forbids PR watching and keeps one-shot PR checks', () => {
-  assert.ok(agent('session-worker').includes(WORKER_RULE));
+test('the worker forbids PR watching and keeps one-shot PR checks', () => {
+  assert.ok(agent(WORKER).includes(WORKER_RULE));
 });
 
-test('a status-check reply while only waiting for PR reviews is complete, in all three report blocks', () => {
+test('a status-check reply while only waiting for PR reviews is complete, in both report blocks', () => {
   const line = '- Send only results, blockers and questions. A reply to a status check from the orchestrator, when work continues and nothing is needed, is progress. When your objective is done and you are only waiting, for example for reviews of your open PR, the reply is complete.';
-  for (const name of [...ORCHESTRATORS, 'session-worker']) assert.ok(agent(name).includes(line), name);
+  for (const name of AGENTS) assert.ok(agent(name).includes(line), name);
 });
 
 const ROUTING = [
@@ -47,62 +46,50 @@ const RECHECK_CLAUSE = 'A re-check covers only the review of the new diff: the c
 const OWN_UNIT_LINE = '- Start its claims check and its regular or critical review yourself, as separate jobs, as you would for a child\'s unit (see "Evidence and review").';
 const CLAIMS_ROW = '| Claims check | Sol at `medium`; Opus at `low` if Sol isn\'t listed | The check before every merge, publish and "done". A check, not a review. |';
 
-test('both orchestrators have the same claims routing rule under the Claims check bullet', () => {
-  for (const name of ORCHESTRATORS) {
-    const text = agent(name);
-    const at = text.indexOf('- **Claims check**:');
-    assert.ok(at >= 0, `${name}: claims bullet`);
-    const bulletEnd = text.indexOf('\n', at);
-    assert.equal(text.slice(bulletEnd + 1, bulletEnd + 1 + ROUTING.length), ROUTING, `${name}: routing follows the bullet`);
-  }
+test('the orchestrator has the claims routing rule under the Claims check bullet', () => {
+  const text = agent(ORCHESTRATOR);
+  const at = text.indexOf('- **Claims check**:');
+  assert.ok(at >= 0, 'claims bullet');
+  const bulletEnd = text.indexOf('\n', at);
+  assert.equal(text.slice(bulletEnd + 1, bulletEnd + 1 + ROUTING.length), ROUTING, 'routing follows the bullet');
 });
 
 test('combined review-and-claims requests are split, and claims refreshes and own units get a new checker', () => {
-  for (const name of ORCHESTRATORS) {
-    const text = agent(name);
-    assert.match(text, /split it into two jobs/, name);
-    assert.match(text, /a request to refresh earlier claims, and the claims check of your own unit/, name);
-    assert.ok(text.includes(OWN_UNIT_LINE), `${name}: own-unit line`);
-  }
+  const text = agent(ORCHESTRATOR);
+  assert.match(text, /split it into two jobs/);
+  assert.match(text, /a request to refresh earlier claims, and the claims check of your own unit/);
+  assert.ok(text.includes(OWN_UNIT_LINE), 'own-unit line');
 });
 
-test('each orchestrator runs the claims checker as its own delegation type', () => {
-  assert.ok(agent('hands-on-orchestrator').includes('Run it as a one-off, read-only sub-agent.'));
-  assert.ok(agent('hands-on-orchestrator').includes('Start every sub-agent as `wintermute:orchestrator-worker`.'));
-  assert.ok(agent('hands-on-session-orchestrator').includes('Run it as a one-off, read-only session, created with `base_branch` set to that branch.'));
-  assert.ok(agent('hands-on-session-orchestrator').includes('Create every child, owner or one-off, with `kickoff.agent: "wintermute:session-worker"`'));
+test('the orchestrator runs the claims checker as a one-off session, and every child as the worker', () => {
+  assert.ok(agent(ORCHESTRATOR).includes('Run it as a one-off, read-only session, created with `base_branch` set to that branch.'));
+  assert.ok(agent(ORCHESTRATOR).includes('Create every child, owner or one-off, with `kickoff.agent: "wintermute:wintermute-peon"`'));
 });
 
 test('reuse of idle agents and re-checks exclude claims checks', () => {
-  for (const name of ORCHESTRATORS) {
-    const text = agent(name);
-    const reuse = text.split('\n').find(l => l.startsWith('- Send a follow-up to an idle '));
-    assert.ok(reuse && reuse.includes(REUSE_CLAUSE), `${name}: split-work reuse rule`);
-    const recheck = text.split('\n').find(l => l.startsWith('- **Re-checks**'));
-    assert.ok(recheck && recheck.includes(RECHECK_CLAUSE), `${name}: re-check rule`);
-  }
-  const step4 = agent('hands-on-session-orchestrator').split('\n').find(l => l.startsWith('4. If an idle session'));
+  const text = agent(ORCHESTRATOR);
+  const reuse = text.split('\n').find(l => l.startsWith('- Send a follow-up to an idle '));
+  assert.ok(reuse && reuse.includes(REUSE_CLAUSE), 'split-work reuse rule');
+  const recheck = text.split('\n').find(l => l.startsWith('- **Re-checks**'));
+  assert.ok(recheck && recheck.includes(RECHECK_CLAUSE), 're-check rule');
+  const step4 = text.split('\n').find(l => l.startsWith('4. If an idle session'));
   assert.ok(step4 && step4.includes(REUSE_CLAUSE), 'helper request step 4');
 });
 
 test('the claims check row keeps its models and is no longer called a review row', () => {
-  for (const name of ORCHESTRATORS) {
-    const text = agent(name);
-    assert.ok(text.includes(CLAIMS_ROW), `${name}: row unchanged`);
-    assert.ok(text.includes('- The last five rows are review rows. The claims check row above them is a check, not a review row.'), `${name}: review rows counted without the claims check row`);
-    assert.doesNotMatch(text, /a claims check, a review or a judge gets its review row/, name);
-    assert.match(text, /a claims check gets the claims check row, a review or a judge gets its review row/, name);
-  }
+  const text = agent(ORCHESTRATOR);
+  assert.ok(text.includes(CLAIMS_ROW), 'row unchanged');
+  assert.ok(text.includes('- The last five rows are review rows. The claims check row above them is a check, not a review row.'), 'review rows counted without the claims check row');
+  assert.doesNotMatch(text, /a claims check, a review or a judge gets its review row/);
+  assert.match(text, /a claims check gets the claims check row, a review or a judge gets its review row/);
 });
 
 const MISROUTE_HEAD = '- A claims check is a separate job from a review. If you are a reviewer and your brief or a follow-up also asks you to verify the author\'s claims for a merge, publish or "done", for example "refresh the test and lint claims", do the review and leave the claims job undone.';
 const MISROUTE_TAIL = 'Don\'t do the claims job anyway, don\'t count it as done or as not needed, and don\'t start another agent for it. You may still run tests, read CI or reproduce a failure when your review needs that to establish a finding.';
 
-test('both workers hand a misrouted claims job back and keep tests for findings', () => {
-  const where = { 'orchestrator-worker': 'Under **Blockers or questions**, say that a claims job was sent to you and needs a separate claims checker.', 'session-worker': 'In your report, under `Blockers:`, say that a claims job was sent to you and needs a separate claims checker.' };
-  for (const [name, middle] of Object.entries(where)) {
-    assert.ok(agent(name).includes(`${MISROUTE_HEAD} ${middle} ${MISROUTE_TAIL}`), name);
-  }
+test('the worker hands a misrouted claims job back and keeps tests for findings', () => {
+  const middle = 'In your report, under `Blockers:`, say that a claims job was sent to you and needs a separate claims checker.';
+  assert.ok(agent(WORKER).includes(`${MISROUTE_HEAD} ${middle} ${MISROUTE_TAIL}`));
 });
 
 const LIGHT_ROW = '| Light review | Sol at `high`, Sonnet at `xhigh` or Carbon at `medium`, never from the author\'s vendor | The review of a small follow-up with real logic that meets no critical-unit trigger (see "Follow-up jobs" in "Evidence and review"). Never a unit\'s first review. |';
@@ -117,17 +104,14 @@ const followUpRule = text => {
   return start >= 0 && end > start ? text.slice(start + 1, end) : null;
 };
 
-test('both orchestrators have the same Follow-up jobs rule, just before Re-checks', () => {
-  const rules = ORCHESTRATORS.map(name => followUpRule(agent(name)));
-  for (const [i, rule] of rules.entries()) {
-    assert.ok(rule, `${ORCHESTRATORS[i]}: rule before Re-checks`);
-    assert.equal(rule.split('\n').filter(l => l.startsWith('- ')).length, 1, `${ORCHESTRATORS[i]}: rule is the bullet right before Re-checks`);
-  }
-  assert.equal(rules[0], rules[1]);
+test('the orchestrator has the Follow-up jobs rule just before Re-checks', () => {
+  const rule = followUpRule(agent(ORCHESTRATOR));
+  assert.ok(rule, 'rule before Re-checks');
+  assert.equal(rule.split('\n').filter(l => l.startsWith('- ')).length, 1, 'rule is the bullet right before Re-checks');
 });
 
 test('the follow-up rule covers every follow-up type, both directions, its safeguards and the recorded reason', () => {
-  const rule = followUpRule(agent('hands-on-session-orchestrator'));
+  const rule = followUpRule(agent(ORCHESTRATOR));
   for (const phrase of [
     'fixes, reviewer re-checks, panel re-checks, claims checks and rebases, and any other later job',
     'A follow-up doesn\'t inherit the unit\'s tier, review rows, number of reviewers or critical status.',
@@ -145,7 +129,7 @@ test('the follow-up rule covers every follow-up type, both directions, its safeg
 });
 
 test('a follow-up skips its claims check only after an earlier pass, on a mechanical diff, with a test job that ran at the exact head', () => {
-  const rule = followUpRule(agent('hands-on-session-orchestrator'));
+  const rule = followUpRule(agent(ORCHESTRATOR));
   for (const phrase of [
     'an earlier claims check passed for this unit',
     'the whole change from the commit that check passed at to the new head is mechanical, touches no build, CI or test configuration, and removes or skips no tests',
@@ -155,40 +139,33 @@ test('a follow-up skips its claims check only after an earlier pass, on a mechan
   ]) assert.ok(rule.includes(phrase), phrase);
 });
 
-test('the light review row sits between the claims check and regular review rows in both orchestrators', () => {
-  for (const name of ORCHESTRATORS) {
-    const lines = agent(name).split('\n');
-    const at = lines.indexOf(CLAIMS_ROW);
-    assert.ok(at >= 0, `${name}: claims row`);
-    assert.equal(lines[at + 1], LIGHT_ROW, `${name}: light row follows the claims row`);
-    assert.ok(lines[at + 2].startsWith('| Regular review |'), `${name}: regular row follows the light row`);
-  }
+test('the light review row sits between the claims check and regular review rows', () => {
+  const lines = agent(ORCHESTRATOR).split('\n');
+  const at = lines.indexOf(CLAIMS_ROW);
+  assert.ok(at >= 0, 'claims row');
+  assert.equal(lines[at + 1], LIGHT_ROW, 'light row follows the claims row');
+  assert.ok(lines[at + 2].startsWith('| Regular review |'), 'regular row follows the light row');
 });
 
-test('the rules that follow-ups touch point to Follow-up jobs in both orchestrators', () => {
-  for (const name of ORCHESTRATORS) {
-    const text = agent(name);
-    const line = start => text.split('\n').find(l => l.startsWith(start)) ?? '';
-    assert.ok(line('- **Re-checks**').includes('gets the scrutiny that "Follow-up jobs" sizes for it'), `${name}: re-checks`);
-    assert.ok(line('- **Re-checks**').includes('and only when it can affect how units work together or the spec as a whole'), `${name}: panel re-check`);
-    assert.ok(line('  Record a one-line reason in the unit').includes(CRITICAL_POINTER), `${name}: critical units`);
-    assert.ok(line('- **Claims check**').includes(CLAIMS_EXCEPTION), `${name}: claims check`);
-    assert.ok(text.includes(FOLLOW_UP_TIER_LINE), `${name}: models and effort`);
-    assert.ok(text.includes(FINDINGS_POINTER), `${name}: fix PR for a panel finding`);
-    assert.doesNotMatch(text, /goes back to the same reviewer/, `${name}: old re-check rule removed`);
-  }
+test('the rules that follow-ups touch point to Follow-up jobs', () => {
+  const text = agent(ORCHESTRATOR);
+  const line = start => text.split('\n').find(l => l.startsWith(start)) ?? '';
+  assert.ok(line('- **Re-checks**').includes('gets the scrutiny that "Follow-up jobs" sizes for it'), 're-checks');
+  assert.ok(line('- **Re-checks**').includes('and only when it can affect how units work together or the spec as a whole'), 'panel re-check');
+  assert.ok(line('  Record a one-line reason in the unit').includes(CRITICAL_POINTER), 'critical units');
+  assert.ok(line('- **Claims check**').includes(CLAIMS_EXCEPTION), 'claims check');
+  assert.ok(text.includes(FOLLOW_UP_TIER_LINE), 'models and effort');
+  assert.ok(text.includes(FINDINGS_POINTER), 'fix PR for a panel finding');
+  assert.doesNotMatch(text, /goes back to the same reviewer/, 'old re-check rule removed');
 });
 
-test('each orchestrator keeps a unit\'s claims checker for its later claims checks', () => {
-  assert.ok(agent('hands-on-orchestrator').includes('Run it as a one-off, read-only sub-agent. Start it with `mode: "background"`, so that it can take the unit\'s later claims checks.'));
-  assert.ok(agent('hands-on-session-orchestrator').includes('created with `base_branch` set to that branch. Keep it until the unit merges, so that it can take the unit\'s later claims checks.'));
+test('the orchestrator keeps a unit\'s claims checker for its later claims checks', () => {
+  assert.ok(agent(ORCHESTRATOR).includes('created with `base_branch` set to that branch. Keep it until the unit merges, so that it can take the unit\'s later claims checks.'));
 });
 
 const RECHECK_RUN_LIMIT = 'A reviewer who re-checks it checks only the new diff. The re-check brief says so, and says to run code only to settle a possible finding, with the smallest check that settles it, such as one test file. The reviewer doesn\'t repeat the owner\'s test runs, full test suites or mutation checks, even when a project\'s test rules ask authors for them: the owner\'s evidence and CI cover those, and so does the claims check when one runs.';
 
-test('both orchestrators limit what a re-checking reviewer runs, with the same words', () => {
-  for (const name of ORCHESTRATORS) {
-    const recheck = agent(name).split('\n').find(l => l.startsWith('- **Re-checks**')) ?? '';
-    assert.ok(recheck.includes(RECHECK_RUN_LIMIT), name);
-  }
+test('the orchestrator limits what a re-checking reviewer runs', () => {
+  const recheck = agent(ORCHESTRATOR).split('\n').find(l => l.startsWith('- **Re-checks**')) ?? '';
+  assert.ok(recheck.includes(RECHECK_RUN_LIMIT));
 });

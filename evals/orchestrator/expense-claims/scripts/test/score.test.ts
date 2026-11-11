@@ -106,7 +106,7 @@ test("score times a synthetic session, runs the seed's suite on a fresh clone an
     variant: "e2e",
     run: "1",
     session: "s1",
-    agent: "hands-on-orchestrator",
+    agent: "wintermute-core",
     features: "policy+reports+import+summary",
     calibration: "yes",
     outcome: "passed",
@@ -293,20 +293,20 @@ test("a new variant's first run with fewer features is not a calibration run", {
 });
 
 test("explicit live runtime IDs keep manual scoring in the historical calibration and summary group and record live provenance", { timeout: 180_000 }, async () => {
-  const repoDir = join(dir, "orch-eval-hands-on-orchestrator-1");
+  const repoDir = join(dir, "orch-eval-wintermute-core-1");
   cpSync(join(KIT_DIR, "reference"), repoDir, { recursive: true, filter: (src) => !/[\\/](node_modules|\.DS_Store)$/.test(src) });
   await git(repoDir, ["init", "-q", "-b", "main"]);
   await git(repoDir, ["add", "-A"]);
   await git(repoDir, ["commit", "-q", "-m", "Reference"]);
   const stateDir = join(dir, "live-state");
   const events = basic().map((event) => event.type === "subagent.selected"
-    ? { ...event, data: { agentName: "wintermute:hands-on-orchestrator" } } : event);
-  writeSession(stateDir, "live", "local/orch-eval-hands-on-orchestrator-1", "2026-01-01T10:00:00Z", events);
+    ? { ...event, data: { agentName: "wintermute:wintermute-core" } } : event);
+  writeSession(stateDir, "live", "local/orch-eval-wintermute-core-1", "2026-01-01T10:00:00Z", events);
   const results = join(dir, "live-results.csv");
   for (const [n, variant, extra] of [
-    ["1", "hands-on-orchestrator", []],
-    ["2", "wintermute:hands-on-orchestrator", []],
-    ["3", "wintermute:hands-on-orchestrator", ["--agent-sha256", "a".repeat(64), "--agent-bundle-sha256", "b".repeat(64)]],
+    ["1", "wintermute-core", []],
+    ["2", "wintermute:wintermute-core", []],
+    ["3", "wintermute:wintermute-core", ["--agent-sha256", "a".repeat(64), "--agent-bundle-sha256", "b".repeat(64)]],
   ] as const) {
     const result = await score([
       "--repo-dir", repoDir, "--no-github", "--results", results, "--state-dir", stateDir, "--session", "live",
@@ -316,16 +316,16 @@ test("explicit live runtime IDs keep manual scoring in the historical calibratio
   }
   const rows = readResults(results);
   assert.deepEqual(rows.map((row) => [row.variant, row.agent, row.calibration, row.agent_revision, row.agent_sha256, row.agent_bundle_sha256]), [
-    ["hands-on-orchestrator", "wintermute:hands-on-orchestrator", "yes", "", "", ""],
-    ["hands-on-orchestrator", "wintermute:hands-on-orchestrator", "no", "", "", ""],
-    ["hands-on-orchestrator", "wintermute:hands-on-orchestrator", "no", "", "a".repeat(64), "b".repeat(64)],
+    ["wintermute-core", "wintermute:wintermute-core", "yes", "", "", ""],
+    ["wintermute-core", "wintermute:wintermute-core", "no", "", "", ""],
+    ["wintermute-core", "wintermute:wintermute-core", "no", "", "a".repeat(64), "b".repeat(64)],
   ]);
   assert.equal(summarize(rows).groups.length, 2);
   assert.deepEqual(summarize(rows).groups.map((g) => [g.agentBundle, g.runs]), [["", 2], ["b".repeat(64), 1]]);
 
   const set = readVariants(join(KIT_DIR, "variants", "review-policy.json"));
   const variantA = set.variants["orchestrator-review-a"];
-  writeSession(stateDir, "policy", "local/orch-eval-hands-on-orchestrator-1", "2026-01-01T10:00:00Z",
+  writeSession(stateDir, "policy", "local/orch-eval-wintermute-core-1", "2026-01-01T10:00:00Z",
     basic().map((event) => event.type === "subagent.selected" ? { ...event, data: { agentName: variantA.agent } } : event));
   const policyResults = join(dir, "policy-results.csv");
   const policyScore = await score([

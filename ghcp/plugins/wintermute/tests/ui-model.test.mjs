@@ -444,7 +444,7 @@ test('a report title is plain text without the repeated status', () => {
 });
 
 test('activity text is plain text without the engine\'s repetitions', () => {
-  assert.equal(feedText({ kind: 'subagent-done', text: 'orchestrator-worker orchestrator-worker finished' }), 'orchestrator-worker finished');
+  assert.equal(feedText({ kind: 'subagent-done', text: 'rubber-duck rubber-duck finished' }), 'rubber-duck finished');
   assert.equal(feedText({ kind: 'subagent-done', text: 'explore map-module finished' }), 'explore map-module finished');
   assert.equal(feedText({ kind: 'subagent-done', text: 'task task failed' }), 'task failed');
   assert.equal(feedText({ kind: 'report', text: 'reported needs input: Status: needs_input. PR 2 is **done**' }), 'reported needs input: PR 2 is done');
@@ -455,7 +455,7 @@ test('activity text is plain text without the engine\'s repetitions', () => {
 
 test('a sub-agent item drops a trailing ": <its own label>", and only that', () => {
   assert.equal(feedText({ kind: 'subagent-start', label: 'map-import-module', text: 'started explore: map-import-module' }), 'started explore');
-  assert.equal(feedText({ kind: 'subagent-done', label: 'scan-docs-links', text: 'cancelled orchestrator-worker: scan-docs-links' }), 'cancelled orchestrator-worker');
+  assert.equal(feedText({ kind: 'subagent-done', label: 'scan-docs-links', text: 'cancelled rubber-duck: scan-docs-links' }), 'cancelled rubber-duck');
   assert.equal(feedText({ kind: 'subagent-start', label: 'B1', text: 'started code-review: review-pr-418' }), 'started code-review: review-pr-418');
   assert.equal(feedText({ kind: 'subagent-start', label: 'docs', text: 'started explore: map-docs' }), 'started explore: map-docs');
   assert.equal(feedText({ kind: 'subagent-start', label: 'a.b', text: 'started explore: aXb' }), 'started explore: aXb');

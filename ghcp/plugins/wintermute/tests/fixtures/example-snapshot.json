@@ -29,7 +29,7 @@
     "subagents": [
       { "id": "call-root-41", "name": "map-import-module", "type": "explore", "model": "gpt-5.4-mini", "effort": "low", "mode": "background", "status": "running", "startedAt": 1792065360000, "endedAt": null, "durationMs": null, "credits": 51.0, "task": "Map the import module" },
       { "id": "call-root-40", "name": "table-research", "type": "research", "model": "claude-sonnet-5", "effort": "medium", "mode": "background", "status": "stuck", "startedAt": 1792063500000, "endedAt": null, "durationMs": null, "credits": 102.0, "task": "DataGrid or a new table" },
-      { "id": "call-root-24", "name": "scan-docs-links", "type": "orchestrator-worker", "model": "claude-sonnet-5", "effort": "medium", "mode": "background", "status": "cancelled", "startedAt": 1791843600000, "endedAt": 1791844320000, "durationMs": 720000, "credits": 17.0, "task": "Scan the docs for broken links" },
+      { "id": "call-root-24", "name": "scan-docs-links", "type": "rubber-duck", "model": "claude-sonnet-5", "effort": "medium", "mode": "background", "status": "cancelled", "startedAt": 1791843600000, "endedAt": 1791844320000, "durationMs": 720000, "credits": 17.0, "task": "Scan the docs for broken links" },
       { "id": "call-root-18", "name": "migrate-fixtures", "type": "task", "model": "claude-haiku-5.5", "effort": null, "mode": "background", "status": "failed", "startedAt": 1791838200000, "endedAt": 1791839100000, "durationMs": 900000, "credits": 38.0, "task": "Migrate the test fixtures" },
       { "id": "call-root-12", "name": "audit-schema-usage", "type": "general-purpose", "model": "claude-sonnet-5", "effort": "high", "mode": "sync", "status": "completed", "startedAt": 1791811200000, "endedAt": 1791812400000, "durationMs": 1200000, "credits": 140.0, "task": "Audit where the schema is used" }
     ],
@@ -46,7 +46,7 @@
       "subagents": [
         { "id": "call-root-12", "start": 1791811200000, "end": 1791812400000, "type": "general-purpose" },
         { "id": "call-root-18", "start": 1791838200000, "end": 1791839100000, "type": "task" },
-        { "id": "call-root-24", "start": 1791843600000, "end": 1791844320000, "type": "orchestrator-worker" },
+        { "id": "call-root-24", "start": 1791843600000, "end": 1791844320000, "type": "rubber-duck" },
         { "id": "call-root-40", "start": 1792063500000, "end": null, "type": "research" },
         { "id": "call-root-41", "start": 1792065360000, "end": null, "type": "explore" }
       ],
@@ -384,8 +384,8 @@
       "todo": null, "toolDesc": null, "dataWarning": null, "busySince": null,
       "subagents": [],
       "recent": [
-        { "id": "call-root-24:subagent-done:cli-0000-root/evt-root-1224", "at": 1791844320000, "unitId": "call-root-24", "label": "scan-docs-links", "kind": "subagent-done", "text": "cancelled orchestrator-worker: scan-docs-links" },
-        { "id": "call-root-24:subagent-start:cli-0000-root/call-root-24", "at": 1791843600000, "unitId": "call-root-24", "label": "scan-docs-links", "kind": "subagent-start", "text": "started orchestrator-worker: scan-docs-links" }
+        { "id": "call-root-24:subagent-done:cli-0000-root/evt-root-1224", "at": 1791844320000, "unitId": "call-root-24", "label": "scan-docs-links", "kind": "subagent-done", "text": "cancelled rubber-duck: scan-docs-links" },
+        { "id": "call-root-24:subagent-start:cli-0000-root/call-root-24", "at": 1791843600000, "unitId": "call-root-24", "label": "scan-docs-links", "kind": "subagent-start", "text": "started rubber-duck: scan-docs-links" }
       ],
       "timeline": {
         "segments": [
@@ -399,7 +399,7 @@
       "reviewedPr": null,
       "monitor": { "state": "none", "lastCheckAt": null, "nextCheckAt": null, "everyMinutes": null, "since": null },
       "dependsOn": null, "todoId": null,
-      "agent": { "type": "orchestrator-worker", "mode": "background", "effort": "medium" }
+      "agent": { "type": "rubber-duck", "mode": "background", "effort": "medium" }
     },
     {
       "id": "call-root-40", "kind": "subagent", "label": "table-research", "name": "DataGrid or a new table",
@@ -481,8 +481,8 @@
     { "id": "ws-0004-b2:report:call-b2-5", "at": 1792063140000, "unitId": "ws-0004-b2", "label": "B2", "kind": "report", "text": "reported complete: The parser is done. The plan for step 2 is waiting for approval." },
     { "id": "ws-0003-b1:monitor-check:evt-b1-0301", "at": 1792063080000, "unitId": "ws-0003-b1", "label": "B1", "kind": "monitor-check", "text": "PR monitor check" },
     { "id": "ws-0003-b1:report:call-b1-4", "at": 1792058160000, "unitId": "ws-0003-b1", "label": "B1", "kind": "report", "text": "reported needs input: PR #418 is open with 14 endpoints. Should list endpoints page by cursor or by offset?" },
-    { "id": "call-root-24:subagent-done:cli-0000-root/evt-root-1224", "at": 1791844320000, "unitId": "call-root-24", "label": "scan-docs-links", "kind": "subagent-done", "text": "cancelled orchestrator-worker: scan-docs-links" },
-    { "id": "call-root-24:subagent-start:cli-0000-root/call-root-24", "at": 1791843600000, "unitId": "call-root-24", "label": "scan-docs-links", "kind": "subagent-start", "text": "started orchestrator-worker: scan-docs-links" },
+    { "id": "call-root-24:subagent-done:cli-0000-root/evt-root-1224", "at": 1791844320000, "unitId": "call-root-24", "label": "scan-docs-links", "kind": "subagent-done", "text": "cancelled rubber-duck: scan-docs-links" },
+    { "id": "call-root-24:subagent-start:cli-0000-root/call-root-24", "at": 1791843600000, "unitId": "call-root-24", "label": "scan-docs-links", "kind": "subagent-start", "text": "started rubber-duck: scan-docs-links" },
     { "id": "call-root-18:subagent-done:cli-0000-root/evt-root-0818", "at": 1791839100000, "unitId": "call-root-18", "label": "migrate-fixtures", "kind": "subagent-done", "text": "failed task: migrate-fixtures" },
     { "id": "call-root-18:subagent-start:cli-0000-root/call-root-18", "at": 1791838200000, "unitId": "call-root-18", "label": "migrate-fixtures", "kind": "subagent-start", "text": "started task: migrate-fixtures" },
     { "id": "call-root-12:subagent-done:cli-0000-root/evt-root-0412", "at": 1791812400000, "unitId": "call-root-12", "label": "audit-schema-usage", "kind": "subagent-done", "text": "completed general-purpose: audit-schema-usage" },

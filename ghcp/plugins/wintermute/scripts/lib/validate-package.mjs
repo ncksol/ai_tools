@@ -3,9 +3,7 @@ import path from 'node:path';
 import { isStableVersion, releaseNotesProblem } from './release.mjs';
 
 export const AGENTS_DIR = 'com.github.copilot/agents';
-export const PACKAGED_AGENTS = Object.freeze([
-  'hands-on-orchestrator', 'hands-on-session-orchestrator', 'orchestrator-worker', 'session-worker',
-]);
+export const PACKAGED_AGENTS = Object.freeze(['wintermute-core', 'wintermute-peon']);
 const BARE_ID = new RegExp(`(?:agent_type|kickoff\\.agent):\\s*"(${PACKAGED_AGENTS.join('|')})"`, 'g');
 
 /**

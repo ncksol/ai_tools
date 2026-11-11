@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-export const LIVE_VARIANTS = ["hands-on-orchestrator", "hands-on-session-orchestrator"];
+export const LIVE_VARIANTS = ["wintermute-core"];
 // The labels of the shipped A/B/C manifest, variants/review-policy.json. readVariants rejects any other
 // label, so summaries tell pinned-policy rows from live rows without reading that file.
 export const POLICY_VARIANTS: ReadonlySet<string> = new Set(["orchestrator-review-a", "orchestrator-review-b", "orchestrator-review-c"]);

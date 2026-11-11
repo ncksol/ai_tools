@@ -56,7 +56,7 @@ const SUBAGENT_UNITS = [
   { label: 'write-migration-notes', state: 'completed', type: 'task', mode: 'background', effort: 'medium', start: 130, end: 100, name: 'Write the notes for the data migration' },
   { label: 'retry-model-call', state: 'failed', type: 'task', mode: 'background', effort: null, start: 300, end: 290, name: 'Retry the summary step', reason: 'Failed: the model request failed after 3 retries.' },
   { label: 'probe-cache-sizes', state: 'failed', type: 'explore', mode: 'background', effort: 'low', start: 800, end: 790, name: 'Probe the cache sizes on the sample data', reason: 'Failed: the tool call timed out.' },
-  { label: 'scan-test-names', state: 'cancelled', type: 'orchestrator-worker', mode: 'background', effort: 'medium', start: 24, end: 4, name: 'Scan the test names for duplicates', reason: 'Cancelled after 20 min.' },
+  { label: 'scan-test-names', state: 'cancelled', type: 'explore', mode: 'background', effort: 'medium', start: 24, end: 4, name: 'Scan the test names for duplicates', reason: 'Cancelled after 20 min.' },
   { label: 'map-old-endpoints', state: 'crashed', type: 'explore', mode: 'background', effort: 'low', start: 35, end: 20, name: 'Map the old endpoints to the new ones', reason: 'Ended rule: the orchestrator process ended while it ran.' },
   // Seven more finished ones, so the snapshot lists MAX_FINISHED_SUBAGENT_UNITS finished sub-agents, as the engine would.
   { label: 'tidy-css-tokens', state: 'completed', type: 'general-purpose', mode: 'background', effort: 'low', start: 160, end: 150, name: 'Tidy the CSS colour tokens' },
@@ -65,7 +65,7 @@ const SUBAGENT_UNITS = [
   { label: 'check-a11y-labels', state: 'completed', type: 'code-review', mode: 'background', effort: 'medium', start: 340, end: 320, name: 'Check the accessible labels on the controls' },
   { label: 'compare-fixture-shapes', state: 'completed', type: 'explore', mode: 'background', effort: 'low', start: 460, end: 440, name: 'Compare the fixture shapes with the schema' },
   { label: 'review-docs-tone', state: 'completed', type: 'rubber-duck', mode: 'sync', effort: 'high', start: 520, end: 500, name: 'Review the tone of the user docs' },
-  { label: 'scan-old-branches', state: 'cancelled', type: 'orchestrator-worker', mode: 'background', effort: 'medium', start: 640, end: 600, name: 'Scan the old branches for unmerged work', reason: 'Cancelled after 40 min.' },
+  { label: 'scan-old-branches', state: 'cancelled', type: 'explore', mode: 'background', effort: 'medium', start: 640, end: 600, name: 'Scan the old branches for unmerged work', reason: 'Cancelled after 40 min.' },
 ];
 /** Per sub-agent state: the unit's status, statusDetail and bucket, the orchestrator's SubagentView status, the report status, the activity label and the feed verb. */
 const SUBAGENT_STATES = {
