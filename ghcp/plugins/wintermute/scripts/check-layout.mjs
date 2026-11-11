@@ -36,6 +36,7 @@ export const VIEWS = [
   { name: 'timeline-run', params: { tab: 'timeline', span: 'run' } },
   { name: 'plan', params: { tab: 'plan' } },
   { name: 'board', params: { tab: 'board' } },
+  { name: 'board-archived', params: { tab: 'board' }, click: '[data-archived]' },
   { name: 'history', params: { page: 'history' }, history: true },
   { name: 'run', params: { page: 'run', run: 'RUN' }, history: true },
 ];
