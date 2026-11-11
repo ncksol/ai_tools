@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  BOARD_STAGES, REPORT_CLASS, REPORT_LABELS, STATE_LINES, UNIT_STAGES, activeSubagents, archivedUnits, askingIds, boardColumns, cardZones, closedNotMerged, countTiles, effortOf, feedText,
-  findByLabel, findPlanned, finishedOutcome, flattenPlan, foldFooter, isDone, isFinished, isSubagent, needItems, needMark, nowLine, omittedSubagents, orchestratorView, planForest, planLayout,
+  REPORT_CLASS, REPORT_LABELS, STATE_LINES, activeSubagents, archivedAt, archivedOutcome, archivedUnits, askingIds, boardZones, cardZones, closedNotMerged, countTiles, effortOf, feedText,
+  findByLabel, findPlanned, finishedOutcome, flattenPlan, foldFooter, inReview, isDone, isFinished, isSubagent, needItems, needMark, nowLine, omittedSubagents, orchestratorView, planForest, planLayout,
   prWords, progressPercent, reportKind, reportTitle, reviewsWords, runClockEnd, runEnd, sharePercent, shortModel, stateLine, stateWords, unitClockEnd, unitEnd, waitingOnYou, withoutStatusPrefix,
 } from '../ui/model.mjs';
 import { createDemoEngine } from '../server/demo-engine.mjs';
@@ -533,36 +533,61 @@ test('dependency cycles and unknown parents become roots instead of vanishing', 
   assert.equal(all.length, snapshot.units.filter(unit => !isSubagent(unit)).length + 3);
 });
 
-test('the board has one column per stage, attention first', () => {
-  const columns = boardColumns(exampleSnapshot());
-  assert.deepEqual(columns.map(column => column.stage), BOARD_STAGES);
-  const at = stage => columns.find(column => column.stage === stage).nodes.map(node => (node.unit ?? node.planned).label);
-  assert.deepEqual(at('planned'), ['B3', 'I2']);
-  assert.deepEqual(at('coding'), ['I1', 'B2', 'F1']);
-  assert.deepEqual(at('pr_open'), ['D5']);
-  assert.deepEqual(at('in_review'), ['B1']);
-  assert.deepEqual(at('merged'), ['F2a']);
-  assert.deepEqual(at('archived'), ['B0']);
-  assert.deepEqual(at('subagent'), ['table-research', 'migrate-fixtures', 'scan-docs-links', 'map-import-module', 'audit-schema-usage']);
+test('the Board groups units on the Cards tab\'s rules: in progress, in review by an open PR, finished and archived', () => {
+  const zones = boardZones(exampleSnapshot());
+  const labels = units => units.map(unit => unit.label);
+  assert.deepEqual(zones.planned.map(entry => entry.label), ['B3', 'I2']);
+  assert.deepEqual(labels(zones.progress), ['I1', 'table-research', 'B2', 'F1', 'map-import-module']);
+  assert.deepEqual(labels(zones.review), ['B1', 'D5']);
+  assert.deepEqual(labels(zones.finished), ['F2a', 'scan-docs-links', 'migrate-fixtures', 'audit-schema-usage']);
+  assert.deepEqual(labels(zones.archived), ['B0']);
+  assert.equal(zones.hasReview, true);
 });
 
-test('the board ends with the Sub-agents column; the stage track keeps the session pipeline', () => {
-  assert.deepEqual(BOARD_STAGES, ['planned', 'coding', 'pr_open', 'in_review', 'merged', 'archived', 'subagent']);
-  assert.deepEqual(UNIT_STAGES, ['coding', 'pr_open', 'in_review', 'merged', 'archived']);
+test('a unit is in review while its PR is open, a draft or not known; a swarm with no PR has no review group', () => {
+  for (const [pr, want] of [['open', true], ['draft', true], ['unknown', true], ['merged', false], ['closed', false]]) {
+    assert.equal(inReview({ pr: { id: 1, state: pr } }), want, pr);
+  }
+  assert.equal(inReview({ pr: null }), false);
+  const snapshot = exampleSnapshot();
+  for (const unit of snapshot.units) unit.pr = null;
+  const zones = boardZones(snapshot);
+  assert.equal(zones.hasReview, false);
+  assert.deepEqual(zones.review, []);
 });
 
-test('every unit off the active grid is on the Board, and every finished one in the Finished section', async () => {
+test('archived units come latest archived first, and each reads as its outcome', () => {
+  const snapshot = exampleSnapshot();
+  const b0 = snapshot.units.find(unit => unit.label === 'B0');
+  assert.deepEqual(archivedOutcome(b0), { words: 'merged {a}', tone: 'ok', at: 1791964200000 });
+  const mark = at => ({ at, kind: 'archived', text: 'Archived', status: null });
+  const plain = { status: 'archived', statusDetail: 'archived', pr: null, outcome: null, closedWithoutMerge: false, endedAt: null, since: 5, timeline: { marks: [mark(40)] } };
+  assert.deepEqual(archivedOutcome(plain), { words: 'archived {a}', tone: 'off', at: 40 });
+  assert.deepEqual(archivedOutcome({ ...plain, outcome: 'done', endedAt: 30 }), { words: 'done {a}', tone: 'ok', at: 30 });
+  assert.deepEqual(archivedOutcome({ ...plain, outcome: 'failed', closedWithoutMerge: true, endedAt: 30 }), { words: 'failed {a}', tone: 'bad', at: 30 });
+  assert.deepEqual(archivedOutcome({ ...plain, closedWithoutMerge: true, endedAt: 30 }), { words: 'closed {a}', tone: 'off', at: 30 });
+  assert.deepEqual(archivedOutcome({ ...plain, closedWithoutMerge: true, pr: { id: 9, state: 'closed' }, endedAt: 30 }), { words: 'closed, not merged {a}', tone: 'off', at: 30 });
+  assert.equal(archivedAt({ ...plain, timeline: { marks: [] }, endedAt: 30 }), 30);
+  const older = structuredClone(b0);
+  Object.assign(older, { id: 'ws-old', label: 'B-1' });
+  older.timeline.marks = older.timeline.marks.map(item => (item.kind === 'archived' ? { ...item, at: item.at - 60000 } : item));
+  snapshot.units.unshift(older);
+  assert.deepEqual(boardZones(snapshot).archived.map(unit => unit.label), ['B0', 'B-1']);
+});
+
+test('the Board shows every unit once, and its Finished group is the Cards tab\'s Finished section', async () => {
   const stress = await createDemoEngine({ scenario: 'stress', now: () => NOW, simulate: false }).getSnapshot();
   const archivedMerged = exampleSnapshot();
   Object.assign(archivedMerged.units.find(unit => unit.label === 'F2a'), { status: 'archived', stage: 'merged' });
   for (const snapshot of [exampleSnapshot(), stress, closedSnapshot(), archivedMerged]) {
+    const zones = boardZones(snapshot);
     const { active, finished } = cardZones(snapshot);
-    const shown = new Set(active);
-    const left = snapshot.units.filter(unit => !shown.has(unit));
-    assert.ok(left.length > 0);
-    const onBoard = new Set(boardColumns(snapshot).flatMap(column => column.nodes.map(node => node.unit)));
-    for (const unit of left) assert.ok(onBoard.has(unit), unit.label);
-    for (const unit of left) assert.equal(finished.includes(unit), !isArchivedUnit(unit), unit.label);
+    const all = [...zones.progress, ...zones.review, ...zones.finished, ...zones.archived];
+    assert.equal(all.length, snapshot.units.length);
+    assert.equal(new Set(all).size, snapshot.units.length);
+    assert.deepEqual(zones.finished, finished);
+    assert.deepEqual(new Set([...zones.progress, ...zones.review]), new Set(active));
+    assert.deepEqual(new Set(zones.archived), new Set(archivedUnits(snapshot)));
   }
 });
 

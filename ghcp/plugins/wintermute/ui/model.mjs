@@ -166,6 +166,38 @@ export function finishedOutcome(unit) {
   return { words, tone, at: finishedAt(unit) };
 }
 
+const OPEN_PR_STATES = new Set(['open', 'draft', 'unknown']);
+export const inReview = unit => Boolean(unit.pr && OPEN_PR_STATES.has(unit.pr.state));
+export const isMergedUnit = unit => unit.status === 'merged' || unit.pr?.state === 'merged' || unit.outcome === 'merged';
+export const archivedAt = unit => unit.timeline?.marks?.find(mark => mark.kind === 'archived')?.at ?? unit.endedAt ?? unit.since;
+export const BOARD_FINISHED_LIMIT = 10;
+
+/** The Cards tab's groups, split by own PR and sorted by the latest finish or archive time. */
+export function boardZones(snapshot) {
+  const { active, finished } = cardZones(snapshot);
+  const archived = archivedUnits(snapshot).map((unit, index) => ({ unit, index }))
+    .sort((a, b) => archivedAt(b.unit) - archivedAt(a.unit) || a.index - b.index)
+    .map(({ unit }) => unit);
+  return {
+    planned: snapshot.planned,
+    progress: active.filter(unit => !inReview(unit)),
+    review: active.filter(inReview),
+    finished,
+    archived,
+    hasReview: snapshot.units.some(unit => unit.pr),
+  };
+}
+
+/** Archive order uses the archive time; outcome ages use the work's end time when known. */
+export function archivedOutcome(unit) {
+  const at = unit.endedAt ?? archivedAt(unit);
+  if (isMergedUnit(unit)) return { words: 'merged {a}', tone: 'ok', at };
+  if (unit.outcome === 'done') return { words: 'done {a}', tone: 'ok', at };
+  if (unit.outcome === 'failed' || unit.statusDetail === 'failed') return { words: 'failed {a}', tone: 'bad', at };
+  if (unit.closedWithoutMerge) return { words: unit.pr ? 'closed, not merged {a}' : 'closed {a}', tone: 'off', at };
+  return { words: 'archived {a}', tone: 'off', at: archivedAt(unit) };
+}
+
 /**
  * The Needs you item a session asked itself: one that matches its waiting state (a question or a PR approval while it
  * waits on a question, a plan while it waits on a plan), else any of its own; the newest when there are several.
