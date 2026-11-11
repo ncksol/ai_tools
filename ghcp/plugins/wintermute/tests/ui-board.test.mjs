@@ -84,7 +84,7 @@ test('archived units wait under one closed row below the columns, and read as th
   const html = boardHtml(context(exampleSnapshot()));
   const row = html.slice(html.indexOf('<section class="b-fin" aria-label="Archived">'));
   assert.match(row, /^<section class="b-fin" aria-label="Archived"><button type="button" class="b-fin-h" data-archived aria-expanded="false">/);
-  assert.equal(text(row), 'Archived 1 1 merged · latest first');
+  assert.equal(text(row), 'Archived 1 · 1 merged · latest first');
   assert.ok(html.indexOf('aria-label="Archived"') > html.lastIndexOf('<section class="bcol"'));
   const open = boardHtml(context(exampleSnapshot(), { archivedOpen: true }));
   assert.match(open, /data-archived aria-expanded="true"/);

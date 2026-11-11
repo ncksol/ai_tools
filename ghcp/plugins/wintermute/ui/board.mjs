@@ -44,7 +44,7 @@ function archivedHtml(units, ctx) {
   const open = Boolean(ctx.archivedOpen);
   const merged = units.filter(isMergedUnit).length;
   return `<section class="b-fin" aria-label="Archived"><button type="button" class="b-fin-h" data-archived aria-expanded="${open}">${CARET}`
-    + `<span class="b-fin-t">Archived</span><span class="b-fin-n">${units.length}</span><span class="b-fin-s">${merged ? `${merged} merged · ` : ''}latest first</span></button>`
+    + `<span class="b-fin-t">Archived</span><span class="b-fin-n">${units.length}</span><span class="b-fin-s">${merged ? `· ${merged} merged · ` : ''}latest first</span></button>`
     + (open ? `<div class="b-fin-list">${units.map(unit => outcomeCard(unit, archivedOutcome(unit), ctx)).join('')}</div>` : '')
     + '</section>';
 }
