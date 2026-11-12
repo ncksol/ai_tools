@@ -1,11 +1,39 @@
 # Wintermute
 
+An agent says "done, tests pass", and you can't tell whether the tests ran on the commit that will merge. The model that wrote the change also reviews it, and [a model reviewing its own work "is still bounded by its own training biases"](https://github.blog/ai-and-ml/github-copilot/github-copilot-cli-combines-model-families-for-a-second-opinion/). One long session does every part in order, and [long sessions can get less reliable](https://www.anthropic.com/research/effective-context-engineering-for-ai-agents) as their context grows. Open more sessions to go faster, and now you have to track who is doing what and who waits on whom. Wintermute is a plugin for the GitHub Copilot app that runs substantial work as a team of sessions with the checks built in. You describe the work to one coordinator agent. It splits the work into units, gives each unit its own session with a model and reasoning effort chosen for that job, and runs independent units in parallel. Before a unit merges, a model from another vendor reviews it, and a separate session checks the author's claims at the exact pushed commit: that the tests ran and how many, that CI is green, and that the scope matches the brief. Before the last PR merges, two judges from two vendors check how the units work together. Must-fix and should-fix findings block the merge until they are fixed or disproved. A dashboard shows every session's progress, cost, stuck work and the decisions that wait on you, so you can follow the whole job without reading every transcript.
+
+### Compared with one session and `/orchestrate`
+
+The Copilot app's built-in `/orchestrate` skill already creates child sessions, runs them in parallel and stacks PRs. It leaves the process to you. Wintermute brings one:
+
+| | One session | Built-in `/orchestrate` | Wintermute |
+| --- | --- | --- | --- |
+| Who does the work | One session, every part in order | Child sessions in parallel, with stacked PRs | Child sessions in parallel, with stacked PRs |
+| Model and effort | The session's model, or Fusion's pick per step | Up to you | Set for every session from a tier table in the agent |
+| Review | When you ask, for example with `/rubber-duck` | Up to you | A model from another vendor, before every merge |
+| Proof that the tests ran | The session's own report | Up to you | A separate session checks tests, CI and scope at the pushed commit |
+| Final check | When you ask | Up to you | Two judges from two vendors check the last PR |
+| Following the work | The transcript | The app's project Overview | The Overview, plus a dashboard with progress, cost, stuck work and what needs you |
+
+The app also gives second opinions from other models, such as `/rubber-duck` and Copilot Fusion's Critique pattern. Those advise the session. In Wintermute, the review by another vendor and the claims check are conditions for merging.
+
+### When not to use it
+
+- For one small change, a short investigation or work that has to happen in order, use a single session. There is little to coordinate, and the extra sessions and checks only add cost.
+- A swarm uses more sessions and tokens than one session doing the same work: even a one-unit job gets a review, a claims check and a two-judge final panel.
+- It is built for models from Anthropic, OpenAI and Google. With fewer vendors, the reviews are less independent.
+- The checks make independent review happen; they don't guarantee correct code. The agents don't watch PRs or react to new review comments on their own.
+
+New to Wintermute? Start with the [quick start](QUICKSTART.md). The rest of this README is the reference.
+
+## What's in the plugin
+
 Wintermute is one Copilot plugin with two parts that are released and updated together:
 
 - the `wintermute-core` orchestrator agent for the GitHub Copilot app, which plans work and hands it to child sessions;
 - the swarm dashboard, which shows what those sessions are doing.
 
-New to Wintermute? Start with the [quick start](QUICKSTART.md). This README is the reference. Each release is listed in the [CHANGELOG](CHANGELOG.md).
+Each release is listed in the [CHANGELOG](CHANGELOG.md).
 
 ## Install
 
