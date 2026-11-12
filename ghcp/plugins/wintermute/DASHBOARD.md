@@ -1,6 +1,6 @@
 # The swarm dashboard
 
-The swarm dashboard shows what a swarm of Copilot sessions is doing, so you can follow the whole job without reading transcripts. A swarm is a session that has started child sessions, such as a `wintermute-core` orchestrator and the sessions it hands work to. For every session the dashboard shows what it is doing, how far it has got, what it costs and whether it needs you.
+The swarm dashboard shows what a swarm of Copilot sessions is doing, so you can follow the whole job without reading transcripts. A swarm is usually a session that has started child sessions, such as a `wintermute-core` orchestrator and the sessions it hands work to. For every session the dashboard shows what it is doing, how far it has got, what it costs and whether it needs you.
 
 It is watch-only. You answer questions and approve plans and PRs in the sessions themselves; the dashboard only shows you where to look.
 
@@ -10,26 +10,18 @@ All the pictures on this page use the dashboard's built-in sample data (`npm sta
 
 ## What you're looking at
 
-1. **Top bar.** Live shows the running swarm, History shows finished runs. "Sample data" marks the demo. The button at the right switches between the light and dark themes.
+1. **Top bar.** Live shows the running swarm, History shows finished runs. "Sample data" marks the demo. The moon button at the right switches between the light and dark themes.
 2. **Header.** The orchestrator: its state ("Waiting on question · 25m") and what it is doing or waiting for. Then how long the swarm has run, its cost, and counts of units working, stuck, waiting on you, blocked, idle and finished.
-3. **Tabs.** Cards, Timeline, Plan and Board show the same units in four ways.
+3. **Tabs.** Cards, Timeline, Plan and Board are different views of the swarm. For example, Plan leaves out sub-agents, and archived units are only on the Board.
 4. **Cards.** One card per active unit, with the ones that need attention first.
 5. **Finished.** Units that are done, closed by default.
 6. **Activity.** The latest events across the swarm, newest first.
 
-## Open it
-
-- **In the Copilot app.** `wintermute-core` opens the dashboard in the side panel when it creates its first child session. To open it again, ask the agent to open the swarm dashboard canvas (canvas id `swarm-dashboard`). It shows the swarm of the session it was opened in. If that session is in no swarm, it says so, offers the live swarms in its swarm picker, and switches to the session's swarm as soon as there is one. To show a particular swarm, pass its root session id as the canvas input: `{ "swarm": "<root session id>" }`.
-- **In a browser.** From the plugin folder (`~/.copilot/installed-plugins/ai-tools/wintermute` once installed), run `npm start` and open the address it prints, `http://127.0.0.1:7927/` by default. It needs Node.js 18 or later and a SQLite reader (see [Install](README.md#install)).
-- **With sample data.** `npm start -- --demo` serves a sample swarm with simulated activity, `--demo stress` a crowded one, and `--still` stops the simulation. Your own dashboard may already use port 7927, so give the demo another port: `npm start -- --demo --port 7928`.
-
 ## Header and what needs you
-
-The header is the orchestrator's card. Its status mark and state say what it is doing, the question or plan it waits on, why the swarm stalled, or what it waits for. The tiles count the active units by state, what waits on you and the finished units.
 
 Anything that waits on you shows on the card it belongs to, for example "Waiting on plan" or a "PR to approve" chip, and in the header. On the other tabs, one line under the header says how many things wait on you and since when, with a link back to the Cards tab.
 
-While nothing in the swarm is busy, stuck or waiting, the clocks stop at the last activity and the header says "quiet since" that time. They start again when work resumes. A swarm that stays quiet for 2 hours moves to History.
+When no work is active and nothing waits on you, the clocks usually stop at the last activity and the header says "quiet since" that time. They start again when work resumes. A swarm that stays quiet for 2 hours moves to History.
 
 ## Cards
 
@@ -52,7 +44,7 @@ The Timeline shows each session's busy, idle and waiting time over the last 3 or
 
 ![The Plan tab: units as a graph of stacked branches, coloured by stage](docs/images/dashboard-plan.png)
 
-The Plan draws the units as a graph of stacked branches: each unit sits after the unit whose branch it builds on. The colour says its stage, from planned and coding to PR open, in review, merged and archived. A solid blue outline marks a planned unit that can start now, because its parent branch has a PR open or is merged.
+In the picture, B3 export can start now, while I2 load tests waits for I1 integration. The Plan draws the units as a graph of stacked branches: each unit sits after the unit whose branch it builds on, and the colour says its stage. A solid blue outline marks a planned unit that can start now, because its parent has reached the PR stage or later. In a narrow panel where the graph doesn't fit, the Plan is an indented list.
 
 ## Board
 
@@ -64,7 +56,7 @@ The Board groups the units in columns: Planned, In progress, In review (an open 
 
 ![The detail panel for a stuck unit: why it counts as stuck, its current activity and its latest report](docs/images/dashboard-detail.png)
 
-Click any card to open its details beside the tabs. The panel shows:
+Click any card to open its details beside the tabs. In a narrow panel, the details replace the list, and Back to cards returns. The panel shows:
 
 - how long the unit has run, its cost, progress, stage, model and effort;
 - why it counts as stuck or waiting, with the rule that fired and its numbers;
@@ -95,15 +87,21 @@ The dashboard starts in the theme your system uses and follows it until you pick
 A session counts as **stuck** when:
 
 - a model call, tool call or sub-agent has gone quiet for longer than its limit;
-- it is busy but has written nothing for 10 minutes;
-- in its last 30 minutes of busy time, it keeps failing tool calls, runs the same tool call again and again, or compacts its context twice or more;
+- it is busy but has written nothing for 10 minutes, and no open tool call or sub-agent has a limit of its own;
+- in its last 30 minutes of busy time, it had at least 5 failed tool calls, made the same tool call 3 times in a row within one prompt (polling calls don't count), or compacted its context twice or more;
 - it has been idle for 30 minutes after a progress report, with no task finished and no monitor due.
 
 A session waiting for your answer is never stuck. The detail panel names the rule that fired and its numbers. The rules are in `engine/model/status.mjs` and their limits in `engine/config.mjs`.
 
-A whole swarm counts as **stalled** when at least one open unit remains, the orchestrator and every open unit are idle, and nothing is scheduled to run. Open units are the ones on the Cards grid; archived and finished units don't count. A unit with an open question or plan of its own stays open. A unit whose latest report is `complete`, whose PR is open and that has had no reply from the orchestrator since is waiting on review: it has done its part, so it doesn't count towards a stall. A swarm with no open units is not stalled.
+A whole swarm counts as **stalled** when at least one open unit remains, the orchestrator and every open unit are idle, and nothing is scheduled to run. Open units are the ones on the Cards grid; archived and finished units don't count. A unit with an open question or plan of its own stays open. An idle or stopped unit whose latest report is `complete`, whose PR is open and that has had no reply from the orchestrator since is waiting on review: it has done its part, so it doesn't count towards a stall. A swarm with no open units is not stalled.
 
 `wintermute-core` and its children report in a fixed format that the dashboard reads exactly. The [`wintermute-core` prompt](com.github.copilot/agents/wintermute-core.agent.md) defines it in its "Dashboard data contract", "The `children` table" and "Report format" sections.
+
+## Open it
+
+- **In the Copilot app.** `wintermute-core` opens the dashboard in the side panel when it creates its first child session. To open it again, ask the agent to open the swarm dashboard canvas (canvas id `swarm-dashboard`). It shows the swarm of the session it was opened in. If that session is in no swarm, it says so, offers the live swarms in its swarm picker, and switches to the session's swarm as soon as there is one. To show a particular swarm, pass its root session id as the canvas input: `{ "swarm": "<root session id>" }`.
+- **In a browser.** From the plugin folder (`~/.copilot/installed-plugins/ai-tools/wintermute` once installed), run `npm start` and open the address it prints, `http://127.0.0.1:7927/` by default. It needs Node.js 18 or later and a SQLite reader (see [Install](README.md#install)).
+- **With sample data.** `npm start -- --demo` serves a sample swarm with simulated activity, `--demo stress` a crowded one, and `--still` stops the simulation. Your own dashboard may already use port 7927, so give the demo another port: `npm start -- --demo --port 7928`.
 
 ## More
 

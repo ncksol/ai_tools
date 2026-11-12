@@ -64,7 +64,7 @@ Run `wintermute-core` as the session's agent in the GitHub Copilot app: pick it 
 
 ## The swarm dashboard
 
-The swarm dashboard shows what every session in a swarm is doing, how far it has got, what it costs, what is stuck and what needs you, so you can follow the whole job without reading transcripts. A swarm is a session that has started child sessions. The dashboard is watch-only: it reads Copilot's local data read-only and never changes it, and its only network requests of its own are read-only `gh` and `az` queries about the swarm's pull requests (see [Privacy and data access](#privacy-and-data-access)).
+Follow each session's progress, cost and blockers in one watch-only view, and see what needs your input without reading every transcript. The dashboard reads Copilot's local data without changing it; see [Privacy and data access](#privacy-and-data-access).
 
 - In the Copilot app, `wintermute-core` opens it in the side panel when it creates its first child session. To open it again, ask the agent to open the swarm dashboard canvas (canvas id `swarm-dashboard`).
 - In a browser, run the launcher from the plugin folder and open the address it prints:
@@ -105,7 +105,7 @@ Run these from the plugin folder.
 | `npm run release:bump -- <version\|patch\|minor\|major>` | Advance the single package version and prepare its changelog section |
 | `npm run release:publish -- --dry-run` | Check release readiness and preview the tag and notes without publishing |
 | `npm run release:publish` | Tag the current main commit, push only that tag and create its GitHub Release |
-| `npm run check:layout` | Check every view, in the light and the dark theme, for overlap, clipped text, type, spacing and contrast at every width, and that live updates leave the page steady, that History refreshes in place when a run finishes or the page reconnects, and that the theme button switches and remembers the theme, in a local headless Chrome, Chromium or Edge (set `CHROME_PATH` to choose one); `-- --live <url>` checks a running dashboard, and `-- --engine webkit` runs the checks in WebKit, apart from a few motion, multi-window and speed checks that run only in Chrome, Chromium or Edge (see below) |
+| `npm run check:layout` | Check every view, in the light and the dark theme, for overlap, clipped text, type, spacing and contrast at every width, and that live updates leave the page steady, that History refreshes in place when a run finishes or the page reconnects, and that the theme button switches and remembers the theme, in a local headless Chrome, Chromium or Edge (set `CHROME_PATH` to choose one); `-- --live <url>` checks a running dashboard, and `-- --engine webkit` runs the checks in WebKit (see below) |
 
 ### Check the layout in WebKit (optional)
 
