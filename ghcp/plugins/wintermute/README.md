@@ -10,8 +10,8 @@ The app's built-in `/orchestrate` already runs child sessions in parallel and st
 | --- | --- | --- | --- |
 | Who does the work | One main session, which can use sub-agents | Child sessions in parallel, with stacked PRs | Child sessions in parallel, with stacked PRs |
 | Model and effort | The session's model, or Copilot Fusion's pick per step | No fixed tier policy; defaults or your instructions | Set for every child session from the agent's tier table |
-| Review | On demand, or automatically with rubber duck (when enabled) or Fusion | You prompt for it | A model from another vendor, before every merge |
-| Proof that the tests ran | The session's own report | You prompt for it | A separate session checks tests, CI and scope at the pushed commit |
+| Review | On demand, or automatically with rubber duck (when enabled) or Fusion | No prescribed per-PR review gate; automatic critique is still available | A model from another vendor, before every merge |
+| Proof that the tests ran | The session's own report | No prescribed independent test or CI verification | A separate session checks tests, CI and scope at the pushed commit |
 | Final check | No prescribed two-judge merge panel | No prescribed two-judge merge panel | Two judges from two vendors check the last PR |
 | Following the work | The transcript | The app's project Overview | The Overview, plus a dashboard with progress, cost, stuck work and what needs you |
 
