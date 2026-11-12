@@ -49,7 +49,7 @@ cd ~/.copilot/installed-plugins/ai-tools/wintermute
 npm start
 ```
 
-To look around before you run a real swarm, `npm start -- --demo` serves a sample swarm instead of your data.
+To look around before you run a real swarm, `npm start -- --demo` serves a sample swarm instead of your data. The [dashboard guide](DASHBOARD.md) shows what each view means.
 
 ## Update
 
@@ -61,6 +61,7 @@ Then start new sessions to get the updated agents; a running session keeps the a
 
 ## Read more
 
-- [README](README.md): the agents, everything the dashboard shows, how it decides what is stuck, privacy, commands and troubleshooting.
+- [Dashboard guide](DASHBOARD.md): every view of the dashboard, with screenshots, and how it decides what is stuck.
+- [README](README.md): the agents, the dashboard's port and privacy, commands and troubleshooting.
 - [CHANGELOG](CHANGELOG.md): what each release contains.
 - The agent prompts, [`wintermute-core`](com.github.copilot/agents/wintermute-core.agent.md) and [`wintermute-peon`](com.github.copilot/agents/wintermute-peon.agent.md): the exact rules the agents follow, including the model tiers.
