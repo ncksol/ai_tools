@@ -42,7 +42,7 @@ This repo is also a **Copilot CLI plugin marketplace** (`ai-tools`). Plugins are
 
 `adr-authoring` is a documentation workflow, not a PR-review tool. Ask it to draft an ADR in chat, write an authorized Markdown file, or review an existing ADR. It records supplied decisions by default and recommends architecture only when explicitly asked. Its structural checks do not establish factual accuracy or model-output consistency.
 
-`wintermute` ships the orchestrator with the dashboard that watches it, so one `copilot plugin update` updates both. Its agents run under plugin IDs such as `wintermute:wintermute-core`; the dashboard canvas is `swarm-dashboard`. The dashboard reads Copilot's local session data, so it shows the swarms that run on the same machine. Its [CHANGELOG](./ghcp/plugins/wintermute/CHANGELOG.md) lists each release and how to move from the old `swarm-dashboard` plugin and symlinked agents.
+`wintermute` ships the orchestrator with the dashboard that watches it, so one `copilot plugin update` updates both. Its agents run under plugin IDs such as `wintermute:wintermute-core`; the dashboard canvas is `swarm-dashboard`. The dashboard reads Copilot's local session data, so it shows the swarms that run on the same machine. New to it? Start with the [quick start](./ghcp/plugins/wintermute/QUICKSTART.md). Its [CHANGELOG](./ghcp/plugins/wintermute/CHANGELOG.md) lists each release.
 
 ### Skills
 
@@ -146,7 +146,7 @@ copilot plugin install adr-authoring@ai-tools
 
 Direct installs from a repo, URL or local path (`copilot plugin install ./ghcp/plugins/adr-authoring`) still work, but the CLI marks them deprecated in favour of `plugin@marketplace`.
 
-For the orchestrator agents and the swarm dashboard, install `wintermute`. If you used the `swarm-dashboard` plugin or symlinked the orchestrator agents into `~/.copilot/agents/`, follow the migration steps in the [`wintermute` CHANGELOG](./ghcp/plugins/wintermute/CHANGELOG.md) instead of the command below: old copies in `~/.copilot/agents/` stay separate agents with the same names in the picker and run the old prompts, and two plugins with the `swarm-dashboard` canvas clash.
+For the orchestrator agents and the swarm dashboard, install `wintermute`. The [quick start](./ghcp/plugins/wintermute/QUICKSTART.md) shows how to start your first swarm.
 
 ```bash
 copilot plugin install wintermute@ai-tools
@@ -288,6 +288,7 @@ ai_tools/
             ├── plugin.json
             ├── package.json
             ├── CHANGELOG.md
+            ├── QUICKSTART.md          ← start here
             ├── engine/                ← reads Copilot's local data into swarm snapshots
             ├── server/                ← local server, shared port and canvas host
             ├── ui/                    ← the dashboard page, no build step
