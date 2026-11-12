@@ -290,7 +290,7 @@ ai_tools/
             ├── CHANGELOG.md
             ├── QUICKSTART.md          ← start here
             ├── DASHBOARD.md           ← the dashboard guide, with screenshots
-            ├── docs/images/           ← screenshots for the dashboard guide
+            ├── docs/images/           ← the README banner and the dashboard screenshots
             ├── engine/                ← reads Copilot's local data into swarm snapshots
             ├── server/                ← local server, shared port and canvas host
             ├── ui/                    ← the dashboard page, no build step

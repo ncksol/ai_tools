@@ -1,4 +1,9 @@
-# Wintermute
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/banner-dark.svg">
+    <img alt="Wintermute: substantial work as a crew of agent sessions, checked before it counts as done" src="docs/images/banner-light.svg" width="640" height="128">
+  </picture>
+</h1>
 
 Wintermute is a plugin for the GitHub Copilot app that plans and runs substantial work as a crew of agent sessions: research, specs, code, investigations and documents. Copilot can already use sub-agents and second opinions, but by default nothing requires an independent check, long sessions [can get less reliable](https://www.anthropic.com/research/effective-context-engineering-for-ai-agents), and with several sessions open you become the project manager. You describe the goal once; Wintermute splits it across sessions with a model for each job, running independent parts in parallel. Before work counts as done, another session checks it: code gets a cross-vendor review and a check that the tests ran at the pushed commit before merging; a spec or other key document gets a fact-check from another vendor. A dashboard shows progress, cost, stuck work and what needs you. New here? Start with the [quick start](QUICKSTART.md).
 
@@ -135,7 +140,7 @@ Without Playwright or its WebKit build the check says so and skips. `npm test` a
 | `engine/` | Reads Copilot's local data into swarm snapshots and run summaries |
 | `server/` | The local server, live updates, the shared port and the canvas host |
 | `ui/` | The dashboard page: plain ES modules and CSS, no build step |
-| `docs/images/` | Screenshots for the [dashboard guide](DASHBOARD.md) |
+| `docs/images/` | The README banner and the [dashboard guide](DASHBOARD.md)'s screenshots |
 | `com.github.copilot/agents/` | The orchestrator agent and its peon |
 | `com.github.copilot/extensions/swarm-dashboard/` | The canvas extension |
 | `scripts/` | The launcher, the snapshot command, the layout check and the validator |
