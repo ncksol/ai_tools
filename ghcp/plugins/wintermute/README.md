@@ -1,6 +1,6 @@
 # Wintermute
 
-Wintermute is a plugin for the GitHub Copilot app that runs substantial work as a team of agent sessions, so you don't manage each session yourself. One long session works one step at a time, [can get less reliable as its context grows](https://www.anthropic.com/research/effective-context-engineering-for-ai-agents) and [reviews its own work with its own training biases](https://github.blog/ai-and-ml/github-copilot/github-copilot-cli-combines-model-families-for-a-second-opinion/); run parallel sessions yourself, and you become the project manager. With Wintermute, you describe the goal once. It splits the work across sessions, picks a model for each job and runs independent parts in parallel, and every merge waits for a review by another vendor's model and an independent check of tests, CI and scope at the pushed commit. A dashboard shows progress, cost, stuck work and what needs you. New here? Start with the [quick start](QUICKSTART.md).
+Wintermute is a plugin for the GitHub Copilot app that runs substantial work as a team of agent sessions. Copilot can already split work across sub-agents and ask another model for a second opinion, but by default nothing requires a review or proof that the tests ran before a merge, long sessions [can get less reliable as their context grows](https://www.anthropic.com/research/effective-context-engineering-for-ai-agents), and with several sessions open you become the project manager. With Wintermute, you describe the goal once. It splits the work across sessions, picks a model for each job and runs independent parts in parallel, and every merge waits for a review by another vendor's model and an independent check of tests, CI and scope at the pushed commit. A dashboard shows progress, cost, stuck work and what needs you. New here? Start with the [quick start](QUICKSTART.md).
 
 ## Compared with one session and `/orchestrate`
 
@@ -8,20 +8,20 @@ The app's built-in `/orchestrate` already runs child sessions in parallel and st
 
 | | One session | Built-in `/orchestrate` | Wintermute |
 | --- | --- | --- | --- |
-| Who does the work | One main session | Child sessions in parallel, with stacked PRs | Child sessions in parallel, with stacked PRs |
-| Model and effort | The session's model, or Copilot Fusion's pick per step | You prompt for it | Set for every session from a tier table in the agent |
-| Review | You ask for it, for example with `/rubber-duck` | You prompt for it | A model from another vendor, before every merge |
+| Who does the work | One main session, which can use sub-agents | Child sessions in parallel, with stacked PRs | Child sessions in parallel, with stacked PRs |
+| Model and effort | The session's model, or Copilot Fusion's pick per step | No fixed tier policy; defaults or your instructions | Set for every child session from the agent's tier table |
+| Review | On demand, or automatically with rubber duck (when enabled) or Fusion | You prompt for it | A model from another vendor, before every merge |
 | Proof that the tests ran | The session's own report | You prompt for it | A separate session checks tests, CI and scope at the pushed commit |
-| Final check | You ask for it | You prompt for it | Two judges from two vendors check the last PR |
+| Final check | No prescribed two-judge merge panel | No prescribed two-judge merge panel | Two judges from two vendors check the last PR |
 | Following the work | The transcript | The app's project Overview | The Overview, plus a dashboard with progress, cost, stuck work and what needs you |
 
 The app also gives second opinions from other models, such as `/rubber-duck` and Copilot Fusion's Critique pattern. Those advise the session. In Wintermute, the review by another vendor and the claims check are conditions for merging.
 
 ## Good fit and trade-offs
 
-- For a small, self-contained task, a single session is simpler and cheaper.
-- Even a one-unit run adds a review, a claims check and a two-judge panel, so it uses more sessions and tokens.
-- Independent review needs models from at least two vendors; the agent is built for Anthropic, OpenAI and Google. The checks make independent review happen, but they don't guarantee correct code.
+- For a small, self-contained task, a single session is usually simpler; the coordination overhead may not be worth it.
+- Even a one-PR swarm normally adds a unit review, a claims check and a two-judge panel. These add model calls and can increase token use and cost.
+- Cross-vendor review needs at least two vendors; the default policy uses Anthropic, OpenAI and Google. You can limit the work to one vendor, but you lose that diversity. The checks make independent review happen, but they don't guarantee correct code.
 
 ## What's in the plugin
 
