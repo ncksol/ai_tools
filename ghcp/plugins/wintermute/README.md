@@ -65,7 +65,9 @@ The agents are in `com.github.copilot/agents/`. Copilot names a plugin agent `<p
 
 Run `wintermute-core` as the session's agent in the GitHub Copilot app: pick it before your first message, from the composer's **+** menu or with `/agent`. Where a tool or CLI flag takes an agent ID, use the `wintermute:` ID. A bare name never resolves to a plugin agent, so `wintermute-core` starts its children as `wintermute:wintermute-peon`.
 
-`wintermute-core` is meant to run on Claude Opus 5.5 at `max` reasoning effort. Its "Models and effort" tiers set the model and effort only for the jobs it hands out.
+### Which model to run it on
+
+`wintermute-core` needs a strong model at a high reasoning level to coordinate the work. There's no single recommended setup. Our research points to Claude Opus 5.5 at `high` or `xhigh`, or GPT-6.1 Sol at `high`, as good starting points. That's not a recommendation, so experiment to see what works for you. The agent's "Models and effort" tiers set the model and effort only for the jobs it hands out.
 
 ## The swarm dashboard
 
