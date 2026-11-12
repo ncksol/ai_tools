@@ -1,30 +1,27 @@
 # Wintermute
 
-An agent says "done, tests pass", and you can't tell whether the tests ran on the commit that will merge. The model that wrote the change also reviews it, and [a model reviewing its own work "is still bounded by its own training biases"](https://github.blog/ai-and-ml/github-copilot/github-copilot-cli-combines-model-families-for-a-second-opinion/). One long session does every part in order, and [long sessions can get less reliable](https://www.anthropic.com/research/effective-context-engineering-for-ai-agents) as their context grows. Open more sessions to go faster, and now you have to track who is doing what and who waits on whom. Wintermute is a plugin for the GitHub Copilot app that runs substantial work as a team of sessions with the checks built in. You describe the work to one coordinator agent. It splits the work into units, gives each unit its own session with a model and reasoning effort chosen for that job, and runs independent units in parallel. Before a unit merges, a model from another vendor reviews it, and a separate session checks the author's claims at the exact pushed commit: that the tests ran and how many, that CI is green, and that the scope matches the brief. Before the last PR merges, two judges from two vendors check how the units work together. Must-fix and should-fix findings block the merge until they are fixed or disproved. A dashboard shows every session's progress, cost, stuck work and the decisions that wait on you, so you can follow the whole job without reading every transcript.
+Wintermute is a plugin for the GitHub Copilot app that runs substantial work as a team of agent sessions, so you don't manage each session yourself. One long session works one step at a time, [can get less reliable as its context grows](https://www.anthropic.com/research/effective-context-engineering-for-ai-agents) and [reviews its own work with its own training biases](https://github.blog/ai-and-ml/github-copilot/github-copilot-cli-combines-model-families-for-a-second-opinion/); run parallel sessions yourself, and you become the project manager. With Wintermute, you describe the goal once. It splits the work across sessions, picks a model for each job and runs independent parts in parallel, and every merge waits for a review by another vendor's model and an independent check of tests, CI and scope at the pushed commit. A dashboard shows progress, cost, stuck work and what needs you. New here? Start with the [quick start](QUICKSTART.md).
 
-### Compared with one session and `/orchestrate`
+## Compared with one session and `/orchestrate`
 
-The Copilot app's built-in `/orchestrate` skill already creates child sessions, runs them in parallel and stacks PRs. It leaves the process to you. Wintermute brings one:
+The app's built-in `/orchestrate` already runs child sessions in parallel and stacks PRs; use it when you want to set the workflow yourself. Wintermute packages model choice, independent review and verification into a preset workflow, with a dashboard to follow the whole job.
 
 | | One session | Built-in `/orchestrate` | Wintermute |
 | --- | --- | --- | --- |
-| Who does the work | One session, every part in order | Child sessions in parallel, with stacked PRs | Child sessions in parallel, with stacked PRs |
-| Model and effort | The session's model, or Fusion's pick per step | Up to you | Set for every session from a tier table in the agent |
-| Review | When you ask, for example with `/rubber-duck` | Up to you | A model from another vendor, before every merge |
-| Proof that the tests ran | The session's own report | Up to you | A separate session checks tests, CI and scope at the pushed commit |
-| Final check | When you ask | Up to you | Two judges from two vendors check the last PR |
+| Who does the work | One main session | Child sessions in parallel, with stacked PRs | Child sessions in parallel, with stacked PRs |
+| Model and effort | The session's model, or Copilot Fusion's pick per step | You prompt for it | Set for every session from a tier table in the agent |
+| Review | You ask for it, for example with `/rubber-duck` | You prompt for it | A model from another vendor, before every merge |
+| Proof that the tests ran | The session's own report | You prompt for it | A separate session checks tests, CI and scope at the pushed commit |
+| Final check | You ask for it | You prompt for it | Two judges from two vendors check the last PR |
 | Following the work | The transcript | The app's project Overview | The Overview, plus a dashboard with progress, cost, stuck work and what needs you |
 
 The app also gives second opinions from other models, such as `/rubber-duck` and Copilot Fusion's Critique pattern. Those advise the session. In Wintermute, the review by another vendor and the claims check are conditions for merging.
 
-### When not to use it
+## Good fit and trade-offs
 
-- For one small change, a short investigation or work that has to happen in order, use a single session. There is little to coordinate, and the extra sessions and checks only add cost.
-- A swarm uses more sessions and tokens than one session doing the same work: even a one-unit job gets a review, a claims check and a two-judge final panel.
-- It is built for models from Anthropic, OpenAI and Google. With fewer vendors, the reviews are less independent.
-- The checks make independent review happen; they don't guarantee correct code. The agents don't watch PRs or react to new review comments on their own.
-
-New to Wintermute? Start with the [quick start](QUICKSTART.md). The rest of this README is the reference.
+- For a small, self-contained task, a single session is simpler and cheaper.
+- Even a one-unit run adds a review, a claims check and a two-judge panel, so it uses more sessions and tokens.
+- Independent review needs models from at least two vendors; the agent is built for Anthropic, OpenAI and Google. The checks make independent review happen, but they don't guarantee correct code.
 
 ## What's in the plugin
 
