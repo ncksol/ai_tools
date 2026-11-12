@@ -2,9 +2,21 @@
 
 All notable changes to the `wintermute` plugin. Each version here matches `plugin.json`, `package.json` and the plugin's entry in the root `.github/plugin/marketplace.json`.
 
-For every agent or dashboard change, run `npm run release:bump -- <version|patch|minor|major>` from this plugin folder and replace the new section's TODO with release notes. Each section starts with a heading `## X.Y.Z — YYYY-MM-DD`, the release's version and date, which `release:bump` writes. `npm run validate` and `release:publish` refuse a section that is empty or still has the TODO. Use stable SemVer; during 0.x, compatible fixes advance the patch, features and incompatible contracts advance the minor. Commit the version files and notes with the change.
+For every agent or dashboard change, run `npm run release:bump -- <version|patch|minor|major>` from this plugin folder and replace the new section's TODO with release notes. Each section starts with a heading `## X.Y.Z — YYYY-MM-DD`, the release's version and date, which `release:bump` writes. `npm run validate` and `release:publish` refuse a section that is empty or still has the TODO. Versions follow semantic versioning: major for incompatible changes to agent IDs, invocation behaviour, the canvas ID or the report and dashboard contracts, minor for compatible features, patch for compatible fixes. Commit the version files and notes with the change.
 
-After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace still follows main. See [Releases](README.md#releases) for prerequisites, checks and recovery after a partial publish.
+After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main. See [Releases](README.md#releases) for prerequisites, checks and recovery after a partial publish.
+
+## 1.0.0 — 2026-11-12
+
+The first stable release. New to Wintermute? Start with the [quick start](https://github.com/ncksol/ai_tools/blob/main/ghcp/plugins/wintermute/QUICKSTART.md).
+
+### What's in it
+
+- `wintermute-core` (`wintermute:wintermute-core`): an orchestrator agent for the GitHub Copilot app. It plans the work, splits it into units and hands each unit to its own child session. It brings plans, questions and PR go-aheads to you, tagged with the units they concern, and before a unit merges it has the unit reviewed by a model from another vendor and its claims checked independently. It never starts sub-agents, and does only quick jobs itself.
+- `wintermute-peon` (`wintermute:wintermute-peon`): the agent every child session runs as. It does one unit, reports to the orchestrator in a fixed format, and asks the orchestrator when it needs another agent; it can't start sub-agents or sessions.
+- The swarm dashboard: a watch-only view of each swarm, as the `swarm-dashboard` canvas in the app, or in a browser through a local launcher (`http://127.0.0.1:7927/` by default). It shows a card per unit, what waits on you, activity, a timeline, the plan and a board, cost in dollars, stuck and stalled work, and the history of finished runs, in light and dark themes, with a cockpit view for Chrome and Edge. It reads Copilot's local data read-only.
+- Commands for the browser launcher, JSON snapshots, tests, plugin validation, layout checks and releases.
+- From this release, versions follow semantic versioning: a new major version for incompatible changes to agent IDs, invocation behaviour, the canvas ID or the report and dashboard contracts.
 
 ## 0.12.0 — 2026-11-11
 

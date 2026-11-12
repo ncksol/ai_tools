@@ -218,11 +218,6 @@ CREATE TABLE IF NOT EXISTS children (
 );
 ```
 
-- If `children` already exists with other columns, an older version of this file created it. `PRAGMA table_info(children)` shows the columns. Rename it with `ALTER TABLE children RENAME TO children_old`, create the table above, and move every child session in `children_old` across, active or ended:
-  - Add one `children` row per child session. Give it a new unit label and keep its session id. Fill `title` (required; use the child's old name), and fill `todo_id`, `branch`, `base_branch` and the PR columns when you know them. Set `created_at` from the old row when it has the time, and to now otherwise.
-  - Set `outcome` and `ended_at` only when you know how the unit ended. Don't guess.
-  - Copy the rest of the old per-child data into `child_notes`: project, model and effort, archived status, last report, review verdicts, skipped reviews and escalations.
-  - Send each child that is still running its unit label and the report format below.
 - Insert a child's row as soon as the child exists, including children with no branch or PR. `session_id` is the id returned by `create_session`, `open_pr_session` or `open_issue_session`; a project session id and a CLI session id both work.
 - `title` is a short human name for the unit. Set `todo_id` to the unit's `todos.id` when the plan uses todos, and set `branch` and `base_branch` when you know them.
 - Write timestamps with SQLite instead of typing them: `strftime('%Y-%m-%dT%H:%M:%SZ', 'now')` gives ISO 8601 in UTC. Set `updated_at` on every change.

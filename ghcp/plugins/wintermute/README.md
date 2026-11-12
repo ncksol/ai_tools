@@ -5,7 +5,7 @@ Wintermute is one Copilot plugin with two parts that are released and updated to
 - the `wintermute-core` orchestrator agent for the GitHub Copilot app, which plans work and hands it to child sessions;
 - the swarm dashboard, which shows what those sessions are doing.
 
-Each release is listed in the [CHANGELOG](CHANGELOG.md).
+New to Wintermute? Start with the [quick start](QUICKSTART.md). This README is the reference. Each release is listed in the [CHANGELOG](CHANGELOG.md).
 
 ## Install
 
@@ -14,7 +14,7 @@ copilot plugin marketplace add ncksol/ai_tools
 copilot plugin install wintermute@ai-tools
 ```
 
-Then start new sessions, or restart the Copilot app, to get the agents; a session that was already running keeps the agents it started with. Reloading extensions in a session, or restarting the app, loads the dashboard canvas. The plugin has no npm dependencies, and the canvas runs on the Node.js that ships with Copilot. The browser launcher and the commands below need Node.js 18 or later.
+Then start a new session, or restart the Copilot app, to get the agents. Reloading extensions in a session, or restarting the app, loads the dashboard canvas. The plugin has no npm dependencies, and the canvas runs on the Node.js that ships with Copilot. The browser launcher and the commands below need Node.js 18 or later.
 
 ## Update
 
@@ -22,21 +22,7 @@ Then start new sessions, or restart the Copilot app, to get the agents; a sessio
 copilot plugin update wintermute@ai-tools
 ```
 
-Then start new sessions, or restart the app, to get the updated agents: a running session keeps the agents it started with. Reloading extensions in a session, or restarting the app, refreshes the dashboard canvas. A dashboard server that already runs on the port keeps serving the old version until no session hosts it any more (see [Troubleshooting](#troubleshooting)). Agent changes in this repository reach you only through a plugin update, not through `git pull`.
-
-An update doesn't change the prompts of sessions that are already running, and doesn't stop automations those sessions already created. From 0.5.0 the agents no longer start PR monitors; PR-monitor schedules made by older sessions keep running until you stop them in the app or archive their session. From 0.12.0 the plugin ships one orchestrator, `wintermute-core`; the [CHANGELOG](CHANGELOG.md) entry for 0.12.0 lists the agents it replaces.
-
-## Moving from swarm-dashboard
-
-Before 0.2.0 the dashboard was the `swarm-dashboard` plugin and the agents were loose files that you linked or copied into `~/.copilot/agents/`. To move to `wintermute`:
-
-1. Remove the old agent files from `~/.copilot/agents/`. The plugin's agents answer only to their `wintermute:` IDs. Old copies there stay separate agents under the bare names, with the same names in the agent picker, and run the old prompts, which start bare-named workers. Once your clone pulls this release, the symlinks also point at files that no longer exist.
-2. Run `copilot plugin uninstall swarm-dashboard@ai-tools`. Two installed plugins that both register the `swarm-dashboard` canvas would clash.
-3. Run `copilot plugin install wintermute@ai-tools`.
-4. Restart the app, or reload extensions in every open session. Any session that still runs the old extension can keep hosting the 0.1.x dashboard server on port 7927, with no out-of-date notice. A session keeps the agents it started with until the app restarts, so if you only reload extensions, start a new session for orchestrator work.
-5. With a dashboard canvas open, check that `curl -s http://127.0.0.1:7927/api/health` reports `"version":"0.2.0"`. An older version means a session still hosts the old server: restart the app.
-
-The [CHANGELOG](CHANGELOG.md) entry for 0.2.0 has the commands. The canvas id (`swarm-dashboard`), the port and the run history in `~/.copilot/swarm-dashboard/` stay the same, so past runs stay in History.
+Then start new sessions, or restart the app, to get the updated agents. A session that is already running keeps the agents and prompts it started with, and automations it created keep running until you stop them in the app or archive the session. Reloading extensions in a session, or restarting the app, refreshes the dashboard canvas. A dashboard server that already runs on the port keeps serving the old version until no session hosts it any more; `curl -s http://127.0.0.1:7927/api/health` shows the version it runs (see [Troubleshooting](#troubleshooting)). Agent changes in this repository reach you only through a plugin update, not through `git pull`.
 
 ## The agents
 
@@ -66,8 +52,8 @@ It opens as a canvas in the app's side panel, or in any browser through a small 
 - While the page is disconnected, the cards dim and the clocks stop, and the status says since when the data is shown.
 - Timeline: each session's busy, idle and waiting time over the last hours or the whole run, with cost over time. The orchestrator's one-off sub-agents have their own lanes right under it, for those active in the chosen window.
 - Plan and Board: the planned units and what each waits on, as a graph of stacked branches; and a board of units grouped as on the Cards tab: planned, in progress, in review (an open or draft PR) and finished (the latest 10, with Show all), with archived units under a closed row below.
-- Detail panel: one unit's current activity, why it counts as stuck or waiting, its latest report, sub-agents, PR and monitor (for a sub-agent: its type, mode and effort), and recent activity. The monitor shows a scheduled automation on the unit, if there is one; agents no longer start PR monitors, so an open PR without one shows "no monitor", which is normal. Only a configured schedule that is overdue shows as missing.
-- History: finished runs with their duration, cost and outcomes, and a summary of each run. Saved finish times that included app bookkeeping are corrected when complete logs are available and the run's cost has not fallen. Missing logs or a lower listed cost after a child workspace is deleted keep the saved summary. Summaries saved before 0.9.4 are rebuilt with the new outcomes when their logs can be read and the run has lost no cost or child sessions since.
+- Detail panel: one unit's current activity, why it counts as stuck or waiting, its latest report, sub-agents, PR and monitor (for a sub-agent: its type, mode and effort), and recent activity. The monitor shows a scheduled automation on the unit, if there is one; the agents don't start PR monitors, so an open PR without one shows "no monitor", which is normal. Only a configured schedule that is overdue shows as missing.
+- History: finished runs with their duration, cost and outcomes, and a summary of each run. A run that resumes and finishes again gets a new summary. When a run's logs are cleaned up, or a child workspace is deleted and the run's listed cost falls, its saved summary is kept.
 
 ## Open the dashboard
 
@@ -149,7 +135,7 @@ Without Playwright or its WebKit build the check says so and skips. `npm test` a
 
 ## Releases
 
-Agents and dashboard ship as one version. Any change to either requires a version bump in `plugin.json`, `package.json` and the `wintermute` entry in the root marketplace, with notes in [CHANGELOG.md](CHANGELOG.md). The commands require Node.js 18 or later and no npm dependencies. Publishing also requires Git, authenticated `gh`, and permission to push tags and create releases.
+This section is for maintainers. Agents and dashboard ship as one version. Any change to either requires a version bump in `plugin.json`, `package.json` and the `wintermute` entry in the root marketplace, with notes in [CHANGELOG.md](CHANGELOG.md). The commands require Node.js 18 or later and no npm dependencies. Publishing also requires Git, authenticated `gh`, and permission to push tags and create releases.
 
 Before merging a change, run from `ghcp/plugins/wintermute`:
 
@@ -159,7 +145,7 @@ npm run release:bump -- patch
 npm test && npm run validate
 ```
 
-Use `minor` for features and, while the package is 0.x, incompatible changes to agent IDs, invocation behaviour, the canvas ID or report/dashboard contracts. Use `patch` for compatible fixes; `major` advances to the next major version. You can also give an explicit stable SemVer such as `0.3.0`. Leading zeroes, `v` prefixes, prerelease/build suffixes and versions that do not increase are rejected. The bump command preserves an existing changelog section for the chosen version, and does not commit, tag or publish. Review and commit the three version changes and the completed notes with the implementation. Run `npm run check:layout` too when dashboard UI files change.
+Versions follow semantic versioning. Use `major` for incompatible changes to agent IDs, invocation behaviour, the canvas ID or the report and dashboard contracts, `minor` for compatible features, and `patch` for compatible fixes. You can also give an explicit stable version such as `1.2.0`; leading zeroes, `v` prefixes, prerelease or build suffixes and versions that do not increase are rejected. The bump command keeps an existing changelog section for the chosen version, and does not commit, tag or publish. Commit the three version changes and the finished notes with the change. Run `npm run check:layout` too when dashboard UI files change.
 
 After merging, publish from a clean, up-to-date `main` checkout, not a feature branch or an installed plugin copy. Start at the repository root:
 
@@ -172,18 +158,18 @@ npm run release:publish -- --dry-run
 npm run release:publish
 ```
 
-The publisher runs the plugin validator, requires finished notes for the current version, and requires HEAD to match both local `origin/main` and the live remote main ref. It refuses dirty trees (including untracked files) and tags that already exist locally or on origin. Before changing any refs, it checks `gh` authentication for origin's host and confirms that `gh` can resolve origin's repository. Origin must be an HTTPS or SSH GitHub URL with an owner/name path and no custom port. The dry run performs the same read-only checks, including network queries to origin and GitHub, and prints the planned tag and notes; it creates no refs, pushes nothing and creates no release.
+The publisher runs the plugin validator, requires finished notes for the current version, and requires HEAD to match both local `origin/main` and the live remote main ref. It refuses dirty trees (including untracked files) and tags that already exist locally or on origin, and checks that `gh` is signed in to origin's host and can resolve origin's repository. Origin must be an HTTPS or SSH GitHub URL with an owner/name path and no custom port. The dry run makes the same read-only checks and prints the planned tag and notes; it creates no refs, pushes nothing and creates no release.
 
-A publish creates the annotated tag `wintermute-vX.Y.Z` on HEAD, pushes only that tag, and creates a GitHub Release using only that version's changelog section. The release explicitly targets origin's host and repository, regardless of `GH_REPO`, `GH_HOST` or `gh`'s default repository. The root marketplace continues to track main through its relative source path: tags and GitHub Releases are release records, not a separate installation channel or a gate on plugin updates. Updating the plugin does not replace already-running sessions or an old dashboard server; follow the update/restart guidance above.
+A publish creates the annotated tag `wintermute-vX.Y.Z` on HEAD, pushes only that tag, and creates a GitHub Release from that version's changelog section, on origin's host and repository whatever `GH_REPO`, `GH_HOST` or `gh`'s default repository say. The root marketplace tracks main through its relative source path: tags and GitHub Releases are release records, not a separate installation channel. Users get a release through `copilot plugin update` (see [Update](#update)).
 
-Publishing is not atomic across Git and GitHub. If a push or GitHub Release creation fails, the command reports the failure and retains the annotated tag; rerunning refuses that existing tag. Inspect the local tag, origin tag and GitHub Release first. After resolving the cause, push only the retained tag if it never reached origin, or create the missing release with `gh release create wintermute-vX.Y.Z --repo <host>/<owner>/<repo> --verify-tag --title "Wintermute vX.Y.Z" --notes-file <file-containing-that-changelog-section>`, using origin's host and repository for `--repo`. Never move or overwrite an already-published tag.
+Publishing is not atomic across Git and GitHub. If a push or the GitHub Release fails, the command reports the failure and keeps the annotated tag, and a rerun refuses that tag. Inspect the local tag, origin tag and GitHub Release first. After fixing the cause, push only the kept tag if it never reached origin, or create the missing release with `gh release create wintermute-vX.Y.Z --repo <host>/<owner>/<repo> --verify-tag --title "Wintermute vX.Y.Z" --notes-file <file-containing-that-changelog-section>`, using origin's host and repository for `--repo`. Never move or overwrite a published tag.
 
 ## Troubleshooting
 
 - "Port 7927 is used by another program" or "… is in use and not answering": see [The port](#the-port).
 - "Port 7927 serves the dashboard with sample data": a launcher started with `--demo` holds the port. Stop it with Ctrl+C in its terminal, or start it with `--port <n>`.
 - "Disconnected · retrying" in a browser: no dashboard server is running. Start the launcher or open the canvas. In the canvas the page recovers by itself within a few seconds; if it does not, close and reopen the canvas.
-- Old behaviour after an update: restart the app, or reload extensions in every session, so that no session still serves the previous version; a dashboard started separately in a browser has to be restarted by whoever started it. An open dashboard or cockpit page reloads itself once when it reconnects to a server with new dashboard files, and keeps its tab, swarm and open panel. A canvas that finds an older dashboard on the port says so in the extension log and, from 0.2.0 on, shows an out-of-date notice in the regular view and the cockpit (an older running dashboard from before 0.2.0 is replaced by the migration's app restart or extension reload in every open session; see [Moving from swarm-dashboard](#moving-from-swarm-dashboard)).
+- Old behaviour after an update: restart the app, or reload extensions in every session, so that no session still serves the previous version; a dashboard started separately in a browser has to be restarted by whoever started it. `curl -s http://127.0.0.1:7927/api/health` shows the version that serves the port. An open dashboard or cockpit page reloads itself once when it reconnects to a server with new dashboard files, and keeps its tab, swarm and open panel. A canvas that finds an older dashboard on the port says so in the extension log, and shows an out-of-date notice in the regular view and the cockpit.
 - Pages that never load: browsers allow about six open connections per site, and each open dashboard page holds one. With more than about six dashboard tabs or canvases open at once, the extra pages wait; close the ones you do not need. The server itself serves at most 32 live pages at once. It disconnects a page that stops taking updates for 30 seconds, and that page reconnects by itself.
 - "1 data warning" at the top right: some Copilot data could not be read, for example after a Copilot update changed a file format. Session-log and cost warnings apply only to the selected swarm, including its child sessions and older session aliases; engine-wide problems appear on every swarm. Hover over it for details. The rest of the dashboard still works.
 
