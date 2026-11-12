@@ -56,7 +56,7 @@ To look around before you run a real swarm, `npm start -- --demo` serves a sampl
 copilot plugin update wintermute@ai-tools
 ```
 
-Then start new sessions to get the updated agents; a running session keeps the agents it started with. To update the dashboard, restart the app, or reload extensions in every open session: a dashboard server that already runs on port 7927 keeps serving the old version. `curl -s http://127.0.0.1:7927/api/health` shows the version it runs.
+Then start new sessions to get the updated agents; a running session keeps the agents it started with. To update the dashboard in the app, restart the app, or reload extensions in every open session: a dashboard server that already runs on port 7927 keeps serving the old version. If you started the dashboard with the launcher, stop it with Ctrl+C and run `npm start` again; restarting the app doesn't replace it. `curl -s http://127.0.0.1:7927/api/health` shows the version that serves the port.
 
 ## Read more
 
