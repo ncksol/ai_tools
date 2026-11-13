@@ -44,6 +44,8 @@ angle: allegory (wordless origami on a desk)
 - Blue, orange, sage and rose paper identify houses; no vendor names or third-party characters.
 - No voice-over or captions. The pictures carry the story.
 - Steam remains animated, including while the mug is picked up and beside the end card.
+- The same paper-cut human hand has a closed-fist thumbs up, a pencil grip and a receiving grip. The pencil follows its ink, and the lantern and mug move with the hand after contact.
+- The drawer pulls towards the human below the desk edge. Its paper contents return under that edge as it closes.
 
 ## Notes
 

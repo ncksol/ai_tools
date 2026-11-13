@@ -21,10 +21,10 @@ MOTION: Absolute, seekable GSAP tweens. Fold geometry interpolates equal-vertex 
 | 480-719 | 16-24 s | Approved strips spread to four clear workspaces, then continuously fold into plane, frog, boat and fan. | Four distinct folds. Helpers leave on overlapping paths. |
 | 720-989 | 24-33 s | Helpers scatter. First boat crosses the coffee ring; second departs at 29 s as the first clears it. | Paper flutter. Frog arrives at the keycap gap. |
 | 990-1259 | 33-42 s | Frog tries, raises its flag, waits; crane folds and sends a bridge; frog crosses. | Fold and contact. Helpers turn home. |
-| 1260-1649 | 42-55 s | Helpers unfold into finished drawings. Orange checks blue; evidence in lamp light precedes the stamp. Rose work gets a red mark and is refolded. | Return folds, pencil, stamp. Corrected strip joins the others. |
+| 1260-1649 | 42-55 s | Helpers unfold into finished drawings. Orange checks blue; evidence in lamp light precedes the stamp. Rose work gets a red mark, moves to a clear fold space, and returns only after lying flat. | Return folds, pencil, stamp. Corrected strip joins the others. |
 | 1650-1859 | 55-62 s | Sage and rose inspectors align the strips against one straightedge. | Soft slides and paper contact. Aligned strips move to the crane. |
 | 1860-2189 | 62-73 s | Four strips fold into a single lantern; light at 67.5 s. Shipping note and human tick. | Long fold, pencil tick. Approved work moves toward the human. |
-| 2190-2369 | 73-79 s | Creatures flatten and slide into the drawer. The hand lifts lantern and mug; steam continues. | Paper slides, drawer and pickup. Crane's final sheet becomes the end card. |
+| 2190-2369 | 73-79 s | Creatures flatten and slide into the drawer. The same hand grips the lantern, carries it to the mug, then moves both together; steam continues. | Paper slides, drawer and pickup. Crane's final sheet becomes the end card. |
 | 2370-2519 | 79-84 s | Paper end card unfolds: "Hand over the crumpled thing." / "Wintermute 1.0". Lantern and hot coffee remain beside it. | Final paper fold. At least 3 seconds of stable reading. |
 
 BANNED: Slideshow cuts; crossfades between forms; generic UI cards; model/vendor logos; narration; captions; extra slogans; a dark void; neon; particle decoration; floating titles; simulated stop-motion cadence; moving type during its reading hold. Lantern light is a literal story object, not decorative glow.
@@ -32,3 +32,7 @@ BANNED: Slideshow cuts; crossfades between forms; generic UI cards; model/vendor
 QA: Inspect 0.8, 5.5, 10.5, 14.5, 18.5, 22.5, 27.5, 30.0, 34.5, 38.5, 40.5, 44.5, 48.5, 50.5, 53.5, 58.5, 65.0, 68.5, 71.0, 75.0, 78.0 and 82.0 seconds. Sample the fold transitions and the first/second-boat handoff more densely. Check every beat without explanatory text, inspect phone-size sheets, and decode frames from the final MP4.
 
 The root `index.motion.json` supplies seeked appearance and steam-liveness assertions. Frame inspection is still required for ink strokes, paper layering and the story's causal reads.
+
+HAND RIG: Three consistent paper-cut poses, with one thumb and four fingers and an attached forearm. The pencil tip and the two tick segments share positions and easing. A parent carry group keeps all lantern panels, ribs and handle together. Pickup begins only after the hand reaches the lantern; the mug moves only after the receiving grip reaches its lower edge.
+
+DRAWER RIG: A fixed mouth below the desk edge masks the tray and archived sheets. The drawer pulls down towards the human, then carries its contents back under the desk. The front face and attached handle remain inside the frame.

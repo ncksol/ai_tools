@@ -15,19 +15,22 @@ The eight approved beats appear in order on the same desk:
 | Results and checks | 42-55 s | Finished drawings, orange inspection of blue work, light before stamp, rose correction and refold |
 | Final panel | 55-62 s | Sage and rose inspectors align the four edges against a ruler |
 | Lantern and go-ahead | 62-73 s | Shared paper bodies fold into a lit lantern; the human ticks the shipping note |
-| Archive and receive | 73-79 s | Creatures flatten into the drawer; the hand receives the lantern beside still-steaming coffee |
+| Archive and receive | 73-79 s | Creatures flatten into the drawer; the hand grips the lantern, reaches the mug, then carries both together |
 
 The end card opens at 79 seconds. Its exact copy, "Hand over the crumpled thing." and "Wintermute 1.0", is held after the opening fold, with the lantern and moving steam still visible.
 
-Source snapshots were inspected at every beat, at intermediate folds, and at the frog, bridge and inspector motion boundaries. The phone-size story sheet was also inspected. No unintended clipping, label collisions or geometry resets were visible in those frames. Paper-form transitions use continuous polygon morphs and hinged facets, not scene cuts or cross-fades.
+Source snapshots were inspected at every beat, at intermediate folds, and at the frog, bridge and inspector motion boundaries. The beat and phone-size story sheets were also inspected. No unintended clipping, label collisions or geometry resets were visible in those frames. The writing strip folds in a separate workspace and returns flat before the panel. Paper-form transitions use continuous polygon morphs and hinged facets, not scene cuts or cross-fades.
 
-`snapshot --against` produced 19 source/video pairs at 0.8, 5, 10.2, 15, 23.2, 30.2, 35.3, 38.8, 48.3, 50.5, 53.5, 58.8, 64.8, 68.8, 70.8, 75.3, 78.5, 80.8 and 83.96 seconds. Matching decoded frames across all eight beats and the final frame were inspected. The pairs label the HTML capture "render" and the MP4 decode "reference"; their composition, lettering and geometry agree.
+`snapshot --against` produced 34 source/video pairs from 0.8 to 83.967 seconds. All pairs were inspected, including every beat, the correction fold, both pencil-stroke segments, the drawer closing, lantern contact, mug contact and the final hold. The pairs label the HTML capture "render" and the MP4 decode "reference"; their composition, lettering and geometry agree. Exact decoded frames 1539 and 1644 were also inspected against their source captures.
 
-The light-before-stamp sequence is the most subtle wordless beat. The held strip, lamp beam, blocking wing and proof mark before the stamp provide the cue. The small job labels are identifiers, not the main reading copy.
+The same hand uses three paper-cut poses, each with one thumb, four fingers and a connected forearm. The pencil nib follows the tick. The receiving grip stays with the lantern through pickup and reaches the mug before it moves. Mug, attached handle, beveled keycaps, drawer tray and attached drawer handle were checked as real objects. The drawer pulls towards the human beneath the desk edge; its contents disappear under that edge when it closes.
+
+The light-before-stamp sequence is the most subtle wordless beat. The held strip, lamp beam, blocking wing and proof mark before the stamp provide the cue; a closer view of the held strip would make it easier to read on a phone. The small job labels are identifiers, not the main reading copy.
 
 ## Automated gate
 
 The full browser check passed with motion enabled and `browserSkipped=false`.
+It sampled 30 explicit layout times, 300 motion times, 5 contrast times and 599 craft times.
 
 | Audit | Errors | Warnings |
 | --- | --- | --- |
@@ -51,13 +54,13 @@ One rounded font family is deliberate; weight and size establish the hierarchy.
 ## Render evidence
 
 - HyperFrames 0.9.19, local Chrome, hardware ANGLE Metal on Apple M5 Pro; screenshot capture with two workers.
-- Delivery render completed in 56.2 seconds. File size: 10,797,768 bytes.
+- Delivery render completed in 56.0 seconds. File size: 10,798,381 bytes.
 - Video: 1920 x 1080, `r_frame_rate=30/1`, `avg_frame_rate=30/1`, 2520 frames, `duration=84.000000`.
 - Format and AAC durations: `84.000000`.
 - Full-video decode succeeded. Every consecutive 320 x 180 decoded frame has a different checksum; no repeated-frame stretch was found.
 - Decoded timestamp error against `frameIndex / 30` stayed below 0.000001 seconds for every frame.
-- HTML, motion sidecar, audio generator, GSAP, both font files and generated effects passed the before/after render SHA-256 comparison.
-- MP4 SHA-256: `85cffcb6ab340a5d7605d0a425c1739ea0d6e92bdc49069b94ac4d263c87933b`.
+- All ten render inputs passed the before/after SHA-256 comparison: both HTML files, motion sidecar, audio generator, GSAP, both fonts, effects WAV, hidden music placeholder and provenance JSON.
+- MP4 SHA-256: `ffeb690f3b8eba84ff9b67994888f1e751eed9c39f149c22edebf4afd8a29a21`.
 - No desktop-app line was printed by the render.
 
 Detailed check, render, ffprobe, timestamp, checksum and paired-frame evidence remains under the ignored `.hyperframes/` directory.
