@@ -1,10 +1,37 @@
-import { access, readdir, readFile } from 'node:fs/promises';
+import { access, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { isStableVersion, releaseNotesProblem } from './release.mjs';
 
 export const AGENTS_DIR = 'com.github.copilot/agents';
 export const PACKAGED_AGENTS = Object.freeze(['wintermute-core', 'wintermute-peon']);
 const BARE_ID = new RegExp(`(?:agent_type|kickoff\\.agent):\\s*"(${PACKAGED_AGENTS.join('|')})"`, 'g');
+// Copilot's installed-artwork reader caps SVG at 256 KiB and raster input at 8 MiB.
+const LOGO_LIMITS = { '.svg': 262144, '.png': 8388608 };
+
+function inside(root, file) {
+  const relative = path.relative(root, file);
+  return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+async function validateLogo(root, manifest) {
+  const field = 'plugin.json extensions["com.github.copilot"].logo';
+  const logo = manifest.extensions?.['com.github.copilot']?.logo;
+  if (typeof logo !== 'string' || !logo.trim()) return [`${field}: logo must be a non-empty plugin-relative path`];
+  const file = path.resolve(root, logo.trim());
+  if (path.isAbsolute(logo.trim()) || !inside(root, file)) return [`${field}: logo must resolve to a file inside the plugin directory`];
+  const limit = LOGO_LIMITS[path.extname(file).toLowerCase()];
+  if (!limit) return [`${field}: logo must be an SVG or PNG`];
+  try {
+    const [base, resolved] = await Promise.all([realpath(root), realpath(file)]);
+    if (!inside(base, resolved)) return [`${field}: logo must resolve to a file inside the plugin directory`];
+    const info = await stat(resolved);
+    if (!info.isFile()) return [`${field}: logo must be a regular file`];
+    if (info.size > limit) return [`${field}: logo exceeds the app's ${limit}-byte limit`];
+  } catch (error) {
+    return [error.code === 'ENOENT' ? `${field}: logo file is missing (${logo})` : `${field}: ${error.message}`];
+  }
+  return [];
+}
 
 /**
  * Agent frontmatter is checked against a strict, flat subset of YAML, so that a value this check accepts reads the same in
@@ -79,6 +106,7 @@ export function parseAgentFrontmatter(text) {
 /** The package's checks: the bundled agents, their IDs, one version everywhere and a CHANGELOG entry for it. */
 export async function validatePackage(root, repositoryRoot, manifest) {
   const errors = [];
+  errors.push(...await validateLogo(root, manifest));
   if ('agents' in manifest) errors.push(`plugin.json must not declare "agents": Agent Plugins 1.0 plugins load agents only from ${AGENTS_DIR}/`);
   for (const name of PACKAGED_AGENTS) {
     const file = `${AGENTS_DIR}/${name}.agent.md`;

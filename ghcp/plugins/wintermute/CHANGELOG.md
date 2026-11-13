@@ -6,6 +6,13 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.0.1 — 2026-11-13
+
+### Fixed
+
+- Installed plugins in the GitHub Copilot app now show Wintermute's banner mark as their icon, on a square tile that works in light and dark themes.
+- The package validator checks the icon's reference, file type, plugin-directory boundary and the app's byte limit.
+
 ## 1.0.0 — 2026-11-12
 
 The first stable release. New to Wintermute? Start with the [quick start](https://github.com/ncksol/ai_tools/blob/main/ghcp/plugins/wintermute/QUICKSTART.md).
