@@ -31,7 +31,7 @@ const validate = dir => validateDashboard(dir, JSON.parse(readFileSync(path.join
 test('the plugin declares its canvas the way Copilot discovers it', async () => {
   const manifest = readJson('plugin.json');
   assert.equal(manifest.$schema, AGENT_PLUGINS_SCHEMA);
-  assert.deepEqual(manifest.extensions, { 'com.github.copilot': {} });
+  assert.ok(manifest.extensions['com.github.copilot']);
   assert.deepEqual(readJson(`${EXTENSION_DIR}/copilot-extension.json`), { name: 'swarm-dashboard', version: 1 });
   assert.deepEqual(await validateDashboard(root, manifest, readJson('package.json')), []);
 });

@@ -18,6 +18,12 @@ The first stable release. New to Wintermute? Start with the [quick start](https:
 - Commands for the browser launcher, JSON snapshots, tests, plugin validation, layout checks and releases.
 - From this release, versions follow semantic versioning: a new major version for incompatible changes to agent IDs, invocation behaviour, the canvas ID or the report and dashboard contracts.
 
+### Fixed
+
+- Installed plugins in the GitHub Copilot app now show Wintermute's banner mark as their icon, on a square tile that works in light and dark themes.
+- The package validator checks the icon's reference, file type, plugin-directory boundary and the app's byte limit.
+- The dashboard tab in the app is labelled Wintermute; its canvas ID stays `swarm-dashboard`.
+
 ## 0.12.0 — 2026-11-11
 
 ### Changed

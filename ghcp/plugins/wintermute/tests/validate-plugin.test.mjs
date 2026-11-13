@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validatePlugin } from '../scripts/validate-plugin.mjs';
@@ -57,6 +57,63 @@ const editJson = (file, change) => {
   change(value);
   writeFileSync(file, JSON.stringify(value));
 };
+
+test('a missing or invalid Copilot logo reference is reported', async () => {
+  const { repo, root } = sandbox();
+  for (const logo of [undefined, '', ' ', 42]) {
+    editJson(path.join(root, 'plugin.json'), manifest => { manifest.extensions['com.github.copilot'].logo = logo; });
+    const errors = await validatePlugin(root, repo);
+    assert.ok(errors.some(error => error.includes('logo must be a non-empty plugin-relative path')), errors.join('\n'));
+  }
+});
+
+test('a wrong logo path is reported instead of accepting a missing image', async () => {
+  const { repo, root } = sandbox();
+  editJson(path.join(root, 'plugin.json'), manifest => { manifest.extensions['com.github.copilot'].logo = 'docs/images/missing.svg'; });
+  const errors = await validatePlugin(root, repo);
+  assert.ok(errors.some(error => error.includes('logo file is missing')), errors.join('\n'));
+});
+
+test('a logo cannot escape the plugin directory through its path or a symlink', async () => {
+  const { repo, root } = sandbox();
+  const outside = path.join(repo, 'outside.svg');
+  writeFileSync(outside, '<svg xmlns="http://www.w3.org/2000/svg"/>');
+  symlinkSync(outside, path.join(root, 'docs/images/linked.svg'));
+  for (const logo of [outside, '../../../outside.svg', 'docs/images/linked.svg']) {
+    editJson(path.join(root, 'plugin.json'), manifest => { manifest.extensions['com.github.copilot'].logo = logo; });
+    const errors = await validatePlugin(root, repo);
+    assert.ok(errors.some(error => error.includes('logo must resolve to a file inside the plugin directory')), `${logo}: ${errors.join('\n')}`);
+  }
+});
+
+test('a logo must be an SVG or PNG file, not a directory or another image type', async () => {
+  const { repo, root } = sandbox();
+  writeFileSync(path.join(root, 'docs/images/logo.gif'), 'GIF89a');
+  mkdirSync(path.join(root, 'docs/images/directory.svg'));
+  for (const [logo, expected] of [
+    ['docs/images/logo.gif', 'logo must be an SVG or PNG'],
+    ['docs/images/directory.svg', 'logo must be a regular file'],
+  ]) {
+    editJson(path.join(root, 'plugin.json'), manifest => { manifest.extensions['com.github.copilot'].logo = logo; });
+    const errors = await validatePlugin(root, repo);
+    assert.ok(errors.some(error => error.includes(expected)), errors.join('\n'));
+  }
+});
+
+test('logo byte limits accept the boundary and reject one byte over for each format', async () => {
+  const { repo, root } = sandbox();
+  for (const [extension, limit] of [['svg', 262144], ['png', 8388608]]) {
+    const logo = `docs/images/limit.${extension}`;
+    const file = path.join(root, logo);
+    writeFileSync(file, '');
+    editJson(path.join(root, 'plugin.json'), manifest => { manifest.extensions['com.github.copilot'].logo = logo; });
+    truncateSync(file, limit);
+    assert.deepEqual(await validatePlugin(root, repo), [], extension);
+    truncateSync(file, limit + 1);
+    const errors = await validatePlugin(root, repo);
+    assert.ok(errors.some(error => error.includes(`logo exceeds the app's ${limit}-byte limit`)), errors.join('\n'));
+  }
+});
 
 test('the plugin ships the two agents, each named after its file', () => {
   assert.deepEqual([...PACKAGED_AGENTS].sort(), ['wintermute-core', 'wintermute-peon']);

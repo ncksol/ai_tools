@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } fro
 import { createServer } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { CANVAS_TITLE, createCanvasHost, pageUrl } from '../server/canvas-host.mjs';
+import { createCanvasHost, pageUrl } from '../server/canvas-host.mjs';
 import { createDemoEngine } from '../server/demo-engine.mjs';
 import { createDashboardServer } from '../server/http.mjs';
 import { probePort } from '../server/shared.mjs';
@@ -57,7 +57,7 @@ test('the first canvas hosts the server and later canvases reuse it', async () =
   const first = host(port);
   const second = host(port);
   try {
-    assert.deepEqual(await first.open({ sessionId: 'cli-1', instanceId: 'a' }), { url: `http://127.0.0.1:${port}/?host=canvas&session=cli-1&plugin=test`, title: CANVAS_TITLE });
+    assert.deepEqual(await first.open({ sessionId: 'cli-1', instanceId: 'a' }), { url: `http://127.0.0.1:${port}/?host=canvas&session=cli-1&plugin=test`, title: 'Wintermute' });
     assert.equal(first.hosting(), true);
     assert.equal((await probePort(port)).state, 'ours');
     const reused = await second.open({ sessionId: 'cli-2', instanceId: 'b', input: { swarm: 'ws-0000-root' } });
@@ -288,12 +288,12 @@ test('the extension joins with one canvas that opens the shared page', async () 
     assert.equal(canvases.length, 1);
     const [canvas] = canvases;
     assert.equal(canvas.declaration.id, 'swarm-dashboard');
-    assert.equal(canvas.declaration.displayName, 'Swarm dashboard');
+    assert.equal(canvas.declaration.displayName, 'Wintermute');
     assert.deepEqual(canvas.declaration.inputSchema.required ?? [], [], 'the input stays optional');
     assert.equal(extension.canvasHost.hosting(), false, 'loading starts nothing');
     const pluginVersion = JSON.parse(readFileSync(path.join(root, 'plugin.json'), 'utf8')).version;
     const opened = await canvas.open({ sessionId: 'cli-0003-b1', extensionId: 'test', canvasId: 'swarm-dashboard', instanceId: 'one' });
-    assert.deepEqual(opened, { url: `http://127.0.0.1:${port}/?host=canvas&session=cli-0003-b1&plugin=${pluginVersion}`, title: 'Swarm dashboard' });
+    assert.deepEqual(opened, { url: `http://127.0.0.1:${port}/?host=canvas&session=cli-0003-b1&plugin=${pluginVersion}`, title: 'Wintermute' });
     const health = await (await fetch(`http://127.0.0.1:${port}/api/health`)).json();
     assert.equal(health.app, 'swarm-dashboard');
     assert.equal(health.version, pluginVersion);

@@ -18,6 +18,8 @@
   ],
   "category": "development",
   "extensions": {
-    "com.github.copilot": {}
+    "com.github.copilot": {
+      "logo": "docs/images/icon.svg"
+    }
   }
 }

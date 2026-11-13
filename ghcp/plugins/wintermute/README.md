@@ -142,7 +142,7 @@ Without Playwright or its WebKit build the check says so and skips. `npm test` a
 | `engine/` | Reads Copilot's local data into swarm snapshots and run summaries |
 | `server/` | The local server, live updates, the shared port and the canvas host |
 | `ui/` | The dashboard page: plain ES modules and CSS, no build step |
-| `docs/images/` | The README banner and the [dashboard guide](DASHBOARD.md)'s screenshots |
+| `docs/images/` | The installed plugin icon, the README banner and the [dashboard guide](DASHBOARD.md)'s screenshots |
 | `com.github.copilot/agents/` | The orchestrator agent and its peon |
 | `com.github.copilot/extensions/swarm-dashboard/` | The canvas extension |
 | `scripts/` | The launcher, the snapshot command, the layout check and the validator |

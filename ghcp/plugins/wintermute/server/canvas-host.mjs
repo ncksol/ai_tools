@@ -1,7 +1,7 @@
 import { createDashboardServer } from './http.mjs';
 import { listenShared, probePort } from './shared.mjs';
 
-export const CANVAS_TITLE = 'Swarm dashboard';
+export const CANVAS_TITLE = 'Wintermute';
 
 /** The page address for one canvas: the swarm named in its input, else the swarm of the session it opened in. */
 export function pageUrl(port, { sessionId, input, version } = {}) {
