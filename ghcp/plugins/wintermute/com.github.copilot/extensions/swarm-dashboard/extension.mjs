@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { CanvasError, createCanvas, joinSession } from '@github/copilot-sdk/extension';
-import { createCanvasHost } from '../../../server/canvas-host.mjs';
+import { CANVAS_TITLE, createCanvasHost } from '../../../server/canvas-host.mjs';
 import { createDefaultEngine } from '../../../server/engines.mjs';
 import { resolvePort } from '../../../server/shared.mjs';
 
@@ -21,7 +21,7 @@ export const canvasHost = port === null ? null : createCanvasHost({ port, versio
 
 export const canvas = createCanvas({
   id: 'swarm-dashboard',
-  displayName: 'Swarm dashboard',
+  displayName: CANVAS_TITLE,
   description: 'Watch an agentic swarm: what each session and sub-agent is doing, its progress and cost, and what needs you.',
   inputSchema: {
     type: 'object',

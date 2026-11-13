@@ -12,6 +12,7 @@ After merging, run `npm run release:publish -- --dry-run`, then `npm run release
 
 - Installed plugins in the GitHub Copilot app now show Wintermute's banner mark as their icon, on a square tile that works in light and dark themes.
 - The package validator checks the icon's reference, file type, plugin-directory boundary and the app's byte limit.
+- The dashboard tab in the app is labelled Wintermute; its canvas ID stays `swarm-dashboard`.
 
 ## 1.0.0 — 2026-11-12
 
