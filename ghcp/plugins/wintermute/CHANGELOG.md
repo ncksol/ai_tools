@@ -6,14 +6,6 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
-## 1.0.1 — 2026-11-13
-
-### Fixed
-
-- Installed plugins in the GitHub Copilot app now show Wintermute's banner mark as their icon, on a square tile that works in light and dark themes.
-- The package validator checks the icon's reference, file type, plugin-directory boundary and the app's byte limit.
-- The dashboard tab in the app is labelled Wintermute; its canvas ID stays `swarm-dashboard`.
-
 ## 1.0.0 — 2026-11-12
 
 The first stable release. New to Wintermute? Start with the [quick start](https://github.com/ncksol/ai_tools/blob/main/ghcp/plugins/wintermute/QUICKSTART.md).
@@ -25,6 +17,12 @@ The first stable release. New to Wintermute? Start with the [quick start](https:
 - The swarm dashboard: a watch-only view of each swarm, as the `swarm-dashboard` canvas in the app, or in a browser through a local launcher (`http://127.0.0.1:7927/` by default). It shows a card per unit, what waits on you, activity, a timeline, the plan and a board, cost in dollars, stuck and stalled work, and the history of finished runs, in light and dark themes. It reads Copilot's local data read-only. The [dashboard guide](https://github.com/ncksol/ai_tools/blob/main/ghcp/plugins/wintermute/DASHBOARD.md) shows every view.
 - Commands for the browser launcher, JSON snapshots, tests, plugin validation, layout checks and releases.
 - From this release, versions follow semantic versioning: a new major version for incompatible changes to agent IDs, invocation behaviour, the canvas ID or the report and dashboard contracts.
+
+### Fixed
+
+- Installed plugins in the GitHub Copilot app now show Wintermute's banner mark as their icon, on a square tile that works in light and dark themes.
+- The package validator checks the icon's reference, file type, plugin-directory boundary and the app's byte limit.
+- The dashboard tab in the app is labelled Wintermute; its canvas ID stays `swarm-dashboard`.
 
 ## 0.12.0 — 2026-11-11
 
