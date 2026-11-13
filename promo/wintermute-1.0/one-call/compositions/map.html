@@ -10,52 +10,40 @@
     #root .bal svg { position: absolute; overflow: visible; }
     #root .sfx { position: absolute; z-index: 25; font-family: "Bangers", sans-serif; color: var(--color-paper, #ece8df); -webkit-text-stroke: 7px var(--color-ink, #0a0c0f); paint-order: stroke fill; letter-spacing: 0.04em; white-space: nowrap; line-height: 1; opacity: 0; }
     #root .lg { font-family: "League Gothic", sans-serif; }
-    #root { position: absolute; inset: 0; overflow: hidden; background: #15191e; }
+    #root { position: absolute; inset: 0; overflow: hidden; background: #1b1f25; }
     #mp-art { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
   </style>
   <div id="root" data-composition-id="map" data-width="1920" data-height="1080">
     <svg id="mp-art" viewBox="0 0 1920 1080" width="1920" height="1080">
-      <rect x="-600" y="-600" width="3120" height="2280" fill="#15191e" />
-      <rect x="160" y="110" width="480" height="420" fill="#0a0c0f" />
-      <rect x="172" y="122" width="456" height="396" fill="#262c34" />
-      <g fill="#141820"><rect x="172" y="380" width="120" height="138" /><rect x="300" y="330" width="140" height="188" /><rect x="450" y="400" width="178" height="118" /></g>
-      <path d="M400 122 V518 M172 320 H628" stroke="#0a0c0f" stroke-width="10" />
-      <rect x="150" y="600" width="1260" height="140" rx="20" fill="#2b313a" stroke="#0a0c0f" stroke-width="6" />
-      <rect x="560" y="640" width="320" height="120" rx="50" fill="#c9ccd1" stroke="#0a0c0f" stroke-width="5" />
-      <g transform="translate(700 650) rotate(-78)">
-        <path d="M30,-70 C70,-66 92,-30 90,8 C88,44 70,70 40,82 L36,100 L-12,100 L-14,86 C-30,84 -42,76 -46,64 C-52,62 -58,56 -56,48 C-60,44 -62,36 -58,30 L-74,10 C-76,6 -74,2 -70,0 L-58,-6 C-60,-40 -40,-68 0,-72 C10,-72 20,-72 30,-70 Z" fill="#9aa1aa" stroke="#0a0c0f" stroke-width="4" stroke-linejoin="round" />
-          <path d="M-56,-30 C-62,-78 -6,-104 40,-86 C66,-100 98,-70 92,-28 C100,-6 94,14 88,30 C82,4 72,-16 58,-22 C44,-8 16,-26 -6,-34 C-22,-22 -42,-24 -56,-30 Z" fill="#0a0c0f" />
-          <ellipse cx="42" cy="6" rx="12" ry="18" fill="#9aa1aa" stroke="#0a0c0f" stroke-width="4" />
-        <path d="M-40,-10 C-34,-4 -26,-4 -20,-10" fill="none" stroke="#0a0c0f" stroke-width="4" stroke-linecap="round" />
-      </g>
-      <path d="M560 740 C700 700 900 690 1100 700 C1250 708 1380 720 1440 760 L1500 1080 L120 1080 L160 780 Z" fill="#5b6470" stroke="#0a0c0f" stroke-width="6" stroke-linejoin="round" />
-      <path d="M620 820 C800 800 1000 800 1300 830" fill="none" stroke="#3a424d" stroke-width="5" />
-      <rect x="1440" y="880" width="340" height="200" fill="#262b32" stroke="#0a0c0f" stroke-width="6" />
-      <rect x="1560" y="850" width="100" height="34" fill="#0a0c0f" />
+      <rect x="-600" y="-600" width="3120" height="2280" fill="#1b1f25" />
+      <!-- His desk at home, past midnight: he has fallen asleep beside the map (drawn by DESK_SCENE) -->
+      <g id="mp-room"></g>
       <g id="mp-phone">
-        <rect x="1494" y="500" width="212" height="372" rx="30" fill="#0a0c0f" />
-        <svg x="1508" y="530" width="184" height="312" viewBox="0 0 184 312">
+        <path d="M600 760 L620 738 L712 738 L732 760 Z" fill="#0a0c0f" />
+        <rect x="560" y="368" width="212" height="372" rx="30" fill="#0a0c0f" />
+        <svg x="574" y="398" width="184" height="312" viewBox="0 0 184 312">
           <rect width="184" height="312" fill="#1b2027" />
           <path d="M-10 190 C40 170 80 210 120 196 S170 176 200 186" fill="none" stroke="#0e1115" stroke-width="22" />
           <g stroke="#2e353e" stroke-width="5"><path d="M20 0 V312 M66 0 V312 M112 0 V312 M158 0 V312 M0 40 H184 M0 100 H184 M0 150 H184 M0 240 H184 M0 290 H184" /></g>
           <g id="mp-pins"></g>
         </svg>
       </g>
-      <polygon points="1494,520 1300,1080 1900,1080 1706,520" fill="#58cfc2" opacity="0.06" />
+      <polygon points="560,388 366,1080 966,1080 772,388" fill="#58cfc2" opacity="0.06" />
     </svg>
     <div id="mp-cap1" class="cap" style="left: 96px; top: 70px">All night, watch the pins move.</div>
     <div id="mp-cap2" class="cap" style="left: 96px; top: 70px">Or sleep.</div>
+    <div id="mp-z" class="sfx" style="left: 1190px; top: 380px; font-size: 64px">z Z z</div>
   </div>
   <script>
     (function () {
-      // Pins: the crew's positions across the city; each follows a street route.
+      const { HANDSET_D, CORD_AT, HANDSET, HS_POINT, COIL, DESK_HS, DESKPHONE, INK, st, C_HEAD, C_FIST, LIMBS, CUFF, C_TORSO, C_PHONE, C_SLEEP, C_STAND, PROPS, CREW, GLOVE, HAT, FIG_HS, C_PHONE_HS, C_AT, C_EAR, C_MOUTH, DESK_SCENE, JOB_ON_DESK, SKIN, SKIN_D, SHIRT, SHIRT_D, TIE, TROUSER } = window.OC;
+      document.getElementById("mp-room").innerHTML = DESK_SCENE({ cx: 1430, s: 1.5, Y: 760, wx: 1150, lampX: 1760, phoneX: 1000, mugX: 300, sleep: true, phoneId: "mp-deskphone", clientId: "mp-client" });
+      // Pins: the four crew members across the city; each follows a street route.
       const routes = [
         [[20, 40], [20, 100], [66, 100], [66, 150]],
         [[158, 40], [112, 40], [112, 150], [66, 150]],
         [[20, 290], [20, 240], [112, 240], [112, 150]],
         [[158, 290], [158, 240], [158, 150], [112, 150]],
-        [[66, 290], [66, 240], [20, 240], [20, 150]],
-        [[112, 0], [112, 40], [158, 40], [158, 100]],
       ];
       window.__mpRoutes = routes;
       let s = "";
@@ -97,11 +85,12 @@
     } }, 0);
 
     // Close on the phone's map, then pull back: he is asleep, the pins keep moving.
-    tl.fromTo("#mp-art", { x: -2835, y: -1059, scale: 2.4, transformOrigin: "0px 0px" }, { x: -2835, y: -1059, scale: 2.4, duration: 3.0, ease: "none" }, 0);
+    tl.fromTo("#mp-art", { x: -638.4, y: -789.6, scale: 2.4, transformOrigin: "0px 0px" }, { x: -638.4, y: -789.6, scale: 2.4, duration: 3.0, ease: "none" }, 0);
     wipe("#mp-cap1", 0.2);
     out("#mp-cap1", 2.95);
     tl.to("#mp-art", { x: 0, y: 0, scale: 1, duration: 1.0, ease: "power2.inOut" }, 3.0);
     wipe("#mp-cap2", 4.1);
+    tl.fromTo("#mp-z", { opacity: 0, scale: 0.6 }, { opacity: 1, scale: 1, duration: 0.3, ease: "expo.out" }, 4.5);
     window.__timelines["map"] = tl;
   </script>
 </template>

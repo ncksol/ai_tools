@@ -31,8 +31,9 @@ Slot: `assets/audio/music.mp3`, one clip from 0 to 86 s (0.4 s fade-in, 1.5 s fa
 | 62.5–69.0 | He sleeps; the pins keep moving | Quietest stretch |
 | 69.0 | Dawn; the rain stops | The music opens up |
 | 71.5 | The finished job lands on the desk (the reveal) | Strong moment |
-| 75.0–76.5 | The phones go quiet, one by one | Thin out |
+| 75.0–76.1 | The four lines go quiet, one by one | Thin out |
 | 76.9 | One last ring | Near silence |
+| 77.3 | Cut: he answers at his desk | Leave space for the voice |
 | 79.5 | End card | Final phrase |
 | 82.3 | The mark lands | Resolve on a strong downbeat, then hold and fade |
 
@@ -45,7 +46,7 @@ Slots: `assets/audio/vo/<nn>.mp3`, one file per line, also a commented block in 
 | File | Line (exact text) | Starts at | Max length | Delivery |
 | --- | --- | --- | --- | --- |
 | `vo/01.mp3` | Let's take it apart. | 9.40 s | 1.6 s | Quiet, almost to himself, already looking at the pieces. |
-| `vo/02.mp3` | Six people. Here's the plan. Yes? | 15.70 s | 2.9 s | Brief and businesslike, small beats between the sentences; "Yes?" is a real question. |
+| `vo/02.mp3` | Four people. Here's the plan. Yes? | 15.70 s | 2.9 s | Brief and businesslike, small beats between the sentences; "Yes?" is a real question. |
 | `vo/03.mp3` | It's all in the envelope. | 22.45 s | 1.8 s | Low, confidential, to a stranger he trusts. |
 | `vo/04.mp3` | Librarian. The safecracker needs a blueprint. | 35.25 s | 2.5 s | Crisp dispatcher: the name, a short pause, the request. |
 | `vo/05.mp3` | Your call. | 59.60 s | 1.1 s | A respectful handover, a touch of warmth: the human decides. |

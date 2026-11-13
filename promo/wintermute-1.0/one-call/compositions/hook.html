@@ -12,7 +12,6 @@
     #hk-city { top: 0; }
     #hk-door { top: 1080px; }
     #root .lg { font-family: "League Gothic", sans-serif; }
-    #hk-hand { position: absolute; left: 0; top: 0; width: 1000px; height: 1000px; z-index: 20; }
     #hk-dip { position: absolute; inset: 0; background: #000; opacity: 0; z-index: 40; }
   </style>
   <div id="root" data-composition-id="hook" data-width="1920" data-height="1080">
@@ -63,15 +62,15 @@
         <polyline id="hk-tube" points="1372,200 1420,382 1480,248 1540,382 1588,200" fill="none" stroke="#58cfc2" stroke-width="12" stroke-linejoin="round" stroke-linecap="round" />
         <polyline points="1372,200 1420,382 1480,248 1540,382 1588,200" fill="none" stroke="#c8fbf5" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round" />
         <rect width="1920" height="1080" fill="url(#hk-wash)" />
-      </svg>
-    </div>
-
-    <!-- The engineer's arm and the job: local (0,0) is the folder centre, at (700,300) in this layer -->
-    <svg id="hk-hand" viewBox="-700 -300 1000 1000" width="1000" height="1000">
-          <path d="M-640,660 L-330,660 L-300,520 L-560,490 Z" fill="#c9ccd1" stroke="#0a0c0f" stroke-width="6" stroke-linejoin="round" />
-          <path d="M-560,560 L-320,585 M-575,615 L-322,630" stroke="#8a929c" stroke-width="5" />
-          <path d="M-520,505 L-318,520 L-150,175 L-245,128 Z" fill="#9aa1aa" stroke="#0a0c0f" stroke-width="6" stroke-linejoin="round" />
-          <g id="hk-folder" data-layout-allow-overlap>
+        <!-- The client: the tired engineer at the W door, the job in his hand -->
+        <g id="hk-client"><g transform="translate(587 300) scale(0.82)">
+          <g id="hk-body"></g>
+          <g id="hk-armdown" opacity="0"></g>
+          <g id="hk-armout">
+            <g id="hk-arm"></g>
+            <g id="hk-palm"></g>
+            <g transform="translate(394 384) scale(0.75)">
+              <g id="hk-folder" data-layout-allow-overlap>
             <rect x="-200" y="-160" width="140" height="40" rx="6" fill="#d9d2c1" stroke="#0a0c0f" stroke-width="5" />
             <rect x="-200" y="-135" width="400" height="270" rx="6" fill="#e2dccd" stroke="#0a0c0f" stroke-width="6" />
             <path d="M-170 -100 H120 M-170 -76 H60" stroke="#8a929c" stroke-width="5" />
@@ -79,10 +78,14 @@
               <rect x="-150" y="-48" width="300" height="104" fill="none" stroke="#b3262e" stroke-width="8" />
               <text class="lg" x="0" y="34" text-anchor="middle" font-size="88" letter-spacing="4" fill="#b3262e">THE JOB</text>
             </g>
+              </g>
+            </g>
+            <g id="hk-thumb"></g>
           </g>
-          <rect x="-238" y="62" width="96" height="92" rx="34" fill="#9aa1aa" stroke="#0a0c0f" stroke-width="6" />
-          <ellipse cx="-150" cy="70" rx="34" ry="20" fill="#9aa1aa" stroke="#0a0c0f" stroke-width="6" />
-    </svg>
+        </g></g>
+      </svg>
+    </div>
+
 
     <div id="hk-cap1" class="cap" style="left: 96px; top: 84px">2:00 A.M.</div>
     <div id="hk-cap2" class="cap" style="left: 96px; top: 166px">Too big for one night.</div>
@@ -101,65 +104,7 @@
   </div>
   <script>
     (function () {
-      // A payphone handset in side view: earpiece cup at the top, curved grip, mouthpiece angled forward.
-      // Local frame: earpiece face at x=54, cord leaves the grip at CORD_AT. About 300 units tall.
-      const HANDSET_D =
-        "M46 -42 Q54 -42 54 -34 L54 34 Q54 42 46 42 L22 36 C8 92 6 140 22 188 L50 180 Q57 178 60 184 L92 238 Q95 245 88 249 C62 262 30 263 8 250 C-16 202 -24 112 -12 40 C-19 18 -17 -16 1 -30 Z";
-      const CORD_AT = [6, 254];
-      const HANDSET = (o) => {
-        const fill = o.fill || "#0a0c0f";
-        const line = o.line || null;
-        const lw = o.lw || 4;
-        const t = 'translate(' + o.x + " " + o.y + ") rotate(" + (o.rot || 0) + ") scale(" + (o.flip ? -(o.s || 1) : o.s || 1) + " " + (o.s || 1) + ")";
-        const grille = o.grille || line || "#3a424d";
-        return (
-          '<g transform="' + t + '">' +
-          '<path d="' + HANDSET_D + '" fill="' + fill + '"' + (line ? ' stroke="' + line + '" stroke-width="' + lw + '" stroke-linejoin="round"' : "") + "/>" +
-          '<path d="M50 -30 V30 M57 191 L85 238" stroke="' + grille + '" stroke-width="' + lw * 0.9 + '" stroke-linecap="round" opacity="0.8"/>' +
-          "</g>"
-        );
-      };
-      // Where a point in handset-local coordinates lands after HANDSET's transform.
-      const HS_POINT = (o, p) => {
-        const s = o.s || 1;
-        const a = ((o.rot || 0) * Math.PI) / 180;
-        const px = (o.flip ? -1 : 1) * p[0] * s;
-        const py = p[1] * s;
-        return [o.x + px * Math.cos(a) - py * Math.sin(a), o.y + px * Math.sin(a) + py * Math.cos(a)];
-      };
-      // A coiled phone cord along a sagging curve from (x1,y1) to (x2,y2), control point (cx,cy).
-      const COIL = (x1, y1, cx, cy, x2, y2, loops, amp) => {
-        const n = Math.max(80, loops * 14);
-        let d = "";
-        for (let i = 0; i <= n; i++) {
-          const s = i / n;
-          const bx = (1 - s) * (1 - s) * x1 + 2 * (1 - s) * s * cx + s * s * x2;
-          const by = (1 - s) * (1 - s) * y1 + 2 * (1 - s) * s * cy + s * s * y2;
-          let tx = 2 * (1 - s) * (cx - x1) + 2 * s * (x2 - cx);
-          let ty = 2 * (1 - s) * (cy - y1) + 2 * s * (y2 - cy);
-          const L = Math.hypot(tx, ty) || 1;
-          tx /= L;
-          ty /= L;
-          const ph = 2 * Math.PI * loops * s;
-          const ends = Math.min(1, s * 12, (1 - s) * 12);
-          const x = bx + ends * (-ty * amp * Math.sin(ph) + tx * amp * 0.55 * Math.cos(ph));
-          const y = by + ends * (tx * amp * Math.sin(ph) + ty * amp * 0.55 * Math.cos(ph));
-          d += (i ? " L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
-        }
-        return d;
-      };
-      // A rotary desk phone with its handset in the cradle; base centred on (x, y) = bottom middle.
-      const DESK_HS = (x, y, k) => ({ x: x + 95 * k, y: y - 152 * k, rot: 90, s: 0.86 * k, fill: "#0a0c0f", line: "#3a424d", lw: 3 / (0.86 * k), grille: "#3a424d" });
-      const DESKPHONE = (x, y, k, withHandset) => {
-        const P = (px, py) => (x + px * k).toFixed(1) + " " + (y + py * k).toFixed(1);
-        let s =
-          '<path d="M' + P(-110, 0) + " L" + P(-84, -78) + " Q" + P(-80, -88) + " " + P(-68, -88) + " L" + P(68, -88) + " Q" + P(80, -88) + " " + P(84, -78) + " L" + P(110, 0) + ' Z" fill="#1c2128" stroke="#0a0c0f" stroke-width="' + 4 * k + '"/>' +
-          '<circle cx="' + (x).toFixed(1) + '" cy="' + (y - 44 * k).toFixed(1) + '" r="' + (30 * k).toFixed(1) + '" fill="#3a424d" stroke="#0a0c0f" stroke-width="' + 3 * k + '"/>' +
-          '<circle cx="' + x.toFixed(1) + '" cy="' + (y - 44 * k).toFixed(1) + '" r="' + (10 * k).toFixed(1) + '" fill="#0a0c0f"/>' +
-          '<path d="M' + P(-92, -86) + " L" + P(-88, -106) + " M" + P(92, -86) + " L" + P(88, -106) + '" stroke="#0a0c0f" stroke-width="' + 12 * k + '" stroke-linecap="round"/>';
-        if (withHandset) s += HANDSET(DESK_HS(x, y, k));
-        return s;
-      };
+      const { HANDSET_D, CORD_AT, HANDSET, HS_POINT, COIL, DESK_HS, DESKPHONE, INK, st, C_HEAD, C_FIST, LIMBS, CUFF, C_TORSO, C_PHONE, C_SLEEP, C_STAND, PROPS, CREW, GLOVE, HAT, FIG_HS, C_PHONE_HS, C_AT, C_EAR, C_MOUTH, DESK_SCENE, JOB_ON_DESK, SKIN, SKIN_D, SHIRT, SHIRT_D, TIE, TROUSER } = window.OC;
       // Seeded city layout: same buildings and lit windows on every render.
       let seed = 7;
       const rnd = () => {
@@ -187,6 +132,14 @@
           x += w + 6 + rnd() * 18;
         }
       };
+      const ST = C_STAND();
+      document.getElementById("hk-body").innerHTML = ST.body;
+      document.getElementById("hk-arm").innerHTML = ST.arm;
+      document.getElementById("hk-palm").innerHTML = ST.palm;
+      document.getElementById("hk-thumb").innerHTML = ST.thumb;
+      document.getElementById("hk-armdown").innerHTML =
+        LIMBS([[[-8, 156], [14, 316], 30, 25]], SHIRT) + LIMBS([[[14, 316], [30, 452], 20, 16]], SKIN) + CUFF([14, 316], 82, 27) +
+        '<g transform="translate(34 486) rotate(84) scale(0.8)">' + C_FIST() + "</g>";
       skyline("hk-far", "hk-far-win", -30, 300, 620, 905, 90, 190, 0.18);
       skyline("hk-mid", "hk-mid-win", -60, 160, 420, 905, 140, 260, 0.12);
       // Street payphones: glass booths whose panes light teal when they ring.
@@ -216,17 +169,17 @@
 
     // Frame 0 is the thumbnail: door, neon W, the job in hand, "2:00 A.M."
     tl.set("#hk-cam", { y: -1080 }, 0);
-    tl.set("#hk-hand", { x: -230, y: 400, rotation: -6, transformOrigin: "700px 300px" }, 0);
     wipeIn("#hk-cap2", 0.45);
 
     // The engineer lines the job up with the slot and pushes it through.
-    tl.to("#hk-hand", { x: 260, y: 315, rotation: 0, duration: 0.85, ease: "power2.inOut" }, 0.35);
+    tl.fromTo("#hk-client", { x: -50 }, { x: 0, duration: 0.85, ease: "power2.inOut" }, 0.35);
     tl.to("#hk-flap", { scaleY: 0.1, svgOrigin: "960 594", duration: 0.14, ease: "power2.out" }, 1.2);
-    tl.to("#hk-folder", { scaleX: 0.57, scaleY: 0.14, transformOrigin: "50% 50%", duration: 0.38, ease: "power3.in" }, 1.24);
-    tl.to("#hk-hand", { x: 290, duration: 0.38, ease: "power3.in" }, 1.24);
+    tl.to("#hk-folder", { scaleX: 0.9, scaleY: 0.14, transformOrigin: "50% 50%", duration: 0.38, ease: "power3.in" }, 1.24);
     tl.to("#hk-folder", { scaleY: 0.01, opacity: 0, transformOrigin: "50% 50%", duration: 0.12, ease: "power2.in" }, 1.62);
     tl.to("#hk-flap", { scaleY: 1, svgOrigin: "960 594", duration: 0.22, ease: "back.out(2.2)" }, 1.84);
-    tl.to("#hk-hand", { x: -320, y: 900, rotation: 10, duration: 0.6, ease: "power3.in" }, 1.86);
+    // Job delivered: his arm drops to his side.
+    tl.to("#hk-armout", { opacity: 0, duration: 0.12, ease: "none" }, 1.86);
+    tl.to("#hk-armdown", { opacity: 1, duration: 0.12, ease: "none" }, 1.86);
     out("#hk-cap1, #hk-cap2", 2.75);
 
     // Tilt up from the door to the skyline: every payphone starts ringing.
