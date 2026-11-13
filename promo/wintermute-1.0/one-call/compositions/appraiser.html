@@ -123,6 +123,8 @@
     out("#ap-b2", 5.25);
     // He stamps it.
     tl.fromTo("#ap-stamp", { opacity: 0, scale: 1.5, svgOrigin: "1290 748" }, { opacity: 1, scale: 1, svgOrigin: "1290 748", duration: 0.12, ease: "power4.out" }, 5.6);
+    // Whip pan to the next piece of the job.
+    tl.to("#ap-art, #ap-cap", { x: -420, filter: "blur(14px)", duration: 0.28, ease: "power3.in" }, 7.22);
     window.__timelines["appraiser"] = tl;
   </script>
 </template>

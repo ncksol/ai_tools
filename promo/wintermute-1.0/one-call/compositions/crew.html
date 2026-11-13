@@ -12,6 +12,7 @@
     #root .sfx { position: absolute; z-index: 25; font-family: "Bangers", sans-serif; color: var(--color-paper, #ece8df); -webkit-text-stroke: 7px var(--color-ink, #0a0c0f); paint-order: stroke fill; letter-spacing: 0.04em; white-space: nowrap; line-height: 1; opacity: 0; }
     #root .pnl { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: hidden; }
     #root .art { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: visible; }
+    #c3-dip { position: absolute; inset: 0; background: #000; opacity: 0; z-index: 40; }
     #c3-p2 { clip-path: inset(0px 0px 0px 1920px); }
     #c3-p3 { clip-path: inset(1080px 969px 0px 0px); }
     #c3-p4 { clip-path: inset(1080px 0px 0px 969px); }
@@ -36,6 +37,7 @@
     <div id="c3-k2" class="cap" style="left: 1029px; top: 960px">THE FORGER &middot; documents</div>
     <div id="c3-k3" class="cap" style="left: 30px; top: 1000px">THE LIBRARIAN &middot; research</div>
     <div id="c3-k4" class="cap" style="left: 999px; top: 1000px">THE DRIVER &middot; tests</div>
+    <div id="c3-dip"></div>
     <div id="c3-met" class="cap big" style="left: 706px; top: 506px">They have never met.</div>
   </div>
   <script>
@@ -213,6 +215,8 @@
 
     // None of them has met the others.
     wipe("#c3-met", 7.0);
+    // Dip cut onto the switchboard.
+    tl.to("#c3-dip", { opacity: 0.45, duration: 0.1, ease: "none" }, 9.88);
     window.__timelines["crew"] = tl;
   </script>
 </template>

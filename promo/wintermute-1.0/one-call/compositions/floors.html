@@ -6,12 +6,14 @@
     #root .cap { position: absolute; z-index: 30; background: var(--color-paper, #ece8df); color: var(--color-ink, #0a0c0f); font-family: "Special Elite", monospace; font-size: 36px; line-height: 1.25; padding: 14px 24px 12px; border: 3px solid var(--color-ink, #0a0c0f); box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.6); white-space: nowrap; clip-path: inset(-30% 100% -30% -6%); }
     #root .cap.big { font-size: 42px; padding: 16px 30px 14px; }
     #root .sfx { position: absolute; z-index: 25; font-family: "Bangers", sans-serif; color: var(--color-paper, #ece8df); -webkit-text-stroke: 7px var(--color-ink, #0a0c0f); paint-order: stroke fill; letter-spacing: 0.04em; white-space: nowrap; line-height: 1; opacity: 0; }
+    #fl-under { position: absolute; inset: 0; background: #161b21; }
     #fl-a { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: hidden; background: #161b21; }
     #fl-art { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
     #root .mini { position: absolute; width: 467px; height: 531px; overflow: hidden; opacity: 0; background: #15191e; }
     #root .mini svg { position: absolute; left: 0; top: 0; }
   </style>
   <div id="root" data-composition-id="floors" data-width="1920" data-height="1080">
+    <div id="fl-under"></div>
     <div id="m0" class="mini" style="left: 0px; top: 0px">
       <svg viewBox="0 0 467 531" width="467" height="531">
         <rect width="467" height="531" fill="#2b313a" />
@@ -202,6 +204,8 @@
     const tl = gsap.timeline({ paused: true });
     const wipe = (sel, at) => tl.fromTo(sel, { clipPath: "inset(-30% 100% -30% -6%)" }, { clipPath: "inset(-30% -6% -30% -6%)", duration: 0.32, ease: "power2.out" }, at);
 
+    tl.fromTo("#fl-under", { opacity: 1 }, { opacity: 0, duration: 0.01 }, 0.4);
+    tl.fromTo("#fl-a", { x: 380, filter: "blur(14px)" }, { x: 0, filter: "blur(0px)", duration: 0.34, ease: "expo.out" }, 0);
     // Floor one: the safecracker works the dial; the second-floor man waits outside.
     wipe("#fl-cap", 0.2);
     tl.fromTo("#fl-dial", { rotation: 0, svgOrigin: "1300 740" }, { keyframes: [{ rotation: 140, duration: 0.45 }, { rotation: 60, duration: 0.35 }, { rotation: 210, duration: 0.45 }], ease: "power2.inOut", svgOrigin: "1300 740" }, 0.1);

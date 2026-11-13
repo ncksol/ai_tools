@@ -10,12 +10,14 @@
     #root .sfx { position: absolute; z-index: 25; font-family: "Bangers", sans-serif; color: var(--color-paper, #ece8df); -webkit-text-stroke: 7px var(--color-ink, #0a0c0f); paint-order: stroke fill; letter-spacing: 0.04em; white-space: nowrap; line-height: 1; opacity: 0; }
     #root .lg { font-family: "League Gothic", sans-serif; }
     #root { position: absolute; inset: 0; overflow: hidden; background: var(--color-paper, #ece8df); }
+    #dp-under { position: absolute; inset: 0; background: #1c2128; }
     #dp-l, #dp-r { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: hidden; }
     #dp-r { clip-path: inset(0px 0px 0px 1920px); }
     #dp-lart { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
     #root .bal.shout { border-width: 6px; border-radius: 18px; }
   </style>
   <div id="root" data-composition-id="dispute" data-width="1920" data-height="1080">
+    <div id="dp-under"></div>
     <div id="dp-l">
       <svg id="dp-lart" viewBox="0 0 1920 1080" width="1920" height="1080">
         <rect x="-400" width="2720" height="1080" fill="#1c2128" />
@@ -132,6 +134,8 @@
     const wipe = (sel, at) => tl.fromTo(sel, { clipPath: "inset(-30% 100% -30% -6%)" }, { clipPath: "inset(-30% -6% -30% -6%)", duration: 0.32, ease: "power2.out" }, at);
     const pop = (sel, at, origin) => tl.fromTo(sel, { opacity: 0, scale: 0.86, transformOrigin: origin || "50% 100%" }, { opacity: 1, scale: 1, duration: 0.2, ease: "power3.out" }, at);
     const out = (sel, at) => tl.to(sel, { opacity: 0, duration: 0.15, ease: "power3.in" }, at);
+    tl.fromTo("#dp-under", { opacity: 1 }, { opacity: 0, duration: 0.01 }, 0.4);
+    tl.fromTo("#dp-l", { x: 380, filter: "blur(14px)" }, { x: 0, filter: "blur(0px)", duration: 0.34, ease: "expo.out" }, 0);
     // Two of the crew argue over one piece.
     wipe("#dp-cap1", 0.15);
     pop("#dp-ba", 0.6, "40% 100%");

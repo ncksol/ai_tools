@@ -176,6 +176,8 @@
     };
     tl.fromTo("#ln-print", { opacity: 0, scale: 0.5, x: 434, y: 790, transformOrigin: "50% 50%" }, { opacity: 1, scale: 1, duration: 0.3, ease: "expo.out" }, 4.7);
     tl.to(carry, { u: 2, duration: 1.3, ease: "power2.inOut", onUpdate: placePrint }, 5.0);
+    // Whip pan: the blueprint has arrived, on to the job.
+    tl.to("#ln-map, #root .cap, #root .lbl", { x: -420, filter: "blur(14px)", duration: 0.28, ease: "power3.in" }, 7.22);
     window.__timelines["lines"] = tl;
   </script>
 </template>
