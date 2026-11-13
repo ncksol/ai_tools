@@ -53,9 +53,6 @@
         <path id="cl-cord-rim" fill="none" stroke="#58cfc2" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" opacity="0.85" />
         <path id="cl-cord" fill="none" stroke="#0a0c0f" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" />
         <g id="cl-handset">
-          <path d="M1712 590 C1700 610 1700 690 1712 712 L1748 712 C1740 690 1740 610 1748 590 Z" fill="#0a0c0f" stroke="#58cfc2" stroke-width="3" />
-          <rect x="1690" y="566" width="80" height="36" rx="16" fill="#0a0c0f" stroke="#58cfc2" stroke-width="3" />
-          <rect x="1690" y="700" width="80" height="36" rx="16" fill="#0a0c0f" stroke="#58cfc2" stroke-width="3" />
         </g>
       </g>
       <path id="cl-wave" fill="none" stroke="#58cfc2" stroke-width="5" stroke-linejoin="round" stroke-linecap="round" />
@@ -88,17 +85,15 @@
           <path d="M-46,-10 C-38,-4 -30,-4 -22,-10" fill="none" stroke="#0a0c0f" stroke-width="4" stroke-linecap="round" />
           <path d="M-44,2 C-38,6 -30,6 -24,2" fill="none" stroke="#5b6470" stroke-width="3" stroke-linecap="round" />
           <path d="M-52,52 L-38,50" stroke="#0a0c0f" stroke-width="4" stroke-linecap="round" />
-          <path d="M66,-26 C78,-20 80,0 70,10 L-6,98 C-16,108 -38,102 -34,86 L-22,76 L50,-6 L46,-20 Z" fill="#0a0c0f" />
+          <g id="cl-hs"></g>
           <path d="M98,330 L160,330 L74,82 L28,92 Z" fill="#9aa1aa" stroke="#0a0c0f" stroke-width="4" stroke-linejoin="round" />
           <path d="M84,268 L156,262 L170,330 L96,334 Z" fill="#ece8df" stroke="#0a0c0f" stroke-width="4" stroke-linejoin="round" />
           <ellipse cx="36" cy="64" rx="26" ry="32" fill="#9aa1aa" stroke="#0a0c0f" stroke-width="4" transform="rotate(-24 36 64)" />
         </g>
-        <path id="cl-phonecord" d="M1310 560 C1360 700 1440 760 1560 770" fill="none" stroke="#0a0c0f" stroke-width="5" stroke-dasharray="2 7" stroke-linecap="round" />
+        <path id="cl-phonecord" fill="none" stroke="#0a0c0f" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
         <rect x="960" y="826" width="960" height="12" fill="#3a424d" />
         <rect x="960" y="836" width="960" height="244" fill="#262b32" />
-        <path d="M1560 830 L1576 772 L1704 772 L1720 830 Z" fill="#0a0c0f" />
-        <circle cx="1640" cy="796" r="24" fill="#3a424d" stroke="#0a0c0f" stroke-width="4" />
-        <path d="M1586 772 V756 M1694 772 V756" stroke="#0a0c0f" stroke-width="10" stroke-linecap="round" />
+        <g id="cl-deskphone"></g>
         <rect x="1060" y="760" width="56" height="68" rx="6" fill="#5b6470" stroke="#0a0c0f" stroke-width="4" />
         <path d="M1116 776 C1140 776 1140 812 1116 812" fill="none" stroke="#0a0c0f" stroke-width="6" />
         <rect x="1160" y="806" width="190" height="22" fill="#ece8df" stroke="#0a0c0f" stroke-width="3" transform="rotate(-3 1255 817)" />
@@ -109,7 +104,7 @@
     <div id="cl-ring" class="sfx" style="left: 1560px; top: 640px; font-size: 92px">RRRING!</div>
     <div id="cl-b1" class="bal voice" style="left: 70px; top: 56px">
       Six people.<br />Here's the plan.<br />Yes?
-      <svg width="420" height="320" style="left: 380px; top: 226px"><polyline points="20,0 110,80 80,100 220,190 190,210 380,300" fill="none" stroke="#58cfc2" stroke-width="5" stroke-linejoin="round" /></svg>
+      <svg width="420" height="500" style="left: 380px; top: 226px"><polyline points="20,0 110,100 80,120 220,260 190,280 372,474" fill="none" stroke="#0a0c0f" stroke-width="12" stroke-linejoin="round" stroke-linecap="round" /><polyline points="20,0 110,100 80,120 220,260 190,280 372,474" fill="none" stroke="#58cfc2" stroke-width="5" stroke-linejoin="round" stroke-linecap="round" /></svg>
     </div>
     <div id="cl-b2" class="bal" style="left: 1030px; top: 150px">
       Yes.
@@ -118,13 +113,72 @@
   </div>
   <script>
     (function () {
+      // A payphone handset in side view: earpiece cup at the top, curved grip, mouthpiece angled forward.
+      // Local frame: earpiece face at x=54, cord leaves the grip at CORD_AT. About 300 units tall.
+      const HANDSET_D =
+        "M46 -42 Q54 -42 54 -34 L54 34 Q54 42 46 42 L22 36 C8 92 6 140 22 188 L50 180 Q57 178 60 184 L92 238 Q95 245 88 249 C62 262 30 263 8 250 C-16 202 -24 112 -12 40 C-19 18 -17 -16 1 -30 Z";
+      const CORD_AT = [6, 254];
+      const HANDSET = (o) => {
+        const fill = o.fill || "#0a0c0f";
+        const line = o.line || null;
+        const lw = o.lw || 4;
+        const t = 'translate(' + o.x + " " + o.y + ") rotate(" + (o.rot || 0) + ") scale(" + (o.flip ? -(o.s || 1) : o.s || 1) + " " + (o.s || 1) + ")";
+        const grille = o.grille || line || "#3a424d";
+        return (
+          '<g transform="' + t + '">' +
+          '<path d="' + HANDSET_D + '" fill="' + fill + '"' + (line ? ' stroke="' + line + '" stroke-width="' + lw + '" stroke-linejoin="round"' : "") + "/>" +
+          '<path d="M50 -30 V30 M57 191 L85 238" stroke="' + grille + '" stroke-width="' + lw * 0.9 + '" stroke-linecap="round" opacity="0.8"/>' +
+          "</g>"
+        );
+      };
+      // Where a point in handset-local coordinates lands after HANDSET's transform.
+      const HS_POINT = (o, p) => {
+        const s = o.s || 1;
+        const a = ((o.rot || 0) * Math.PI) / 180;
+        const px = (o.flip ? -1 : 1) * p[0] * s;
+        const py = p[1] * s;
+        return [o.x + px * Math.cos(a) - py * Math.sin(a), o.y + px * Math.sin(a) + py * Math.cos(a)];
+      };
+      // A coiled phone cord along a sagging curve from (x1,y1) to (x2,y2), control point (cx,cy).
+      const COIL = (x1, y1, cx, cy, x2, y2, loops, amp) => {
+        const n = Math.max(80, loops * 14);
+        let d = "";
+        for (let i = 0; i <= n; i++) {
+          const s = i / n;
+          const bx = (1 - s) * (1 - s) * x1 + 2 * (1 - s) * s * cx + s * s * x2;
+          const by = (1 - s) * (1 - s) * y1 + 2 * (1 - s) * s * cy + s * s * y2;
+          let tx = 2 * (1 - s) * (cx - x1) + 2 * s * (x2 - cx);
+          let ty = 2 * (1 - s) * (cy - y1) + 2 * s * (y2 - cy);
+          const L = Math.hypot(tx, ty) || 1;
+          tx /= L;
+          ty /= L;
+          const ph = 2 * Math.PI * loops * s;
+          const ends = Math.min(1, s * 12, (1 - s) * 12);
+          const x = bx + ends * (-ty * amp * Math.sin(ph) + tx * amp * 0.55 * Math.cos(ph));
+          const y = by + ends * (tx * amp * Math.sin(ph) + ty * amp * 0.55 * Math.cos(ph));
+          d += (i ? " L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
+        }
+        return d;
+      };
+      // A rotary desk phone with its handset in the cradle; base centred on (x, y) = bottom middle.
+      const DESK_HS = (x, y, k) => ({ x: x + 95 * k, y: y - 152 * k, rot: 90, s: 0.86 * k, fill: "#0a0c0f", line: "#3a424d", lw: 3 / (0.86 * k), grille: "#3a424d" });
+      const DESKPHONE = (x, y, k, withHandset) => {
+        const P = (px, py) => (x + px * k).toFixed(1) + " " + (y + py * k).toFixed(1);
+        let s =
+          '<path d="M' + P(-110, 0) + " L" + P(-84, -78) + " Q" + P(-80, -88) + " " + P(-68, -88) + " L" + P(68, -88) + " Q" + P(80, -88) + " " + P(84, -78) + " L" + P(110, 0) + ' Z" fill="#1c2128" stroke="#0a0c0f" stroke-width="' + 4 * k + '"/>' +
+          '<circle cx="' + (x).toFixed(1) + '" cy="' + (y - 44 * k).toFixed(1) + '" r="' + (30 * k).toFixed(1) + '" fill="#3a424d" stroke="#0a0c0f" stroke-width="' + 3 * k + '"/>' +
+          '<circle cx="' + x.toFixed(1) + '" cy="' + (y - 44 * k).toFixed(1) + '" r="' + (10 * k).toFixed(1) + '" fill="#0a0c0f"/>' +
+          '<path d="M' + P(-92, -86) + " L" + P(-88, -106) + " M" + P(92, -86) + " L" + P(88, -106) + '" stroke="#0a0c0f" stroke-width="' + 12 * k + '" stroke-linecap="round"/>';
+        if (withHandset) s += HANDSET(DESK_HS(x, y, k));
+        return s;
+      };
       const NS = "http://www.w3.org/2000/svg";
       // Six pieces of the job, one per member of the crew.
       const cards = [
         ["THE SAFE", 520, 270, -4],
         ["THE PAPERS", 1380, 260, 3],
         ["THE BLUEPRINTS", 420, 590, 2],
-        ["THE ROUTE", 1490, 610, -3],
+        ["THE ROUTE", 1430, 620, -3],
         ["THE 2ND FLOOR", 680, 880, 3],
         ["THE APPRAISAL", 1250, 885, -2],
       ];
@@ -151,15 +205,18 @@
         ln.setAttribute("stroke-dashoffset", 0);
         sg.appendChild(ln);
       });
-      // Coiled cord from the top edge down to the handset.
-      let d = "";
-      for (let i = 0; i <= 551; i++) {
-        const th = i * 0.38;
-        const x = 1730 + 26 * Math.sin(th);
-        const y = -660 + i * 2.2 + 12 * Math.cos(th);
-        d += (i ? " L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
-      }
+      // The Voice: a payphone handset hanging on its coiled cord.
+      const HS = { x: 1736.6, y: 799, rot: 180, s: 1.1, fill: "#0a0c0f", line: "#58cfc2", grille: "#58cfc2", lw: 4 };
+      document.getElementById("cl-handset").innerHTML = HANDSET(HS);
+      const at = HS_POINT(HS, CORD_AT);
+      const d = COIL(at[0], -720, at[0] + 8, (at[1] + -720) / 2, at[0], at[1], 44, 13);
       document.getElementById("cl-cord").setAttribute("d", d);
+      // The client holds a handset to his ear; its cord runs down to the desk phone.
+      const CH = { x: 61, y: 24, rot: 44, s: 0.48, flip: true, fill: "#0a0c0f", grille: "#3a424d" };
+      document.getElementById("cl-hs").innerHTML = HANDSET(CH);
+      const cp = HS_POINT(CH, CORD_AT);
+      document.getElementById("cl-phonecord").setAttribute("d", COIL(1388 + 1.42 * cp[0], 452 + 1.42 * cp[1], 1400, 880, 1572, 800, 16, 9));
+      document.getElementById("cl-deskphone").innerHTML = DESKPHONE(1640, 830, 0.75, false);
       document.getElementById("cl-cord-rim").setAttribute("d", d);
     })();
 

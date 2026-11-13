@@ -55,13 +55,14 @@
           <ellipse cx="42" cy="6" rx="12" ry="18" fill="#9aa1aa" stroke="#0a0c0f" stroke-width="4" />
           <circle cx="-34" cy="-8" r="6" fill="#0a0c0f" />
           <path d="M-52,52 L-38,50" stroke="#0a0c0f" stroke-width="4" stroke-linecap="round" />
-          <path d="M66,-26 C78,-20 80,0 70,10 L-6,98 C-16,108 -38,102 -34,86 L-22,76 L50,-6 L46,-20 Z" fill="#0a0c0f" />
+          <g id="dp-hs"></g>
           <path d="M98,330 L160,330 L74,82 L28,92 Z" fill="#9aa1aa" stroke="#0a0c0f" stroke-width="4" stroke-linejoin="round" />
           <ellipse cx="36" cy="64" rx="26" ry="32" fill="#9aa1aa" stroke="#0a0c0f" stroke-width="4" transform="rotate(-24 36 64)" />
         </g>
         <path d="M1168 840 C1400 800 1700 810 1920 850 L1920 1080 L1168 1080 Z" fill="#5b6470" stroke="#0a0c0f" stroke-width="6" />
+        <path id="dp-cord" fill="none" stroke="#0a0c0f" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" />
         <rect x="1720" y="820" width="200" height="260" fill="#262b32" stroke="#0a0c0f" stroke-width="6" />
-        <path d="M1740 820 L1756 780 L1860 780 L1876 820 Z" fill="#0a0c0f" />
+        <g id="dp-deskphone"></g>
 </svg>
     </div>
 
@@ -72,11 +73,70 @@
     <div id="dp-bx" class="bal" style="left: 190px; top: 320px">Left.<svg width="200" height="200" style="left: 150px; top: 98px"><path d="M10,0 L70,0 L200,190 Z" fill="#fbfaf6" /><path d="M10,0 L200,190 L70,0" fill="none" stroke="#0a0c0f" stroke-width="4" stroke-linejoin="round" /></svg></div>
     <div id="dp-by" class="bal" style="left: 1240px; top: 320px">Right.<svg width="200" height="200" style="left: 60px; top: 98px"><path d="M10,0 L70,0 L40,190 Z" fill="#fbfaf6" /><path d="M10,0 L40,190 L70,0" fill="none" stroke="#0a0c0f" stroke-width="4" stroke-linejoin="round" /></svg></div>
     <div id="dp-ring" class="sfx" style="left: 1560px; top: 640px; font-size: 92px">RRRING!</div>
-    <div id="dp-bv" class="bal voice" style="left: 1230px; top: 90px">Your call.<svg width="200" height="200" style="left: 200px; top: 96px"><polyline points="30,0 60,40 40,52 80,96 62,104 100,150" fill="none" stroke="#58cfc2" stroke-width="5" stroke-linejoin="round" /></svg></div>
+    <div id="dp-bv" class="bal voice" style="left: 1230px; top: 90px">Your call.<svg width="200" height="340" style="left: 200px; top: 96px"><polyline points="0,4 40,60 22,72 90,170 70,182 161,315" fill="none" stroke="#0a0c0f" stroke-width="12" stroke-linejoin="round" stroke-linecap="round" /><polyline points="0,4 40,60 22,72 90,170 70,182 161,315" fill="none" stroke="#58cfc2" stroke-width="5" stroke-linejoin="round" stroke-linecap="round" /></svg></div>
     <div id="dp-bc" class="bal" style="left: 1240px; top: 120px">Left.<svg width="200" height="200" style="left: 150px; top: 98px"><path d="M10,0 L70,0 L180,170 Z" fill="#fbfaf6" /><path d="M10,0 L180,170 L70,0" fill="none" stroke="#0a0c0f" stroke-width="4" stroke-linejoin="round" /></svg></div>
   </div>
   <script>
     (function () {
+      // A payphone handset in side view: earpiece cup at the top, curved grip, mouthpiece angled forward.
+      // Local frame: earpiece face at x=54, cord leaves the grip at CORD_AT. About 300 units tall.
+      const HANDSET_D =
+        "M46 -42 Q54 -42 54 -34 L54 34 Q54 42 46 42 L22 36 C8 92 6 140 22 188 L50 180 Q57 178 60 184 L92 238 Q95 245 88 249 C62 262 30 263 8 250 C-16 202 -24 112 -12 40 C-19 18 -17 -16 1 -30 Z";
+      const CORD_AT = [6, 254];
+      const HANDSET = (o) => {
+        const fill = o.fill || "#0a0c0f";
+        const line = o.line || null;
+        const lw = o.lw || 4;
+        const t = 'translate(' + o.x + " " + o.y + ") rotate(" + (o.rot || 0) + ") scale(" + (o.flip ? -(o.s || 1) : o.s || 1) + " " + (o.s || 1) + ")";
+        const grille = o.grille || line || "#3a424d";
+        return (
+          '<g transform="' + t + '">' +
+          '<path d="' + HANDSET_D + '" fill="' + fill + '"' + (line ? ' stroke="' + line + '" stroke-width="' + lw + '" stroke-linejoin="round"' : "") + "/>" +
+          '<path d="M50 -30 V30 M57 191 L85 238" stroke="' + grille + '" stroke-width="' + lw * 0.9 + '" stroke-linecap="round" opacity="0.8"/>' +
+          "</g>"
+        );
+      };
+      // Where a point in handset-local coordinates lands after HANDSET's transform.
+      const HS_POINT = (o, p) => {
+        const s = o.s || 1;
+        const a = ((o.rot || 0) * Math.PI) / 180;
+        const px = (o.flip ? -1 : 1) * p[0] * s;
+        const py = p[1] * s;
+        return [o.x + px * Math.cos(a) - py * Math.sin(a), o.y + px * Math.sin(a) + py * Math.cos(a)];
+      };
+      // A coiled phone cord along a sagging curve from (x1,y1) to (x2,y2), control point (cx,cy).
+      const COIL = (x1, y1, cx, cy, x2, y2, loops, amp) => {
+        const n = Math.max(80, loops * 14);
+        let d = "";
+        for (let i = 0; i <= n; i++) {
+          const s = i / n;
+          const bx = (1 - s) * (1 - s) * x1 + 2 * (1 - s) * s * cx + s * s * x2;
+          const by = (1 - s) * (1 - s) * y1 + 2 * (1 - s) * s * cy + s * s * y2;
+          let tx = 2 * (1 - s) * (cx - x1) + 2 * s * (x2 - cx);
+          let ty = 2 * (1 - s) * (cy - y1) + 2 * s * (y2 - cy);
+          const L = Math.hypot(tx, ty) || 1;
+          tx /= L;
+          ty /= L;
+          const ph = 2 * Math.PI * loops * s;
+          const ends = Math.min(1, s * 12, (1 - s) * 12);
+          const x = bx + ends * (-ty * amp * Math.sin(ph) + tx * amp * 0.55 * Math.cos(ph));
+          const y = by + ends * (tx * amp * Math.sin(ph) + ty * amp * 0.55 * Math.cos(ph));
+          d += (i ? " L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
+        }
+        return d;
+      };
+      // A rotary desk phone with its handset in the cradle; base centred on (x, y) = bottom middle.
+      const DESK_HS = (x, y, k) => ({ x: x + 95 * k, y: y - 152 * k, rot: 90, s: 0.86 * k, fill: "#0a0c0f", line: "#3a424d", lw: 3 / (0.86 * k), grille: "#3a424d" });
+      const DESKPHONE = (x, y, k, withHandset) => {
+        const P = (px, py) => (x + px * k).toFixed(1) + " " + (y + py * k).toFixed(1);
+        let s =
+          '<path d="M' + P(-110, 0) + " L" + P(-84, -78) + " Q" + P(-80, -88) + " " + P(-68, -88) + " L" + P(68, -88) + " Q" + P(80, -88) + " " + P(84, -78) + " L" + P(110, 0) + ' Z" fill="#1c2128" stroke="#0a0c0f" stroke-width="' + 4 * k + '"/>' +
+          '<circle cx="' + (x).toFixed(1) + '" cy="' + (y - 44 * k).toFixed(1) + '" r="' + (30 * k).toFixed(1) + '" fill="#3a424d" stroke="#0a0c0f" stroke-width="' + 3 * k + '"/>' +
+          '<circle cx="' + x.toFixed(1) + '" cy="' + (y - 44 * k).toFixed(1) + '" r="' + (10 * k).toFixed(1) + '" fill="#0a0c0f"/>' +
+          '<path d="M' + P(-92, -86) + " L" + P(-88, -106) + " M" + P(92, -86) + " L" + P(88, -106) + '" stroke="#0a0c0f" stroke-width="' + 12 * k + '" stroke-linecap="round"/>';
+        if (withHandset) s += HANDSET(DESK_HS(x, y, k));
+        return s;
+      };
       // Noir figure, feet at (0,0), facing right, about 400 units tall.
       const FIG = (o) => {
         const f = o.fill || "#0a0c0f";
@@ -85,7 +145,8 @@
         const hats = {
           fedora: '<ellipse cx="2" cy="-352" rx="50" ry="9"/><path d="M-28,-352 C-28,-388 -18,-396 2,-396 C22,-396 32,-388 32,-352 Z"/>',
           bowler: '<ellipse cx="2" cy="-352" rx="40" ry="7"/><path d="M-27,-352 C-27,-404 31,-404 31,-352 Z"/>',
-          cap: '<path d="M-26,-348 C-26,-382 22,-386 44,-356 L60,-348 Z"/>',
+          cap: '<path d="M-32,-350 C-36,-372 -14,-386 4,-386 C22,-386 42,-372 38,-350 Z"/><ellipse cx="3" cy="-350" rx="36" ry="7"/>',
+          boater: '<rect x="-27" y="-376" width="58" height="24"/><ellipse cx="2" cy="-352" rx="48" ry="6"/>',
         };
         const arms = {
           phone: "M32,-290 Q80,-262 48,-318",
@@ -126,10 +187,15 @@
             r(-48, -322, 96, 16, 'fill="#c9ccd1" opacity="0.8"'),
         };
       };
+      const CH = { x: 61, y: 24, rot: 44, s: 0.48, flip: true, fill: "#0a0c0f", grille: "#3a424d" };
+      document.getElementById("dp-hs").innerHTML = HANDSET(CH);
+      const cp = HS_POINT(CH, CORD_AT);
+      document.getElementById("dp-cord").setAttribute("d", COIL(1520 + 1.15 * cp[0], 470 + 1.15 * cp[1], 1600, 900, 1752, 806, 16, 8));
+      document.getElementById("dp-deskphone").innerHTML = DESKPHONE(1810, 822, 0.62, false);
       document.querySelector("#dp-a > g").innerHTML = FIG({ arm: "point", rim: "#8a929c" });
       document.querySelector("#dp-b > g").innerHTML = FIG({ arm: "point", rim: "#8a929c" });
       document.querySelector("#dp-x > g").innerHTML = FIG({ fill: "#8a929c", line: "#0a0c0f", hat: "bowler", arm: "down" });
-      document.querySelector("#dp-y > g").innerHTML = FIG({ fill: "#c9ccd1", line: "#0a0c0f", hat: "cap", arm: "down" });
+      document.querySelector("#dp-y > g").innerHTML = FIG({ fill: "#c9ccd1", line: "#0a0c0f", hat: "boater", arm: "down" });
     })();
     const tl = gsap.timeline({ paused: true });
     const wipe = (sel, at) => tl.fromTo(sel, { clipPath: "inset(-30% 100% -30% -6%)" }, { clipPath: "inset(-30% -6% -30% -6%)", duration: 0.32, ease: "power2.out" }, at);

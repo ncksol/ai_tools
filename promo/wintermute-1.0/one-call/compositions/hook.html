@@ -101,6 +101,65 @@
   </div>
   <script>
     (function () {
+      // A payphone handset in side view: earpiece cup at the top, curved grip, mouthpiece angled forward.
+      // Local frame: earpiece face at x=54, cord leaves the grip at CORD_AT. About 300 units tall.
+      const HANDSET_D =
+        "M46 -42 Q54 -42 54 -34 L54 34 Q54 42 46 42 L22 36 C8 92 6 140 22 188 L50 180 Q57 178 60 184 L92 238 Q95 245 88 249 C62 262 30 263 8 250 C-16 202 -24 112 -12 40 C-19 18 -17 -16 1 -30 Z";
+      const CORD_AT = [6, 254];
+      const HANDSET = (o) => {
+        const fill = o.fill || "#0a0c0f";
+        const line = o.line || null;
+        const lw = o.lw || 4;
+        const t = 'translate(' + o.x + " " + o.y + ") rotate(" + (o.rot || 0) + ") scale(" + (o.flip ? -(o.s || 1) : o.s || 1) + " " + (o.s || 1) + ")";
+        const grille = o.grille || line || "#3a424d";
+        return (
+          '<g transform="' + t + '">' +
+          '<path d="' + HANDSET_D + '" fill="' + fill + '"' + (line ? ' stroke="' + line + '" stroke-width="' + lw + '" stroke-linejoin="round"' : "") + "/>" +
+          '<path d="M50 -30 V30 M57 191 L85 238" stroke="' + grille + '" stroke-width="' + lw * 0.9 + '" stroke-linecap="round" opacity="0.8"/>' +
+          "</g>"
+        );
+      };
+      // Where a point in handset-local coordinates lands after HANDSET's transform.
+      const HS_POINT = (o, p) => {
+        const s = o.s || 1;
+        const a = ((o.rot || 0) * Math.PI) / 180;
+        const px = (o.flip ? -1 : 1) * p[0] * s;
+        const py = p[1] * s;
+        return [o.x + px * Math.cos(a) - py * Math.sin(a), o.y + px * Math.sin(a) + py * Math.cos(a)];
+      };
+      // A coiled phone cord along a sagging curve from (x1,y1) to (x2,y2), control point (cx,cy).
+      const COIL = (x1, y1, cx, cy, x2, y2, loops, amp) => {
+        const n = Math.max(80, loops * 14);
+        let d = "";
+        for (let i = 0; i <= n; i++) {
+          const s = i / n;
+          const bx = (1 - s) * (1 - s) * x1 + 2 * (1 - s) * s * cx + s * s * x2;
+          const by = (1 - s) * (1 - s) * y1 + 2 * (1 - s) * s * cy + s * s * y2;
+          let tx = 2 * (1 - s) * (cx - x1) + 2 * s * (x2 - cx);
+          let ty = 2 * (1 - s) * (cy - y1) + 2 * s * (y2 - cy);
+          const L = Math.hypot(tx, ty) || 1;
+          tx /= L;
+          ty /= L;
+          const ph = 2 * Math.PI * loops * s;
+          const ends = Math.min(1, s * 12, (1 - s) * 12);
+          const x = bx + ends * (-ty * amp * Math.sin(ph) + tx * amp * 0.55 * Math.cos(ph));
+          const y = by + ends * (tx * amp * Math.sin(ph) + ty * amp * 0.55 * Math.cos(ph));
+          d += (i ? " L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
+        }
+        return d;
+      };
+      // A rotary desk phone with its handset in the cradle; base centred on (x, y) = bottom middle.
+      const DESK_HS = (x, y, k) => ({ x: x + 95 * k, y: y - 152 * k, rot: 90, s: 0.86 * k, fill: "#0a0c0f", line: "#3a424d", lw: 3 / (0.86 * k), grille: "#3a424d" });
+      const DESKPHONE = (x, y, k, withHandset) => {
+        const P = (px, py) => (x + px * k).toFixed(1) + " " + (y + py * k).toFixed(1);
+        let s =
+          '<path d="M' + P(-110, 0) + " L" + P(-84, -78) + " Q" + P(-80, -88) + " " + P(-68, -88) + " L" + P(68, -88) + " Q" + P(80, -88) + " " + P(84, -78) + " L" + P(110, 0) + ' Z" fill="#1c2128" stroke="#0a0c0f" stroke-width="' + 4 * k + '"/>' +
+          '<circle cx="' + (x).toFixed(1) + '" cy="' + (y - 44 * k).toFixed(1) + '" r="' + (30 * k).toFixed(1) + '" fill="#3a424d" stroke="#0a0c0f" stroke-width="' + 3 * k + '"/>' +
+          '<circle cx="' + x.toFixed(1) + '" cy="' + (y - 44 * k).toFixed(1) + '" r="' + (10 * k).toFixed(1) + '" fill="#0a0c0f"/>' +
+          '<path d="M' + P(-92, -86) + " L" + P(-88, -106) + " M" + P(92, -86) + " L" + P(88, -106) + '" stroke="#0a0c0f" stroke-width="' + 12 * k + '" stroke-linecap="round"/>';
+        if (withHandset) s += HANDSET(DESK_HS(x, y, k));
+        return s;
+      };
       // Seeded city layout: same buildings and lit windows on every render.
       let seed = 7;
       const rnd = () => {
@@ -144,7 +203,7 @@
           r(-64, -196, 128, 8, 'fill="#1c2128"') +
           r(-64, -104, 128, 8, 'fill="#1c2128"') +
           r(14, -250, 40, 64, 'rx="4" fill="#0a0c0f"') +
-          r(22, -264, 14, 74, 'rx="6" fill="#0a0c0f"') +
+          HANDSET({ x: bx - 6 * k, y: b - 244 * k, rot: 0, s: 0.24 * k, fill: "#0a0c0f", grille: "#3a424d" }) +
           r(-86, -328, 172, 30, 'rx="4" fill="#0a0c0f"') +
           r(-48, -322, 96, 16, 'fill="#c9ccd1" opacity="0.8"');
       });
