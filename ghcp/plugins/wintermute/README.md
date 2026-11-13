@@ -1,7 +1,7 @@
 <h1 align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/banner-dark.svg">
-    <img alt="Wintermute: Command the swarm." src="docs/images/banner-light.svg" width="640" height="128">
+    <img alt="Wintermute: One mind. Many agents. Command the swarm." src="docs/images/banner-light.svg" width="640" height="128">
   </picture>
 </h1>
 
