@@ -1,0 +1,197 @@
+<template>
+  <style>
+    @font-face { font-family: "Special Elite"; src: url("assets/fonts/special-elite-400.woff2") format("woff2"); font-weight: 400; font-style: normal; }
+    @font-face { font-family: "Patrick Hand"; src: url("assets/fonts/patrick-hand-400.woff2") format("woff2"); font-weight: 400; font-style: normal; }
+    @font-face { font-family: "Bangers"; src: url("assets/fonts/bangers-400.woff2") format("woff2"); font-weight: 400; font-style: normal; }
+    #root { position: absolute; inset: 0; overflow: hidden; background: var(--color-paper, #ece8df); }
+    #root .bal { position: absolute; z-index: 32; font-family: "Patrick Hand", sans-serif; text-transform: uppercase; font-size: 54px; line-height: 1.05; padding: 24px 40px 20px; border: 4px solid; border-radius: 48px; white-space: nowrap; opacity: 0; background: #fbfaf6; color: var(--color-ink, #0a0c0f); border-color: var(--color-ink, #0a0c0f); }
+    #root .bal.voice { background: var(--color-ink, #0a0c0f); color: var(--color-neon, #58cfc2); border-color: var(--color-neon, #58cfc2); }
+    #root .bal svg { position: absolute; overflow: visible; }
+    #root .sfx { position: absolute; z-index: 25; font-family: "Bangers", sans-serif; color: var(--color-paper, #ece8df); -webkit-text-stroke: 7px var(--color-ink, #0a0c0f); paint-order: stroke fill; letter-spacing: 0.04em; white-space: nowrap; line-height: 1; opacity: 0; }
+    #root .tw { font-family: "Special Elite", monospace; }
+    #root .lg { font-family: "League Gothic", sans-serif; }
+    #cl-left, #cl-right { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: hidden; }
+    #cl-left { background: #15191e; }
+    #cl-right { clip-path: inset(0px 0px 0px 1920px); }
+    #cl-artwrap { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
+    #cl-art { position: absolute; left: 0; width: 1920px; }
+  </style>
+  <div id="root" data-composition-id="call" data-width="1920" data-height="1080">
+    <div id="cl-left">
+      <div id="cl-artwrap">
+        <svg id="cl-art" viewBox="0 -700 1920 1780" style="top:-700px; height:1780px" width="1920" height="1080">
+      <defs>
+        <radialGradient id="cl-lamp" cx="880" cy="140" r="1050" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#c9ccd1" stop-opacity="0.34" />
+          <stop offset="0.5" stop-color="#c9ccd1" stop-opacity="0.1" />
+          <stop offset="1" stop-color="#c9ccd1" stop-opacity="0" />
+        </radialGradient>
+      </defs>
+      <rect y="-700" width="1920" height="1780" fill="#15191e" />
+      <g id="cl-cracks" stroke="#0e1114" stroke-width="3" fill="none">
+        <path d="M120 0 L160 140 L130 260 M1820 1080 L1760 900 L1790 780 M300 1080 L340 960" />
+      </g>
+      <rect y="-700" width="1920" height="1780" fill="url(#cl-lamp)" />
+      <path d="M880 -700 V54" stroke="#0a0c0f" stroke-width="6" />
+      <path d="M826 96 Q880 40 934 96 Z" fill="#0a0c0f" />
+      <ellipse cx="880" cy="98" rx="20" ry="8" fill="#ece8df" />
+      <g id="cl-strings" stroke="#b3262e" stroke-width="5" stroke-linecap="round"></g>
+      <g id="cl-cards"></g>
+      <g id="cl-folder" data-layout-allow-overlap>
+        <rect x="770" y="420" width="140" height="40" rx="6" fill="#d9d2c1" stroke="#0a0c0f" stroke-width="5" />
+        <rect x="770" y="445" width="380" height="256" rx="6" fill="#e2dccd" stroke="#0a0c0f" stroke-width="6" />
+        <path d="M800 480 H1080 M800 506 H1010" stroke="#8a929c" stroke-width="5" />
+        <g transform="rotate(-7 960 590)">
+          <rect x="818" y="540" width="284" height="100" fill="none" stroke="#b3262e" stroke-width="8" />
+          <text class="lg" x="960" y="622" text-anchor="middle" font-size="84" letter-spacing="4" fill="#b3262e">THE JOB</text>
+        </g>
+        <circle cx="960" cy="452" r="12" fill="#3a424d" stroke="#0a0c0f" stroke-width="4" />
+      </g>
+      <!-- The Voice: a coiled cord and a dangling handset, never a body -->
+      <g id="cl-voice">
+        <path id="cl-cord-rim" fill="none" stroke="#58cfc2" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" opacity="0.85" />
+        <path id="cl-cord" fill="none" stroke="#0a0c0f" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" />
+        <g id="cl-handset">
+          <path d="M1712 590 C1700 610 1700 690 1712 712 L1748 712 C1740 690 1740 610 1748 590 Z" fill="#0a0c0f" stroke="#58cfc2" stroke-width="3" />
+          <rect x="1690" y="566" width="80" height="36" rx="16" fill="#0a0c0f" stroke="#58cfc2" stroke-width="3" />
+          <rect x="1690" y="700" width="80" height="36" rx="16" fill="#0a0c0f" stroke="#58cfc2" stroke-width="3" />
+        </g>
+      </g>
+      <path id="cl-wave" fill="none" stroke="#58cfc2" stroke-width="5" stroke-linejoin="round" stroke-linecap="round" />
+    </svg>
+      </div>
+    </div>
+
+    <!-- The client's apartment, 2 a.m. -->
+    <div id="cl-right">
+      <svg viewBox="0 0 1920 1080" width="1920" height="1080">
+        <rect x="960" width="960" height="1080" fill="#1b1f25" />
+        <rect x="1110" y="104" width="440" height="392" fill="#0a0c0f" />
+        <rect x="1122" y="116" width="416" height="368" fill="#262c34" />
+        <g fill="#141820"><rect x="1122" y="330" width="90" height="154" /><rect x="1220" y="280" width="120" height="204" /><rect x="1350" y="350" width="80" height="134" /><rect x="1440" y="300" width="98" height="184" /></g>
+        <g fill="#ece8df" opacity="0.5"><rect x="1240" y="300" width="9" height="14" /><rect x="1262" y="330" width="9" height="14" /><rect x="1300" y="300" width="9" height="14" /><rect x="1460" y="320" width="9" height="14" /><rect x="1490" y="360" width="9" height="14" /><rect x="1146" y="356" width="9" height="14" /></g>
+        <path d="M1330 116 V484 M1122 300 H1538" stroke="#0a0c0f" stroke-width="10" />
+        <polygon points="1752,560 1610,830 1920,830 1846,560" fill="#ece8df" opacity="0.13" />
+        <path d="M1810 830 L1832 640 L1790 560" fill="none" stroke="#0a0c0f" stroke-width="10" stroke-linejoin="round" />
+        <path d="M1740 572 L1772 516 L1850 530 L1858 586 Z" fill="#0a0c0f" />
+        <ellipse cx="1800" cy="584" rx="54" ry="10" fill="#ece8df" opacity="0.8" />
+        <g id="cl-client" transform="translate(1388 452) scale(1.42)">
+          <path d="M-20,100 L40,100 L120,150 C150,170 165,240 172,330 L-172,330 C-165,240 -130,170 -70,150 Z" fill="#c9ccd1" stroke="#0a0c0f" stroke-width="4" stroke-linejoin="round" />
+          <path d="M-12,70 L36,70 L40,106 L-16,106 Z" fill="#9aa1aa" stroke="#0a0c0f" stroke-width="4" />
+          <path d="M-14,100 L8,132 L36,100" fill="#9aa1aa" stroke="#0a0c0f" stroke-width="4" stroke-linejoin="round" />
+          <path d="M4,124 L22,124 L32,214 L14,248 L-4,214 Z" fill="#3a424d" stroke="#0a0c0f" stroke-width="3.5" stroke-linejoin="round" transform="rotate(8 13 124)" />
+          <path d="M30,-70 C70,-66 92,-30 90,8 C88,44 70,70 40,82 L36,100 L-12,100 L-14,86 C-30,84 -42,76 -46,64 C-52,62 -58,56 -56,48 C-60,44 -62,36 -58,30 L-74,10 C-76,6 -74,2 -70,0 L-58,-6 C-60,-40 -40,-68 0,-72 C10,-72 20,-72 30,-70 Z" fill="#9aa1aa" stroke="#0a0c0f" stroke-width="4" stroke-linejoin="round" />
+          <path d="M-56,-30 C-62,-78 -6,-104 40,-86 C66,-100 98,-70 92,-28 C100,-6 94,14 88,30 C82,4 72,-16 58,-22 C44,-8 16,-26 -6,-34 C-22,-22 -42,-24 -56,-30 Z" fill="#0a0c0f" />
+          <path d="M-62,-36 L-74,-50 L-52,-44 M-20,-92 L-26,-112 L-6,-96 M40,-90 L52,-110 L58,-88" stroke="#0a0c0f" stroke-width="7" stroke-linecap="round" fill="none" />
+          <ellipse cx="42" cy="6" rx="12" ry="18" fill="#9aa1aa" stroke="#0a0c0f" stroke-width="4" />
+          <path d="M-46,-10 C-38,-4 -30,-4 -22,-10" fill="none" stroke="#0a0c0f" stroke-width="4" stroke-linecap="round" />
+          <path d="M-44,2 C-38,6 -30,6 -24,2" fill="none" stroke="#5b6470" stroke-width="3" stroke-linecap="round" />
+          <path d="M-52,52 L-38,50" stroke="#0a0c0f" stroke-width="4" stroke-linecap="round" />
+          <path d="M66,-26 C78,-20 80,0 70,10 L-6,98 C-16,108 -38,102 -34,86 L-22,76 L50,-6 L46,-20 Z" fill="#0a0c0f" />
+          <path d="M98,330 L160,330 L74,82 L28,92 Z" fill="#9aa1aa" stroke="#0a0c0f" stroke-width="4" stroke-linejoin="round" />
+          <path d="M84,268 L156,262 L170,330 L96,334 Z" fill="#ece8df" stroke="#0a0c0f" stroke-width="4" stroke-linejoin="round" />
+          <ellipse cx="36" cy="64" rx="26" ry="32" fill="#9aa1aa" stroke="#0a0c0f" stroke-width="4" transform="rotate(-24 36 64)" />
+        </g>
+        <path id="cl-phonecord" d="M1310 560 C1360 700 1440 760 1560 770" fill="none" stroke="#0a0c0f" stroke-width="5" stroke-dasharray="2 7" stroke-linecap="round" />
+        <rect x="960" y="826" width="960" height="12" fill="#3a424d" />
+        <rect x="960" y="836" width="960" height="244" fill="#262b32" />
+        <path d="M1560 830 L1576 772 L1704 772 L1720 830 Z" fill="#0a0c0f" />
+        <circle cx="1640" cy="796" r="24" fill="#3a424d" stroke="#0a0c0f" stroke-width="4" />
+        <path d="M1586 772 V756 M1694 772 V756" stroke="#0a0c0f" stroke-width="10" stroke-linecap="round" />
+        <rect x="1060" y="760" width="56" height="68" rx="6" fill="#5b6470" stroke="#0a0c0f" stroke-width="4" />
+        <path d="M1116 776 C1140 776 1140 812 1116 812" fill="none" stroke="#0a0c0f" stroke-width="6" />
+        <rect x="1160" y="806" width="190" height="22" fill="#ece8df" stroke="#0a0c0f" stroke-width="3" transform="rotate(-3 1255 817)" />
+        <rect x="1170" y="790" width="190" height="20" fill="#d9d2c1" stroke="#0a0c0f" stroke-width="3" transform="rotate(2 1265 800)" />
+      </svg>
+    </div>
+
+    <div id="cl-ring" class="sfx" style="left: 1560px; top: 640px; font-size: 92px">RRRING!</div>
+    <div id="cl-b1" class="bal voice" style="left: 70px; top: 56px">
+      Six people.<br />Here's the plan.<br />Yes?
+      <svg width="420" height="320" style="left: 380px; top: 226px"><polyline points="20,0 110,80 80,100 220,190 190,210 380,300" fill="none" stroke="#58cfc2" stroke-width="5" stroke-linejoin="round" /></svg>
+    </div>
+    <div id="cl-b2" class="bal" style="left: 1030px; top: 150px">
+      Yes.
+      <svg width="140" height="200" style="left: 150px; top: 96px"><path d="M10,0 L70,0 L120,150 Z" fill="#fbfaf6" /><path d="M10,0 L120,150 L70,0" fill="none" stroke="#0a0c0f" stroke-width="4" stroke-linejoin="round" /></svg>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const NS = "http://www.w3.org/2000/svg";
+      // Six pieces of the job, one per member of the crew.
+      const cards = [
+        ["THE SAFE", 520, 270, -4],
+        ["THE PAPERS", 1380, 260, 3],
+        ["THE BLUEPRINTS", 420, 590, 2],
+        ["THE ROUTE", 1490, 610, -3],
+        ["THE 2ND FLOOR", 680, 880, 3],
+        ["THE APPRAISAL", 1250, 885, -2],
+      ];
+      const cg = document.getElementById("cl-cards");
+      const sg = document.getElementById("cl-strings");
+      cards.forEach(([label, x, y, r], i) => {
+        const g = document.createElementNS(NS, "g");
+        g.setAttribute("id", "cl-c" + i);
+        g.innerHTML =
+          '<g transform="rotate(' + r + " " + x + " " + y + ')">' +
+          '<rect x="' + (x - 170) + '" y="' + (y - 70) + '" width="340" height="140" fill="#ece8df" stroke="#0a0c0f" stroke-width="5"/>' +
+          '<path d="M' + (x - 150) + " " + (y - 34) + " H" + (x + 150) + '" stroke="#b3262e" stroke-width="3" opacity="0.6"/>' +
+          '<text class="tw" x="' + x + '" y="' + (y + 22) + '" text-anchor="middle" font-size="36" fill="#0a0c0f">' + label + "</text>" +
+          '<circle cx="' + x + '" cy="' + (y - 52) + '" r="11" fill="#3a424d" stroke="#0a0c0f" stroke-width="4"/></g>';
+        cg.appendChild(g);
+        const ln = document.createElementNS(NS, "line");
+        ln.setAttribute("id", "cl-s" + i);
+        ln.setAttribute("x1", 960);
+        ln.setAttribute("y1", 452);
+        ln.setAttribute("x2", x);
+        ln.setAttribute("y2", y - 52);
+        const len = Math.hypot(x - 960, y - 52 - 452);
+        ln.setAttribute("stroke-dasharray", len + " " + (len + 10));
+        ln.setAttribute("stroke-dashoffset", 0);
+        sg.appendChild(ln);
+      });
+      // Coiled cord from the top edge down to the handset.
+      let d = "";
+      for (let i = 0; i <= 551; i++) {
+        const th = i * 0.38;
+        const x = 1730 + 26 * Math.sin(th);
+        const y = -660 + i * 2.2 + 12 * Math.cos(th);
+        d += (i ? " L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
+      }
+      document.getElementById("cl-cord").setAttribute("d", d);
+      document.getElementById("cl-cord-rim").setAttribute("d", d);
+    })();
+
+    const tl = gsap.timeline({ paused: true });
+    const speech = [[0.7, 3.4]];
+    const wave = { t: 0 };
+    const drawWave = () => {
+      const t = wave.t;
+      let a = 0.06;
+      speech.forEach(([s, e]) => {
+        if (t > s - 0.15 && t < e + 0.25) a = Math.max(a, Math.min(1, (t - s + 0.15) / 0.15, (e + 0.25 - t) / 0.25));
+      });
+      let d = "";
+      for (let i = 0; i <= 140; i++) {
+        const x = 1150 + i * 5;
+        const env = Math.sin((i / 140) * Math.PI);
+        const y = 990 + a * 70 * env * Math.sin(i * 0.55 + t * 21) * Math.sin(i * 0.13 - t * 7.3) + 3 * Math.sin(i * 0.9 + t * 11);
+        d += (i ? " L" : "M") + x + " " + y.toFixed(1);
+      }
+      document.getElementById("cl-wave").setAttribute("d", d);
+    };
+    tl.fromTo(wave, { t: 7.5 }, { t: 14, duration: 6.5, ease: "none", onUpdate: drawWave }, 0);
+
+    // The page splits: the Voice's wall shrinks into the left panel, the client's room opens on the right.
+    tl.fromTo("#cl-artwrap", { x: 0, y: 0, scale: 1, transformOrigin: "0px 0px" }, { x: -140, y: 300, scale: 0.58, duration: 0.6, ease: "power3.inOut" }, 0);
+    tl.fromTo("#cl-left", { clipPath: "inset(0px 0px 0px 0px)" }, { clipPath: "inset(0px 969px 0px 0px)", duration: 0.6, ease: "power3.inOut" }, 0);
+    tl.fromTo("#cl-right", { clipPath: "inset(0px 0px 0px 1920px)" }, { clipPath: "inset(0px 0px 0px 969px)", duration: 0.6, ease: "power3.inOut" }, 0);
+    tl.fromTo("#cl-ring", { opacity: 0, scale: 0.4, rotation: 0 }, { opacity: 1, scale: 1, rotation: -6, duration: 0.18, ease: "expo.out" }, 0.1);
+    tl.to("#cl-ring", { opacity: 0, duration: 0.12, ease: "power3.in" }, 0.62);
+
+    tl.fromTo("#cl-b1", { opacity: 0, scale: 0.86, transformOrigin: "80% 100%" }, { opacity: 1, scale: 1, duration: 0.2, ease: "power3.out" }, 0.7);
+    tl.to("#cl-b1", { opacity: 0, duration: 0.15, ease: "power3.in" }, 3.75);
+    tl.fromTo("#cl-b2", { opacity: 0, scale: 0.86, transformOrigin: "60% 100%" }, { opacity: 1, scale: 1, duration: 0.2, ease: "power3.out" }, 3.75);
+    window.__timelines["call"] = tl;
+  </script>
+</template>

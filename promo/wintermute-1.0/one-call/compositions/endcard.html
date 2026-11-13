@@ -1,0 +1,74 @@
+<template>
+  <style>
+    @font-face { font-family: "Special Elite"; src: url("assets/fonts/special-elite-400.woff2") format("woff2"); font-weight: 400; font-style: normal; }
+    #root { position: absolute; inset: 0; overflow: hidden; background: #0a0c0f; }
+    #root .tag { position: absolute; left: 0; width: 1920px; text-align: center; font-family: "League Gothic", sans-serif; font-size: 168px; line-height: 1; letter-spacing: 0.02em; color: var(--color-paper, #ece8df); text-transform: uppercase; white-space: nowrap; }
+    #root .tag span { display: inline-block; opacity: 0; }
+    #root .tag .hot { color: var(--color-neon, #58cfc2); }
+    #ec-l1 { top: 150px; }
+    #ec-l2 { top: 330px; }
+    #ec-wave { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
+    #ec-lock { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
+    #ec-word { position: absolute; left: 732px; top: 676px; width: 560px; height: 83px; clip-path: inset(0% 100% 0% 0%); }
+    #ec-ver { position: absolute; left: 1322px; top: 652px; font-family: "League Gothic", sans-serif; font-size: 124px; line-height: 1; color: var(--color-neon, #58cfc2); opacity: 0; }
+    #ec-url { position: absolute; left: 0; width: 1920px; top: 900px; text-align: center; font-family: "Special Elite", monospace; font-size: 34px; color: #a7b0ba; opacity: 0; }
+  </style>
+  <div id="root" data-composition-id="endcard" data-width="1920" data-height="1080"
+    data-composition-variables='[{"id":"line1","type":"string","label":"Tagline, line 1","default":"You bring the job."},{"id":"url","type":"string","label":"Link","default":"github.com/ncksol/ai_tools"}]'>
+    <svg id="ec-wave" viewBox="0 0 1920 1080" width="1920" height="1080"><path id="ec-wavep" fill="none" stroke="#58cfc2" stroke-width="6" stroke-linejoin="round" stroke-linecap="round" /></svg>
+    <div id="ec-l1" class="tag"><span>You</span> <span>bring</span> <span>the</span> <span>job.</span></div>
+    <div id="ec-l2" class="tag"><span>Wintermute</span> <span>runs</span> <span>the</span> <span class="hot">crew.</span></div>
+    <svg id="ec-lock" viewBox="0 0 1920 1080" width="1920" height="1080">
+      <g transform="translate(530 620) scale(1.25)">
+        <rect x="1" y="1" width="126" height="126" rx="22" fill="#142536" stroke="#687c96" stroke-width="2" id="ec-tile" opacity="0" />
+        <g transform="translate(-60 -56)" stroke-linejoin="round">
+          <path id="ec-arc1" d="M103.8 170.1A54 54 0 0 1 103.8 69.9" fill="none" stroke="#8ec5ec" stroke-width="7.5" stroke-linecap="round" pathLength="100" stroke-dasharray="100 120" stroke-dashoffset="110" />
+          <path id="ec-arc2" d="M144.2 69.9A54 54 0 0 1 144.2 170.1" fill="none" stroke="#58cfc2" stroke-width="7.5" stroke-linecap="round" pathLength="100" stroke-dasharray="100 120" stroke-dashoffset="110" />
+          <g id="ec-core" opacity="0">
+            <polygon points="120,90 100,99 90,120 100,141 120,150" fill="#25506f" stroke="#8ec5ec" stroke-width="3.5" />
+            <polygon points="128,90 148,99 158,120 148,141 128,150" fill="#1b5e54" stroke="#58cfc2" stroke-width="3.5" />
+            <polygon points="124,105.5 138.5,120 124,134.5 109.5,120" fill="#78d9ce" stroke="#78d9ce" stroke-width="2.5" />
+            <circle cx="124" cy="120" r="5.5" fill="#142536" />
+          </g>
+        </g>
+      </g>
+    </svg>
+    <img id="ec-word" src="assets/brand/wordmark.svg" alt="Wintermute" />
+    <div id="ec-ver">1.0</div>
+    <div id="ec-url" data-var-text="url">github.com/ncksol/ai_tools</div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    // The Voice's waveform speaks once more, then settles into a line.
+    const w = { t: 0 };
+    const amp = { a: 1 };
+    const draw = () => {
+      let d = "";
+      for (let i = 0; i <= 160; i++) {
+        const x = 160 + i * 10;
+        const env = Math.sin((i / 160) * Math.PI);
+        d += (i ? " L" : "M") + x + " " + (560 + amp.a * 60 * env * Math.sin(i * 0.5 + w.t * 20) * Math.sin(i * 0.11 - w.t * 7)).toFixed(1);
+      }
+      document.getElementById("ec-wavep").setAttribute("d", d);
+    };
+    tl.fromTo(w, { t: 0 }, { t: 6.5, duration: 6.5, ease: "none", onUpdate: draw }, 0);
+    tl.fromTo(amp, { a: 1 }, { a: 0, duration: 0.9, ease: "power2.inOut", onUpdate: draw }, 1.0);
+    tl.fromTo("#ec-wave", { opacity: 1, scaleX: 1, transformOrigin: "50% 50%" }, { scaleX: 0, duration: 0.5, ease: "power3.in" }, 2.0);
+    // The line: word by word, blur to sharp.
+    document.querySelectorAll("#ec-l1 span").forEach((el, i) => {
+      tl.fromTo(el, { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.13, ease: "power2.out" }, 0.25 + i * 0.09);
+    });
+    document.querySelectorAll("#ec-l2 span").forEach((el, i) => {
+      tl.fromTo(el, { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.13, ease: "power2.out" }, 1.15 + i * 0.09);
+    });
+    // The mark draws on, the wordmark wipes in, then the version.
+    tl.to("#ec-tile", { opacity: 1, duration: 0.2, ease: "power2.out" }, 2.35);
+    tl.to("#ec-arc1", { strokeDashoffset: 0, duration: 0.45, ease: "power2.out" }, 2.4);
+    tl.to("#ec-arc2", { strokeDashoffset: 0, duration: 0.45, ease: "power2.out" }, 2.5);
+    tl.fromTo("#ec-core", { opacity: 0, scale: 0.6, svgOrigin: "124 120" }, { opacity: 1, scale: 1, svgOrigin: "124 120", duration: 0.3, ease: "expo.out" }, 2.75);
+    tl.fromTo("#ec-word", { clipPath: "inset(0% 100% 0% 0%)" }, { clipPath: "inset(0% 0% 0% 0%)", duration: 0.45, ease: "power3.out" }, 2.8);
+    tl.fromTo("#ec-ver", { opacity: 0, filter: "blur(8px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.18, ease: "power2.out" }, 3.25);
+    tl.fromTo("#ec-url", { opacity: 0 }, { opacity: 1, duration: 0.3, ease: "power2.out" }, 3.5);
+    window.__timelines["endcard"] = tl;
+  </script>
+</template>

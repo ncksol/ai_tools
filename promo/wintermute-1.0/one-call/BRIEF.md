@@ -1,0 +1,60 @@
+---
+workflow: general-video
+flow: automation
+storyboard: no
+message: "You bring the job. Wintermute runs the crew."
+destination: github-release-and-social
+aspect: 1920x1080
+fps: 30
+language: en
+audience: developers who use GitHub Copilot CLI and the GitHub Copilot app
+length: 60-90s
+angle: allegory (noir reverse heist)
+---
+
+## Intent
+
+A promotional cartoon for the v1.0 release of the Wintermute plugin. The user's request: "a promotional video/cartoon for the v1.0 release of the wintermute plugin … The story should be about the work that plugin is doing and how it helps the human … the story should not be straightforward, it should be allegory about the job." The user picked this story and asked for "a smooth 30fps animation".
+
+### 2. One Call: a noir reverse heist
+
+**Idea:** A voice on the city's payphones plans a perfect heist. At the end we learn the crew broke in to *leave* the finished job on the client's desk, not to take something.
+**Look:** Graphic-novel noir with rain and one neon colour, a nod to the plugin's name (mood only, no quotes). Comic panels split into 2, then 4, then 8 as the crew spreads out.
+**Hook:** At 2 a.m., a tired engineer pushes a file marked "THE JOB" through a slot marked W. Every payphone in the city starts ringing.
+
+1. The Voice is never seen, only a phone cord and a waveform. It pins the file to a wall and splits it up with red string.
+2. It makes one call to the client: "Six people. Here's the plan. Yes?" The client says "Yes."
+3. Across the city, each person picks up a phone and gets a sealed envelope: a safecracker, a forger (documents), a librarian (research) and a driver (tests). They have never met.
+4. They can't call each other, so every line goes through the Voice. When the safecracker needs a blueprint, the Voice calls the librarian.
+5. The second-floor man starts as soon as the first floor is open.
+6. An appraiser from a different family checks every piece. He won't take the crew's word for anything: "Show me it works."
+7. Two crew members argue over one piece, so two outside appraisers decide. When they disagree, the client's phone rings: "Your call."
+8. All night the client can watch the pins move on a city map, or just sleep.
+9. At dawn, the crew slips into the client's office and leaves the finished job on the desk. The phones go quiet one by one. One last ring: "Anything else?"
+
+**End card:** "You bring the job. Wintermute runs the crew." 1.0
+**How it maps:** The Voice is the orchestrator (wintermute-core), the crew are the child sessions, the envelopes are the kickoff briefs, calls routed through the Voice are helper requests, the appraiser from another family is a review by a different model vendor, "show me" is the claims check (evidence, not word), the two outside appraisers are the disagreement panel, "Your call" is a question to the human, and the city map is the swarm dashboard.
+
+## Assets
+
+- `assets/brand/icon.svg` — copy of the plugin's own mark (`ghcp/plugins/wintermute/docs/images/icon.svg`); end card.
+- `assets/brand/wordmark.svg` — the "Wintermute" wordmark path taken unchanged from `ghcp/plugins/wintermute/docs/images/banner-dark.svg`; end card.
+- `assets/audio/music.mp3` — music slot. The user supplies the track; it is not in the project yet.
+- `assets/audio/vo/<nn>.mp3` — optional voice for The Voice, one file per line (see `AUDIO.md`). Not in the project yet.
+
+## Customizations
+
+- Music slot: one `<audio id="music">` clip at `assets/audio/music.mp3` running the full film, ready in `index.html` as a commented block. Render without it until the file arrives.
+- Optional voice-over for The Voice only, one clip per line, timed to fit its beat (`AUDIO.md`). The film must still read muted: every line stays in a balloon or caption box.
+
+## Notes
+
+- usage: unknown (unsupported_harness); local render only.
+- No voice-over in this cut. Dialogue appears as noir caption boxes and speech balloons.
+- Music: supplied by the user later (coordinator decision, 2026-11-13). No music bed is sourced or synthesised here.
+- Sound effects: only files with a recorded source and a licence that allows use in a public promo video. Credits are listed in `assets/sfx/CREDITS.md`.
+- Original vector artwork only, drawn in HTML/SVG in this project. No hosted generation services.
+- Homage to William Gibson's Neuromancer in mood only: no quotes, names or text from the novel. No third-party characters or logos, and no AI vendor logos; the "different family" is shown with colour and costume, not brands.
+- Never show or hint at the dashboard's cockpit mode. The city map in beat 8 is the regular dashboard idea only.
+- Wintermute runs any substantial work (research, specs, code, investigations, documents); the crew roles carry this, so the film never says "code" or "merge".
+- Fonts: League Gothic is bundled with HyperFrames. Any font file added under `assets/fonts/` is listed with its licence in `assets/fonts/LICENSES.md`.

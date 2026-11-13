@@ -1,0 +1,5 @@
+# HyperFrames working state, snapshots and renders
+.hyperframes/
+renders/
+*.mp4
+*.mov

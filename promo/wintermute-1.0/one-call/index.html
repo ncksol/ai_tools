@@ -1,0 +1,131 @@
+<!doctype html>
+<html
+  lang="en"
+  data-resolution="landscape"
+  data-composition-variables='[
+    {"id":"color-paper","type":"color","label":"Paper","default":"#ece8df"},
+    {"id":"color-ink","type":"color","label":"Ink","default":"#0a0c0f"},
+    {"id":"color-neon","type":"color","label":"Neon (the Voice)","default":"#58cfc2"},
+    {"id":"color-string","type":"color","label":"Red string","default":"#b3262e"}
+  ]'
+>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="assets/vendor/gsap.min.js"></script>
+    <style>
+      :root {
+        --color-paper: #ece8df;
+        --color-ink: #0a0c0f;
+        --color-neon: #58cfc2;
+        --color-string: #b3262e;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: var(--color-ink);
+      }
+      #root {
+        position: relative;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: var(--color-ink);
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="86"
+      data-width="1920"
+      data-height="1080"
+    >
+      <div id="hook" data-composition-id="hook" data-composition-src="compositions/hook.html" data-start="0" data-duration="7.5" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="wall" data-composition-id="wall" data-composition-src="compositions/wall.html" data-start="7.5" data-duration="7.5" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="call" data-composition-id="call" data-composition-src="compositions/call.html" data-start="15" data-duration="6.5" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="crew" data-composition-id="crew" data-composition-src="compositions/crew.html" data-start="21.5" data-duration="10" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="lines" data-composition-id="lines" data-composition-src="compositions/lines.html" data-start="31.5" data-duration="7.5" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="floors" data-composition-id="floors" data-composition-src="compositions/floors.html" data-start="39" data-duration="7.5" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="appraiser" data-composition-id="appraiser" data-composition-src="compositions/appraiser.html" data-start="46.5" data-duration="7.5" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="dispute" data-composition-id="dispute" data-composition-src="compositions/dispute.html" data-start="54" data-duration="8.5" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="map" data-composition-id="map" data-composition-src="compositions/map.html" data-start="62.5" data-duration="6.5" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="dawn" data-composition-id="dawn" data-composition-src="compositions/dawn.html" data-start="69" data-duration="10.5" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="endcard" data-composition-id="endcard" data-composition-src="compositions/endcard.html" data-start="79.5" data-duration="6.5" data-track-index="1" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+
+      <div id="rain" data-composition-id="rain" data-composition-src="compositions/rain.html" data-start="0" data-duration="69" data-track-index="20" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+
+      <audio id="sfx-rain" class="clip" src="assets/sfx/rain-bed.mp3" data-start="0" data-duration="70.8" data-track-index="12" data-volume="1" data-fade-in="0.3" data-automation="{&quot;version&quot;:1,&quot;lanes&quot;:[{&quot;target&quot;:&quot;volume&quot;,&quot;points&quot;:[{&quot;t&quot;:0,&quot;v&quot;:0.7},{&quot;t&quot;:7.3,&quot;v&quot;:0.7},{&quot;t&quot;:7.6,&quot;v&quot;:0.35},{&quot;t&quot;:21.4,&quot;v&quot;:0.35},{&quot;t&quot;:21.7,&quot;v&quot;:0.7},{&quot;t&quot;:31.4,&quot;v&quot;:0.7},{&quot;t&quot;:31.7,&quot;v&quot;:0.3},{&quot;t&quot;:38.9,&quot;v&quot;:0.3},{&quot;t&quot;:39.2,&quot;v&quot;:0.6},{&quot;t&quot;:46.4,&quot;v&quot;:0.6},{&quot;t&quot;:46.7,&quot;v&quot;:0.3},{&quot;t&quot;:62.4,&quot;v&quot;:0.3},{&quot;t&quot;:62.7,&quot;v&quot;:0.4},{&quot;t&quot;:69.0,&quot;v&quot;:0.4},{&quot;t&quot;:70.6,&quot;v&quot;:0.0}]}]}"></audio>
+      <audio id="sfx-slot" class="clip" src="assets/sfx/letterbox.mp3" data-start="0.8" data-track-index="13" data-volume="0.9" data-duration="3.4" data-fade-out="0.3"></audio>
+      <audio id="sfx-ring1" class="clip" src="assets/sfx/ring-c.mp3" data-start="3.55" data-track-index="14" data-volume="0.3" data-duration="3.95" data-fade-out="0.15"></audio>
+      <audio id="sfx-ring2" class="clip" src="assets/sfx/ring-a.mp3" data-start="3.77" data-track-index="15" data-volume="0.5" data-duration="3.73" data-fade-out="0.15"></audio>
+      <audio id="sfx-ring3" class="clip" src="assets/sfx/ring-b.mp3" data-start="4.0" data-track-index="16" data-volume="0.45" data-duration="3.5" data-media-start="0.4" data-fade-out="0.15"></audio>
+      <audio id="sfx-ring4" class="clip" src="assets/sfx/ring-d.mp3" data-start="4.2" data-track-index="13" data-volume="0.3" data-duration="3.3" data-fade-out="0.15"></audio>
+      <audio id="sfx-pin1" class="clip" src="assets/sfx/tack.mp3" data-start="7.52" data-track-index="13" data-volume="3.0" data-duration="0.53"></audio>
+      <audio id="sfx-pin2" class="clip" src="assets/sfx/tack.mp3" data-start="11.36" data-track-index="13" data-volume="2.4" data-duration="0.53"></audio>
+      <audio id="sfx-pin3" class="clip" src="assets/sfx/tack.mp3" data-start="11.76" data-track-index="14" data-volume="2.4" data-duration="0.53"></audio>
+      <audio id="sfx-ring5" class="clip" src="assets/sfx/ring-a.mp3" data-start="15.0" data-track-index="13" data-volume="0.55" data-duration="0.62" data-fade-out="0.08"></audio>
+      <audio id="sfx-pick1" class="clip" src="assets/sfx/pickup.mp3" data-start="15.33" data-track-index="14" data-volume="1.0" data-duration="1.11"></audio>
+      <audio id="sfx-ring6" class="clip" src="assets/sfx/ring-b.mp3" data-start="21.5" data-track-index="13" data-volume="0.55" data-duration="0.8" data-media-start="0.4" data-fade-out="0.08"></audio>
+      <audio id="sfx-pick2" class="clip" src="assets/sfx/pickup.mp3" data-start="22.0" data-track-index="14" data-volume="1.0" data-duration="1.11"></audio>
+      <audio id="sfx-ring7" class="clip" src="assets/sfx/ring-a.mp3" data-start="24.5" data-track-index="13" data-volume="0.45" data-duration="0.65" data-fade-out="0.08"></audio>
+      <audio id="sfx-pick3" class="clip" src="assets/sfx/pickup.mp3" data-start="24.85" data-track-index="14" data-volume="0.9" data-duration="1.11"></audio>
+      <audio id="sfx-ring8" class="clip" src="assets/sfx/ring-c.mp3" data-start="26.6" data-track-index="13" data-volume="0.25" data-duration="0.5" data-fade-out="0.08"></audio>
+      <audio id="sfx-pick4" class="clip" src="assets/sfx/pickup.mp3" data-start="26.8" data-track-index="14" data-volume="0.8" data-duration="1.11"></audio>
+      <audio id="sfx-ring9" class="clip" src="assets/sfx/ring-d.mp3" data-start="26.75" data-track-index="15" data-volume="0.35" data-duration="0.55" data-fade-out="0.08"></audio>
+      <audio id="sfx-pick5" class="clip" src="assets/sfx/pickup.mp3" data-start="27.0" data-track-index="16" data-volume="0.8" data-duration="1.11"></audio>
+      <audio id="sfx-vault" class="clip" src="assets/sfx/creak.mp3" data-start="40.22" data-track-index="13" data-volume="0.6" data-duration="1.42"></audio>
+      <audio id="sfx-clunk" class="clip" src="assets/sfx/thump.mp3" data-start="40.32" data-track-index="14" data-volume="1.0" data-duration="0.72"></audio>
+      <audio id="sfx-press" class="clip" src="assets/sfx/stamp-hit.mp3" data-start="43.62" data-track-index="13" data-volume="0.5" data-duration="1.01"></audio>
+      <audio id="sfx-key" class="clip" src="assets/sfx/key.mp3" data-start="50.87" data-track-index="13" data-volume="2.5" data-duration="1.05"></audio>
+      <audio id="sfx-lid" class="clip" src="assets/sfx/creak.mp3" data-start="51.35" data-track-index="14" data-volume="0.35" data-duration="1.42"></audio>
+      <audio id="sfx-stamp" class="clip" src="assets/sfx/stamp-hit.mp3" data-start="51.94" data-track-index="13" data-volume="1.0" data-duration="1.01"></audio>
+      <audio id="sfx-ring10" class="clip" src="assets/sfx/ring-c.mp3" data-start="58.9" data-track-index="13" data-volume="0.35" data-duration="0.55" data-fade-out="0.08"></audio>
+      <audio id="sfx-pick6" class="clip" src="assets/sfx/pickup.mp3" data-start="59.15" data-track-index="14" data-volume="0.9" data-duration="1.11"></audio>
+      <audio id="sfx-door1" class="clip" src="assets/sfx/creak.mp3" data-start="69.37" data-track-index="13" data-volume="0.8" data-duration="1.42"></audio>
+      <audio id="sfx-desk" class="clip" src="assets/sfx/thump.mp3" data-start="71.45" data-track-index="13" data-volume="0.6" data-duration="0.72"></audio>
+      <audio id="sfx-door2" class="clip" src="assets/sfx/thump.mp3" data-start="74.0" data-track-index="13" data-volume="0.5" data-duration="0.72"></audio>
+      <audio id="sfx-quiet1" class="clip" src="assets/sfx/hangup.mp3" data-start="74.82" data-track-index="14" data-volume="0.9" data-duration="0.44"></audio>
+      <audio id="sfx-quiet2" class="clip" src="assets/sfx/hangup.mp3" data-start="75.12" data-track-index="15" data-volume="0.9" data-duration="0.44"></audio>
+      <audio id="sfx-quiet3" class="clip" src="assets/sfx/hangup.mp3" data-start="75.42" data-track-index="13" data-volume="0.9" data-duration="0.44"></audio>
+      <audio id="sfx-quiet4" class="clip" src="assets/sfx/hangup.mp3" data-start="75.72" data-track-index="14" data-volume="0.9" data-duration="0.44"></audio>
+      <audio id="sfx-quiet5" class="clip" src="assets/sfx/hangup.mp3" data-start="76.02" data-track-index="13" data-volume="0.9" data-duration="0.44"></audio>
+      <audio id="sfx-quiet6" class="clip" src="assets/sfx/hangup.mp3" data-start="76.32" data-track-index="14" data-volume="0.9" data-duration="0.44"></audio>
+      <audio id="sfx-ring11" class="clip" src="assets/sfx/ring-a.mp3" data-start="76.9" data-track-index="13" data-volume="0.55" data-duration="0.55" data-fade-out="0.08"></audio>
+      <audio id="sfx-pick7" class="clip" src="assets/sfx/pickup.mp3" data-start="77.15" data-track-index="14" data-volume="1.0" data-duration="1.11"></audio>
+
+      <!-- MUSIC SLOT. The user supplies the track (see AUDIO.md). Put it at assets/audio/music.mp3,
+           then delete this comment's first and last lines so the clip below becomes active.
+           The volume lane ducks the bed to 0.35 under each of The Voice's lines.
+      <audio id="music" class="clip" src="assets/audio/music.mp3" data-start="0" data-duration="86" data-track-index="10" data-volume="0.8" data-fade-in="0.4" data-fade-out="1.5" data-automation="{&quot;version&quot;:1,&quot;lanes&quot;:[{&quot;target&quot;:&quot;volume&quot;,&quot;points&quot;:[{&quot;t&quot;:0,&quot;v&quot;:1.0},{&quot;t&quot;:9.15,&quot;v&quot;:1.0},{&quot;t&quot;:9.35,&quot;v&quot;:0.35},{&quot;t&quot;:11.1,&quot;v&quot;:0.35},{&quot;t&quot;:11.45,&quot;v&quot;:1.0},{&quot;t&quot;:15.45,&quot;v&quot;:1.0},{&quot;t&quot;:15.65,&quot;v&quot;:0.35},{&quot;t&quot;:18.7,&quot;v&quot;:0.35},{&quot;t&quot;:19.05,&quot;v&quot;:1.0},{&quot;t&quot;:22.2,&quot;v&quot;:1.0},{&quot;t&quot;:22.4,&quot;v&quot;:0.35},{&quot;t&quot;:24.35,&quot;v&quot;:0.35},{&quot;t&quot;:24.7,&quot;v&quot;:1.0},{&quot;t&quot;:35.0,&quot;v&quot;:1.0},{&quot;t&quot;:35.2,&quot;v&quot;:0.35},{&quot;t&quot;:37.85,&quot;v&quot;:0.35},{&quot;t&quot;:38.2,&quot;v&quot;:1.0},{&quot;t&quot;:59.35,&quot;v&quot;:1.0},{&quot;t&quot;:59.55,&quot;v&quot;:0.35},{&quot;t&quot;:60.8,&quot;v&quot;:0.35},{&quot;t&quot;:61.15,&quot;v&quot;:1.0},{&quot;t&quot;:77.3,&quot;v&quot;:1.0},{&quot;t&quot;:77.5,&quot;v&quot;:0.35},{&quot;t&quot;:79.45,&quot;v&quot;:0.35},{&quot;t&quot;:79.8,&quot;v&quot;:1.0}]}]}"></audio>
+      -->
+
+      <!-- VOICE SLOTS. One file per line of The Voice (script and timings in AUDIO.md). When the files are in
+           assets/audio/vo/, delete this comment's first and last lines.
+      <audio id="vo-01" class="clip" src="assets/audio/vo/01.mp3" data-start="9.4" data-track-index="11" data-volume="1"></audio>
+      <audio id="vo-02" class="clip" src="assets/audio/vo/02.mp3" data-start="15.7" data-track-index="11" data-volume="1"></audio>
+      <audio id="vo-03" class="clip" src="assets/audio/vo/03.mp3" data-start="22.45" data-track-index="11" data-volume="1"></audio>
+      <audio id="vo-04" class="clip" src="assets/audio/vo/04.mp3" data-start="35.25" data-track-index="11" data-volume="1"></audio>
+      <audio id="vo-05" class="clip" src="assets/audio/vo/05.mp3" data-start="59.6" data-track-index="11" data-volume="1"></audio>
+      <audio id="vo-06" class="clip" src="assets/audio/vo/06.mp3" data-start="77.55" data-track-index="11" data-volume="1"></audio>
+      -->
+    </div>
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+
+
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

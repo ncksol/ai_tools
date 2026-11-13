@@ -1,0 +1,249 @@
+<template>
+  <style>
+    @font-face { font-family: "Special Elite"; src: url("assets/fonts/special-elite-400.woff2") format("woff2"); font-weight: 400; font-style: normal; }
+    @font-face { font-family: "Bangers"; src: url("assets/fonts/bangers-400.woff2") format("woff2"); font-weight: 400; font-style: normal; }
+    #root { position: absolute; inset: 0; overflow: hidden; background: var(--color-paper, #ece8df); }
+    #root .cap { position: absolute; z-index: 30; background: var(--color-paper, #ece8df); color: var(--color-ink, #0a0c0f); font-family: "Special Elite", monospace; font-size: 36px; line-height: 1.25; padding: 14px 24px 12px; border: 3px solid var(--color-ink, #0a0c0f); box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.6); white-space: nowrap; clip-path: inset(-30% 100% -30% -6%); }
+    #root .cap.big { font-size: 42px; padding: 16px 30px 14px; }
+    #root .sfx { position: absolute; z-index: 25; font-family: "Bangers", sans-serif; color: var(--color-paper, #ece8df); -webkit-text-stroke: 7px var(--color-ink, #0a0c0f); paint-order: stroke fill; letter-spacing: 0.04em; white-space: nowrap; line-height: 1; opacity: 0; }
+    #fl-a { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: hidden; background: #161b21; }
+    #fl-art { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
+    #root .mini { position: absolute; width: 467px; height: 531px; overflow: hidden; opacity: 0; background: #15191e; }
+    #root .mini svg { position: absolute; left: 0; top: 0; }
+  </style>
+  <div id="root" data-composition-id="floors" data-width="1920" data-height="1080">
+    <div id="m0" class="mini" style="left: 0px; top: 0px">
+      <svg viewBox="0 0 467 531" width="467" height="531">
+        <rect width="467" height="531" fill="#2b313a" />
+        <circle cx="233" cy="250" r="170" fill="#3a424d" stroke="#0a0c0f" stroke-width="8" />
+        <g id="m0-dial">
+          <circle cx="233" cy="250" r="110" fill="#5b6470" stroke="#0a0c0f" stroke-width="6" />
+          <g id="m0-ticks" stroke="#ece8df" stroke-width="4"></g>
+          <circle cx="233" cy="250" r="40" fill="#0a0c0f" />
+          <rect x="226" y="146" width="14" height="40" fill="#58cfc2" />
+        </g>
+        <path d="M60 531 C90 420 150 380 190 380 L200 330 L240 340 L236 400 C200 430 160 470 150 531 Z" fill="#0a0c0f" />
+      </svg>
+    </div>
+    <div id="m2" class="mini" style="left: 969px; top: 0px">
+      <svg viewBox="0 0 467 531" width="467" height="531">
+        <rect width="467" height="531" fill="#1c2128" />
+        <rect x="60" y="360" width="340" height="120" fill="#ece8df" stroke="#0a0c0f" stroke-width="5" transform="rotate(-4 230 420)" />
+        <path d="M90 392 H330 M90 420 H300 M90 448 H250" stroke="#8a929c" stroke-width="5" transform="rotate(-4 230 420)" />
+        <g id="m2-mark" opacity="0"><rect x="250" y="380" width="110" height="60" fill="none" stroke="#0a0c0f" stroke-width="6" transform="rotate(-10 305 410)" /></g>
+        <g id="m2-stamp">
+          <rect x="240" y="300" width="130" height="40" rx="6" fill="#0a0c0f" />
+          <rect x="290" y="190" width="30" height="112" fill="#3a424d" stroke="#0a0c0f" stroke-width="4" />
+          <ellipse cx="305" cy="178" rx="56" ry="34" fill="#5b6470" stroke="#0a0c0f" stroke-width="5" />
+          <path d="M260 120 C290 70 360 80 380 140 L360 176 C340 140 300 140 280 168 Z" fill="#0a0c0f" />
+        </g>
+      </svg>
+    </div>
+    <div id="m3" class="mini" style="left: 1453.5px; top: 0px">
+      <svg viewBox="0 0 467 531" width="467" height="531">
+        <rect width="467" height="531" fill="#1c2128" />
+        <path d="M40 330 L230 300 L230 470 L40 500 Z" fill="#ece8df" stroke="#0a0c0f" stroke-width="5" />
+        <path d="M230 300 L420 330 L420 500 L230 470 Z" fill="#d9d2c1" stroke="#0a0c0f" stroke-width="5" />
+        <g stroke="#8a929c" stroke-width="5"><path d="M70 350 L200 330 M70 376 L200 356 M70 402 L200 382 M70 428 L180 410 M260 330 L390 350 M260 356 L390 376 M260 382 L390 402 M260 408 L360 424" /></g>
+        <g id="m3-lens"><circle cx="150" cy="330" r="62" fill="#58cfc2" fill-opacity="0.18" stroke="#0a0c0f" stroke-width="10" /><path d="M196 374 L250 430" stroke="#0a0c0f" stroke-width="20" stroke-linecap="round" /></g>
+        <path d="M120 120 L330 120 L330 220 L120 220 Z" fill="#2b313a" stroke="#0a0c0f" stroke-width="5" />
+        <path d="M140 145 H310 M140 170 H300 M140 195 H260" stroke="#5b6470" stroke-width="5" />
+      </svg>
+    </div>
+    <div id="m4" class="mini" style="left: 0px; top: 549px">
+      <svg viewBox="0 0 467 531" width="467" height="531">
+        <rect width="467" height="531" fill="#15191e" />
+        <path d="M0 400 L467 330 L467 531 L0 531 Z" fill="#0b0d10" />
+        <path d="M0 470 L467 400" stroke="#ece8df" stroke-width="6" stroke-dasharray="40 30" />
+        <rect x="211" y="60" width="44" height="40" rx="6" fill="#3a424d" stroke="#0a0c0f" stroke-width="5" />
+        <circle cx="233" cy="230" r="130" fill="#ece8df" stroke="#0a0c0f" stroke-width="10" />
+        <g id="m4-ticks" stroke="#0a0c0f" stroke-width="5"></g>
+        <path id="m4-hand" d="M233 230 L233 124" stroke="#58cfc2" stroke-width="8" stroke-linecap="round" />
+        <circle cx="233" cy="230" r="12" fill="#0a0c0f" />
+      </svg>
+    </div>
+    <div id="m5" class="mini" style="left: 484.5px; top: 549px">
+      <svg viewBox="0 0 467 531" width="467" height="531">
+        <rect width="467" height="531" fill="#0a0c0f" />
+        <path id="m5-cord" fill="none" stroke="#58cfc2" stroke-width="10" stroke-linecap="round" opacity="0.85" />
+        <path id="m5-cord2" fill="none" stroke="#0a0c0f" stroke-width="5" stroke-linecap="round" />
+        <path id="m5-wave" fill="none" stroke="#58cfc2" stroke-width="5" stroke-linejoin="round" />
+      </svg>
+    </div>
+    <div id="m6" class="mini" style="left: 969px; top: 549px">
+      <svg viewBox="0 0 467 531" width="467" height="531">
+        <rect width="467" height="531" fill="#2b313a" />
+        <polygon points="233,0 60,531 406,531" fill="#ece8df" opacity="0.08" />
+        <g id="m6-fig" transform="translate(220 640) scale(1.5)"></g>
+        <g id="m6-loupe"><circle cx="300" cy="230" r="30" fill="#58cfc2" fill-opacity="0.2" stroke="#0a0c0f" stroke-width="8" /><path d="M318 254 L336 300" stroke="#0a0c0f" stroke-width="14" stroke-linecap="round" /></g>
+      </svg>
+    </div>
+    <div id="m7" class="mini" style="left: 1453.5px; top: 549px">
+      <svg viewBox="0 0 467 531" width="467" height="531">
+        <rect width="467" height="531" fill="#1c2128" />
+        <circle cx="233" cy="250" r="160" fill="#ece8df" stroke="#0a0c0f" stroke-width="12" />
+        <g id="m7-ticks" stroke="#0a0c0f" stroke-width="6"></g>
+        <path id="m7-hour" d="M233 250 L233 170" stroke="#0a0c0f" stroke-width="14" stroke-linecap="round" />
+        <path id="m7-min" d="M233 250 L233 120" stroke="#0a0c0f" stroke-width="8" stroke-linecap="round" />
+        <circle cx="233" cy="250" r="14" fill="#0a0c0f" />
+      </svg>
+    </div>
+
+    <div id="fl-a">
+      <svg id="fl-art" viewBox="0 0 1920 1080" width="1920" height="1080">
+        <rect width="1920" height="1080" fill="#161b21" />
+        <rect y="960" width="1920" height="120" fill="#0b0d10" />
+        <rect x="380" y="140" width="1160" height="820" fill="#262c34" stroke="#0a0c0f" stroke-width="10" />
+        <rect x="400" y="160" width="1120" height="320" fill="#121519" />
+        <rect x="400" y="500" width="1120" height="452" fill="#1c2128" />
+        <rect x="360" y="116" width="1200" height="30" fill="#0a0c0f" />
+        <rect x="380" y="480" width="1160" height="22" fill="#0a0c0f" />
+        <rect x="1514" y="250" width="34" height="180" fill="#161b21" />
+        <rect x="1540" y="426" width="160" height="12" fill="#0a0c0f" />
+        <g id="fl-boxes" fill="#2b313a" stroke="#0a0c0f" stroke-width="4"></g>
+        <polygon id="fl-lamp2" points="980,180 760,480 1220,480" fill="#ece8df" opacity="0" />
+        <path d="M980 160 V180 M950 196 Q980 168 1010 196 Z" fill="#0a0c0f" stroke="#0a0c0f" stroke-width="4" />
+        <polygon id="fl-spill" points="1300,620 420,620 420,952 1300,900" fill="#ece8df" opacity="0" />
+        <circle cx="1300" cy="740" r="156" fill="#ece8df" />
+        <g id="fl-door">
+          <circle cx="1300" cy="740" r="156" fill="#3a424d" stroke="#0a0c0f" stroke-width="8" />
+          <g id="fl-dial"><circle cx="1300" cy="740" r="54" fill="#5b6470" stroke="#0a0c0f" stroke-width="6" /><rect x="1294" y="690" width="12" height="28" fill="#58cfc2" /></g>
+          <g stroke="#0a0c0f" stroke-width="12" stroke-linecap="round"><path d="M1300 610 V636 M1300 844 V870 M1170 740 H1196 M1404 740 H1430" /></g>
+        </g>
+        <path id="fl-dep" opacity="0" d="M1240 600 C1180 560 1180 520 1200 420" fill="none" stroke="#58cfc2" stroke-width="6" stroke-dasharray="12 10" />
+        <path id="fl-deph" d="M1184 438 L1200 410 L1218 440" fill="none" stroke="#58cfc2" stroke-width="6" stroke-linejoin="round" opacity="0" />
+        <g id="fl-safe" transform="translate(1060 952)"></g>
+        <path d="M1640 116 V440" stroke="#8a929c" stroke-width="5" />
+        <g id="fl-man"><g id="fl-man-f" transform="translate(1650 426) scale(0.72)"></g></g>
+      </svg>
+    </div>
+
+    <div id="fl-cap" class="cap" style="left: 96px; top: 34px">The second-floor man starts the moment the first floor opens.</div>
+    <div id="fl-clunk" class="sfx" style="left: 1380px; top: 560px; font-size: 96px">CLUNK!</div>
+    <div id="fl-all" class="cap big" style="left: 690px; top: 503px">All night. All at once.</div>
+  </div>
+  <script>
+    (function () {
+      // Noir figure, feet at (0,0), facing right, about 400 units tall.
+      const FIG = (o) => {
+        const f = o.fill || "#0a0c0f";
+        const ln = o.line || null;
+        const st = ln ? ' stroke="' + ln + '" stroke-width="4" stroke-linejoin="round"' : "";
+        const hats = {
+          fedora: '<ellipse cx="2" cy="-352" rx="50" ry="9"/><path d="M-28,-352 C-28,-388 -18,-396 2,-396 C22,-396 32,-388 32,-352 Z"/>',
+          bowler: '<ellipse cx="2" cy="-352" rx="40" ry="7"/><path d="M-27,-352 C-27,-404 31,-404 31,-352 Z"/>',
+          cap: '<path d="M-26,-348 C-26,-382 22,-386 44,-356 L60,-348 Z"/>',
+        };
+        const arms = {
+          phone: "M32,-290 Q80,-262 48,-318",
+          down: "M30,-290 C46,-240 50,-190 46,-150",
+          hold: "M30,-290 Q60,-236 96,-220",
+          reach: "M30,-290 Q86,-262 132,-236",
+          point: "M30,-292 Q90,-300 132,-322",
+        };
+        const armD = arms[o.arm || "down"];
+        const arm = (ln ? '<path d="' + armD + '" fill="none" stroke="' + ln + '" stroke-width="34" stroke-linecap="round"/>' : "") + '<path d="' + armD + '" fill="none" stroke="' + f + '" stroke-width="26" stroke-linecap="round"/>';
+        const handset = o.arm === "phone" ? '<path d="M16,-364 C6,-350 8,-316 28,-300 L42,-310 C28,-322 24,-348 30,-362 Z" fill="#0a0c0f"/>' : "";
+        const band = ln ? '<rect x="-27" y="-366" width="58" height="10" fill="#0a0c0f" stroke="none"/>' : "";
+        const rim = o.rim ? '<path d="M-48,-300 C-60,-250 -64,-170 -68,-96 M-28,-352 C-28,-388 -18,-396 2,-396" fill="none" stroke="' + o.rim + '" stroke-width="4" stroke-linecap="round"/>' : "";
+        return (
+          '<g fill="' + f + '"' + st + ">" +
+          '<path d="M-34,-100 L-10,-100 L-8,-10 L-32,-10 Z M8,-100 L32,-100 L34,-10 L10,-10 Z"/>' +
+          '<path d="M-38,-12 L-4,-12 L4,0 L-38,0 Z M8,-12 L40,-12 L52,0 L8,0 Z"/>' +
+          '<path d="M-48,-300 C-60,-250 -64,-170 -68,-96 L68,-96 C64,-170 60,-250 48,-300 C30,-312 -30,-312 -48,-300 Z"/>' +
+          '<path d="M-32,-300 L-22,-334 L2,-318 L24,-334 L36,-300 Z"/>' +
+          '<circle cx="2" cy="-334" r="23"/>' + (hats[o.hat || "fedora"]) + band + "</g>" + arm + handset + rim
+        );
+      };
+      // Glass payphone booth, base at (bx, b), scale k; the panes can light teal.
+      const BOOTH = (bx, b, k, litId) => {
+        const r = (x, y, w, h, extra) => '<rect x="' + (bx + x * k) + '" y="' + (b + y * k) + '" width="' + w * k + '" height="' + h * k + '" ' + extra + "/>";
+        return {
+          back:
+            r(-78, -306, 156, 306, 'rx="4" fill="#1c2128" stroke="#0a0c0f" stroke-width="' + 3 * k + '"') +
+            r(-64, -284, 128, 266, 'fill="#2b313a"') +
+            r(-64, -284, 128, 266, 'id="' + litId + '" fill="#58cfc2" opacity="0"') +
+            r(14, -250, 40, 64, 'rx="4" fill="#0a0c0f"') +
+            r(20, -228, 28, 4, 'fill="#3a424d"'),
+          front:
+            r(-4, -284, 8, 266, 'fill="#1c2128"') +
+            r(-64, -196, 128, 8, 'fill="#1c2128"') +
+            r(-64, -104, 128, 8, 'fill="#1c2128"') +
+            r(-86, -328, 172, 30, 'rx="4" fill="#0a0c0f"') +
+            r(-48, -322, 96, 16, 'fill="#c9ccd1" opacity="0.8"'),
+        };
+      };
+      document.getElementById("fl-safe").innerHTML = FIG({ arm: "reach", rim: "#8a929c" });
+      document.getElementById("fl-man-f").innerHTML = FIG({ arm: "down", hat: "cap", rim: "#8a929c" });
+      document.getElementById("m6-fig").innerHTML = FIG({ fill: "#ece8df", line: "#0a0c0f", arm: "hold" });
+      let b = "";
+      for (let r = 0; r < 4; r++) for (let c = 0; c < 6; c++) b += '<rect x="' + (440 + c * 62) + '" y="' + (200 + r * 64) + '" width="54" height="56"/>';
+      document.getElementById("fl-boxes").innerHTML = b;
+      const ticks = (id, cx, cy, r1, r2, n) => {
+        let t = "";
+        for (let i = 0; i < n; i++) {
+          const a = (i / n) * Math.PI * 2;
+          t += '<path d="M' + (cx + r1 * Math.sin(a)).toFixed(1) + " " + (cy - r1 * Math.cos(a)).toFixed(1) + " L" + (cx + r2 * Math.sin(a)).toFixed(1) + " " + (cy - r2 * Math.cos(a)).toFixed(1) + '"/>';
+        }
+        document.getElementById(id).innerHTML = t;
+      };
+      ticks("m0-ticks", 233, 250, 92, 104, 40);
+      ticks("m4-ticks", 233, 230, 108, 122, 12);
+      ticks("m7-ticks", 233, 250, 130, 146, 12);
+      let d = "";
+      for (let i = 0; i <= 200; i++) {
+        const th = i * 0.38;
+        d += (i ? " L" : "M") + (330 + 22 * Math.sin(th)).toFixed(1) + " " + (-20 + i * 1.6 + 10 * Math.cos(th)).toFixed(1);
+      }
+      document.getElementById("m5-cord").setAttribute("d", d);
+      document.getElementById("m5-cord2").setAttribute("d", d);
+    })();
+
+    const tl = gsap.timeline({ paused: true });
+    const wipe = (sel, at) => tl.fromTo(sel, { clipPath: "inset(-30% 100% -30% -6%)" }, { clipPath: "inset(-30% -6% -30% -6%)", duration: 0.32, ease: "power2.out" }, at);
+
+    // Floor one: the safecracker works the dial; the second-floor man waits outside.
+    wipe("#fl-cap", 0.2);
+    tl.fromTo("#fl-dial", { rotation: 0, svgOrigin: "1300 740" }, { keyframes: [{ rotation: 140, duration: 0.45 }, { rotation: 60, duration: 0.35 }, { rotation: 210, duration: 0.45 }], ease: "power2.inOut", svgOrigin: "1300 740" }, 0.1);
+    // The vault opens; the same instant the second floor starts.
+    tl.to("#fl-door", { scaleX: 0.1, svgOrigin: "1450 740", duration: 0.35, ease: "power3.out" }, 1.4);
+    tl.to("#fl-spill", { opacity: 0.16, duration: 0.3, ease: "power2.out" }, 1.45);
+    tl.fromTo("#fl-clunk", { opacity: 0, scale: 0.4, rotation: 0 }, { opacity: 1, scale: 1, rotation: -7, duration: 0.18, ease: "expo.out" }, 1.42);
+    tl.to("#fl-clunk", { opacity: 0, duration: 0.15, ease: "power3.in" }, 2.6);
+    tl.fromTo("#fl-dep", { opacity: 1, strokeDasharray: "12 10", clipPath: "inset(100% 0% 0% 0%)" }, { clipPath: "inset(0% 0% 0% 0%)", duration: 0.3, ease: "power2.out" }, 1.5);
+    tl.to("#fl-deph", { opacity: 1, duration: 0.1 }, 1.75);
+    tl.to("#fl-lamp2", { opacity: 0.14, duration: 0.2, ease: "power2.out" }, 1.6);
+    tl.fromTo("#fl-man", { x: 0, y: 0 }, { keyframes: [{ x: -120, y: -40, duration: 0.3, ease: "power2.out" }, { x: -330, y: 0, duration: 0.35, ease: "power2.in" }] }, 1.55);
+    tl.to("#fl-boxes rect:nth-child(9)", { scaleX: 0.15, svgOrigin: "626 328", duration: 0.3, ease: "power3.out" }, 2.6);
+
+    // Eight panels: everyone at work at once.
+    tl.to("#fl-cap", { opacity: 0, duration: 0.15, ease: "power3.in" }, 4.0);
+    tl.to("#fl-a", { clipPath: "inset(0px 968.5px 549px 484.5px)", duration: 0.6, ease: "power3.inOut" }, 4.2);
+    tl.fromTo("#fl-art", { x: 0, y: 0, scale: 1, transformOrigin: "0px 0px" }, { x: 30, y: 60, scale: 0.62, duration: 0.6, ease: "power3.inOut" }, 4.2);
+    // The cut-away shrinks into one panel and uncovers the other seven beneath it.
+    tl.fromTo(".mini", { opacity: 0 }, { opacity: 1, duration: 0.01 }, 4.19);
+    tl.fromTo("#m0-dial", { rotation: 0, svgOrigin: "233 250" }, { keyframes: [{ rotation: 120, duration: 0.6 }, { rotation: 40, duration: 0.5 }, { rotation: 190, duration: 0.7 }, { rotation: 150, duration: 0.6 }], ease: "power2.inOut", svgOrigin: "233 250" }, 4.5);
+    tl.fromTo("#m2-stamp", { y: -40 }, { y: 40, duration: 0.28, ease: "power3.in", yoyo: true, repeat: 5 }, 4.5);
+    tl.to("#m2-mark", { opacity: 1, duration: 0.05 }, 4.78);
+    tl.fromTo("#m3-lens", { x: 0, y: 0 }, { keyframes: [{ x: 160, y: -10, duration: 0.9 }, { x: 40, y: 50, duration: 0.8 }, { x: 200, y: 40, duration: 0.8 }], ease: "power2.inOut" }, 4.5);
+    tl.fromTo("#m4-hand", { rotation: 0, svgOrigin: "233 230" }, { rotation: 360, svgOrigin: "233 230", duration: 3, ease: "none" }, 4.5);
+    tl.fromTo("#m6-loupe", { x: 0, y: 40 }, { x: -20, y: -10, duration: 0.8, ease: "power2.out" }, 4.6);
+    tl.fromTo("#m7-hour", { rotation: 90, svgOrigin: "233 250" }, { rotation: 120, svgOrigin: "233 250", duration: 3, ease: "none" }, 4.5);
+    tl.fromTo("#m7-min", { rotation: 0, svgOrigin: "233 250" }, { rotation: 360, svgOrigin: "233 250", duration: 3, ease: "none" }, 4.5);
+    const w5 = { t: 0 };
+    tl.fromTo(w5, { t: 0 }, { t: 3, duration: 3, ease: "none", onUpdate: () => {
+      let d = "";
+      for (let i = 0; i <= 80; i++) {
+        const env = Math.sin((i / 80) * Math.PI);
+        d += (i ? " L" : "M") + (40 + i * 4.8).toFixed(1) + " " + (430 + 50 * env * Math.sin(i * 0.6 + w5.t * 20) * Math.sin(i * 0.15 - w5.t * 6)).toFixed(1);
+      }
+      document.getElementById("m5-wave").setAttribute("d", d);
+    } }, 4.5);
+    wipe("#fl-all", 4.9);
+    // Zoom through the appraiser's panel into his room.
+    tl.to("#fl-all", { opacity: 0, duration: 0.15, ease: "power3.in" }, 6.85);
+    tl.set("#m6", { zIndex: 50 }, 6.9);
+    tl.to("#m6", { x: -242.5, y: -274.5, scale: 4.3, transformOrigin: "50% 50%", duration: 0.6, ease: "power3.in" }, 6.9);
+    window.__timelines["floors"] = tl;
+  </script>
+</template>

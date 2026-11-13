@@ -1,0 +1,182 @@
+<template>
+  <style>
+    @font-face { font-family: "Special Elite"; src: url("assets/fonts/special-elite-400.woff2") format("woff2"); font-weight: 400; font-style: normal; }
+    @font-face { font-family: "Patrick Hand"; src: url("assets/fonts/patrick-hand-400.woff2") format("woff2"); font-weight: 400; font-style: normal; }
+    @font-face { font-family: "Bangers"; src: url("assets/fonts/bangers-400.woff2") format("woff2"); font-weight: 400; font-style: normal; }
+    #root .cap { position: absolute; z-index: 30; background: var(--color-paper, #ece8df); color: var(--color-ink, #0a0c0f); font-family: "Special Elite", monospace; font-size: 38px; line-height: 1.25; padding: 14px 26px 12px; border: 3px solid var(--color-ink, #0a0c0f); box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.6); white-space: nowrap; clip-path: inset(-30% 100% -30% -6%); }
+    #root .bal { position: absolute; z-index: 32; font-family: "Patrick Hand", sans-serif; text-transform: uppercase; font-size: 60px; line-height: 1.05; padding: 26px 44px 22px; border: 4px solid; border-radius: 50px; white-space: nowrap; opacity: 0; background: #fbfaf6; color: var(--color-ink, #0a0c0f); border-color: var(--color-ink, #0a0c0f); }
+    #root .bal.voice { background: var(--color-ink, #0a0c0f); color: var(--color-neon, #58cfc2); border-color: var(--color-neon, #58cfc2); }
+    #root .bal svg { position: absolute; overflow: visible; }
+    #root .sfx { position: absolute; z-index: 25; font-family: "Bangers", sans-serif; color: var(--color-paper, #ece8df); -webkit-text-stroke: 7px var(--color-ink, #0a0c0f); paint-order: stroke fill; letter-spacing: 0.04em; white-space: nowrap; line-height: 1; opacity: 0; }
+    #root .lg { font-family: "League Gothic", sans-serif; }
+    #root { position: absolute; inset: 0; overflow: hidden; background: #3a424d; }
+    #dw-art { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
+    #dw-night { position: absolute; inset: 0; background: #0a0c0f; opacity: 0.62; z-index: 10; }
+    #root .inset { position: absolute; z-index: 20; width: 270px; height: 180px; border: 5px solid var(--color-ink, #0a0c0f); outline: 8px solid var(--color-paper, #ece8df); opacity: 0; }
+    #root .inset svg { display: block; }
+    #dw-hand { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; z-index: 15; }
+  </style>
+  <div id="root" data-composition-id="dawn" data-width="1920" data-height="1080">
+    <svg id="dw-art" viewBox="0 0 1920 1080" width="1920" height="1080">
+      <rect width="1920" height="1080" fill="#3a424d" />
+      <rect x="1170" y="100" width="600" height="470" fill="#0a0c0f" />
+      <rect id="dw-sky" x="1184" y="114" width="572" height="442" fill="#262c34" />
+      <g fill="#5b6470"><rect x="1184" y="390" width="120" height="166" /><rect x="1310" y="330" width="150" height="226" /><rect x="1468" y="420" width="110" height="136" /><rect x="1586" y="360" width="170" height="196" /></g>
+      <path d="M1470 114 V556 M1184 330 H1756" stroke="#0a0c0f" stroke-width="12" />
+      <polygon id="dw-beam" points="1184,560 1756,560 1600,1080 560,1080" fill="#ece8df" opacity="0" />
+      <rect x="120" y="210" width="370" height="800" fill="#0a0c0f" />
+      <rect x="134" y="224" width="342" height="786" fill="#050607" />
+      <g id="dw-door">
+        <rect x="134" y="224" width="342" height="786" fill="#1c2128" stroke="#0a0c0f" stroke-width="6" />
+        <rect x="174" y="270" width="262" height="300" fill="#22272e" stroke="#0a0c0f" stroke-width="5" />
+        <rect x="174" y="640" width="262" height="320" fill="#22272e" stroke="#0a0c0f" stroke-width="5" />
+        <circle cx="440" cy="620" r="14" fill="#5b6470" stroke="#0a0c0f" stroke-width="4" />
+      </g>
+      <g id="dw-crew"></g>
+      <rect x="1060" y="560" width="200" height="170" rx="16" fill="#1c2128" stroke="#0a0c0f" stroke-width="6" />
+      <rect x="640" y="690" width="1000" height="26" fill="#5b6470" stroke="#0a0c0f" stroke-width="6" />
+      <rect x="680" y="716" width="920" height="364" fill="#2b313a" stroke="#0a0c0f" stroke-width="6" />
+      <g id="dw-phone">
+        <path d="M1380 690 L1396 640 L1520 640 L1536 690 Z" fill="#0a0c0f" />
+        <circle cx="1458" cy="664" r="18" fill="#5b6470" stroke="#0a0c0f" stroke-width="4" />
+      </g>
+      <g id="dw-receiver"><rect x="1386" y="616" width="144" height="28" rx="14" fill="#0a0c0f" /></g>
+      <g id="dw-folder" opacity="0">
+        <rect x="860" y="636" width="330" height="22" fill="#d9d2c1" stroke="#0a0c0f" stroke-width="4" transform="rotate(-2 1025 647)" />
+        <rect x="850" y="610" width="340" height="40" rx="5" fill="#e2dccd" stroke="#0a0c0f" stroke-width="5" />
+        <rect x="870" y="590" width="300" height="34" rx="5" fill="#ece8df" stroke="#0a0c0f" stroke-width="5" />
+        <path d="M1000 590 V650 M850 628 H1190" stroke="#b3262e" stroke-width="5" />
+        <text class="lg" x="890" y="619" font-size="32" letter-spacing="2" fill="#b3262e">THE JOB</text>
+        <g transform="rotate(-6 1100 604)"><rect x="1036" y="582" width="132" height="40" fill="#ece8df" stroke="#58cfc2" stroke-width="4" /><text class="lg" x="1102" y="614" text-anchor="middle" font-size="34" letter-spacing="2" fill="#58cfc2">CHECKED</text></g>
+      </g>
+    </svg>
+    <svg id="dw-hand" viewBox="0 0 1920 1080" width="1920" height="1080">
+      <g id="dw-arm">
+        <path d="M1920,1080 L1700,1080 L1500,700 L1580,660 Z" fill="#9aa1aa" stroke="#0a0c0f" stroke-width="6" stroke-linejoin="round" />
+        <path d="M1960,1000 L1700,1100 L1650,1000 L1900,880 Z" fill="#c9ccd1" stroke="#0a0c0f" stroke-width="6" stroke-linejoin="round" />
+        <rect x="1490" y="618" width="96" height="70" rx="30" fill="#9aa1aa" stroke="#0a0c0f" stroke-width="6" />
+      </g>
+    </svg>
+    <div id="dw-night"></div>
+    <div id="dw-i0" class="inset" style="left: 70px; top: 40px"><svg viewBox="0 0 270 180" width="270" height="180"><rect width="270" height="180" fill="#14181d"/><rect x="95" y="20" width="80" height="150" rx="4" fill="#1c2128" stroke="#0a0c0f" stroke-width="5"/><rect x="104" y="34" width="62" height="126" fill="#2b313a"/><rect id="dw-il0" x="104" y="34" width="62" height="126" fill="#58cfc2" opacity="0.6"/><rect x="132" y="34" width="5" height="126" fill="#1c2128"/><rect x="146" y="60" width="16" height="26" fill="#0a0c0f"/><rect x="0" y="168" width="270" height="12" fill="#0b0d10"/></svg></div>
+    <div id="dw-i1" class="inset" style="left: 370px; top: 40px"><svg viewBox="0 0 270 180" width="270" height="180"><rect width="270" height="180" fill="#14181d"/><rect x="95" y="20" width="80" height="150" rx="4" fill="#1c2128" stroke="#0a0c0f" stroke-width="5"/><rect x="104" y="34" width="62" height="126" fill="#2b313a"/><rect id="dw-il1" x="104" y="34" width="62" height="126" fill="#58cfc2" opacity="0.6"/><rect x="132" y="34" width="5" height="126" fill="#1c2128"/><rect x="146" y="60" width="16" height="26" fill="#0a0c0f"/><rect x="0" y="168" width="270" height="12" fill="#0b0d10"/></svg></div>
+    <div id="dw-i2" class="inset" style="left: 670px; top: 40px"><svg viewBox="0 0 270 180" width="270" height="180"><rect width="270" height="180" fill="#14181d"/><rect x="95" y="20" width="80" height="150" rx="4" fill="#1c2128" stroke="#0a0c0f" stroke-width="5"/><rect x="104" y="34" width="62" height="126" fill="#2b313a"/><rect id="dw-il2" x="104" y="34" width="62" height="126" fill="#58cfc2" opacity="0.6"/><rect x="132" y="34" width="5" height="126" fill="#1c2128"/><rect x="146" y="60" width="16" height="26" fill="#0a0c0f"/><rect x="0" y="168" width="270" height="12" fill="#0b0d10"/></svg></div>
+    <div id="dw-i3" class="inset" style="left: 970px; top: 40px"><svg viewBox="0 0 270 180" width="270" height="180"><rect width="270" height="180" fill="#14181d"/><rect x="95" y="20" width="80" height="150" rx="4" fill="#1c2128" stroke="#0a0c0f" stroke-width="5"/><rect x="104" y="34" width="62" height="126" fill="#2b313a"/><rect id="dw-il3" x="104" y="34" width="62" height="126" fill="#58cfc2" opacity="0.6"/><rect x="132" y="34" width="5" height="126" fill="#1c2128"/><rect x="146" y="60" width="16" height="26" fill="#0a0c0f"/><rect x="0" y="168" width="270" height="12" fill="#0b0d10"/></svg></div>
+    <div id="dw-i4" class="inset" style="left: 1270px; top: 40px"><svg viewBox="0 0 270 180" width="270" height="180"><rect width="270" height="180" fill="#14181d"/><rect x="95" y="20" width="80" height="150" rx="4" fill="#1c2128" stroke="#0a0c0f" stroke-width="5"/><rect x="104" y="34" width="62" height="126" fill="#2b313a"/><rect id="dw-il4" x="104" y="34" width="62" height="126" fill="#58cfc2" opacity="0.6"/><rect x="132" y="34" width="5" height="126" fill="#1c2128"/><rect x="146" y="60" width="16" height="26" fill="#0a0c0f"/><rect x="0" y="168" width="270" height="12" fill="#0b0d10"/></svg></div>
+    <div id="dw-i5" class="inset" style="left: 1570px; top: 40px"><svg viewBox="0 0 270 180" width="270" height="180"><rect width="270" height="180" fill="#14181d"/><rect x="95" y="20" width="80" height="150" rx="4" fill="#1c2128" stroke="#0a0c0f" stroke-width="5"/><rect x="104" y="34" width="62" height="126" fill="#2b313a"/><rect id="dw-il5" x="104" y="34" width="62" height="126" fill="#58cfc2" opacity="0.6"/><rect x="132" y="34" width="5" height="126" fill="#1c2128"/><rect x="146" y="60" width="16" height="26" fill="#0a0c0f"/><rect x="0" y="168" width="270" height="12" fill="#0b0d10"/></svg></div>
+    
+    <div id="dw-cap1" class="cap" style="left: 96px; top: 70px">At dawn, the crew breaks in.</div>
+    <div id="dw-cap2" class="cap" style="left: 96px; top: 70px">They didn't come to take anything.</div>
+    <div id="dw-ring" class="sfx" style="left: 1310px; top: 470px; font-size: 96px">RRRING!</div>
+    <div id="dw-bv" class="bal voice" style="left: 820px; top: 280px">Anything else?<svg width="260" height="260" style="left: 420px; top: 104px"><polyline points="40,0 90,60 66,74 140,150 116,162 200,250" fill="none" stroke="#58cfc2" stroke-width="5" stroke-linejoin="round" /></svg></div>
+  </div>
+  <script>
+    (function () {
+      // Noir figure, feet at (0,0), facing right, about 400 units tall.
+      const FIG = (o) => {
+        const f = o.fill || "#0a0c0f";
+        const ln = o.line || null;
+        const st = ln ? ' stroke="' + ln + '" stroke-width="4" stroke-linejoin="round"' : "";
+        const hats = {
+          fedora: '<ellipse cx="2" cy="-352" rx="50" ry="9"/><path d="M-28,-352 C-28,-388 -18,-396 2,-396 C22,-396 32,-388 32,-352 Z"/>',
+          bowler: '<ellipse cx="2" cy="-352" rx="40" ry="7"/><path d="M-27,-352 C-27,-404 31,-404 31,-352 Z"/>',
+          cap: '<path d="M-26,-348 C-26,-382 22,-386 44,-356 L60,-348 Z"/>',
+        };
+        const arms = {
+          phone: "M32,-290 Q80,-262 48,-318",
+          down: "M30,-290 C46,-240 50,-190 46,-150",
+          hold: "M30,-290 Q60,-236 96,-220",
+          reach: "M30,-290 Q86,-262 132,-236",
+          point: "M30,-292 Q90,-300 132,-322",
+        };
+        const armD = arms[o.arm || "down"];
+        const arm = (ln ? '<path d="' + armD + '" fill="none" stroke="' + ln + '" stroke-width="34" stroke-linecap="round"/>' : "") + '<path d="' + armD + '" fill="none" stroke="' + f + '" stroke-width="26" stroke-linecap="round"/>';
+        const handset = o.arm === "phone" ? '<path d="M16,-364 C6,-350 8,-316 28,-300 L42,-310 C28,-322 24,-348 30,-362 Z" fill="#0a0c0f"/>' : "";
+        const band = ln ? '<rect x="-27" y="-366" width="58" height="10" fill="#0a0c0f" stroke="none"/>' : "";
+        const rim = o.rim ? '<path d="M-48,-300 C-60,-250 -64,-170 -68,-96 M-28,-352 C-28,-388 -18,-396 2,-396" fill="none" stroke="' + o.rim + '" stroke-width="4" stroke-linecap="round"/>' : "";
+        return (
+          '<g fill="' + f + '"' + st + ">" +
+          '<path d="M-34,-100 L-10,-100 L-8,-10 L-32,-10 Z M8,-100 L32,-100 L34,-10 L10,-10 Z"/>' +
+          '<path d="M-38,-12 L-4,-12 L4,0 L-38,0 Z M8,-12 L40,-12 L52,0 L8,0 Z"/>' +
+          '<path d="M-48,-300 C-60,-250 -64,-170 -68,-96 L68,-96 C64,-170 60,-250 48,-300 C30,-312 -30,-312 -48,-300 Z"/>' +
+          '<path d="M-32,-300 L-22,-334 L2,-318 L24,-334 L36,-300 Z"/>' +
+          '<circle cx="2" cy="-334" r="23"/>' + (hats[o.hat || "fedora"]) + band + "</g>" + arm + handset + rim
+        );
+      };
+      // Glass payphone booth, base at (bx, b), scale k; the panes can light teal.
+      const BOOTH = (bx, b, k, litId) => {
+        const r = (x, y, w, h, extra) => '<rect x="' + (bx + x * k) + '" y="' + (b + y * k) + '" width="' + w * k + '" height="' + h * k + '" ' + extra + "/>";
+        return {
+          back:
+            r(-78, -306, 156, 306, 'rx="4" fill="#1c2128" stroke="#0a0c0f" stroke-width="' + 3 * k + '"') +
+            r(-64, -284, 128, 266, 'fill="#2b313a"') +
+            r(-64, -284, 128, 266, 'id="' + litId + '" fill="#58cfc2" opacity="0"') +
+            r(14, -250, 40, 64, 'rx="4" fill="#0a0c0f"') +
+            r(20, -228, 28, 4, 'fill="#3a424d"'),
+          front:
+            r(-4, -284, 8, 266, 'fill="#1c2128"') +
+            r(-64, -196, 128, 8, 'fill="#1c2128"') +
+            r(-64, -104, 128, 8, 'fill="#1c2128"') +
+            r(-86, -328, 172, 30, 'rx="4" fill="#0a0c0f"') +
+            r(-48, -322, 96, 16, 'fill="#c9ccd1" opacity="0.8"'),
+        };
+      };
+      const crew = [
+        { arm: "hold", hat: "fedora" },
+        { arm: "down", hat: "fedora" },
+        { arm: "down", hat: "fedora" },
+        { arm: "down", hat: "fedora" },
+        { arm: "down", hat: "cap" },
+      ];
+      let s = "";
+      crew.forEach((c, i) => {
+        s += '<g id="dw-c' + i + '" opacity="0"><g transform="translate(300 1000) scale(1.55)">' + FIG(Object.assign({ rim: "#8a929c" }, c)) + "</g></g>";
+      });
+      document.getElementById("dw-crew").innerHTML = s;
+    })();
+    const tl = gsap.timeline({ paused: true });
+    const wipe = (sel, at) => tl.fromTo(sel, { clipPath: "inset(-30% 100% -30% -6%)" }, { clipPath: "inset(-30% -6% -30% -6%)", duration: 0.32, ease: "power2.out" }, at);
+    const pop = (sel, at, origin) => tl.fromTo(sel, { opacity: 0, scale: 0.86, transformOrigin: origin || "50% 100%" }, { opacity: 1, scale: 1, duration: 0.2, ease: "power3.out" }, at);
+    const out = (sel, at) => tl.to(sel, { opacity: 0, duration: 0.15, ease: "power3.in" }, at);
+    // Colour flood: night lifts into dawn, the rain has stopped.
+    tl.fromTo("#dw-night", { opacity: 0.62 }, { opacity: 0, duration: 1.3, ease: "power2.inOut" }, 0);
+    tl.fromTo("#dw-sky", { attr: { fill: "#262c34" } }, { attr: { fill: "#d9dde0" }, duration: 1.3, ease: "power2.inOut" }, 0);
+    tl.fromTo("#dw-beam", { opacity: 0 }, { opacity: 0.1, duration: 1.3, ease: "power2.inOut" }, 0.2);
+    wipe("#dw-cap1", 0.2);
+    // The door opens; the crew slips in, one by one, carrying the job.
+    tl.to("#dw-door", { scaleX: 0.16, svgOrigin: "134 600", duration: 0.45, ease: "power3.out" }, 0.55);
+    const targets = [740, 610, 480, 350, 220];
+    targets.forEach((tx, i) => {
+      const t0 = 0.9 + i * 0.22;
+      tl.fromTo("#dw-c" + i, { opacity: 0, x: 0 }, { opacity: 1, duration: 0.15, ease: "none" }, t0);
+      tl.fromTo("#dw-c" + i, { x: 0 }, { x: tx, duration: 1.0, ease: "power2.inOut" }, t0);
+      tl.fromTo("#dw-c" + i, { y: 0 }, { y: -14, duration: 0.25, ease: "sine.inOut", yoyo: true, repeat: 3 }, t0);
+    });
+    // The lead sets the finished job on the desk.
+    tl.fromTo("#dw-folder", { opacity: 0, x: -60, y: -30 }, { opacity: 1, x: 0, y: 0, duration: 0.35, ease: "power3.out" }, 2.35);
+    out("#dw-cap1", 3.05);
+    wipe("#dw-cap2", 3.2);
+    // ...and they leave the way they came.
+    targets.forEach((tx, i) => {
+      const t0 = 3.0 + (4 - i) * 0.16;
+      tl.to("#dw-c" + i, { x: 0, duration: 0.85, ease: "power2.inOut" }, t0);
+      tl.to("#dw-c" + i, { opacity: 0, duration: 0.15, ease: "none" }, t0 + 0.8);
+    });
+    tl.to("#dw-door", { scaleX: 1, svgOrigin: "134 600", duration: 0.35, ease: "power3.in" }, 4.75);
+    out("#dw-cap2", 5.45);
+    // The phones go quiet, one by one.
+    for (let i = 0; i < 6; i++) {
+      tl.fromTo("#dw-i" + i, { opacity: 0, y: -20 }, { opacity: 1, y: 0, duration: 0.25, ease: "power3.out" }, 5.55 + i * 0.05);
+      tl.to("#dw-il" + i, { opacity: 0, duration: 0.12, ease: "power2.in" }, 6.0 + i * 0.3);
+    }
+    tl.to(".inset", { opacity: 0, y: -20, duration: 0.25, ease: "power3.in" }, 7.7);
+    // One last ring.
+    tl.fromTo("#dw-phone", { x: 0 }, { x: 3, duration: 0.05, ease: "none", yoyo: true, repeat: 9 }, 7.9);
+    tl.fromTo("#dw-ring", { opacity: 0, scale: 0.4, rotation: 0 }, { opacity: 1, scale: 1, rotation: -6, duration: 0.18, ease: "expo.out" }, 7.92);
+    out("#dw-ring", 8.35);
+    tl.fromTo("#dw-arm", { x: 520, y: 420 }, { x: 0, y: 0, duration: 0.45, ease: "power3.out" }, 8.0);
+    tl.to("#dw-receiver, #dw-arm", { y: -90, duration: 0.3, ease: "power2.out" }, 8.45);
+    pop("#dw-bv", 8.55, "80% 100%");
+    window.__timelines["dawn"] = tl;
+  </script>
+</template>

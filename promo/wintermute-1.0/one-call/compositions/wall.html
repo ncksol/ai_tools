@@ -1,0 +1,147 @@
+<template>
+  <style>
+    @font-face { font-family: "Special Elite"; src: url("assets/fonts/special-elite-400.woff2") format("woff2"); font-weight: 400; font-style: normal; }
+    @font-face { font-family: "Patrick Hand"; src: url("assets/fonts/patrick-hand-400.woff2") format("woff2"); font-weight: 400; font-style: normal; }
+    #root { position: absolute; inset: 0; overflow: hidden; background: #0a0c0f; }
+    #root .cap { position: absolute; z-index: 30; background: var(--color-paper, #ece8df); color: var(--color-ink, #0a0c0f); font-family: "Special Elite", monospace; font-size: 38px; line-height: 1.25; padding: 14px 26px 12px; border: 3px solid var(--color-ink, #0a0c0f); box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.6); white-space: nowrap; clip-path: inset(-30% 100% -30% -6%); }
+    #root .bal { position: absolute; z-index: 32; font-family: "Patrick Hand", sans-serif; text-transform: uppercase; font-size: 54px; line-height: 1; padding: 24px 40px 20px; border: 4px solid; border-radius: 48px; white-space: nowrap; opacity: 0; }
+    #root .bal.voice { background: var(--color-ink, #0a0c0f); color: var(--color-neon, #58cfc2); border-color: var(--color-neon, #58cfc2); }
+    #root .bal svg { position: absolute; overflow: visible; }
+    #root .tw { font-family: "Special Elite", monospace; }
+    #root .lg { font-family: "League Gothic", sans-serif; }
+    #wl-art { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
+  </style>
+  <div id="root" data-composition-id="wall" data-width="1920" data-height="1080">
+    <svg id="wl-art" viewBox="0 0 1920 1080" width="1920" height="1080">
+      <defs>
+        <radialGradient id="wl-lamp" cx="880" cy="140" r="1050" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#c9ccd1" stop-opacity="0.34" />
+          <stop offset="0.5" stop-color="#c9ccd1" stop-opacity="0.1" />
+          <stop offset="1" stop-color="#c9ccd1" stop-opacity="0" />
+        </radialGradient>
+      </defs>
+      <rect width="1920" height="1080" fill="#15191e" />
+      <g id="wl-cracks" stroke="#0e1114" stroke-width="3" fill="none">
+        <path d="M120 0 L160 140 L130 260 M1820 1080 L1760 900 L1790 780 M300 1080 L340 960" />
+      </g>
+      <rect width="1920" height="1080" fill="url(#wl-lamp)" />
+      <path d="M880 0 V54" stroke="#0a0c0f" stroke-width="6" />
+      <path d="M826 96 Q880 40 934 96 Z" fill="#0a0c0f" />
+      <ellipse cx="880" cy="98" rx="20" ry="8" fill="#ece8df" />
+      <g id="wl-strings" stroke="#b3262e" stroke-width="5" stroke-linecap="round"></g>
+      <g id="wl-cards"></g>
+      <g id="wl-folder" data-layout-allow-overlap>
+        <rect x="770" y="420" width="140" height="40" rx="6" fill="#d9d2c1" stroke="#0a0c0f" stroke-width="5" />
+        <rect x="770" y="445" width="380" height="256" rx="6" fill="#e2dccd" stroke="#0a0c0f" stroke-width="6" />
+        <path d="M800 480 H1080 M800 506 H1010" stroke="#8a929c" stroke-width="5" />
+        <g transform="rotate(-7 960 590)">
+          <rect x="818" y="540" width="284" height="100" fill="none" stroke="#b3262e" stroke-width="8" />
+          <text class="lg" x="960" y="622" text-anchor="middle" font-size="84" letter-spacing="4" fill="#b3262e">THE JOB</text>
+        </g>
+        <circle cx="960" cy="452" r="12" fill="#3a424d" stroke="#0a0c0f" stroke-width="4" />
+      </g>
+      <!-- The Voice: a coiled cord and a dangling handset, never a body -->
+      <g id="wl-voice">
+        <path id="wl-cord-rim" fill="none" stroke="#58cfc2" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" opacity="0.85" />
+        <path id="wl-cord" fill="none" stroke="#0a0c0f" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" />
+        <g id="wl-handset">
+          <path d="M1712 590 C1700 610 1700 690 1712 712 L1748 712 C1740 690 1740 610 1748 590 Z" fill="#0a0c0f" stroke="#58cfc2" stroke-width="3" />
+          <rect x="1690" y="566" width="80" height="36" rx="16" fill="#0a0c0f" stroke="#58cfc2" stroke-width="3" />
+          <rect x="1690" y="700" width="80" height="36" rx="16" fill="#0a0c0f" stroke="#58cfc2" stroke-width="3" />
+        </g>
+      </g>
+      <path id="wl-wave" fill="none" stroke="#58cfc2" stroke-width="5" stroke-linejoin="round" stroke-linecap="round" />
+    </svg>
+
+    <div id="wl-cap" class="cap" style="left: 96px; top: 84px">Nobody has ever seen the Voice.</div>
+    <div id="wl-b1" class="bal voice" style="left: 1170px; top: 360px">
+      Let's take it apart.
+      <svg width="120" height="140" style="left: 470px; top: 96px"><polyline points="20,0 44,40 22,52 58,96 42,104 92,150" fill="none" stroke="#58cfc2" stroke-width="5" stroke-linejoin="round" /></svg>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const NS = "http://www.w3.org/2000/svg";
+      // Six pieces of the job, one per member of the crew.
+      const cards = [
+        ["THE SAFE", 520, 270, -4],
+        ["THE PAPERS", 1380, 260, 3],
+        ["THE BLUEPRINTS", 420, 590, 2],
+        ["THE ROUTE", 1490, 610, -3],
+        ["THE 2ND FLOOR", 680, 880, 3],
+        ["THE APPRAISAL", 1250, 885, -2],
+      ];
+      const cg = document.getElementById("wl-cards");
+      const sg = document.getElementById("wl-strings");
+      cards.forEach(([label, x, y, r], i) => {
+        const g = document.createElementNS(NS, "g");
+        g.setAttribute("id", "wl-c" + i);
+        g.innerHTML =
+          '<g transform="rotate(' + r + " " + x + " " + y + ')">' +
+          '<rect x="' + (x - 170) + '" y="' + (y - 70) + '" width="340" height="140" fill="#ece8df" stroke="#0a0c0f" stroke-width="5"/>' +
+          '<path d="M' + (x - 150) + " " + (y - 34) + " H" + (x + 150) + '" stroke="#b3262e" stroke-width="3" opacity="0.6"/>' +
+          '<text class="tw" x="' + x + '" y="' + (y + 22) + '" text-anchor="middle" font-size="36" fill="#0a0c0f">' + label + "</text>" +
+          '<circle cx="' + x + '" cy="' + (y - 52) + '" r="11" fill="#3a424d" stroke="#0a0c0f" stroke-width="4"/></g>';
+        cg.appendChild(g);
+        const ln = document.createElementNS(NS, "line");
+        ln.setAttribute("id", "wl-s" + i);
+        ln.setAttribute("x1", 960);
+        ln.setAttribute("y1", 452);
+        ln.setAttribute("x2", x);
+        ln.setAttribute("y2", y - 52);
+        const len = Math.hypot(x - 960, y - 52 - 452);
+        ln.setAttribute("stroke-dasharray", len + " " + (len + 10));
+        ln.setAttribute("stroke-dashoffset", len);
+        sg.appendChild(ln);
+      });
+      // Coiled cord from the top edge down to the handset.
+      let d = "";
+      for (let i = 0; i <= 260; i++) {
+        const th = i * 0.38;
+        const x = 1730 + 26 * Math.sin(th);
+        const y = -20 + i * 2.2 + 12 * Math.cos(th);
+        d += (i ? " L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
+      }
+      document.getElementById("wl-cord").setAttribute("d", d);
+      document.getElementById("wl-cord-rim").setAttribute("d", d);
+    })();
+
+    const tl = gsap.timeline({ paused: true });
+    // The waveform is a function of time: idle hum, louder while the Voice speaks.
+    const speech = [[1.9, 3.5]];
+    const wave = { t: 0 };
+    const drawWave = () => {
+      const t = wave.t;
+      let a = 0.06;
+      speech.forEach(([s, e]) => {
+        if (t > s - 0.15 && t < e + 0.25) a = Math.max(a, Math.min(1, (t - s + 0.15) / 0.15, (e + 0.25 - t) / 0.25));
+      });
+      let d = "";
+      for (let i = 0; i <= 140; i++) {
+        const x = 1150 + i * 5;
+        const env = Math.sin((i / 140) * Math.PI);
+        const y = 990 + a * 70 * env * Math.sin(i * 0.55 + t * 21) * Math.sin(i * 0.13 - t * 7.3) + 3 * Math.sin(i * 0.9 + t * 11);
+        d += (i ? " L" : "M") + x + " " + y.toFixed(1);
+      }
+      document.getElementById("wl-wave").setAttribute("d", d);
+    };
+    tl.fromTo(wave, { t: 0 }, { t: 7.5, duration: 7.5, ease: "none", onUpdate: drawWave }, 0);
+
+    tl.fromTo("#wl-voice", { y: -760 }, { y: 0, duration: 0.7, ease: "power3.out" }, 0.05);
+    tl.fromTo("#wl-handset", { rotation: 7 }, { keyframes: [{ rotation: -5, duration: 0.5 }, { rotation: 3, duration: 0.5 }, { rotation: -1.5, duration: 0.5 }, { rotation: 0, duration: 0.5 }], ease: "sine.inOut", svgOrigin: "1730 566" }, 0.6);
+    tl.fromTo("#wl-cap", { clipPath: "inset(-30% 100% -30% -6%)" }, { clipPath: "inset(-30% -6% -30% -6%)", duration: 0.32, ease: "power2.out" }, 0.2);
+
+    // The job arrives and is pinned to the wall.
+    tl.fromTo("#wl-folder", { y: 700, rotation: 8, transformOrigin: "50% 50%" }, { y: 0, rotation: 0, duration: 0.6, ease: "expo.out" }, 0.0);
+    tl.fromTo("#wl-b1", { opacity: 0, scale: 0.86, transformOrigin: "90% 100%" }, { opacity: 1, scale: 1, duration: 0.2, ease: "power3.out" }, 1.9);
+    tl.to("#wl-b1", { opacity: 0, duration: 0.15, ease: "power3.in" }, 3.55);
+
+    // The Voice takes it apart: six pieces fly out, red string ties each back to the job.
+    for (let i = 0; i < 6; i++) {
+      tl.fromTo("#wl-c" + i, { x: (960 - [520, 1380, 420, 1490, 680, 1250][i]) * 0.9, y: (560 - [270, 260, 590, 610, 880, 885][i]) * 0.9, scale: 0.3, opacity: 0, transformOrigin: "50% 50%" }, { x: 0, y: 0, scale: 1, opacity: 1, duration: 0.5, ease: "expo.out" }, 3.6 + i * 0.12);
+      tl.to("#wl-s" + i, { strokeDashoffset: 0, duration: 0.45, ease: "power2.out" }, 4.1 + i * 0.15);
+    }
+    tl.to("#wl-cap", { opacity: 0, duration: 0.16, ease: "power3.in" }, 7.1);
+    window.__timelines["wall"] = tl;
+  </script>
+</template>

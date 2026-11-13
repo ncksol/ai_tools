@@ -1,0 +1,181 @@
+<template>
+  <style>
+    @font-face { font-family: "Special Elite"; src: url("assets/fonts/special-elite-400.woff2") format("woff2"); font-weight: 400; font-style: normal; }
+    @font-face { font-family: "Patrick Hand"; src: url("assets/fonts/patrick-hand-400.woff2") format("woff2"); font-weight: 400; font-style: normal; }
+    #root { position: absolute; inset: 0; overflow: hidden; background: #14181d; }
+    #root .cap { position: absolute; z-index: 30; background: var(--color-paper, #ece8df); color: var(--color-ink, #0a0c0f); font-family: "Special Elite", monospace; font-size: 38px; line-height: 1.25; padding: 14px 26px 12px; border: 3px solid var(--color-ink, #0a0c0f); box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.6); white-space: nowrap; clip-path: inset(-30% 100% -30% -6%); }
+    #root .lbl { opacity: 0; position: absolute; z-index: 28; background: var(--color-paper, #ece8df); color: var(--color-ink, #0a0c0f); font-family: "Special Elite", monospace; font-size: 30px; padding: 6px 16px 4px; border: 3px solid var(--color-ink, #0a0c0f); white-space: nowrap; }
+    #root .bal { position: absolute; z-index: 32; font-family: "Patrick Hand", sans-serif; text-transform: uppercase; font-size: 50px; line-height: 1.05; padding: 22px 38px 18px; border: 4px solid; border-radius: 48px; white-space: nowrap; opacity: 0; background: #fbfaf6; color: var(--color-ink, #0a0c0f); border-color: var(--color-ink, #0a0c0f); }
+    #root .bal.voice { background: var(--color-ink, #0a0c0f); color: var(--color-neon, #58cfc2); border-color: var(--color-neon, #58cfc2); text-align: center; }
+    #root .bal svg { position: absolute; overflow: visible; }
+    #ln-map { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; }
+  </style>
+  <div id="root" data-composition-id="lines" data-width="1920" data-height="1080">
+    <svg id="ln-map" viewBox="0 0 1920 1080" width="1920" height="1080">
+      <rect width="1920" height="1080" fill="#14181d" />
+      <g id="ln-streets" stroke="#1d232a" stroke-width="22"></g>
+      <path d="M-20 660 C300 610 520 720 860 690 S1500 600 1940 700" fill="none" stroke="#0e1115" stroke-width="70" />
+      <g id="ln-wires" fill="none" stroke="#5b6470" stroke-width="6" stroke-linecap="round"></g>
+      <g id="ln-hot" fill="none" stroke="#58cfc2" stroke-width="8" stroke-linecap="round"></g>
+      <g id="ln-direct">
+        <path d="M330 420 L330 670" fill="none" stroke="#8a929c" stroke-width="5" stroke-dasharray="14 12" />
+        <circle cx="330" cy="545" r="30" fill="#14181d" stroke="#ece8df" stroke-width="5" />
+        <path d="M314 529 L346 561 M346 529 L314 561" stroke="#ece8df" stroke-width="6" stroke-linecap="round" />
+      </g>
+      <g id="ln-nodes"></g>
+      <g id="ln-voice">
+        <circle cx="960" cy="540" r="132" fill="#0a0c0f" stroke="#58cfc2" stroke-width="7" />
+        <path id="ln-wave" fill="none" stroke="#58cfc2" stroke-width="5" stroke-linejoin="round" />
+        <g transform="translate(960 500) rotate(-30)">
+          <path d="M-14 -50 C-22 -34 -22 34 -14 50 L14 50 C8 34 8 -34 14 -50 Z" fill="#0a0c0f" stroke="#58cfc2" stroke-width="3" />
+          <rect x="-34" y="-68" width="68" height="28" rx="12" fill="#0a0c0f" stroke="#58cfc2" stroke-width="3" />
+          <rect x="-34" y="40" width="68" height="28" rx="12" fill="#0a0c0f" stroke="#58cfc2" stroke-width="3" />
+        </g>
+      </g>
+      <circle id="ln-pulse" r="16" fill="#a8f3ea" stroke="#58cfc2" stroke-width="6" opacity="0" />
+      <g id="ln-print" opacity="0">
+        <rect x="-70" y="-46" width="140" height="92" fill="#58cfc2" stroke="#0a0c0f" stroke-width="4" />
+        <path d="M-70 -16 H70 M-70 14 H70 M-30 -46 V46 M20 -46 V46" stroke="#0a0c0f" stroke-width="2" opacity="0.5" />
+        <path d="M-50 -30 H-10 V6 H40 V30" fill="none" stroke="#ece8df" stroke-width="4" />
+      </g>
+    </svg>
+
+    <div id="ln-cap1" class="cap" style="left: 520px; top: 52px">Nobody calls each other.</div>
+    <div id="ln-cap2" class="cap" style="left: 520px; top: 134px">Every line runs through the Voice.</div>
+    <div id="ln-l0" class="lbl" style="left: 232px; top: 412px">SAFECRACKER</div>
+    <div id="ln-l1" class="lbl" style="left: 1522px; top: 412px">FORGER</div>
+    <div id="ln-l2" class="lbl" style="left: 247px; top: 912px">LIBRARIAN</div>
+    <div id="ln-l3" class="lbl" style="left: 1527px; top: 912px">DRIVER</div>
+
+    <div id="ln-b1" class="bal" style="left: 470px; top: 236px">
+      I need a blueprint.
+      <svg width="140" height="150" style="left: 40px; top: 96px"><path d="M10,0 L70,0 L-80,60 Z" fill="#fbfaf6" /><path d="M10,0 L-80,60 L70,0" fill="none" stroke="#0a0c0f" stroke-width="4" stroke-linejoin="round" /></svg>
+    </div>
+    <div id="ln-b2" class="bal voice" style="left: 520px; top: 740px">
+      Librarian.<br />The safecracker needs a blueprint.
+      <svg width="200" height="140" style="left: 400px; top: -116px"><polyline points="40,120 70,80 46,68 90,24 66,14 100,-20" fill="none" stroke="#58cfc2" stroke-width="5" stroke-linejoin="round" /></svg>
+    </div>
+  </div>
+  <script>
+    const NODES = [
+      ["sc", 330, 290],
+      ["fo", 1590, 290],
+      ["li", 330, 790],
+      ["dr", 1590, 790],
+    ];
+    const wirePath = (x, y) => {
+      const ex = 960 + (x < 960 ? -132 : 132) * 0.8;
+      const ey = 540 + (y < 540 ? -132 : 132) * 0.6;
+      const sx = x + (x < 960 ? 104 : -104);
+      const mx = (sx + ex) / 2;
+      const my = (y + ey) / 2 + 60;
+      return "M" + sx + " " + y + " Q" + mx + " " + my + " " + ex.toFixed(0) + " " + ey.toFixed(0);
+    };
+    (function () {
+      const NS = "http://www.w3.org/2000/svg";
+      let s = "";
+      for (let x = 80; x < 1920; x += 240) s += '<path d="M' + x + ' 0 V1080"/>';
+      for (let y = 120; y < 1080; y += 200) s += '<path d="M0 ' + y + ' H1920"/>';
+      document.getElementById("ln-streets").innerHTML = s;
+      let w = "", h = "", n = "";
+      NODES.forEach(([id, x, y]) => {
+        w += '<path id="ln-w-' + id + '" d="' + wirePath(x, y) + '"/>';
+        h += '<path id="ln-h-' + id + '" d="' + wirePath(x, y) + '"/>';
+        n +=
+          '<g id="ln-n-' + id + '"><circle cx="' + x + '" cy="' + y + '" r="104" fill="#ece8df" stroke="#0a0c0f" stroke-width="8"/>' +
+          '<clipPath id="ln-c-' + id + '"><circle cx="' + x + '" cy="' + y + '" r="98"/></clipPath>' +
+          '<g clip-path="url(#ln-c-' + id + ')" fill="#0a0c0f"><circle cx="' + x + '" cy="' + (y - 6) + '" r="34"/>' +
+          '<ellipse cx="' + x + '" cy="' + (y - 34) + '" rx="66" ry="12"/><path d="M' + (x - 40) + " " + (y - 34) + " C" + (x - 40) + " " + (y - 84) + " " + (x + 40) + " " + (y - 84) + " " + (x + 40) + " " + (y - 34) + ' Z"/>' +
+          '<path d="M' + (x - 92) + " " + (y + 110) + " C" + (x - 84) + " " + (y + 50) + " " + (x - 50) + " " + (y + 30) + " " + x + " " + (y + 30) + " C" + (x + 50) + " " + (y + 30) + " " + (x + 84) + " " + (y + 50) + " " + (x + 92) + " " + (y + 110) + ' Z"/></g></g>';
+      });
+      document.getElementById("ln-wires").innerHTML = w;
+      document.getElementById("ln-hot").innerHTML = h;
+      document.getElementById("ln-nodes").innerHTML = n;
+      NODES.forEach(([id]) => {
+        const p = document.getElementById("ln-w-" + id);
+        const L = p.getTotalLength() || 700;
+        p.setAttribute("stroke-dasharray", L + " " + L);
+        p.setAttribute("stroke-dashoffset", L);
+        const q = document.getElementById("ln-h-" + id);
+        q.setAttribute("stroke-dasharray", L + " " + L);
+        q.setAttribute("stroke-dashoffset", L);
+      });
+    })();
+
+    const tl = gsap.timeline({ paused: true });
+    const wipe = (sel, at) => tl.fromTo(sel, { clipPath: "inset(-30% 100% -30% -6%)" }, { clipPath: "inset(-30% -6% -30% -6%)", duration: 0.32, ease: "power2.out" }, at);
+    const pop = (sel, at, origin) => tl.fromTo(sel, { opacity: 0, scale: 0.86, transformOrigin: origin }, { opacity: 1, scale: 1, duration: 0.2, ease: "power3.out" }, at);
+    const speech = [[3.75, 6.1]];
+    const wave = { t: 0 };
+    tl.to(wave, { t: 7.5, duration: 7.5, ease: "none", onUpdate: () => {
+      const t = wave.t;
+      let a = 0.1;
+      speech.forEach(([s, e]) => { if (t > s - 0.15 && t < e + 0.25) a = Math.max(a, Math.min(1, (t - s + 0.15) / 0.15, (e + 0.25 - t) / 0.25)); });
+      let d = "";
+      for (let i = 0; i <= 60; i++) {
+        const x = 880 + i * (160 / 60);
+        const env = Math.sin((i / 60) * Math.PI);
+        d += (i ? " L" : "M") + x.toFixed(1) + " " + (585 + a * 30 * env * Math.sin(i * 0.9 + t * 21) * Math.sin(i * 0.21 - t * 7)).toFixed(1);
+      }
+      document.getElementById("ln-wave").setAttribute("d", d);
+    } }, 0);
+
+    // The map draws itself: four strangers, one switchboard.
+    tl.fromTo("#ln-voice", { scale: 0.6, opacity: 0, transformOrigin: "50% 50%" }, { scale: 1, opacity: 1, duration: 0.45, ease: "expo.out" }, 0.0);
+    ["sc", "fo", "li", "dr"].forEach((id, i) => {
+      tl.fromTo("#ln-n-" + id, { scale: 0.5, opacity: 0, transformOrigin: "50% 50%" }, { scale: 1, opacity: 1, duration: 0.4, ease: "expo.out" }, 0.1 + i * 0.1);
+      tl.to("#ln-w-" + id, { strokeDashoffset: 0, duration: 0.6, ease: "power2.out" }, 0.4 + i * 0.12);
+      tl.fromTo("#ln-l" + i, { opacity: 0 }, { opacity: 1, duration: 0.2, ease: "power2.out" }, 0.25 + i * 0.1);
+    });
+    wipe("#ln-cap1", 0.3);
+    tl.fromTo("#ln-direct", { opacity: 0 }, { opacity: 1, duration: 0.2, ease: "power2.out" }, 0.9);
+    wipe("#ln-cap2", 1.4);
+
+    // A request travels to the Voice, the Voice calls the librarian, the blueprint comes back.
+    pop("#ln-b1", 2.15, "10% 100%");
+    tl.to("#ln-b1", { opacity: 0, duration: 0.15, ease: "power3.in" }, 4.6);
+    const SAMPLES = {};
+    ["sc", "fo", "li", "dr"].forEach((id) => {
+      const p = document.getElementById("ln-w-" + id);
+      const L = p.getTotalLength() || 700;
+      const pts = [];
+      for (let k = 0; k <= 100; k++) {
+        const pt = p.getPointAtLength((L * k) / 100);
+        pts.push([pt.x, pt.y]);
+      }
+      SAMPLES[id] = pts;
+    });
+    const at = (id, u) => {
+      const pts = SAMPLES[id];
+      const f = Math.max(0, Math.min(1, u)) * 100;
+      const k = Math.min(99, Math.floor(f));
+      const r = f - k;
+      return [pts[k][0] + (pts[k + 1][0] - pts[k][0]) * r, pts[k][1] + (pts[k + 1][1] - pts[k][1]) * r];
+    };
+    const along = (id, from, to, start, dur) => {
+      const o = { u: from };
+      tl.to(o, { u: to, duration: dur, ease: "power2.inOut", onUpdate: () => {
+        const [x, y] = at(id, o.u);
+        gsap.set("#ln-pulse", { attr: { cx: x, cy: y } });
+      } }, start);
+    };
+    tl.to("#ln-pulse", { opacity: 1, duration: 0.1 }, 3.0);
+    along("sc", 0, 1, 3.0, 0.6);
+    tl.to("#ln-h-sc", { strokeDashoffset: 0, duration: 0.6, ease: "power2.inOut" }, 3.0);
+    pop("#ln-b2", 3.75, "50% 0%");
+    along("li", 1, 0, 3.8, 0.6);
+    tl.to("#ln-h-li", { strokeDashoffset: 0, duration: 0.6, ease: "power2.inOut" }, 3.8);
+    tl.to("#ln-pulse", { opacity: 0, duration: 0.1 }, 4.4);
+    tl.to("#ln-b2", { opacity: 0, duration: 0.15, ease: "power3.in" }, 6.2);
+
+    const carry = { u: 0 };
+    const placePrint = () => {
+      const u = carry.u;
+      const [x, y] = u < 1 ? at("li", u) : at("sc", 2 - u);
+      gsap.set("#ln-print", { x, y });
+    };
+    tl.fromTo("#ln-print", { opacity: 0, scale: 0.5, x: 434, y: 790, transformOrigin: "50% 50%" }, { opacity: 1, scale: 1, duration: 0.3, ease: "expo.out" }, 4.7);
+    tl.to(carry, { u: 2, duration: 1.3, ease: "power2.inOut", onUpdate: placePrint }, 5.0);
+    window.__timelines["lines"] = tl;
+  </script>
+</template>

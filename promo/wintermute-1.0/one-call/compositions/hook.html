@@ -1,0 +1,193 @@
+<template>
+  <style>
+    @font-face { font-family: "Special Elite"; src: url("assets/fonts/special-elite-400.woff2") format("woff2"); font-weight: 400; font-style: normal; }
+    @font-face { font-family: "Bangers"; src: url("assets/fonts/bangers-400.woff2") format("woff2"); font-weight: 400; font-style: normal; }
+    #root { position: absolute; inset: 0; overflow: hidden; background: #0a0c0f; }
+    #root .cap { position: absolute; z-index: 30; background: var(--color-paper, #ece8df); color: var(--color-ink, #0a0c0f); font-family: "Special Elite", monospace; font-size: 38px; line-height: 1.25; padding: 14px 26px 12px; border: 3px solid var(--color-ink, #0a0c0f); box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.6); white-space: nowrap; }
+    #hk-cap2, #hk-cap3 { clip-path: inset(-30% 100% -30% -6%); }
+    #root .sfx { position: absolute; z-index: 25; font-family: "Bangers", sans-serif; color: var(--color-paper, #ece8df); -webkit-text-stroke: 7px var(--color-ink, #0a0c0f); paint-order: stroke fill; letter-spacing: 0.04em; white-space: nowrap; line-height: 1; opacity: 0; }
+    #hk-cam { position: absolute; left: 0; top: 0; width: 1920px; height: 2160px; }
+    #hk-door, #hk-city { position: absolute; left: 0; width: 1920px; height: 1080px; }
+    #hk-city { top: 0; }
+    #hk-door { top: 1080px; }
+    #root .lg { font-family: "League Gothic", sans-serif; }
+    #hk-hand { position: absolute; left: 0; top: 0; width: 1000px; height: 1000px; z-index: 20; }
+    #hk-dip { position: absolute; inset: 0; background: #000; opacity: 0; z-index: 40; }
+  </style>
+  <div id="root" data-composition-id="hook" data-width="1920" data-height="1080">
+    <div id="hk-cam">
+      <!-- City: payphones across the skyline -->
+      <svg id="hk-city" viewBox="0 0 1920 1080" width="1920" height="1080">
+        <rect width="1920" height="1080" fill="#161b21" />
+        <g id="hk-far" fill="#1f252c"></g>
+        <g id="hk-far-win" fill="#ece8df"></g>
+        <g id="hk-mid" fill="#101318"></g>
+        <g id="hk-mid-win" fill="#ece8df"></g>
+        <rect x="0" y="905" width="1920" height="175" fill="#0b0d10" />
+        <g id="hk-wet" stroke="#2b313a" stroke-width="3" opacity="0.8">
+          <line x1="40" y1="960" x2="420" y2="960" /><line x1="560" y1="1000" x2="980" y2="1000" />
+          <line x1="1120" y1="955" x2="1500" y2="955" /><line x1="1600" y1="1015" x2="1880" y2="1015" />
+        </g>
+        <g id="hk-booths"></g>
+      </svg>
+      <!-- Door: the slot marked W -->
+      <svg id="hk-door" viewBox="0 0 1920 1080" width="1920" height="1080">
+        <defs>
+          <pattern id="hk-brick" width="160" height="56" patternUnits="userSpaceOnUse">
+            <rect width="160" height="56" fill="#14181d" />
+            <path d="M0 1 H160 M0 29 H160 M2 0 V28 M82 28 V56" stroke="#090b0d" stroke-width="5" />
+          </pattern>
+          <radialGradient id="hk-wash" cx="1440" cy="260" r="900" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#58cfc2" stop-opacity="0.32" />
+            <stop offset="0.55" stop-color="#58cfc2" stop-opacity="0.08" />
+            <stop offset="1" stop-color="#58cfc2" stop-opacity="0" />
+          </radialGradient>
+        </defs>
+        <rect width="1920" height="1080" fill="url(#hk-brick)" />
+        <rect x="620" y="70" width="680" height="1010" fill="#0b0d10" />
+        <rect x="660" y="96" width="600" height="984" fill="#1b1f25" stroke="#0a0c0f" stroke-width="8" />
+        <rect x="722" y="172" width="476" height="340" rx="4" fill="#21262d" stroke="#0a0c0f" stroke-width="6" />
+        <rect x="722" y="730" width="476" height="300" rx="4" fill="#21262d" stroke="#0a0c0f" stroke-width="6" />
+        <circle cx="1196" cy="690" r="17" fill="#3a424d" stroke="#0a0c0f" stroke-width="5" />
+        <rect x="816" y="566" width="288" height="98" rx="10" fill="#3a424d" stroke="#0a0c0f" stroke-width="6" />
+        <rect x="844" y="594" width="232" height="42" fill="#040506" />
+        <g id="hk-flap" data-layout-allow-overlap>
+          <rect x="844" y="594" width="232" height="42" fill="#5b6470" stroke="#0a0c0f" stroke-width="4" />
+          <text class="lg" data-layout-ignore x="960" y="627" text-anchor="middle" font-size="38" letter-spacing="2" fill="#58cfc2">W</text>
+        </g>
+        <!-- The projecting neon sign -->
+        <rect x="1300" y="150" width="210" height="16" fill="#0a0c0f" />
+        <rect x="1330" y="160" width="300" height="262" rx="10" fill="#0d1013" stroke="#232930" stroke-width="8" />
+        <polyline points="1372,200 1420,382 1480,248 1540,382 1588,200" fill="none" stroke="#12403b" stroke-width="30" stroke-linejoin="round" stroke-linecap="round" />
+        <polyline id="hk-tube" points="1372,200 1420,382 1480,248 1540,382 1588,200" fill="none" stroke="#58cfc2" stroke-width="12" stroke-linejoin="round" stroke-linecap="round" />
+        <polyline points="1372,200 1420,382 1480,248 1540,382 1588,200" fill="none" stroke="#c8fbf5" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round" />
+        <rect width="1920" height="1080" fill="url(#hk-wash)" />
+      </svg>
+    </div>
+
+    <!-- The engineer's arm and the job: local (0,0) is the folder centre, at (700,300) in this layer -->
+    <svg id="hk-hand" viewBox="-700 -300 1000 1000" width="1000" height="1000">
+          <path d="M-640,660 L-330,660 L-300,520 L-560,490 Z" fill="#c9ccd1" stroke="#0a0c0f" stroke-width="6" stroke-linejoin="round" />
+          <path d="M-560,560 L-320,585 M-575,615 L-322,630" stroke="#8a929c" stroke-width="5" />
+          <path d="M-520,505 L-318,520 L-150,175 L-245,128 Z" fill="#9aa1aa" stroke="#0a0c0f" stroke-width="6" stroke-linejoin="round" />
+          <g id="hk-folder" data-layout-allow-overlap>
+            <rect x="-200" y="-160" width="140" height="40" rx="6" fill="#d9d2c1" stroke="#0a0c0f" stroke-width="5" />
+            <rect x="-200" y="-135" width="400" height="270" rx="6" fill="#e2dccd" stroke="#0a0c0f" stroke-width="6" />
+            <path d="M-170 -100 H120 M-170 -76 H60" stroke="#8a929c" stroke-width="5" />
+            <g transform="rotate(-7)">
+              <rect x="-150" y="-48" width="300" height="104" fill="none" stroke="#b3262e" stroke-width="8" />
+              <text class="lg" x="0" y="34" text-anchor="middle" font-size="88" letter-spacing="4" fill="#b3262e">THE JOB</text>
+            </g>
+          </g>
+          <rect x="-238" y="62" width="96" height="92" rx="34" fill="#9aa1aa" stroke="#0a0c0f" stroke-width="6" />
+          <ellipse cx="-150" cy="70" rx="34" ry="20" fill="#9aa1aa" stroke="#0a0c0f" stroke-width="6" />
+    </svg>
+
+    <div id="hk-cap1" class="cap" style="left: 96px; top: 84px">2:00 A.M.</div>
+    <div id="hk-cap2" class="cap" style="left: 96px; top: 166px">Too big for one night.</div>
+    <div id="hk-cap3" class="cap" style="left: 96px; top: 84px">Every payphone in the city starts ringing.</div>
+
+    <div id="hk-r1" class="sfx" style="left: 880px; top: 470px; font-size: 104px">RRRING!</div>
+    <div id="hk-r2" class="sfx" style="left: 1220px; top: 520px; font-size: 84px">RRRING!</div>
+    <div id="hk-r3" class="sfx" style="left: 380px; top: 520px; font-size: 84px">RRRING!</div>
+    <div id="hk-r4" class="sfx" style="left: 1510px; top: 520px; font-size: 76px">RING!</div>
+    <div id="hk-r5" class="sfx" style="left: 90px; top: 545px; font-size: 76px">RING!</div>
+    <div id="hk-r6" class="sfx" style="left: 1290px; top: 250px; font-size: 54px">RING!</div>
+    <div id="hk-r7" class="sfx" style="left: 560px; top: 280px; font-size: 50px">RING!</div>
+    <div id="hk-r8" class="sfx" style="left: 1690px; top: 330px; font-size: 46px">RING!</div>
+
+    <div id="hk-dip"></div>
+  </div>
+  <script>
+    (function () {
+      // Seeded city layout: same buildings and lit windows on every render.
+      let seed = 7;
+      const rnd = () => {
+        seed = (seed * 16807) % 2147483647;
+        return (seed - 1) / 2147483646;
+      };
+      const NS = "http://www.w3.org/2000/svg";
+      const add = (parent, tag, attrs) => {
+        const el = document.createElementNS(NS, tag);
+        for (const k in attrs) el.setAttribute(k, attrs[k]);
+        document.getElementById(parent).appendChild(el);
+        return el;
+      };
+      const skyline = (g, wg, x0, minH, maxH, base, minW, maxW, lit) => {
+        let x = x0;
+        while (x < 1960) {
+          const w = minW + rnd() * (maxW - minW);
+          const h = minH + rnd() * (maxH - minH);
+          add(g, "rect", { x, y: base - h, width: w, height: h });
+          for (let wy = base - h + 26; wy < base - 30; wy += 34) {
+            for (let wx = x + 14; wx < x + w - 18; wx += 26) {
+              if (rnd() < lit) add(wg, "rect", { x: wx, y: wy, width: 10, height: 16, opacity: (0.25 + rnd() * 0.5).toFixed(2) });
+            }
+          }
+          x += w + 6 + rnd() * 18;
+        }
+      };
+      skyline("hk-far", "hk-far-win", -30, 300, 620, 905, 90, 190, 0.18);
+      skyline("hk-mid", "hk-mid-win", -60, 160, 420, 905, 140, 260, 0.12);
+      // Street payphones: glass booths whose panes light teal when they ring.
+      const booths = [[200, 0.9], [500, 1.0], [800, 0.82], [1040, 1.12], [1330, 0.9], [1600, 1.0], [1830, 0.8]];
+      booths.forEach(([bx, k], i) => {
+        const b = 905;
+        const g = add("hk-booths", "g", { id: "hk-b" + i });
+        const r = (x, y, w, h, extra) => '<rect x="' + (bx + x * k) + '" y="' + (b + y * k) + '" width="' + w * k + '" height="' + h * k + '" ' + extra + "/>";
+        g.innerHTML =
+          r(-78, -306, 156, 306, 'rx="4" fill="#1c2128" stroke="#0a0c0f" stroke-width="7"') +
+          r(-64, -284, 128, 266, 'fill="#2b313a"') +
+          r(-64, -284, 128, 266, 'class="hk-lit" fill="#58cfc2" opacity="0"') +
+          r(-4, -284, 8, 266, 'fill="#1c2128"') +
+          r(-64, -196, 128, 8, 'fill="#1c2128"') +
+          r(-64, -104, 128, 8, 'fill="#1c2128"') +
+          r(14, -250, 40, 64, 'rx="4" fill="#0a0c0f"') +
+          r(22, -264, 14, 74, 'rx="6" fill="#0a0c0f"') +
+          r(-86, -328, 172, 30, 'rx="4" fill="#0a0c0f"') +
+          r(-48, -322, 96, 16, 'fill="#c9ccd1" opacity="0.8"');
+      });
+    })();
+
+    const tl = gsap.timeline({ paused: true });
+    const wipeIn = (sel, at) =>
+      tl.fromTo(sel, { clipPath: "inset(-30% 100% -30% -6%)" }, { clipPath: "inset(-30% -6% -30% -6%)", duration: 0.32, ease: "power2.out" }, at);
+    const out = (sel, at) => tl.to(sel, { opacity: 0, duration: 0.16, ease: "power3.in" }, at);
+
+    // Frame 0 is the thumbnail: door, neon W, the job in hand, "2:00 A.M."
+    tl.set("#hk-cam", { y: -1080 }, 0);
+    tl.set("#hk-hand", { x: -230, y: 400, rotation: -6, transformOrigin: "700px 300px" }, 0);
+    wipeIn("#hk-cap2", 0.45);
+
+    // The engineer lines the job up with the slot and pushes it through.
+    tl.to("#hk-hand", { x: 260, y: 315, rotation: 0, duration: 0.85, ease: "power2.inOut" }, 0.35);
+    tl.to("#hk-flap", { scaleY: 0.1, svgOrigin: "960 594", duration: 0.14, ease: "power2.out" }, 1.2);
+    tl.to("#hk-folder", { scaleX: 0.57, scaleY: 0.14, transformOrigin: "50% 50%", duration: 0.38, ease: "power3.in" }, 1.24);
+    tl.to("#hk-hand", { x: 290, duration: 0.38, ease: "power3.in" }, 1.24);
+    tl.to("#hk-folder", { scaleY: 0.01, opacity: 0, transformOrigin: "50% 50%", duration: 0.12, ease: "power2.in" }, 1.62);
+    tl.to("#hk-flap", { scaleY: 1, svgOrigin: "960 594", duration: 0.22, ease: "back.out(2.2)" }, 1.84);
+    tl.to("#hk-hand", { x: -320, y: 900, rotation: 10, duration: 0.6, ease: "power3.in" }, 1.86);
+    out("#hk-cap1, #hk-cap2", 2.75);
+
+    // Tilt up from the door to the skyline: every payphone starts ringing.
+    tl.to("#hk-cam", { y: 0, duration: 0.85, ease: "power2.inOut" }, 2.9);
+    const order = [3, 4, 2, 1, 5, 0, 6];
+    order.forEach((b, k) => {
+      const t = 3.55 + k * 0.22;
+      tl.to("#hk-b" + b + " .hk-lit", { opacity: 0.8, duration: 0.08, ease: "none" }, t);
+      tl.fromTo("#hk-b" + b, { x: 0 }, { x: 3, duration: 0.05, ease: "none", yoyo: true, repeat: 23 }, t);
+    });
+    const rings = ["#hk-r1", "#hk-r2", "#hk-r3", "#hk-r6", "#hk-r4", "#hk-r7", "#hk-r5", "#hk-r8"];
+    rings.forEach((r, k) => {
+      const t = 3.6 + k * 0.2;
+      const tilt = [-7, 6, -4, 8, -6, 5, -8, 4][k];
+      tl.fromTo(r, { opacity: 0, scale: 0.4, rotation: 0 }, { opacity: 1, scale: 1, rotation: tilt, duration: 0.2, ease: "expo.out" }, t);
+      tl.to(r, { rotation: tilt - 4, duration: 0.06, ease: "none", yoyo: true, repeat: 9 }, t + 0.2);
+    });
+    wipeIn("#hk-cap3", 4.5);
+
+    // Dip cut into the Voice's room.
+    tl.to("#hk-dip", { opacity: 0.45, duration: 0.1, ease: "none" }, 7.38);
+    window.__timelines["hook"] = tl;
+  </script>
+</template>
