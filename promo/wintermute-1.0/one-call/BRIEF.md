@@ -58,6 +58,6 @@ A promotional cartoon for the v1.0 release of the Wintermute plugin. The user's 
 - The end card adds `github.com/ncksol/ai_tools` in small type under the lockup.
 - Original vector artwork only, drawn in HTML/SVG in this project. No hosted generation services.
 - Homage to William Gibson's Neuromancer in mood only: no quotes, names or text from the novel. No third-party characters or logos, and no AI vendor logos; the "different family" is shown with colour and costume, not brands.
-- Never show or hint at the dashboard's cockpit mode. The city map in beat 8 is the regular dashboard idea only.
+- The city map in beat 8 stands for the swarm dashboard as its README and DASHBOARD.md show it.
 - Wintermute runs any substantial work (research, specs, code, investigations, documents); the crew roles carry this, so the film never says "code" or "merge".
-- Fonts: League Gothic is bundled with HyperFrames. Any font file added under `assets/fonts/` is listed with its licence in `assets/fonts/LICENSES.md`.
+- Fonts: every face is a local WOFF2 under `assets/fonts/`, loaded with `@font-face`, so check and render fetch no fonts. Licences are in `assets/fonts/LICENSES.md`.

@@ -6,7 +6,7 @@
 - The crew are black trench-coat silhouettes; the client is the only lit, drawn human. The "other families" are told apart by colour and costume only: the appraiser in bone white, the outside appraisers in a grey bowler and a light flat cap. No brands or vendor marks.
 - Panels split 1 → 2 → 4 in the crew beat and 8 in the "All night. All at once." montage.
 - Short lines were added around the user's story text so the film reads without narration: "Too big for one night.", "Nobody has ever seen the Voice.", "Let's take it apart.", "It's all in the envelope.", "They have never met.", "Nobody calls each other. / Every line runs through the Voice.", "I need a blueprint.", "Librarian. The safecracker needs a blueprint.", "It's done. Trust me.", "One piece. Two opinions.", the client's "Left.", "All night, watch the pins move. / Or sleep.", "At dawn, the crew breaks in.", "They didn't come to take anything." The end card adds `github.com/ncksol/ai_tools` under the lockup.
-- The city map in beat 8 is a phone showing streets and moving pins: the regular dashboard idea only.
+- The city map in beat 8 is a phone showing streets and moving pins, standing for the swarm dashboard.
 - The rain stops at the cut into dawn (69 s); the rain sound fades out over 1.6 s.
 - Not built here: story 1 from the pitch, and story 3, which the sibling unit builds as `paper`.
 

@@ -71,7 +71,7 @@ BANNED:  dark void with small floating things (every shot is a full panel or a f
          glow/bloom (teal is flat ink, not light blur); particles; gradients as decoration;
          everything centred; fade-and-slide-up entrances; text that moves while read;
          three cards in a row; the logo docked in a corner; AI vendor logos or names;
-         any quote, name or text from Neuromancer; the dashboard's cockpit view;
+         any quote, name or text from Neuromancer;
          the words "code" and "merge" (the crew does any substantial work).
 QA:      0.0 (thumbnail: door, W, folder, caption), 5.5 (city ringing), 13.5 (wall and
          strings), 17.5 (Voice line), 20.5 ("Yes."), 26.5 (4 panels), 30.0, 35.5 (routing),
