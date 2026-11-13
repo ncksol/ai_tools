@@ -1,0 +1,14 @@
+{
+  "name": "paper",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "audio": "node scripts/synthesize-audio.mjs",
+    "predev": "npm run audio",
+    "dev": "HYPERFRAMES_NO_UPDATE_CHECK=1 HYPERFRAMES_NO_TELEMETRY=1 npx --yes hyperframes@0.9.19 preview",
+    "precheck": "npm run audio",
+    "check": "HYPERFRAMES_NO_UPDATE_CHECK=1 HYPERFRAMES_NO_TELEMETRY=1 npx --yes hyperframes@0.9.19 check",
+    "prerender": "npm run audio",
+    "render": "HYPERFRAMES_NO_UPDATE_CHECK=1 HYPERFRAMES_NO_TELEMETRY=1 npx --yes hyperframes@0.9.19 render --fps 30 --quality delivery"
+  }
+}

@@ -1,0 +1,732 @@
+<template>
+  <style>
+    @font-face { font-family: "Paper Nunito"; font-style: normal; font-weight: 700; font-display: block; src: url("assets/fonts/nunito-latin-700-normal.woff2") format("woff2"); }
+    @font-face { font-family: "Paper Nunito"; font-style: normal; font-weight: 900; font-display: block; src: url("assets/fonts/nunito-latin-900-normal.woff2") format("woff2"); }
+    #root { position: absolute; inset: 0; }
+    #paper-stage { display: block; width: 100%; height: 100%; }
+    .paper-outline { stroke: #52676a; stroke-width: 2.4; stroke-linejoin: round; }
+    .paper-crease { fill: none; stroke: #334b50; stroke-width: 2; stroke-opacity: .32; stroke-linejoin: round; }
+    .paper-ink { fill: none; stroke: #334b50; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; }
+    .paper-label { fill: #263e45; font-family: "Paper Nunito", sans-serif; font-size: 30px; font-weight: 700; }
+    .paper-fibre { fill: url(#paper-fibres); pointer-events: none; }
+    .paper-blue { fill: var(--paper-blue, #6598bc); }
+    .paper-orange { fill: var(--paper-orange, #dc9870); }
+    .paper-sage { fill: var(--paper-sage, #91afa0); }
+    .paper-rose { fill: var(--paper-rose, #c98f97); }
+    .paper-end-text { fill: #334b50; font-family: "Paper Nunito", sans-serif; font-size: 76px; font-weight: 900; letter-spacing: -2px; }
+    .paper-end-release { fill: #52676a; font-family: "Paper Nunito", sans-serif; font-size: 38px; font-weight: 700; }
+  </style>
+  <div id="root" data-composition-id="paper" data-width="1920" data-height="1080" data-duration="84">
+    <svg id="paper-stage" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg" aria-label="Paper creatures finish the work before the coffee goes cold">
+      <defs>
+        <pattern id="paper-wood" width="360" height="140" patternUnits="userSpaceOnUse">
+          <rect width="360" height="140" fill="#dcc3a2"/>
+          <path d="M-20 22Q80 3 198 24T390 19M-10 32Q90 17 191 31T385 28M-20 105Q71 94 192 112T382 101M-10 119Q84 108 198 126T380 113" fill="none" stroke="#9d7b57" stroke-width="1.5" opacity=".12"/>
+          <path d="M20 59L78 60M143 79L247 80M288 57L352 54" stroke="#b39572" stroke-width="1" opacity=".25"/>
+        </pattern>
+        <pattern id="paper-fibres" width="54" height="48" patternUnits="userSpaceOnUse">
+          <path d="M2 8l9-2M29 15l12 1M11 33l8-1M36 39l11-3" stroke="#f8edd4" stroke-width="1" opacity=".4"/>
+          <path d="M7 19l5 1M23 41l7-1M41 8l6 1" stroke="#334b50" stroke-width=".8" opacity=".12"/>
+          <circle cx="17" cy="14" r=".7" fill="#334b50" opacity=".1"/>
+        </pattern>
+        <filter id="paper-shadow" x="-60%" y="-60%" width="230%" height="250%">
+          <feDropShadow dx="4" dy="6" stdDeviation="4" flood-color="#57472f" flood-opacity=".18"/>
+        </filter>
+        <filter id="paper-soft-shadow" x="-40%" y="-40%" width="180%" height="200%">
+          <feDropShadow dx="6" dy="9" stdDeviation="8" flood-color="#57472f" flood-opacity=".2"/>
+        </filter>
+        <clipPath id="paper-plane-mask"><use href="#paper-plane-body"/></clipPath>
+        <clipPath id="paper-frog-mask"><use href="#paper-frog-body"/></clipPath>
+        <clipPath id="paper-boat-mask"><use href="#paper-boat-body"/></clipPath>
+        <clipPath id="paper-fan-mask"><use href="#paper-fan-body"/></clipPath>
+        <clipPath id="paper-card-mask"><use href="#paper-card-body"/></clipPath>
+        <symbol id="paper-owl-eyes" viewBox="-100 -110 200 230">
+          <circle cx="-35" cy="-4" r="28" fill="#f8edd4"/>
+          <circle cx="35" cy="-4" r="28" fill="#f8edd4"/>
+          <circle cx="-30" cy="-3" r="8" fill="#334b50"/>
+          <circle cx="30" cy="-3" r="8" fill="#334b50"/>
+          <path d="M-11 21L0 40L11 21Z" fill="#52676a"/>
+          <path d="M-75 28L-30 73M75 28L30 73" class="paper-crease"/>
+        </symbol>
+      </defs>
+
+      <g id="paper-desk" data-layout-ignore="true">
+        <rect width="1920" height="1080" fill="url(#paper-wood)"/>
+        <path d="M0 975H1920" stroke="#aa8562" stroke-width="5"/>
+        <rect y="982" width="1920" height="98" fill="#c3a17a"/>
+        <path d="M0 997H1920M0 1057H1920" stroke="#af8d65" stroke-width="2" opacity=".4"/>
+        <g transform="translate(210 216) rotate(-14)">
+          <path d="M-23 38V-22a27 27 0 0 1 54 0v77a18 18 0 0 1-36 0V-13a10 10 0 0 1 20 0v62" fill="none" stroke="#7d8b89" stroke-width="7" stroke-linecap="round"/>
+          <path d="M-19 37V-22a23 23 0 0 1 46 0" fill="none" stroke="#d2d7ce" stroke-width="2"/>
+        </g>
+        <path d="M292 255l100 17" stroke="#96765d" stroke-width="2" opacity=".18"/>
+      </g>
+
+      <g id="paper-ring" class="clip" data-start="0" data-duration="84" data-track-index="2" data-layout-ignore="true">
+        <g transform="translate(1195 635)">
+          <circle r="133" fill="none" stroke="#916345" stroke-width="12" opacity=".22" stroke-dasharray="485 24 108 17 171 30"/>
+          <circle r="125" fill="none" stroke="#9a714e" stroke-width="3" opacity=".16"/>
+        </g>
+      </g>
+
+      <g id="paper-keys" class="clip" data-start="0" data-duration="84" data-track-index="3" data-layout-ignore="true">
+        <g transform="translate(578 734) rotate(-8)" filter="url(#paper-shadow)">
+          <rect x="-69" y="-65" width="138" height="138" rx="16" fill="#7c817c"/>
+          <path d="M-54-57H54L64 40L46 58H-46L-64 40Z" fill="#f2e9d9" stroke="#a8aaa0" stroke-width="3"/>
+          <rect x="-44" y="-41" width="88" height="77" rx="10" fill="#e7ddcb"/>
+          <path d="M-34-28H31" stroke="#faf4e8" stroke-width="4" stroke-linecap="round"/>
+        </g>
+        <g transform="translate(833 750) rotate(7)" filter="url(#paper-shadow)">
+          <rect x="-69" y="-65" width="138" height="138" rx="16" fill="#7c817c"/>
+          <path d="M-54-57H54L64 40L46 58H-46L-64 40Z" fill="#f2e9d9" stroke="#a8aaa0" stroke-width="3"/>
+          <rect x="-44" y="-41" width="88" height="77" rx="10" fill="#e7ddcb"/>
+          <path d="M-34-28H31" stroke="#faf4e8" stroke-width="4" stroke-linecap="round"/>
+        </g>
+      </g>
+
+      <g id="paper-drawer" class="clip" data-start="0" data-duration="84" data-track-index="4" data-layout-ignore="true">
+        <g id="paper-drawer-mover">
+          <rect x="-205" y="-75" width="410" height="134" rx="7" fill="#8d7255" stroke="#9c7c5c" stroke-width="5"/>
+          <rect x="-185" y="-55" width="370" height="99" rx="3" fill="#b39672"/>
+          <path d="M-185-55H185" stroke="#795e45" stroke-width="7"/>
+          <rect x="-215" y="55" width="430" height="65" rx="8" fill="#c3a17a" stroke="#aa8562" stroke-width="3"/>
+          <path d="M-51 87H51" stroke="#6c756e" stroke-width="13" stroke-linecap="round"/>
+          <path d="M-47 84H47" stroke="#b2b8a8" stroke-width="3" stroke-linecap="round"/>
+        </g>
+      </g>
+
+      <g id="paper-lamp" class="clip" data-start="0" data-duration="84" data-track-index="5" data-layout-ignore="true">
+        <g transform="translate(1348 218)" filter="url(#paper-shadow)">
+          <ellipse cx="85" cy="60" rx="70" ry="28" fill="#839b93"/>
+          <path d="M85 53L23-29L-15-18" fill="none" stroke="#677f78" stroke-width="19" stroke-linecap="round"/>
+          <circle cx="24" cy="-27" r="14" fill="#b7c4b4" stroke="#677f78" stroke-width="5"/>
+          <path d="M-95-43L-24-71L13-13L-72 24Z" fill="#91afa0" stroke="#677f78" stroke-width="3"/>
+          <ellipse cx="-31" cy="-6" rx="46" ry="15" transform="rotate(-24)" fill="#e8e4c9"/>
+        </g>
+        <polygon id="paper-lamp-beam" points="1317,228 1317,228 1317,228" fill="#f8d77c" opacity=".3"/>
+      </g>
+
+      <g id="paper-coffee" class="clip" data-start="0" data-duration="84" data-track-index="6" data-layout-allow-overflow="true">
+        <g id="paper-coffee-mover">
+          <g filter="url(#paper-soft-shadow)">
+            <ellipse cx="1" cy="9" rx="132" ry="120" fill="#eadfc8"/>
+            <ellipse cx="0" cy="0" rx="122" ry="112" fill="#f8edd4" stroke="#c0b8a1" stroke-width="3"/>
+            <path d="M102-38C185-63 193 53 110 46L111 14C148 27 157-27 112-10Z" fill="#f8edd4" stroke="#c0b8a1" stroke-width="5"/>
+            <circle r="99" fill="#f1e9d5" stroke="#d3c9b2" stroke-width="4"/>
+            <circle r="84" fill="#72533c"/>
+            <path d="M-67-35C-15-80 58-62 72-15C28-43-25-55-67-35" fill="#96724c" opacity=".6"/>
+            <path d="M-68 33C-39 66 15 71 51 47" fill="none" stroke="#b08d5b" stroke-width="3" opacity=".65"/>
+          </g>
+          <g id="paper-steam" fill="none" stroke="#fcf3de" stroke-width="9" stroke-linecap="round">
+            <path id="paper-steam-a" d="M-35-81C-73-121 1-135-24-169C-38-190-15-213-5-225"/>
+            <path id="paper-steam-b" d="M9-81C50-123-24-141 5-176C25-203 12-223 27-240"/>
+            <path id="paper-steam-c" d="M48-88C22-116 77-137 54-166C40-183 66-207 60-222"/>
+          </g>
+        </g>
+      </g>
+
+      <g id="paper-ball" class="clip" data-start="0" data-duration="12.3" data-track-index="7" data-layout-allow-overflow="true">
+        <g id="paper-ball-mover" filter="url(#paper-shadow)">
+          <polygon id="paper-ball-body" class="paper-outline" fill="#f8edd4" points="-95,-54 -45,-104 18,-102 74,-65 105,-19 88,48 48,91 -19,109 -73,71 -108,20 -109,-24 -95,-54"/>
+          <use href="#paper-ball-body" class="paper-fibre"/>
+          <g id="paper-ball-folds" class="paper-crease">
+            <path d="M-95-54L-12-22L-45-104M-12-22L74-65L35 23L88 48M-12-22L-73 71L35 23L-19 109M35 23L105-19"/>
+            <path d="M-65-32L-58-4L-80 20M-1-80L18-48L45-47M-33 57L-23 33L5 45"/>
+          </g>
+          <text id="paper-everything" class="paper-label" text-anchor="middle" y="7" style="font-size:34px">everything</text>
+          <g id="paper-mess" class="paper-ink">
+            <path d="M-138-82L-78-91L-4-68L48-87L135-70M-142-35L-91-18L-27-43L62-15L133-31M-136 32L-68 43L-3 22L74 51L130 30M-139 95L-79 76L-8 109L64 88L128 107" stroke-width="4" opacity=".6"/>
+            <path d="M-110-105l18 25-27 10M35-55l25 22-11 25M-4 45l-21 18 19 19M91 78l10 31 22-19" opacity=".5"/>
+          </g>
+          <g fill="none" stroke="#dcc3a2" stroke-width="7" stroke-linecap="round">
+            <path id="paper-tear-a" d="M-184-83L-149-80L-113-86L-78-81L-42-85L-7-80L29-85L65-81L101-86L140-81L184-83"/>
+            <path id="paper-tear-b" d="M-185 0L-149 3L-112-3L-77 2L-40-3L-4 3L33-2L70 3L105-3L144 2L185 0"/>
+            <path id="paper-tear-c" d="M-184 83L-150 86L-114 80L-79 85L-43 81L-7 86L29 81L65 86L103 80L141 85L184 83"/>
+          </g>
+        </g>
+      </g>
+
+      <g id="paper-bridge" class="clip" data-start="36.7" data-duration="6" data-track-index="8" data-layout-ignore="true">
+        <g id="paper-bridge-mover" filter="url(#paper-shadow)">
+          <polygon id="paper-bridge-body" fill="#dc9870" class="paper-outline" points="-80,-80 80,-80 80,80 -80,80"/>
+          <use href="#paper-bridge-body" class="paper-fibre"/>
+          <path id="paper-bridge-creases" d="M-80-30V30M-40-30V30M0-30V30M40-30V30M80-30V30" class="paper-crease"/>
+        </g>
+      </g>
+
+      <g id="paper-lantern-light" class="clip" data-start="62" data-duration="22" data-track-index="9" data-layout-ignore="true">
+        <g id="paper-lantern-light-mover">
+          <ellipse id="paper-light-pool" cx="0" cy="0" rx="163" ry="176" fill="#eeb452" opacity="0"/>
+          <path id="paper-lantern-handle" d="M-100-155Q0-252 100-155M-138-151H138M-108 153H108M0 158V195M-18 191V218M0 191V230M18 191V218" fill="none" stroke="#88734f" stroke-width="8" stroke-linecap="round"/>
+          <path id="paper-lantern-flame" d="M0 46C-35 2-13-20 4-48C1-14 29-1 18 31Z" fill="#f7d37b" opacity="0"/>
+        </g>
+      </g>
+
+      <g id="paper-plane" class="clip" data-start="10.6" data-duration="73.4" data-track-index="10">
+        <g id="paper-plane-mover" filter="url(#paper-shadow)">
+          <polygon id="paper-plane-body" class="paper-outline" fill="#f8edd4" points="-172,-36 -64,-36 40,-36 168,-36 172,-18 170,12 166,35 70,36 -40,35 -168,36 -172,17 -171,-16"/>
+          <g clip-path="url(#paper-plane-mask)">
+            <g id="paper-plane-hinge-a"><polygon id="paper-plane-facet-a" fill="#b2cddd" points="-172,-36 172,-36 0,36"/></g>
+            <g id="paper-plane-hinge-b"><polygon id="paper-plane-facet-b" fill="#4f7e9c" points="-172,-36 0,36 -172,36" opacity=".28"/></g>
+            <use href="#paper-plane-body" class="paper-fibre"/>
+            <path id="paper-plane-seam" d="M-149 35L20 3L145-91M20 3L15 79" class="paper-crease"/>
+            <g id="paper-plane-label"><text x="-148" y="10" class="paper-label">errands</text></g>
+            <g id="paper-plane-drawing" class="paper-ink">
+              <path d="M-40-18L-17 9L10-12L38 17L70-19L100 7L135-12"/>
+              <path d="M-28 16L-13 16M19 19L39 19M94 21L116 21"/>
+              <circle cx="131" cy="-11" r="8"/>
+            </g>
+            <path id="paper-proof-tick" d="M96-5L109 8L137-20" fill="none" stroke="#2c5f58" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+          </g>
+        </g>
+      </g>
+
+      <g id="paper-frog" class="clip" data-start="10.8" data-duration="73.2" data-track-index="11">
+        <g id="paper-frog-mover" filter="url(#paper-shadow)">
+          <polygon id="paper-frog-body" class="paper-outline" fill="#f8edd4" points="-172,-36 -64,-36 40,-36 168,-36 172,-18 170,12 166,35 70,36 -40,35 -168,36 -172,17 -171,-16"/>
+          <g clip-path="url(#paper-frog-mask)">
+            <g id="paper-frog-hinge-a"><polygon id="paper-frog-facet-a" fill="#c9dac5" points="-172,-36 172,-36 0,36"/></g>
+            <g id="paper-frog-hinge-b"><polygon id="paper-frog-facet-b" fill="#597f72" points="-172,-36 0,36 -172,36" opacity=".3"/></g>
+            <use href="#paper-frog-body" class="paper-fibre"/>
+            <path id="paper-frog-seam" d="M-78 39L-32-12L0 33L31-12L77 39M-31-12L-46-47M31-12L46-47" class="paper-crease"/>
+            <g id="paper-frog-label"><text x="-148" y="10" class="paper-label">checks</text></g>
+            <g id="paper-frog-drawing" class="paper-ink">
+              <path d="M-34-15L-23-4L-4-25M-32 18L-22 28L-3 7M19-11H132M19 20H131"/>
+            </g>
+          </g>
+          <g id="paper-frog-eyes">
+            <circle cx="-44" cy="-42" r="18" fill="#f8edd4"/><circle cx="44" cy="-42" r="18" fill="#f8edd4"/>
+            <circle cx="-39" cy="-43" r="7" fill="#334b50"/><circle cx="49" cy="-43" r="7" fill="#334b50"/>
+          </g>
+        </g>
+      </g>
+
+      <g id="paper-boat" class="clip" data-start="11" data-duration="73" data-track-index="12">
+        <g id="paper-boat-mover" filter="url(#paper-shadow)">
+          <polygon id="paper-boat-body" class="paper-outline" fill="#f8edd4" points="-172,-36 -64,-36 40,-36 168,-36 172,-18 170,12 166,35 70,36 -40,35 -168,36 -172,17 -171,-16"/>
+          <g clip-path="url(#paper-boat-mask)">
+            <g id="paper-boat-hinge-a"><polygon id="paper-boat-facet-a" fill="#b2cddd" points="-172,-36 172,-36 0,36"/></g>
+            <g id="paper-boat-hinge-b"><polygon id="paper-boat-facet-b" fill="#4f7e9c" points="-172,-36 0,36 -172,36" opacity=".35"/></g>
+            <use href="#paper-boat-body" class="paper-fibre"/>
+            <path id="paper-boat-seam" d="M-132 9H132M-68-49L0 14L67-49M0 14V83" class="paper-crease"/>
+            <g id="paper-boat-label"><text x="-148" y="10" class="paper-label">hard part</text></g>
+            <g id="paper-boat-drawing" class="paper-ink" transform="translate(30 0) scale(.75 1)">
+              <path d="M-30 23L3-21L31 13L56-15L87 23Z"/>
+              <path d="M-2-13L5-1L14-8M53-7L58 3L65-4M102-10V23M92 13H112"/>
+            </g>
+          </g>
+        </g>
+      </g>
+
+      <g id="paper-fan" class="clip" data-start="11.2" data-duration="72.8" data-track-index="13">
+        <g id="paper-fan-mover" filter="url(#paper-shadow)">
+          <polygon id="paper-fan-body" class="paper-outline" fill="#f8edd4" points="-172,-36 -64,-36 40,-36 168,-36 172,-18 170,12 166,35 70,36 -40,35 -168,36 -172,17 -171,-16"/>
+          <g clip-path="url(#paper-fan-mask)">
+            <g id="paper-fan-hinge-a"><polygon id="paper-fan-facet-a" fill="#e1bac0" points="-172,-36 172,-36 0,36"/></g>
+            <g id="paper-fan-hinge-b"><polygon id="paper-fan-facet-b" fill="#ab6e7b" points="-172,-36 0,36 -172,36" opacity=".35"/></g>
+            <use href="#paper-fan-body" class="paper-fibre"/>
+            <path id="paper-fan-seam" d="M0 100L-111-60M0 100L-53-101M0 100L10-112M0 100L69-86M0 100L121-31" class="paper-crease"/>
+            <g id="paper-fan-label"><text x="-148" y="10" class="paper-label">writing</text></g>
+            <g id="paper-fan-drawing" class="paper-ink">
+              <path d="M-35-17H54M-35 0H129M-35 17H109"/>
+              <path id="paper-fan-correction" d="M76-17H128M116 18L127 26L145 9"/>
+            </g>
+            <path id="paper-red-mark" d="M68-23L107 22M108-23L67 21" fill="none" stroke="#ad4b51" stroke-width="7" stroke-linecap="round"/>
+          </g>
+        </g>
+      </g>
+
+      <g id="paper-lantern-ribs" class="clip" data-start="63.6" data-duration="20.4" data-track-index="26" data-layout-ignore="true">
+        <g id="paper-lantern-ribs-mover">
+          <g id="paper-lantern-ribs-inner" fill="none" stroke="#8d7959" stroke-width="2.5" opacity=".34">
+            <path d="M-113-122Q-8-142 121-122M-140-76Q0-95 147-76M-144-23Q0-37 147-23M-144 30Q0 21 147 30M-132 84Q0 102 138 84M-107 132Q0 153 112 132"/>
+          </g>
+        </g>
+      </g>
+
+      <g id="paper-second-boat" class="clip" data-start="28.9" data-duration="15.3" data-track-index="14" data-layout-ignore="true">
+        <g id="paper-second-boat-mover" filter="url(#paper-shadow)">
+          <polygon id="paper-second-boat-body" class="paper-sage paper-outline" points="-80,-80 80,-80 80,80 -80,80"/>
+          <polygon id="paper-second-boat-facet" points="-65,-45 -38,-83 32,-81 70,-45 0,8" fill="#d6e0c6"/>
+          <use href="#paper-second-boat-body" class="paper-fibre"/>
+          <path d="M-132 9H132M0 14V83" class="paper-crease"/>
+        </g>
+      </g>
+
+      <g id="paper-flag" class="clip" data-start="34.8" data-duration="5.4" data-track-index="15" data-layout-ignore="true">
+        <g id="paper-flag-mover">
+          <path d="M0 80V-80" stroke="#6d705b" stroke-width="5" stroke-linecap="round"/>
+          <polygon id="paper-flag-cloth" points="0,-80 83,-57 0,-24" fill="#dc9870" stroke="#986748" stroke-width="2"/>
+          <path d="M16-64L46-57" stroke="#f8edd4" stroke-width="3" opacity=".55"/>
+        </g>
+      </g>
+
+      <g id="paper-orange-inspector" class="clip" data-start="43" data-duration="34" data-track-index="16" data-layout-ignore="true">
+        <g id="paper-orange-inspector-mover" filter="url(#paper-shadow)">
+          <polygon id="paper-orange-inspector-body" class="paper-orange paper-outline" points="-80,-80 80,-80 80,80 -80,80"/>
+          <use href="#paper-orange-inspector-body" class="paper-fibre"/>
+          <g id="paper-orange-inspector-eyes"><use href="#paper-owl-eyes" x="-100" y="-110" width="200" height="230"/></g>
+          <polygon id="paper-stop-wing" points="60,14 230,38 86,66 30,53" fill="#edba92" stroke="#986748" stroke-width="2"/>
+        </g>
+      </g>
+
+      <g id="paper-stamp" class="clip" data-start="46" data-duration="8.5" data-track-index="17" data-layout-ignore="true">
+        <g id="paper-stamp-mover" filter="url(#paper-shadow)">
+          <rect x="-16" y="-91" width="32" height="96" rx="12" fill="#91684c"/>
+          <ellipse cy="-84" rx="43" ry="19" fill="#a77c59" stroke="#815d45" stroke-width="3"/>
+          <path d="M-65 10L-42-16H42L65 10V38H-65Z" fill="#caa077" stroke="#956e4e" stroke-width="3"/>
+          <rect x="-62" y="31" width="124" height="13" rx="4" fill="#696d62"/>
+        </g>
+      </g>
+
+      <g id="paper-sage-inspector" class="clip" data-start="55" data-duration="22" data-track-index="18" data-layout-ignore="true">
+        <g id="paper-sage-inspector-mover" filter="url(#paper-shadow)">
+          <polygon id="paper-sage-inspector-body" class="paper-sage paper-outline" points="-80,-80 80,-80 80,80 -80,80"/>
+          <use href="#paper-sage-inspector-body" class="paper-fibre"/>
+          <g id="paper-sage-inspector-eyes"><use href="#paper-owl-eyes" x="-100" y="-110" width="200" height="230"/></g>
+        </g>
+      </g>
+      <g id="paper-rose-inspector" class="clip" data-start="55" data-duration="22" data-track-index="19" data-layout-ignore="true">
+        <g id="paper-rose-inspector-mover" filter="url(#paper-shadow)">
+          <polygon id="paper-rose-inspector-body" class="paper-rose paper-outline" points="-80,-80 80,-80 80,80 -80,80"/>
+          <use href="#paper-rose-inspector-body" class="paper-fibre"/>
+          <g id="paper-rose-inspector-eyes"><use href="#paper-owl-eyes" x="-100" y="-110" width="200" height="230"/></g>
+        </g>
+      </g>
+
+      <g id="paper-straightedge" class="clip" data-start="57.5" data-duration="5.5" data-track-index="20" data-layout-ignore="true">
+        <g id="paper-straightedge-mover">
+          <rect x="-282" y="-12" width="564" height="25" rx="3" fill="#c5cbb6" stroke="#708c7a" stroke-width="3"/>
+          <path d="M-240-9V4M-200-9V0M-160-9V4M-120-9V0M-80-9V4M-40-9V0M0-9V4M40-9V0M80-9V4M120-9V0M160-9V4M200-9V0M240-9V4" stroke="#708c7a" stroke-width="2"/>
+        </g>
+      </g>
+
+      <g id="paper-crane" class="clip" data-start="0" data-duration="77" data-track-index="21" data-layout-ignore="true">
+        <g id="paper-crane-mover" filter="url(#paper-shadow)">
+          <polygon id="paper-crane-body" class="paper-blue paper-outline" points="-155,20 -48,-50 10,-10 28,-110 105,-147 132,-135 78,-117 70,-12 115,25 25,55 -58,36 -152,40"/>
+          <g id="paper-crane-wing-a"><polygon id="paper-crane-facet-a" points="-48,0 -127,-89 -17,-48 38,20 -27,51" fill="#b2cddd" class="paper-outline"/></g>
+          <g id="paper-crane-wing-b"><polygon id="paper-crane-facet-b" points="-7,6 57,-84 157,-125 112,-25 38,55" fill="#83b0c7" class="paper-outline"/></g>
+          <use href="#paper-crane-body" class="paper-fibre"/>
+          <path id="paper-crane-seam" d="M-138 22L21 20L57-82M21 20L29 48M57-82L74-116" class="paper-crease"/>
+          <circle id="paper-crane-eye" cx="79" cy="-124" r="4.5" fill="#334b50"/>
+        </g>
+      </g>
+
+      <g id="paper-shipping" class="clip" data-start="68.3" data-duration="5.1" data-track-index="22">
+        <g id="paper-shipping-mover" filter="url(#paper-shadow)">
+          <path d="M-126-62H123L128 68L-118 74Z" fill="#f2d98a" stroke="#c7b36f" stroke-width="2"/>
+          <path d="M-122-58H120V-43H-122Z" fill="#d6bd71" opacity=".4"/>
+          <text class="paper-label" text-anchor="middle" y="-10" style="font-size:32px">OK to ship?</text>
+          <path id="paper-shipping-tick" d="M-33 32L-12 52L34 7" fill="none" stroke="#2c5f58" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+        </g>
+      </g>
+
+      <g id="paper-hand" class="clip" data-start="13.8" data-duration="70.2" data-track-index="23" data-layout-allow-overflow="true">
+        <g id="paper-hand-mover" filter="url(#paper-shadow)">
+          <g id="paper-hand-fingers" fill="#dfae87" stroke="#bf8b6d" stroke-width="2.5">
+            <rect x="-69" y="-113" width="36" height="156" rx="18"/>
+            <rect x="-27" y="-135" width="37" height="174" rx="18"/>
+            <rect x="16" y="-117" width="35" height="162" rx="17"/>
+            <rect x="56" y="-85" width="32" height="136" rx="16"/>
+          </g>
+          <path d="M-72 30Q-77-12-46-18H61Q96-6 96 42L83 136Q77 163 64 188V296H-50V191Q-69 165-72 111Z" fill="#dfae87" stroke="#bf8b6d" stroke-width="3"/>
+          <path id="paper-hand-thumb" d="M-53 74Q-99 65-135 11Q-154-20-139-38Q-122-53-106-29L-62 15L-41 20" fill="#e4b58f" stroke="#bf8b6d" stroke-width="3" stroke-linejoin="round"/>
+          <path d="M-47 132Q-10 115 41 133M-39 54Q-9 72 21 57" fill="none" stroke="#bf8b6d" stroke-width="2" opacity=".45"/>
+          <path d="M-68 226H84L92 390H-76Z" fill="#6f8f9c" stroke="#536f7a" stroke-width="3"/>
+          <path d="M-68 235H84M-65 253H83" stroke="#a1b7bd" stroke-width="4"/>
+          <circle cx="63" cy="254" r="5" fill="#dce1ce"/>
+          <g id="paper-hand-pencil">
+            <path d="M-32-65L-28-168L-20-180L-12-166L-16-65Z" fill="#dbb46c" stroke="#8f7957" stroke-width="2"/>
+            <path d="M-28-168L-20-180L-12-166Z" fill="#e7d2a6"/>
+            <path d="M-23-177L-20-183L-17-176Z" fill="#334b50"/>
+            <path d="M-27-159L-23-78" stroke="#f4dd9e" stroke-width="3"/>
+          </g>
+        </g>
+      </g>
+
+      <g id="paper-end-card" class="clip" data-start="79" data-duration="5" data-track-index="24">
+        <g id="paper-card-mover" filter="url(#paper-soft-shadow)">
+          <polygon id="paper-card-body" points="-615,-294 615,-294 615,294 -615,294" fill="#f8edd4" stroke="#ddcdae" stroke-width="3"/>
+          <g clip-path="url(#paper-card-mask)">
+            <use href="#paper-card-body" class="paper-fibre"/>
+            <g id="paper-card-fold-a"><path d="M-615-294H0V294H-615Z" fill="#eaddbf"/></g>
+            <g id="paper-card-fold-b"><path d="M0-294H615V294H0Z" fill="#f8edd4"/></g>
+            <path id="paper-card-crease" d="M0-275V270" stroke="#dac7a1" stroke-width="2" opacity=".4"/>
+            <g id="paper-end-copy">
+              <text id="paper-end-first" class="paper-end-text" text-anchor="middle" y="-48" data-var-text="paper-end-first">Hand over the</text>
+              <text id="paper-end-second" class="paper-end-text" text-anchor="middle" y="48" data-var-text="paper-end-second">crumpled thing.</text>
+              <path d="M-153 103H153" stroke="#91afa0" stroke-width="5" stroke-linecap="round"/>
+              <text id="paper-end-release" class="paper-end-release" text-anchor="middle" y="176" data-var-text="paper-release">Wintermute 1.0</text>
+            </g>
+          </g>
+        </g>
+      </g>
+
+      <g id="paper-beat-hook" class="clip" data-start="0.5" data-duration="6.5" data-track-index="25" data-beat="Hot coffee and crumpled work"></g>
+      <g id="paper-beat-plan" class="clip" data-start="14.7" data-duration="1.3" data-track-index="25" data-beat="Flatten, tear and approve"></g>
+      <g id="paper-beat-fold" class="clip" data-start="22.9" data-duration="1.1" data-track-index="25" data-beat="Four job-shaped helpers"></g>
+      <g id="paper-beat-stack" class="clip" data-start="29.9" data-duration="3.1" data-track-index="25" data-beat="Second boat starts early"></g>
+      <g id="paper-beat-flag" class="clip" data-start="35" data-duration="7" data-track-index="25" data-beat="Flag, bridge, crossing"></g>
+      <g id="paper-beat-evidence" class="clip" data-start="48" data-duration="7" data-track-index="25" data-beat="Light before the stamp"></g>
+      <g id="paper-beat-panel" class="clip" data-start="58" data-duration="4" data-track-index="25" data-beat="Two colours check the edges"></g>
+      <g id="paper-beat-lantern" class="clip" data-start="68.5" data-duration="4.5" data-track-index="25" data-beat="Lantern lights, human approves"></g>
+      <g id="paper-beat-archive" class="clip" data-start="75" data-duration="4" data-track-index="25" data-beat="Archive, then hot coffee"></g>
+      <g id="paper-beat-end" class="clip" data-start="80.5" data-duration="3.5" data-track-index="25" data-beat="Hand over the crumpled thing"></g>
+    </svg>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true, defaults: { ease: "power2.inOut" } });
+    const brand = window.__hyperframes.getVariables();
+    const frogScale = .75;
+    const strip = [[-172,-36],[-64,-36],[40,-36],[168,-36],[172,-18],[170,12],[166,35],[70,36],[-40,35],[-168,36],[-172,17],[-171,-16]];
+    const square = [[-80,-80],[0,-80],[80,-80],[80,0],[80,80],[0,80],[-80,80],[-80,0]];
+    const owl = [[-85,-90],[-34,-53],[-4,-77],[29,-54],[85,-90],[93,11],[66,82],[25,109],[-24,109],[-72,78],[-96,15],[-85,-90]];
+    const crane = [[-155,20],[-48,-50],[10,-10],[28,-110],[105,-147],[132,-135],[78,-117],[70,-12],[115,25],[25,55],[-58,36],[-152,40]];
+    const panel = [[-38,-145],[0,-160],[38,-145],[48,-92],[56,-32],[56,30],[47,94],[36,145],[0,160],[-38,145],[-57,75],[-58,-60]];
+    const shapes = {
+      plane: {
+        body: [[-144,42],[-70,0],[-155,-50],[-15,-20],[156,-105],[130,-35],[105,15],[55,27],[17,95],[-5,38],[-75,63],[-100,52]],
+        a: [[-155,-50],[156,-105],[20,3]],
+        b: [[20,3],[156,-105],[17,95]],
+        color: brand["paper-blue"] || "#6598bc", start: 17.0, row: 371, ready: { x: 1340, y: 570 },
+      },
+      frog: {
+        body: [[-94,56],[-104,4],[-69,-22],[-48,-72],[-15,-42],[16,-43],[50,-72],[72,-20],[105,6],[91,57],[40,40],[-41,40]],
+        a: [[-94,56],[-48,-72],[0,33]],
+        b: [[0,33],[50,-72],[91,57]],
+        color: brand["paper-sage"] || "#91afa0", start: 18.6, row: 454, ready: { x: 980, y: 520 },
+      },
+      boat: {
+        body: [[-145,2],[-98,-57],[-65,-45],[-38,-83],[32,-81],[70,-45],[98,-57],[146,3],[102,79],[38,99],[-44,99],[-104,78]],
+        a: [[-65,-45],[-38,-83],[32,-81],[70,-45],[0,8]],
+        b: [[-145,2],[146,3],[38,99],[-104,78]],
+        color: brand["paper-blue"] || "#6598bc", start: 20.2, row: 537, ready: { x: 990, y: 300 },
+      },
+      fan: {
+        body: [[-142,-32],[-112,-72],[-74,-105],[-20,-120],[33,-115],[83,-92],[130,-52],[146,-10],[30,90],[7,114],[-22,90],[-142,-32]],
+        a: [[-142,-32],[-74,-105],[7,114]],
+        b: [[7,114],[33,-115],[130,-52]],
+        color: brand["paper-rose"] || "#c98f97", start: 21.8, row: 620, ready: { x: 1330, y: 830 },
+      },
+    };
+
+    // Matching vertex counts preserve one continuous mesh through every fold.
+    function polygon(vertices) {
+      const padded = vertices.concat(Array(Math.max(0, 12 - vertices.length)).fill(vertices[vertices.length - 1]));
+      return padded.map(([x,y]) => `${x},${y}`).join(" ");
+    }
+    function pose(selector, values) {
+      tl.set(selector, { svgOrigin: "0 0", ...values }, 0);
+    }
+    function move(selector, from, to, start, duration, ease = "power2.inOut") {
+      tl.fromTo(selector, from, { ...to, duration, ease, immediateRender: false }, start);
+    }
+    function morph(selector, from, to, start, duration = 1.1) {
+      tl.fromTo(selector, { attr: { points: polygon(from) } },
+        { attr: { points: polygon(to) }, duration, ease: "power2.inOut", immediateRender: false }, start);
+    }
+    function ink(selector, start, duration = .65) {
+      document.querySelectorAll(selector).forEach((path, index) => {
+        const length = path.getTotalLength();
+        tl.set(path, { strokeDasharray: length, strokeDashoffset: length }, 0);
+        move(path, { strokeDashoffset: length }, { strokeDashoffset: 0 }, start + index * .14, duration, "power2.out");
+      });
+    }
+    function hinge(selector, start, amount = 30) {
+      pose(selector, { rotation: 0, scaleX: 1 });
+      move(selector, { rotation: 0, scaleX: 1 }, { rotation: amount, scaleX: .08 }, start, .42, "power2.in");
+      move(selector, { rotation: amount, scaleX: .08 }, { rotation: 0, scaleX: 1 }, start + .42, .7, "power3.out");
+    }
+    function unfold(name, start) {
+      const s = shapes[name];
+      morph(`#paper-${name}-body`, s.body, strip, start, 1.15);
+      morph(`#paper-${name}-facet-a`, s.a, [[-172,-36],[172,-36],[0,36]], start, 1.15);
+      morph(`#paper-${name}-facet-b`, s.b, [[-172,-36],[0,36],[-172,36]], start, 1.15);
+      move(`#paper-${name}-label`, { opacity: 0 }, { opacity: 1 }, start + .5, .45);
+      move(`#paper-${name}-seam`, { opacity: 1 }, { opacity: 0 }, start, .5);
+      if (name === "frog") move("#paper-frog-eyes", { opacity: 1 }, { opacity: 0 }, start, .45);
+    }
+
+    pose("#paper-coffee-mover", { x: 1633, y: 294 });
+    pose("#paper-drawer-mover", { x: 1510, y: 1040 });
+    pose("#paper-ball-mover", { x: -170, y: 310, rotation: -90, scale: 1 });
+    pose("#paper-crane-mover", { x: 441, y: 530, scale: 1, rotation: 0 });
+    pose("#paper-hand-mover", { x: 940, y: 1300, rotation: -8, scale: 1 });
+    pose("#paper-hand-fingers", { scaleY: .32, y: 20 });
+    pose("#paper-hand-thumb", { rotation: 8 });
+    pose("#paper-hand-pencil", { opacity: 0 });
+    pose("#paper-bridge-mover", { x: 491, y: 541, scale: .55, rotation: -15 });
+    pose("#paper-bridge-creases", { opacity: 0 });
+    pose("#paper-flag-mover", { x: 718, y: 632, scale: .01 });
+    pose("#paper-stop-wing", { rotation: 30, scale: .35 });
+    pose("#paper-orange-inspector-mover", { x: 640, y: 422, scale: .8, rotation: -12 });
+    pose("#paper-sage-inspector-mover", { x: 593, y: 584, scale: .75, rotation: 15 });
+    pose("#paper-rose-inspector-mover", { x: 1335, y: 578, scale: .75, rotation: -12 });
+    pose("#paper-stamp-mover", { x: 1068, y: 334, scale: 1 });
+    pose("#paper-straightedge-mover", { x: 970, y: 713, scaleX: .1 });
+    pose("#paper-lantern-light-mover", { x: 980, y: 562 });
+    pose("#paper-shipping-mover", { x: 1330, y: 546, scale: .05, rotation: -8 });
+    pose("#paper-card-mover", { x: 700, y: 510, scale: .15, rotation: -12 });
+    pose("#paper-lantern-ribs-mover", { x: 980, y: 562, scaleY: .01 });
+    pose("#paper-end-copy", { scaleX: .02, opacity: 0 });
+    pose("#paper-card-fold-a", { scaleX: 1 });
+    pose("#paper-card-fold-b", { scaleX: 1 });
+    pose("#paper-light-pool", { opacity: 0 });
+    pose("#paper-lantern-flame", { opacity: 0 });
+    pose("#paper-lantern-handle", { scaleY: .01 });
+    pose("#paper-ball-folds", { opacity: 1 });
+    pose("#paper-mess", { opacity: 0 });
+    pose("#paper-everything", { opacity: 1 });
+    pose("#paper-crane-eye", { opacity: 0 });
+    pose("#paper-crane-seam", { opacity: 0 });
+    morph("#paper-crane-body", square, square, 0, .01);
+    morph("#paper-crane-facet-a", [[-80,-80],[80,-80],[0,80]], [[-80,-80],[80,-80],[0,80]], 0, .01);
+    morph("#paper-crane-facet-b", [[-80,-80],[0,80],[-80,80]], [[-80,-80],[0,80],[-80,80]], 0, .01);
+
+    ["a","b","c"].forEach((letter, index) => {
+      const selector = `#paper-steam-${letter}`;
+      const repeats = Math.max(0, Math.floor((84 - index * .35) / 1.4) - 1);
+      tl.fromTo(selector, { y: 20, x: index * 2, opacity: .12 },
+        { y: -28, x: index * 2 - 12, opacity: .7, duration: 1.4, ease: "sine.inOut", repeat: repeats, yoyo: true }, index * .35);
+      const end = index * .35 + (repeats + 1) * 1.4;
+      if (end < 84) move(selector, { y: -28, opacity: .7 }, { y: -48, opacity: .2 }, end, 84 - end, "sine.out");
+    });
+
+    move("#paper-ball-mover", { x: -170, y: 310, rotation: -90 }, { x: 912, y: 407, rotation: 22 }, 0, 1.55, "power2.out");
+    move("#paper-ball-mover", { y: 407, scaleX: 1, scaleY: 1 }, { y: 451, scaleX: 1.17, scaleY: .81 }, 1.55, .18, "power1.in");
+    move("#paper-ball-mover", { y: 451, scaleX: 1.17, scaleY: .81 }, { y: 394, scaleX: .95, scaleY: 1.05 }, 1.73, .48, "power2.out");
+    move("#paper-ball-mover", { y: 394, scaleX: .95, scaleY: 1.05 }, { y: 451, scaleX: 1.07, scaleY: .94 }, 2.21, .25, "power1.in");
+    move("#paper-ball-mover", { y: 451, scaleX: 1.07, scaleY: .94, rotation: 22 }, { y: 444, scaleX: 1, scaleY: 1, rotation: 7 }, 2.46, .65, "back.out(1.2)");
+    morph("#paper-crane-body", square, crane, 3.65, 1.25);
+    morph("#paper-crane-facet-a", [[-80,-80],[80,-80],[0,80]], [[-48,0],[-127,-89],[-17,-48],[38,20],[-27,51]], 3.65, 1.3);
+    morph("#paper-crane-facet-b", [[-80,-80],[0,80],[-80,80]], [[-7,6],[57,-84],[157,-125],[112,-25],[38,55]], 3.8, 1.2);
+    move("#paper-crane-eye", { opacity: 0 }, { opacity: 1 }, 4.4, .5);
+    move("#paper-crane-seam", { opacity: 0 }, { opacity: 1 }, 4.4, .5);
+    hinge("#paper-crane-wing-a", 4, -25);
+    hinge("#paper-crane-wing-b", 4.15, 31);
+    move("#paper-crane-mover", { x: 441, y: 530, rotation: 0 }, { x: 548, y: 509, rotation: 12 }, 5.7, .85);
+    move("#paper-crane-mover", { x: 548, y: 509, rotation: 12 }, { x: 641, y: 490, rotation: 21 }, 6.9, .6);
+    const ball = [[-95,-54],[-45,-104],[18,-102],[74,-65],[105,-19],[88,48],[48,91],[-19,109],[-73,71],[-108,20],[-109,-24],[-95,-54]];
+    const sheet = [[-185,-167],[-55,-169],[70,-165],[180,-167],[186,-81],[183,0],[184,171],[50,174],[-68,170],[-184,171],[-189,75],[-185,-44]];
+    morph("#paper-ball-body", ball, sheet, 7.4, 1.35);
+    move("#paper-ball-mover", { x: 912, y: 444, rotation: 7 }, { x: 985, y: 495, rotation: 0 }, 7.4, 1.35);
+    move("#paper-everything", { opacity: 1 }, { opacity: 0 }, 7.45, .55);
+    move("#paper-ball-folds", { opacity: 1 }, { opacity: .18 }, 7.6, .8);
+    move("#paper-mess", { opacity: 0 }, { opacity: 1 }, 8.1, .6);
+    move("#paper-crane-mover", { x: 641, y: 490, rotation: 21 }, { x: 507, y: 522, rotation: -4 }, 8.8, .8);
+    hinge("#paper-crane-wing-a", 9.1, -18);
+    hinge("#paper-crane-wing-b", 10.15, 24);
+
+    Object.entries(shapes).forEach(([name, s], index) => {
+      pose(`#paper-${name}-mover`, { x: 985, y: 371 + index * 83, scale: 1, rotation: 0 });
+      pose(`#paper-${name}-label`, { opacity: 0 });
+      pose(`#paper-${name}-seam`, { opacity: 0 });
+      if (name === "frog") pose("#paper-frog-eyes", { opacity: 0 });
+      morph(`#paper-${name}-body`, strip, strip, 0, .01);
+      morph(`#paper-${name}-facet-a`, [[-172,-36],[172,-36],[0,36]], [[-172,-36],[172,-36],[0,36]], 0, .01);
+      morph(`#paper-${name}-facet-b`, [[-172,-36],[0,36],[-172,36]], [[-172,-36],[0,36],[-172,36]], 0, .01);
+      pose(`#paper-${name}-facet-a`, { opacity: 0 });
+      pose(`#paper-${name}-facet-b`, { opacity: 0 });
+      move(`#paper-${name}-mover`, { x: 985, y: 371 + index * 83, rotation: 0 },
+        { x: 994 + index * 4, y: s.row, rotation: [-2,1,-1,2][index] }, 10.7 + index * .2, .65);
+      move(`#paper-${name}-label`, { opacity: 0 }, { opacity: 1 }, 11.3 + index * .15, .5);
+      move(`#paper-${name}-body`, { fill: "#f8edd4" }, { fill: s.color }, 12.2 + index * .2, .7);
+      move(`#paper-${name}-mover`, { x: 994 + index * 4, y: s.row, rotation: [-2,1,-1,2][index] },
+        { x: 990, y: s.row, rotation: 0 }, 12.7 + index * .12, .5);
+      move(`#paper-${name}-mover`, { x: 990, y: s.row, rotation: 0 }, s.ready, 15.9, .75);
+      morph(`#paper-${name}-body`, strip, s.body, s.start, 1.2);
+      morph(`#paper-${name}-facet-a`, [[-172,-36],[172,-36],[0,36]], s.a, s.start, 1.2);
+      morph(`#paper-${name}-facet-b`, [[-172,-36],[0,36],[-172,36]], s.b, s.start + .1, 1.1);
+      move(`#paper-${name}-facet-a`, { opacity: 0 }, { opacity: 1 }, s.start, .6);
+      move(`#paper-${name}-facet-b`, { opacity: 0 }, { opacity: .35 }, s.start, .6);
+      move(`#paper-${name}-label`, { opacity: 1 }, { opacity: 0 }, s.start + .1, .5);
+      move(`#paper-${name}-seam`, { opacity: 0 }, { opacity: 1 }, s.start + .3, .6);
+      hinge(`#paper-${name}-hinge-a`, s.start + .1, -24);
+      hinge(`#paper-${name}-hinge-b`, s.start + .2, 28);
+      ink(`#paper-${name}-drawing path${name === "fan" ? ":not(#paper-fan-correction)" : ""}`, name === "fan" ? 28.6 : 31.4 + index * .5, .65);
+    });
+    ink("#paper-tear-a", 9.2, .55);
+    ink("#paper-tear-b", 9.9, .55);
+    ink("#paper-tear-c", 10.6, .55);
+    ink("#paper-fan-correction", 53.3, .65);
+    ink("#paper-proof-tick", 49.35, .65);
+    ink("#paper-red-mark", 51.25, .55);
+    ink("#paper-shipping-tick", 70.5, .65);
+    move("#paper-frog-eyes", { opacity: 0 }, { opacity: 1 }, 19.4, .5);
+    move("#paper-ball-mover", { x: 985, y: 495, scale: 1 }, { x: 987, y: 669, scale: .01 }, 10.8, 1.2, "power2.in");
+    move("#paper-hand-mover", { x: 940, y: 1300 }, { x: 737, y: 854, rotation: 9 }, 13.8, .8, "power3.out");
+    move("#paper-hand-thumb", { rotation: 8 }, { rotation: 28 }, 14.6, .4, "back.out(1.2)");
+    move("#paper-hand-mover", { x: 737, y: 854, rotation: 9 }, { x: 729, y: 1300, rotation: -5 }, 15.25, .65, "power3.in");
+
+    move("#paper-plane-mover", { ...shapes.plane.ready, rotation: 0 }, { x: 1460, y: 570, rotation: -8, scale: .78 }, 23.6, 1.6, "power3.inOut");
+    move("#paper-plane-mover", { x: 1460, y: 570, rotation: -8 }, { x: 1483, y: 510, rotation: 39 }, 25.2, 2.7);
+    move("#paper-plane-mover", { x: 1483, y: 510, rotation: 39 }, { x: 1378, y: 490, rotation: 30 }, 28, 1.8);
+    move("#paper-plane-mover", { x: 1378, y: 490, rotation: 30 }, { x: 1450, y: 522, rotation: 35 }, 31, 1.7);
+    move("#paper-plane-mover", { x: 1450, y: 522, rotation: 35 }, { x: 1377, y: 480, rotation: 28 }, 34.5, 1.8);
+    move("#paper-plane-mover", { x: 1377, y: 480, rotation: 28 }, { x: 1460, y: 515, rotation: 35 }, 38, 2);
+    move("#paper-plane-mover", { x: 1460, y: 515, rotation: 35, scale: .78 }, { x: 1010, y: 404, rotation: 0, scale: 1 }, 42, 1.65);
+
+    move("#paper-frog-mover", { ...shapes.frog.ready, rotation: 0 }, { x: 705, y: 620, rotation: -12, scale: frogScale }, 23.4, 1.45);
+    move("#paper-frog-mover", { y: 620, scaleY: frogScale }, { y: 637, scaleY: frogScale * .73 }, 26.8, .18, "power1.in");
+    move("#paper-frog-mover", { y: 637, scaleY: frogScale * .73 }, { y: 557, scaleY: frogScale * 1.08 }, 26.98, .36, "power2.out");
+    move("#paper-frog-mover", { y: 557, scaleY: frogScale * 1.08 }, { y: 650, scaleY: frogScale, rotation: 0 }, 27.34, .38, "power2.in");
+    move("#paper-frog-mover", { x: 705, y: 650 }, { x: 705, y: 713 }, 31.7, 1.25);
+    move("#paper-frog-mover", { y: 713, scaleY: frogScale }, { y: 735, scaleY: frogScale * .7 }, 33.2, .18, "power1.in");
+    move("#paper-frog-mover", { y: 735, scaleY: frogScale * .7 }, { y: 686, scaleY: frogScale * 1.1 }, 33.38, .27, "power2.out");
+    move("#paper-frog-mover", { y: 686, scaleY: frogScale * 1.1 }, { y: 723, scaleY: frogScale }, 33.65, .25, "power2.in");
+    move("#paper-flag-mover", { scale: .01 }, { scale: .9 }, 34.8, .55, "back.out(1.3)");
+    move("#paper-flag-cloth", { skewY: 0 }, { skewY: 14, duration: .35 }, 35.4, .35);
+    tl.to("#paper-flag-cloth", { skewY: -10, duration: .45, yoyo: true, repeat: 5, ease: "sine.inOut" }, 35.75);
+    move("#paper-crane-mover", { x: 507, y: 522, rotation: -4 }, { x: 510, y: 534, rotation: 18 }, 35.1, .65);
+    hinge("#paper-crane-wing-b", 36.75, -25);
+    const bridge = [[-139,-32],[-102,-39],[-65,-30],[-29,-39],[8,-31],[46,-38],[84,-30],[137,-35],[140,32],[70,35],[0,32],[-138,36]];
+    morph("#paper-bridge-body", square, bridge, 36.85, .8);
+    move("#paper-bridge-creases", { opacity: 0 }, { opacity: 1 }, 37.1, .55);
+    move("#paper-bridge-mover", { x: 491, y: 541, scale: .55, rotation: -15 },
+      { x: 705, y: 741, scale: 1, rotation: 4 }, 37.65, .95, "power3.out");
+    move("#paper-flag-mover", { scale: .9 }, { scale: .01 }, 38.95, .45, "power2.in");
+    move("#paper-frog-mover", { x: 705, y: 723, scaleY: frogScale }, { x: 705, y: 744, scaleY: frogScale * .7 }, 39.15, .18, "power1.in");
+    move("#paper-frog-mover", { x: 705, y: 744, scaleY: frogScale * .7 }, { x: 826, y: 652, scaleY: frogScale * 1.1, rotation: 8 }, 39.33, .37, "power2.out");
+    move("#paper-frog-mover", { x: 826, y: 652, scaleY: frogScale * 1.1 }, { x: 920, y: 707, scaleY: frogScale, rotation: 0 }, 39.7, .38, "power2.in");
+    move("#paper-frog-mover", { x: 920, y: 707, scale: frogScale }, { x: 1010, y: 493, scale: 1 }, 42.2, 1.5);
+
+    move("#paper-boat-mover", { ...shapes.boat.ready, scale: 1 }, { x: 1040, y: 604, scale: .73, rotation: -4 }, 24.2, 1.1);
+    move("#paper-boat-mover", { x: 1040, y: 604, rotation: -4 }, { x: 1185, y: 656, rotation: 6 }, 25.3, 1.6);
+    move("#paper-boat-mover", { x: 1185, y: 656, rotation: 6 }, { x: 1455, y: 710, rotation: -5 }, 26.9, 2);
+    pose("#paper-second-boat-mover", { x: 1000, y: 580, scale: .45, rotation: -5 });
+    morph("#paper-second-boat-body", square, shapes.boat.body, 28.9, .7);
+    move("#paper-second-boat-mover", { x: 1000, y: 580, scale: .45 }, { x: 1160, y: 602, scale: .61, rotation: 5 }, 28.9, 1.6);
+    move("#paper-second-boat-mover", { x: 1160, y: 602, rotation: 5 }, { x: 1357, y: 598, rotation: -4 }, 30.5, 2.1);
+    move("#paper-second-boat-mover", { x: 1357, y: 598, rotation: -4 }, { x: 1387, y: 633, rotation: 5 }, 34, 1.5);
+    move("#paper-boat-mover", { x: 1455, y: 710, rotation: -5 }, { x: 1475, y: 779, rotation: 3 }, 32.5, 1.7);
+    move("#paper-boat-mover", { x: 1475, y: 779, rotation: 3 }, { x: 1450, y: 753, rotation: -4 }, 37, 1.7);
+    move("#paper-boat-mover", { x: 1450, y: 753, scale: .73 }, { x: 1010, y: 582, scale: 1, rotation: 0 }, 42.4, 1.6);
+    move("#paper-second-boat-mover", { x: 1387, y: 633, scale: .61 }, { x: 1218, y: 594, scale: .03, rotation: 0 }, 42, 1.9);
+
+    move("#paper-fan-mover", { ...shapes.fan.ready, scale: 1 }, { x: 1112, y: 824, scale: .7, rotation: 13 }, 24.6, 1.6);
+    tl.fromTo("#paper-fan-mover", { rotation: 13 }, { rotation: -13, duration: .6, ease: "sine.inOut", yoyo: true, repeat: 19, immediateRender: false }, 27);
+    move("#paper-fan-mover", { x: 1112, y: 824, scale: .7, rotation: 13 }, { x: 1010, y: 671, scale: 1, rotation: 0 }, 42.6, 1.6);
+
+    move("#paper-crane-mover", { x: 510, y: 534, rotation: 18 }, { x: 420, y: 490, rotation: 0 }, 41.5, 1.0);
+    unfold("plane", 43.6);
+    unfold("frog", 43.9);
+    unfold("boat", 44.2);
+    unfold("fan", 44.5);
+    morph("#paper-orange-inspector-body", square, owl, 43, .85);
+    move("#paper-orange-inspector-mover", { x: 640, y: 422, rotation: -12 }, { x: 720, y: 425, rotation: 5 }, 43.7, 1);
+    move("#paper-stamp-mover", { y: 334 }, { y: 360 }, 46.5, .4, "power2.in");
+    move("#paper-stop-wing", { rotation: 30, scale: .35 }, { rotation: -8, scale: 1 }, 46.6, .4, "power3.out");
+    move("#paper-stamp-mover", { y: 360 }, { y: 325 }, 46.95, .35, "power3.out");
+    move("#paper-plane-mover", { x: 1010, y: 404, rotation: 0, scaleY: 1 },
+      { x: 1070, y: 422, rotation: -11, scaleY: .68 }, 47.3, .75);
+    move("#paper-lamp-beam", { attr: { points: "1317,228 1317,228 1317,228" } },
+      { attr: { points: "1317,228 900,479 1260,499" } }, 47.7, .8);
+    move("#paper-plane-mover", { scaleY: .68, y: 422, rotation: -11 }, { scaleY: 1, y: 404, rotation: 0, x: 1010 }, 49.4, .6);
+    move("#paper-stop-wing", { rotation: -8, scale: 1 }, { rotation: 30, scale: .35 }, 49.45, .6);
+    move("#paper-stamp-mover", { y: 325 }, { y: 361 }, 50.15, .25, "power2.in");
+    move("#paper-plane-mover", { scaleY: 1 }, { scaleY: .89 }, 50.4, .12, "none");
+    move("#paper-stamp-mover", { y: 361 }, { y: 320 }, 50.4, .45, "power3.out");
+    move("#paper-plane-mover", { scaleY: .89 }, { scaleY: 1 }, 50.52, .48, "back.out(1.2)");
+    move("#paper-lamp-beam", { attr: { points: "1317,228 900,479 1260,499" } },
+      { attr: { points: "1317,228 1317,228 1317,228" } }, 50.9, .6);
+    morph("#paper-fan-body", strip, shapes.fan.body, 52, .7);
+    morph("#paper-fan-facet-a", [[-172,-36],[172,-36],[0,36]], shapes.fan.a, 52, .7);
+    move("#paper-fan-label", { opacity: 1 }, { opacity: 0 }, 52, .45);
+    move("#paper-red-mark", { strokeDashoffset: 0 }, { strokeDashoffset: 120 }, 52.15, .55);
+    hinge("#paper-fan-hinge-a", 52.1, 30);
+    move("#paper-fan-mover", { y: 671, rotation: 0 }, { y: 709, rotation: -16 }, 52.35, .55);
+    move("#paper-fan-mover", { y: 709, rotation: -16 }, { y: 671, rotation: 0 }, 53, .65);
+    morph("#paper-fan-body", shapes.fan.body, strip, 53.75, .9);
+    morph("#paper-fan-facet-a", shapes.fan.a, [[-172,-36],[172,-36],[0,36]], 53.75, .9);
+    move("#paper-fan-label", { opacity: 0 }, { opacity: 1 }, 54.05, .5);
+    move("#paper-orange-inspector-mover", { x: 720, y: 425, rotation: 5, scale: .8 }, { x: 445, y: 690, rotation: -3, scale: .7 }, 54.3, 1.15);
+
+    ["plane","frog","boat","fan"].forEach((name, index) => {
+      const y = [404,493,582,671][index];
+      const x = [835,929,1023,1117][index];
+      move(`#paper-${name}-mover`, { x: 1010, y, rotation: 0, scale: 1 },
+        { x, y: 523 + [6,-9,13,-4][index], rotation: 90, scale: .88 }, 55.65 + index * .1, 1.2);
+      move(`#paper-${name}-mover`, { y: 523 + [6,-9,13,-4][index] }, { y: 523 }, 58.5 + index * .18, .6, "power3.out");
+    });
+    morph("#paper-sage-inspector-body", square, owl, 55, .85);
+    morph("#paper-rose-inspector-body", square, owl, 55.2, .85);
+    move("#paper-sage-inspector-mover", { x: 593, y: 584, rotation: 15 }, { x: 665, y: 608, rotation: -2 }, 56, .9);
+    move("#paper-rose-inspector-mover", { x: 1335, y: 578, rotation: -12 }, { x: 1296, y: 603, rotation: 3 }, 56.1, .9);
+    move("#paper-straightedge-mover", { scaleX: .1, y: 713 }, { scaleX: 1, y: 682 }, 57.5, .85, "power3.out");
+    move("#paper-sage-inspector-mover", { rotation: -2 }, { rotation: 8 }, 59.7, .45);
+    move("#paper-rose-inspector-mover", { rotation: 3 }, { rotation: -7 }, 60.1, .45);
+    move("#paper-straightedge-mover", { y: 682, scaleX: 1 }, { y: 852, scaleX: .65 }, 61.6, .8, "power2.in");
+
+    move("#paper-sage-inspector-mover", { x: 665, y: 608, rotation: 8, scale: .75 }, { x: 575, y: 720, rotation: 0, scale: .7 }, 61.6, 1);
+    move("#paper-rose-inspector-mover", { x: 1296, y: 603, rotation: -7, scale: .75 }, { x: 1380, y: 640, rotation: 3, scale: .7 }, 61.6, 1);
+    move("#paper-crane-mover", { x: 420, y: 490, rotation: 0 }, { x: 680, y: 460, rotation: 25 }, 62.15, 1.1);
+    hinge("#paper-crane-wing-a", 63.5, -32);
+    hinge("#paper-crane-wing-b", 63.65, 37);
+    ["plane","frog","boat","fan"].forEach((name, index) => {
+      const x = [835,929,1023,1117][index];
+      const finalX = 890 + index * 60;
+      move(`#paper-${name}-mover`, { x, y: 523, rotation: 90, scale: .88 },
+        { x: finalX, y: 562, rotation: 0, scale: 1 }, 63.6 + index * .16, 1.65);
+      morph(`#paper-${name}-body`, strip, panel, 63.6 + index * .16, 1.65);
+      morph(`#paper-${name}-facet-a`, [[-172,-36],[172,-36],[0,36]], [[-38,-145],[0,-160],[0,160],[-38,145],[-57,75],[-58,-60]], 63.6 + index * .16, 1.65);
+      morph(`#paper-${name}-facet-b`, [[-172,-36],[0,36],[-172,36]], [[0,-160],[38,-145],[48,-92],[56,30],[36,145],[0,160]], 63.6 + index * .16, 1.65);
+      move(`#paper-${name}-label`, { opacity: 1 }, { opacity: 0 }, 63.6 + index * .16, .6);
+      move(`#paper-${name}-drawing`, { opacity: 1 }, { opacity: 0 }, 63.6 + index * .16, .6);
+      if (name === "plane") move("#paper-proof-tick", { opacity: 1 }, { opacity: 0 }, 63.6, .6);
+      move(`#paper-${name}-body`, { fill: shapes[name].color, fillOpacity: 1 },
+        { fill: ["#d9ddc9","#e3e8bb","#d9ddc9","#efd2b0"][index], fillOpacity: .76 }, 67.5, 1.2);
+      move(`#paper-${name}-facet-a`, { opacity: 1 }, { opacity: .3 }, 67.5, 1.2);
+      move(`#paper-${name}-facet-b`, { opacity: .35 }, { opacity: .18 }, 67.5, 1.2);
+      move(`#paper-${name}-mover`, { x: finalX, y: 562, rotation: 0 }, { x: finalX + 458, y: 682, rotation: 0, scale: .87 }, 76.85, 1.55, "power3.out");
+    });
+    move("#paper-lantern-handle", { scaleY: .01 }, { scaleY: 1 }, 65, 1.1, "power3.out");
+    move("#paper-lantern-ribs-mover", { scaleY: .01 }, { scaleY: 1 }, 64.25, 1.25, "power3.out");
+    move("#paper-light-pool", { opacity: 0 }, { opacity: .6 }, 67.5, 1.1);
+    move("#paper-lantern-flame", { opacity: 0 }, { opacity: .9 }, 67.5, .8);
+    move("#paper-crane-mover", { x: 680, y: 460, rotation: 25 }, { x: 590, y: 365, rotation: 5 }, 67.15, 1.05);
+    move("#paper-shipping-mover", { scale: .05, rotation: -8 }, { scale: 1, rotation: -6 }, 68.3, .75, "power3.out");
+    move("#paper-hand-mover", { x: 729, y: 1300, rotation: -5 }, { x: 1348, y: 756, rotation: -9 }, 69.1, .85, "power3.out");
+    move("#paper-hand-pencil", { opacity: 0 }, { opacity: 1 }, 69.35, .45);
+    move("#paper-hand-fingers", { scaleY: .32, y: 20 }, { scaleY: .65, y: 2 }, 69.45, .55);
+    move("#paper-hand-mover", { x: 1348, y: 756, rotation: -9 }, { x: 1371, y: 774, rotation: -9 }, 70.5, .18, "none");
+    move("#paper-hand-mover", { x: 1371, y: 774, rotation: -9 }, { x: 1412, y: 724, rotation: -9 }, 70.68, .47, "power2.out");
+    move("#paper-hand-mover", { x: 1412, y: 724, rotation: -9 }, { x: 1420, y: 1300, rotation: 0 }, 71.6, .75, "power3.in");
+    move("#paper-hand-pencil", { opacity: 1 }, { opacity: 0 }, 71.6, .4);
+
+    move("#paper-drawer-mover", { y: 1040 }, { y: 901 }, 73, .7, "power3.out");
+    const archivePoses = [
+      { x: 590, y: 365, rotation: 5, scale: 1 },
+      { x: 445, y: 690, rotation: -3, scale: .7 },
+      { x: 575, y: 720, rotation: 0, scale: .7 },
+      { x: 1380, y: 640, rotation: 3, scale: .7 },
+    ];
+    ["crane","orange-inspector","sage-inspector","rose-inspector"].forEach((name, index) => {
+      const source = name === "crane" ? crane : owl;
+      morph(`#paper-${name}-body`, source, square, 73.4 + index * .12, .9);
+      const mover = `#paper-${name}-mover`;
+      move(mover, archivePoses[index], { x: 1490 + index * 12, y: 897, rotation: [-8,3,10,-3][index], scale: .29 }, 74.25 + index * .18, .9, "power3.inOut");
+      if (name === "crane") {
+        move("#paper-crane-wing-a", { scaleX: 1 }, { scaleX: .01 }, 73.4, .7);
+        move("#paper-crane-wing-b", { scaleX: 1 }, { scaleX: .01 }, 73.45, .7);
+        move("#paper-crane-eye", { opacity: 1 }, { opacity: 0 }, 73.4, .5);
+      } else move(`#paper-${name}-eyes`, { opacity: 1 }, { opacity: 0 }, 73.4 + index * .12, .5);
+      move(mover, { scaleY: .29, y: 897 }, { scaleY: .025, y: 961 }, 75.8, .65, "power2.in");
+    });
+    move("#paper-stop-wing", { scale: .35 }, { scale: .01 }, 73.4, .65);
+    move("#paper-drawer-mover", { y: 901 }, { y: 1040 }, 75.8, 1.05, "power2.inOut");
+    move("#paper-hand-mover", { x: 1420, y: 1300, rotation: 0 }, { x: 1536, y: 814, rotation: -8 }, 76.6, .85, "power3.out");
+    move("#paper-hand-fingers", { scaleY: .65, y: 2 }, { scaleY: .3, y: 21 }, 77.15, .55);
+    move("#paper-coffee-mover", { x: 1633, y: 294 }, { x: 1693, y: 690 }, 76.85, 1.55, "power3.out");
+    move("#paper-lantern-light-mover", { x: 980, y: 562 }, { x: 1438, y: 682, scale: .87 }, 76.85, 1.55, "power3.out");
+    move("#paper-lantern-ribs-mover", { x: 980, y: 562, scale: 1 }, { x: 1438, y: 682, scale: .87 }, 76.85, 1.55, "power3.out");
+    move("#paper-hand-mover", { x: 1536, y: 814, rotation: -8 }, { x: 1563, y: 814, rotation: -5 }, 78, .4, "power3.out");
+    const foldedCard = [[-150,-30],[0,-60],[150,-30],[150,0],[150,30],[0,60],[-150,30],[-150,0]];
+    const openCard = [[-615,-294],[-205,-294],[205,-294],[615,-294],[615,-98],[615,98],[615,294],[205,294],[-205,294],[-615,294],[-615,98],[-615,-98]];
+    morph("#paper-card-body", foldedCard, openCard, 79, 1.05);
+    move("#paper-card-mover", { scale: .15, rotation: -12 }, { scale: .9, rotation: -1 }, 79, 1.05, "power3.out");
+    move("#paper-card-fold-a", { scaleX: 1 }, { scaleX: .01 }, 79.35, .9, "power2.inOut");
+    move("#paper-card-fold-b", { scaleX: 1 }, { scaleX: .01 }, 79.48, .9, "power2.inOut");
+    move("#paper-end-copy", { scaleX: .02, opacity: 0 }, { scaleX: 1, opacity: 1 }, 80.1, .45, "power3.out");
+    window.__timelines["paper"] = tl;
+  </script>
+</template>

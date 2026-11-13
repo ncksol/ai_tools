@@ -1,0 +1,15 @@
+{
+  "paper-sfx.wav": {
+    "source": "scripts/synthesize-audio.mjs",
+    "method": "Seeded, filtered noise; no samples, recordings, music or hosted generation",
+    "license": "CC0-1.0",
+    "duration": 84,
+    "sampleRate": 44100,
+    "channels": 2,
+    "cueCount": 44
+  },
+  "music.mp3": {
+    "status": "User-supplied music slot; hidden in the composition until provided",
+    "placeholder": "Local digital silence, not music"
+  }
+}

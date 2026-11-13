@@ -1,0 +1,25 @@
+{
+  "duration": 84,
+  "assertions": [
+    {
+      "kind": "appearsBy",
+      "selector": "#paper-crane-eye",
+      "bySec": 5.2
+    },
+    {
+      "kind": "appearsBy",
+      "selector": "#paper-proof-tick",
+      "bySec": 50.1
+    },
+    {
+      "kind": "appearsBy",
+      "selector": "#paper-end-first",
+      "bySec": 81
+    },
+    {
+      "kind": "keepsMoving",
+      "withinSelector": "#paper-steam",
+      "maxStaticSec": 2.9
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+node_modules/
+.hyperframes/
+.thumbnails/
+.waveform-cache/
+assets/audio/*.wav
+assets/audio/*.mp3
+*.mp4
+renders/
