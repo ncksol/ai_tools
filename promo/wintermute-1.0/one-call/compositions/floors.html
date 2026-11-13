@@ -117,7 +117,7 @@
         </g>
         <path id="fl-dep" opacity="0" d="M1240 600 C1180 560 1180 520 1200 420" fill="none" stroke="#58cfc2" stroke-width="6" stroke-dasharray="12 10" />
         <path id="fl-deph" d="M1184 438 L1200 410 L1218 440" fill="none" stroke="#58cfc2" stroke-width="6" stroke-linejoin="round" opacity="0" />
-        <g id="fl-safe" transform="translate(1060 952)"></g>
+        <g id="fl-safe" transform="translate(1104 952)"></g>
         <path d="M1640 116 V440" stroke="#8a929c" stroke-width="5" />
         <g id="fl-man"><g id="fl-man-f" transform="translate(1650 426) scale(0.72)"></g></g>
       </svg>
@@ -148,7 +148,7 @@
             r(-48, -322, 96, 16, 'fill="#c9ccd1" opacity="0.8"'),
         };
       };
-      document.getElementById("fl-safe").innerHTML = CREW({ arm: "reach", prop: "stethoscope" });
+      document.getElementById("fl-safe").innerHTML = '<g id="fl-safe-a">' + CREW({ arm: "reach", prop: "stethoscope" }) + '</g><g id="fl-safe-b" opacity="0">' + CREW({ arm: "down", prop: "stethoscope" }) + "</g>";
       document.getElementById("fl-man-f").innerHTML = CREW({ arm: "down", prop: "stamp" });
       document.getElementById("m6-glove").innerHTML = GLOVE("hold", "#ece8df");
       document.getElementById("m6-hat").innerHTML = HAT("fedora", "#ece8df");
@@ -186,6 +186,9 @@
     // The vault opens; the same instant the second floor starts.
     tl.to("#fl-door", { scaleX: 0.1, svgOrigin: "1450 740", duration: 0.35, ease: "power3.out" }, 1.4);
     tl.to("#fl-spill", { opacity: 0.16, duration: 0.3, ease: "power2.out" }, 1.45);
+    // Vault open: he lets go of the dial.
+    tl.to("#fl-safe-a", { opacity: 0, duration: 0.12, ease: "none" }, 1.7);
+    tl.to("#fl-safe-b", { opacity: 1, duration: 0.12, ease: "none" }, 1.7);
     tl.fromTo("#fl-clunk", { opacity: 0, scale: 0.4, rotation: 0 }, { opacity: 1, scale: 1, rotation: -7, duration: 0.18, ease: "expo.out" }, 1.42);
     tl.to("#fl-clunk", { opacity: 0, duration: 0.15, ease: "power3.in" }, 2.6);
     tl.fromTo("#fl-dep", { opacity: 1, strokeDasharray: "12 10", clipPath: "inset(100% 0% 0% 0%)" }, { clipPath: "inset(0% 0% 0% 0%)", duration: 0.3, ease: "power2.out" }, 1.5);

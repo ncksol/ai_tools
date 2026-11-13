@@ -139,8 +139,15 @@
       C_HEAD("open") +
       '<path d="M-16 104 L4 130 L26 104 L16 92 L4 114 L-6 92 Z" fill="' + SHIRT_D + '"' + st(3) + "/>",
     arm: LIMBS([[[-8, 156], [70, 302], 30, 25]], SHIRT) + LIMBS([[[70, 302], [192, 352], 20, 16]], SKIN) + CUFF([70, 302], -62, 27),
-    palm: '<path d="M186 330 C204 314 236 312 256 320 L266 392 C248 404 214 402 198 388 C184 374 180 348 186 330 Z" fill="' + SKIN + '"' + st() + "/>",
-    thumb: '<path d="M236 324 C250 306 276 304 290 314 C298 322 294 334 282 338 L250 342 Z" fill="' + SKIN + '"' + st(3.5) + '/><path d="M276 318 C282 320 286 326 284 332" fill="none"' + st(2.5) + "/>",
+    palm: "",
+    thumb:
+      '<path d="M188 338 C196 322 220 316 250 318 L254 400 C230 406 206 400 196 386 C186 372 184 354 188 338 Z" fill="' + SKIN + '"' + st() + "/>" +
+      [[248, 330, 284, 327, 17], [250, 350, 290, 349, 18], [250, 370, 288, 371, 18], [248, 390, 280, 393, 16]]
+        .map(([x1, y1, x2, y2, w]) =>
+          '<path d="M' + x1 + " " + y1 + " L" + x2 + " " + y2 + '" stroke="' + INK + '" stroke-width="' + (w + 8) + '" stroke-linecap="round"/>' +
+          '<path d="M' + x1 + " " + y1 + " L" + x2 + " " + y2 + '" stroke="' + SKIN + '" stroke-width="' + w + '" stroke-linecap="round"/>' +
+          '<path d="M' + (x1 + 16) + " " + (y1 - w / 2 + 3) + " Q" + (x1 + 20) + " " + y1 + " " + (x1 + 16) + " " + (y1 + w / 2 - 3) + '" fill="none"' + st(2.5) + "/>")
+        .join(""),
   });
   // A crew member: black trench coat and fedora, front view, feet at (0,0), about 400 units tall.
   // arm: the right arm ("down" | "phone" | "point" | "reach" | "hold"); prop: carried in the left hand.
@@ -168,8 +175,32 @@
       '<path d="M-48,-300 C-60,-250 -64,-170 -68,-96 M-28,-352 C-28,-388 -18,-396 2,-396" fill="none" stroke="#8a929c" stroke-width="4" stroke-linecap="round"/>' +
       arm("M-30,-290 C-46,-240 -50,-190 -46,-150") + arm(arms[o.arm || "down"]) +
       (o.arm === "phone" ? HANDSET(FIG_HS) : "") +
-      (o.prop ? '<g transform="translate(-46 -146)">' + PROPS[o.prop] + "</g>" : "")
+      (o.prop ? '<g transform="translate(-46 -146)">' + PROPS[o.prop] + "</g>" : "") +
+      CHAND("fist", -47, -136, 96, 0.42, true) + CHAND.apply(null, HANDS[o.arm || "down"])
     );
+  };
+  // Black-gloved crew hands with a grey rim, so they read against the silhouette.
+  // A fist grips a bar that runs along its local x; "point" has the index finger out along local x.
+  const RIM = "#5b6470";
+  const rs = (w) => ' stroke="' + RIM + '" stroke-width="' + (w || 4) + '" stroke-linejoin="round" stroke-linecap="round"';
+  const CFIST = () =>
+    '<path d="M-30 -24 C-30 -36 -18 -40 -6 -38 L22 -36 C34 -34 38 -24 36 -12 L34 18 C32 32 22 38 8 38 L-14 38 C-28 38 -34 28 -32 14 Z" fill="' + INK + '"' + rs(5) + "/>" +
+    '<path d="M-22 -36 V-16 M-6 -38 V-16 M10 -37 V-16 M24 -35 V-16" fill="none"' + rs(4) + "/>" +
+    '<path d="M-32 6 C-46 4 -48 -12 -36 -18 L-24 -14" fill="' + INK + '"' + rs(4.5) + "/>";
+  const CPOINT = () =>
+    '<path d="M24 -17 L88 -17 C99 -17 99 3 88 3 L24 3 Z" fill="' + INK + '"' + rs(5) + "/>" +
+    '<path d="M-16 -22 C-16 -32 0 -34 24 -30 C40 -26 44 -6 40 10 C36 26 20 30 4 30 L-16 26 Z" fill="' + INK + '"' + rs(5) + "/>" +
+    '<path d="M18 4 C32 4 36 12 32 18 M14 14 C28 16 30 24 24 28" fill="none"' + rs(4) + "/>" +
+    '<path d="M2 -30 C6 -44 22 -48 30 -40 C34 -34 28 -26 20 -26" fill="' + INK + '"' + rs(4.5) + "/>";
+  const CHAND = (kind, x, y, rot, s, flip) =>
+    '<g transform="translate(' + x + " " + y + ")" + (flip ? " scale(-1 1)" : "") + " rotate(" + rot + ") scale(" + s + ')">' + (kind === "point" ? CPOINT() : CFIST()) + "</g>";
+  // Where each right-arm pose puts its hand: [kind, x, y, rotation, scale].
+  const HANDS = {
+    down: ["fist", 47, -136, 96, 0.42],
+    phone: ["fist", 42, -334, 68, 0.42],
+    point: ["point", 132, -322, -28, 0.46],
+    reach: ["fist", 148, -230, 6, 0.44],
+    hold: ["fist", 100, -214, 0, 0.42],
   };
   // White gloves for the appraisers. Facing right; origin at the wrist.
   const GLOVE = (pose, fill) => {
