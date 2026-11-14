@@ -6,6 +6,13 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.1.0 — 2026-11-14
+
+### Added
+
+- `wintermute-peon` can use Copilot Browser (`browser-use/*`) and Computer Use (`computer-use/*`), so child sessions can work with live web pages, sites behind a sign-in and desktop app UI. Approvals and sign-ins those tools ask for go to the orchestrator as `needs_input` reports.
+- `wintermute-core` knows its children have these tools and routes such jobs to them.
+
 ## 1.0.0 — 2026-11-12
 
 The first stable release. New to Wintermute? Start with the [quick start](https://github.com/ncksol/ai_tools/blob/main/ghcp/plugins/wintermute/QUICKSTART.md).
