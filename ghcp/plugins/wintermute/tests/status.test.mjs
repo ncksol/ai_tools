@@ -131,6 +131,9 @@ test('tool limits follow the design call', () => {
   assert.equal(limit('bash', { initialWait: 600 }), 15 * MINUTE);
   assert.equal(limit('bash', {}), 10 * MINUTE);
   assert.equal(limit('read_bash', { delay: 60 }), 3 * MINUTE);
+  assert.equal(limit('powershell', { initialWait: 600 }), 15 * MINUTE);
+  assert.equal(limit('powershell', {}), 10 * MINUTE);
+  assert.equal(limit('read_powershell', { delay: 60 }), 3 * MINUTE);
   assert.equal(limit('read_agent', { timeout: 180 }), 5 * MINUTE);
   assert.equal(limit('create_session', {}), 2 * MINUTE);
   assert.equal(limit('list_repositories', {}), 2 * MINUTE);

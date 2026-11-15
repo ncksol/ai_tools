@@ -40,7 +40,7 @@ const QUICK_TOOLS = new Set([
   'rename_session', 'rename_branch', 'save_session_automation', 'get_session_automation', 'list_repositories', 'add_repository', 'await_repository_creation', 'publish_chat_update',
   'view', 'create', 'edit', 'apply_patch', 'str_replace_editor', 'grep', 'glob', 'rg', 'tool_search_tool', 'sql', 'store_memory', 'vote_memory', 'skill',
 ]);
-const POLLING_TOOLS = new Set(['read_bash', 'read_agent', 'list_agents', 'list_bash', 'get_session', 'get_sessions_status', 'list_sessions_and_chats', 'get_session_automation']);
+const POLLING_TOOLS = new Set(['read_bash', 'read_powershell', 'read_agent', 'list_agents', 'list_bash', 'list_powershell', 'get_session', 'get_sessions_status', 'list_sessions_and_chats', 'get_session_automation']);
 const IDLE_DETAILS = new Set(['idle', 'stopped', 'crashed', 'failed', 'stalled', 'blocked', 'blocked_on_orchestrator']);
 /** Units that are over: they neither keep a swarm busy nor count as idle work. */
 const ENDED_DETAILS = new Set(['archived', 'merged', 'completed', 'cancelled']);
@@ -58,14 +58,16 @@ export function awaitingReview({ detail, report, parentRepliedAt, prState }) {
   return prState === 'open' || prState === 'draft' || prState === 'unknown';
 }
 
-/** The design's tool rule: bash initial_wait + 5 min (10 min without one); read_bash delay + 2 min; read_agent timeout + 2 min; quick tools 2 min. */
+/** The design's tool rule (powershell and read_powershell as bash and read_bash): bash initial_wait + 5 min (10 min without one); read_bash delay + 2 min; read_agent timeout + 2 min; quick tools 2 min. */
 export function toolLimitMs(tool, t) {
   const args = tool.args ?? {};
   switch (tool.name) {
     case 'bash':
+    case 'powershell':
       if (args.mode === 'async') return t.quickToolMs;
       return args.initialWait > 0 ? args.initialWait * 1000 + t.bashExtraMs : t.bashDefaultMs;
     case 'read_bash':
+    case 'read_powershell':
       return (args.delay > 0 ? args.delay * 1000 : 0) + t.readBashExtraMs;
     case 'read_agent':
       return (args.timeout > 0 ? args.timeout * 1000 : args.wait ? 30_000 : 0) + t.readAgentExtraMs;
@@ -76,7 +78,7 @@ export function toolLimitMs(tool, t) {
 
 function limitNote(tool, t) {
   const args = tool.args ?? {};
-  if (tool.name !== 'bash' || args.mode === 'async') return '';
+  if ((tool.name !== 'bash' && tool.name !== 'powershell') || args.mode === 'async') return '';
   return args.initialWait > 0 ? ` (initial_wait ${formatDuration(args.initialWait * 1000)} + ${formatDuration(t.bashExtraMs)})` : ' (no initial_wait)';
 }
 

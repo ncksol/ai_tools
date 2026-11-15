@@ -6,6 +6,13 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.1.1 — 2026-11-15
+
+### Fixed
+
+- `wintermute-peon` and `wintermute-core` now get the PowerShell tools (`powershell`, `read_powershell`, `write_powershell`, `stop_powershell`, `list_powershell`). Before this fix, both agents had no shell on Windows, because Copilot CLI gives Windows sessions these tools in place of the bash tools.
+- The dashboard's stuck detection applies the `bash` and `read_bash` time limits to `powershell` and `read_powershell`.
+
 ## 1.1.0 — 2026-11-14
 
 ### Added
