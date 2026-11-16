@@ -60,7 +60,7 @@ The agents are in `com.github.copilot/agents/`. Copilot names a plugin agent `<p
 
 | Agent | ID | What it does |
 | --- | --- | --- |
-| `wintermute-core` | `wintermute:wintermute-core` | The orchestrator. Plans, delegates and tracks multi-PR work. Hands owned work and one-off jobs to child sessions, which run as `wintermute-peon`, and never starts sub-agents. May do a quick job itself, and commits small edits on its own session branch. Plans for wall-clock speed. |
+| `wintermute-core` | `wintermute:wintermute-core` | The orchestrator. Plans, delegates and tracks multi-PR work. Hands owned work and one-off jobs to child sessions, which run as `wintermute-peon`, and never starts sub-agents. May do a quick job itself, and commits small edits on its own session branch. Does simple PR jobs, such as merges and retargets, itself or through a cheap one-off session. Plans for wall-clock speed. |
 | `wintermute-peon` | `wintermute:wintermute-peon` | The agent every child session of `wintermute-core` runs as. Can't start sub-agents or sessions. Hidden from the picker. |
 
 Run `wintermute-core` as the session's agent in the GitHub Copilot app: pick it before your first message, from the composer's **+** menu or with `/agent`. Where a tool or CLI flag takes an agent ID, use the `wintermute:` ID. A bare name never resolves to a plugin agent, so `wintermute-core` starts its children as `wintermute:wintermute-peon`.
