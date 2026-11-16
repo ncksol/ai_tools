@@ -15,6 +15,10 @@ After merging, run `npm run release:publish -- --dry-run`, then `npm run release
 - `wintermute-peon` expects the orchestrator or a one-off session to merge or retarget its PR, and reads the PR's state again before it acts on it after a pause. Before a merge or retarget of a PR whose owner is busy on it or may have an Agent merge running, `wintermute-core` tells the owner first, and the owner stops the Agent merge and pauses until the job is done.
 - Both agents use the `az` CLI for Azure DevOps, not the app's native PR tools, `az rest` or Agent merge unless the user asks, and trim its output with `--query` or `jq`.
 
+### Added
+
+- The reference-only `wintermute-pr-commands` skill, with the tested `az` commands for Azure DevOps PR work and the tested `gh` reads for GitHub: reads of PR state, votes, policies, builds, threads, labels and work items, and the verified writes (thread reply, description, label, completion that keeps the source branch, retarget through the SDK bundled with `az`, work-item state). It also says how to read the results and lists the operations that have no tested command yet. Both agents load it once, by its bare name, before Azure DevOps or GitHub PR work. The skill runs nothing and grants no permission.
+
 ## 1.1.1 — 2026-11-15
 
 ### Fixed
