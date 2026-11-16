@@ -34,7 +34,8 @@ Always run `wintermute:wintermute-core` as a top-level session. Never start it a
 - **Child sessions.** Each unit gets its own child session, which runs as `wintermute:wintermute-peon`. The orchestrator picks each child's model and reasoning effort, runs independent units in parallel, and stacks a unit that builds on another on its parent's branch. Children can't start agents of their own; they ask the orchestrator instead.
 - **The dashboard.** When the orchestrator creates its first child session, it opens the swarm dashboard in the app's side panel.
 - **Questions for you.** Every question the orchestrator asks starts with a tag that names the units it concerns, for example `[unit=api] ...`, `[unit=api need=pr] ...` for a PR go-ahead, or `[unit=* need=plan] ...` for the whole plan. The dashboard lists open questions as "Needs you".
-- **Go-aheads before PRs.** A child asks before it opens a PR, takes one out of draft or merges. The orchestrator brings these to you, unless you have told it to decide.
+- **Go-aheads before PRs.** Before a PR is opened, taken out of draft or merged, the orchestrator brings the go-ahead to you, unless you have told it to decide.
+- **Who handles a PR.** The child that owns a PR handles the jobs that need its knowledge of the work, such as fixes, review comments and rebases. The orchestrator does simple PR jobs, such as checking CI, merging after your go-ahead or retargeting, itself or through a cheap one-off session.
 - **Reviews and checks.** Before a unit merges, a model from another vendor reviews it, and a separate session checks the author's claims (tests, CI, scope) at the pushed commit. Two judges from two vendors check the last PR before it merges.
 - **The end.** The orchestrator reports the result, open risks and any skipped reviews, then archives the finished child sessions.
 

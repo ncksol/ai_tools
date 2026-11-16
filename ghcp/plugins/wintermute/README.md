@@ -60,10 +60,12 @@ The agents are in `com.github.copilot/agents/`. Copilot names a plugin agent `<p
 
 | Agent | ID | What it does |
 | --- | --- | --- |
-| `wintermute-core` | `wintermute:wintermute-core` | The orchestrator. Plans, delegates and tracks multi-PR work. Hands owned work and one-off jobs to child sessions, which run as `wintermute-peon`, and never starts sub-agents. May do a quick job itself, and commits small edits on its own session branch. Plans for wall-clock speed. |
+| `wintermute-core` | `wintermute:wintermute-core` | The orchestrator. Plans, delegates and tracks multi-PR work. Hands owned work and one-off jobs to child sessions, which run as `wintermute-peon`, and never starts sub-agents. May do a quick job itself, and commits small edits on its own session branch. Does simple PR jobs, such as merges and retargets, itself or through a cheap one-off session. Plans for wall-clock speed. |
 | `wintermute-peon` | `wintermute:wintermute-peon` | The agent every child session of `wintermute-core` runs as. Can't start sub-agents or sessions. Hidden from the picker. |
 
 Run `wintermute-core` as the session's agent in the GitHub Copilot app: pick it before your first message, from the composer's **+** menu or with `/agent`. Where a tool or CLI flag takes an agent ID, use the `wintermute:` ID. A bare name never resolves to a plugin agent, so `wintermute-core` starts its children as `wintermute:wintermute-peon`.
+
+Both agents load the `wintermute-pr-commands` skill (in `skills/`) once before Azure DevOps or GitHub PR work. It is a reference: its `references/azure-devops.md` and `references/github.md` hold the tested `az` and `gh` commands and list the operations that have no tested command yet. The skill runs nothing and grants no permission. Unlike an agent, it is loaded by its bare name.
 
 ### Which model to run it on
 
@@ -144,6 +146,7 @@ Without Playwright or its WebKit build the check says so and skips. `npm test` a
 | `ui/` | The dashboard page: plain ES modules and CSS, no build step |
 | `docs/images/` | The installed plugin icon, the README banner and the [dashboard guide](DASHBOARD.md)'s screenshots |
 | `com.github.copilot/agents/` | The orchestrator agent and its peon |
+| `skills/wintermute-pr-commands/` | The agents' reference of tested PR commands for Azure DevOps and GitHub |
 | `com.github.copilot/extensions/swarm-dashboard/` | The canvas extension |
 | `scripts/` | The launcher, the snapshot command, the layout check and the validator |
 | `tests/` | Unit tests and synthetic fixtures |

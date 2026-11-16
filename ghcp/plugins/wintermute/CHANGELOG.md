@@ -6,6 +6,19 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.2.0 — 2026-11-16
+
+### Changed
+
+- Simple PR jobs no longer go to the session that owns the PR. `wintermute-core` reads PR state, CI and policy results, merges after the go-ahead, retargets, re-queues builds and adds reviewers or labels itself as a quick job, or gives the job to a Low-tier one-off session when it outgrows a quick job, such as a wait for CI. Owners keep the jobs that need their knowledge of the work: fixes, review comments and replies, rebases, PR text and decisions about the PR. The go-ahead, claims check, review and final panel rules are unchanged.
+- Simple PR jobs change only the PR, never the child's branch. Merges keep the source branch, because deleting it would be a write to the child's branch and other PRs may still target it.
+- `wintermute-peon` expects the orchestrator or a one-off session to merge or retarget its PR, and reads the PR's state again before it acts on it after a pause. Before a merge or retarget of a PR whose owner is busy on it or may have an Agent merge running, `wintermute-core` tells the owner first, and the owner stops the Agent merge and pauses until the job is done.
+- Both agents use the `az` CLI for Azure DevOps, not the app's native PR tools, `az rest` or Agent merge unless the user asks, and trim its output with `--query` or `jq`.
+
+### Added
+
+- The reference-only `wintermute-pr-commands` skill, with the tested `az` commands for Azure DevOps PR work and the tested `gh` reads for GitHub: reads of PR state, votes, policies, builds, threads, labels and work items, and the verified writes (thread reply, description, label, completion that keeps the source branch, retarget through the SDK bundled with `az`, work-item state). It also says how to read the results and lists the operations that have no tested command yet. Both agents load it once, by its bare name, before Azure DevOps or GitHub PR work. The skill runs nothing and grants no permission.
+
 ## 1.1.1 — 2026-11-15
 
 ### Fixed
