@@ -12,7 +12,7 @@ After merging, run `npm run release:publish -- --dry-run`, then `npm run release
 
 - Simple PR jobs no longer go to the session that owns the PR. `wintermute-core` reads PR state, CI and policy results, merges after the go-ahead, retargets, re-queues builds and adds reviewers or labels itself as a quick job, or gives the job to a Low-tier one-off session when it outgrows a quick job, such as a wait for CI. Owners keep the jobs that need their knowledge of the work: fixes, review comments and replies, rebases, PR text and decisions about the PR. The go-ahead, claims check, review and final panel rules are unchanged.
 - Simple PR jobs change only the PR, never the child's branch. Merges keep the source branch, because deleting it would be a write to the child's branch and other PRs may still target it.
-- `wintermute-peon` expects the orchestrator or a one-off session to merge or retarget its PR, and reads the PR's state again before it acts on it after a pause.
+- `wintermute-peon` expects the orchestrator or a one-off session to merge or retarget its PR, and reads the PR's state again before it acts on it after a pause. Before a merge or retarget of a PR whose owner is busy on it or may have an Agent merge running, `wintermute-core` tells the owner first, and the owner stops the Agent merge and pauses until the job is done.
 - Both agents use the `az` CLI for Azure DevOps, not the app's native PR tools, `az rest` or Agent merge unless the user asks, and trim its output with `--query` or `jq`.
 
 ## 1.1.1 — 2026-11-15

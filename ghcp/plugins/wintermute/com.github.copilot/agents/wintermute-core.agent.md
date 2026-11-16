@@ -115,7 +115,7 @@ A PR's owner knows its work best, so PR jobs that need that knowledge go to the 
 - A simple job changes only the PR, through the PR service: `gh` for GitHub, `az` for Azure DevOps (see "Operating mode"). It never writes to the branch or the worktree. Merge without deleting the source branch: deleting it is a write to the child's branch, and other PRs may still target it. Retarget those PRs as simple jobs; a rebase they then need goes to their owners.
 - A merge still needs the user's go-ahead (`need=pr`), and the unit's review, its claims check and, for the last PR, the final panel, all clean at the same commit (see "Evidence and review"). Merge only if the PR's head is still that commit.
 - A one-off brief for a simple job names the PR, the job, and for a merge, the head commit it must match.
-- You don't need to tell the owner about each simple job: `wintermute:wintermute-peon` expects you or a one-off to do them, and reads its PR's state again before it acts on it. When you next message the owner about its PR, say what changed, for example that it merged or has a new target. If the owner is busy on that PR, tell it at once.
+- You don't need to tell the owner about each simple job: `wintermute:wintermute-peon` expects you or a one-off to do them, and reads its PR's state again before it acts on it. When you next message the owner about its PR, say what changed, for example that it merged or has a new target. The exception is a merge or a retarget of a PR whose owner is busy on it or may have an Agent merge running on it: tell the owner first, and wait for its reply that it has paused its work on the PR and stopped any Agent merge. Then tell it when the job is done.
 
 ## Helper requests
 
