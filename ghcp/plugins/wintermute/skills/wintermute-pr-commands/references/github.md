@@ -32,9 +32,11 @@ G3. Review threads and whether each is resolved:
 
 ```bash
 gh api graphql -F owner="$GH_OWNER" -F name="$GH_NAME" -F number="$GH_PR" \
-  -f query='query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{id isResolved isOutdated comments(first:1){nodes{databaseId body}}} pageInfo{hasNextPage endCursor}}}}}' \
-  --jq '.data.repository.pullRequest.reviewThreads|{count:(.nodes|length),hasNextPage:.pageInfo.hasNextPage,threads:[.nodes[]|{id,isResolved,isOutdated}]}'
+  -f query='query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$after){nodes{id isResolved isOutdated comments(first:1){nodes{databaseId body}}} pageInfo{hasNextPage endCursor}}}}}' \
+  --jq '.data.repository.pullRequest.reviewThreads|{count:(.nodes|length),hasNextPage:.pageInfo.hasNextPage,endCursor:.pageInfo.endCursor,threads:[.nodes[]|{id,isResolved,isOutdated}]}'
 ```
+
+For the next page, run the same command with `-f after='<endCursor>'` added, using the `endCursor` from the previous page.
 
 G4. Changed paths:
 
@@ -51,7 +53,7 @@ gh pr checks "$GH_PR" -R "$GH_REPO"
 ## Reading the results
 
 - Take thread resolution from G3. REST review comments don't show it.
-- G3 returns up to 100 threads. If `hasNextPage` is true, get the next page with the returned cursor before you say anything about all the threads.
+- G3 returns up to 100 threads. If `hasNextPage` is true, get the next page with the returned `endCursor` before you say anything about all the threads.
 - G5 exits 1 with "no checks reported" when a PR has no checks. That isn't a passing CI result: don't hide it behind a fallback that looks like success.
 - On a merged or closed PR, `mergeable` can be `UNKNOWN` or `null`. That isn't an error.
 
