@@ -244,7 +244,8 @@ function topHtml(view) {
 }
 
 function pickerHtml(view) {
-  if (view.page !== 'live') return '';
+  // A canvas shows the swarm it was opened for, so only the standalone page offers a choice.
+  if (view.page !== 'live' || view.host === 'canvas') return '';
   const live = view.swarms.filter(swarm => swarm.lifecycle === 'live');
   const shown = view.snapshot?.run ?? null;
   const shownLive = shown !== null && live.some(swarm => swarm.id === shown.id);
