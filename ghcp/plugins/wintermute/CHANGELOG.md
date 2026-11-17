@@ -6,6 +6,12 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.2.2 — 2026-11-17
+
+### Fixed
+
+- `wintermute-core` no longer acknowledges expected child archive confirmations to the user or checks the archived child. Late idle or error notices stay quiet too, unless they bring a new result or blocker.
+
 ## 1.2.1 — 2026-11-17
 
 ### Changed
