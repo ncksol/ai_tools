@@ -333,6 +333,17 @@ test('loading, empty and finished states', () => {
   assert.match(renderApp(view({ snapshot: finished, swarm: 'ws-0000-root' })), /class="d-head"/);
 });
 
+test('only the standalone page shows the swarm picker; a canvas does not', () => {
+  const swarms = fixture('example-swarms.json');
+  swarms[1].lifecycle = 'live';
+  const canvas = renderApp(view({ swarms, host: 'canvas' }));
+  assert.doesNotMatch(canvas, /data-swarm/);
+  assert.doesNotMatch(canvas, /class="pick"/);
+  for (const host of ['browser', undefined]) {
+    assert.match(renderApp(view({ swarms, host })), /<label class="pick"><span class="small muted">Swarm<\/span><select data-swarm aria-label="Swarm"><option value="ws-0000-root" selected>Sample story B<\/option><option value="ws-1000-root">Sample story A<\/option><\/select><\/label>/);
+  }
+});
+
 test('the top bar shows a swarm picker, connection trouble, data warnings and sample data', () => {
   const swarms = fixture('example-swarms.json');
   swarms[1].lifecycle = 'live';

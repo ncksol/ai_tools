@@ -475,18 +475,18 @@ async function checkLinks({ page, browser, urls, engine, stdout, stderr }) {
       await browser.send('Target.closeTarget', { targetId: picked.targetId });
     }
 
-    await goRegular(`${urls.stress}?host=canvas`, 480);
-    await pick('ws-8000-root');
+    // The canvas has no picker: it shows the swarm it was opened for.
+    await goRegular(`${urls.stress}?host=canvas&swarm=ws-8000-root`, 480);
+    await page.waitFor("document.querySelector('[data-open=\"ws-8005-i1\"]') !== null");
+    if (await page.evaluate("document.querySelector('select[data-swarm]') !== null")) problems.push('the canvas showed a swarm picker');
     const before = new Set((await browser.send('Target.getTargets')).targetInfos.map(info => info.targetId));
     await clickControl();
     try {
       await page.waitFor("(document.querySelector('.ck-addr-url')?.textContent ?? '').endsWith('/cockpit?swarm=ws-8000-root')", 3000);
     } catch {
-      problems.push('in the canvas the control did not show the picked swarm\'s cockpit address');
+      problems.push('in the canvas the control did not show the shown swarm\'s cockpit address');
     }
     if (await waitForTarget(browser, before, info => info.type === 'page', 500)) problems.push('in the canvas the control opened a window');
-    await pick('ws-0000-root');
-    if (await page.evaluate("document.querySelector('.ck-addr') !== null")) problems.push('in the canvas picking another swarm kept the old cockpit address');
 
     // With no picked swarm, the hub moves the page to another live swarm when the shown one finishes.
     const demo = createDemoEngine({ scenario: 'stress', simulate: false });

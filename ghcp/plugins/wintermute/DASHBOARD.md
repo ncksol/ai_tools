@@ -10,7 +10,7 @@ All the pictures on this page use the dashboard's built-in sample data (`npm sta
 
 ## What you're looking at
 
-1. **Top bar.** Live shows the running swarm, History shows finished runs. "Sample data" marks the demo. The moon button at the right switches between the light and dark themes.
+1. **Top bar.** Live shows the running swarm, History shows finished runs. In a browser, a swarm picker appears when there is another live swarm to switch to; the canvas in the Copilot app has none, as it shows the swarm it was opened for. "Sample data" marks the demo. The moon button at the right switches between the light and dark themes.
 2. **Header.** The orchestrator: its state ("Waiting on question · 25m") and what it is doing or waiting for. Then how long the swarm has run, its cost, and counts of units working, stuck, waiting on you, blocked, idle and finished.
 3. **Tabs.** Cards, Timeline, Plan and Board are different views of the swarm. For example, Plan leaves out sub-agents, and archived units are only on the Board.
 4. **Cards.** One card per active unit, with the ones that need attention first.
@@ -99,7 +99,7 @@ A whole swarm counts as **stalled** when at least one open unit remains, the orc
 
 ## Open it
 
-- **In the Copilot app.** `wintermute-core` opens the dashboard in the side panel when it creates its first child session. To open it again, ask the agent to open the swarm dashboard canvas (canvas id `swarm-dashboard`). It shows the swarm of the session it was opened in. If that session is in no swarm, it says so, offers the live swarms in its swarm picker, and switches to the session's swarm as soon as there is one. To show a particular swarm, pass its root session id as the canvas input: `{ "swarm": "<root session id>" }`.
+- **In the Copilot app.** `wintermute-core` opens the dashboard in the side panel when it creates its first child session. To open it again, ask the agent to open the swarm dashboard canvas (canvas id `swarm-dashboard`). It shows the swarm of the session it was opened in. If that session is in no swarm, it says so and switches to the session's swarm as soon as there is one. To show a particular swarm, pass its root session id as the canvas input: `{ "swarm": "<root session id>" }`.
 - **In a browser.** From the plugin folder (`~/.copilot/installed-plugins/ai-tools/wintermute` once installed), run `npm start` and open the address it prints, `http://127.0.0.1:7927/` by default. It needs Node.js 18 or later and a SQLite reader (see [Install](README.md#install)).
 - **With sample data.** `npm start -- --demo` serves a sample swarm with simulated activity, `--demo stress` a crowded one, and `--still` stops the simulation. Your own dashboard may already use port 7927, so give the demo another port: `npm start -- --demo --port 7928`.
 
