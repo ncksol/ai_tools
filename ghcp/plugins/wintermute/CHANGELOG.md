@@ -10,7 +10,7 @@ After merging, run `npm run release:publish -- --dry-run`, then `npm run release
 
 ### Fixed
 
-- `wintermute-core` no longer acknowledges expected child archive confirmations to the user or checks the archived child. Late idle or error notices stay quiet too, unless they bring a new result or blocker.
+- `wintermute-core` ends expected child archive confirmations without a reply and no longer checks the archived child. Other archives are recorded silently if the unit had ended, or reported as a lost child if work remains. Late idle or error notices stay quiet unless they bring a new result or blocker.
 
 ## 1.2.1 — 2026-11-17
 
