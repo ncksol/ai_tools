@@ -3,7 +3,7 @@ import { clip, firstLine, oneLine } from '../text.mjs';
 import { MINUTE, maxTime, minTime } from '../time.mjs';
 import { UNIT_LABEL_RE, normaliseRegistry, parseQuestionTag, parseReportBody, parseStatusLine, purposeToStatus } from './contract.mjs';
 import { descendants, resolveNodeId } from './forest.mjs';
-import { dispatchesFor } from './dispatch.mjs';
+import { NEW_SESSION, asksOnlyForWork, dispatchesFor } from './dispatch.mjs';
 import { setRunStats } from './run-stats.mjs';
 import { effortOf, mergeStates } from './session-state.mjs';
 import { deriveMonitor, deriveStage, hostOf, mentionFits, otherOwner, prView, registryPrs, resolveOutcome, resolvePr, splitReviewed } from './stage.mjs';
@@ -438,26 +438,32 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
 
 const joinWords = words => (words.length < 2 ? words.join('') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`);
 const CREATED_MATCH_MS = 10 * MINUTE;
+const samePr = (a, b) => a.provider === b.provider && a.id === b.id;
 
 /**
- * A unit blocked on the orchestrator whose request the orchestrator handled without a message to it (issue #127): after the
- * report it gave other sessions work that names the unit (dispatch.mjs), such as the unit's review and claims check. The unit
- * then waits for those sessions while any of them has not reported, and after that for the orchestrator's next step or the user.
- * Either way it is idle, not blocked on an unanswered request. A unit with no such work stays blocked on the orchestrator.
+ * A unit blocked on the orchestrator whose request the orchestrator handled without a message to it (issue #127). This needs an
+ * explicit link: the report asks only for other sessions' work, such as the unit's review and claims check, and asks no decision,
+ * approval or question (asksOnlyForWork); after it, the orchestrator sent or started work that names the unit and doesn't put it
+ * off, for a session that isn't another unit's owner (dispatch.mjs). The unit then waits for those sessions while any of them has
+ * not reported, and after that for the orchestrator's next step or the user. Either way it is idle, not blocked on an unanswered
+ * request. Any other unit blocked on the orchestrator stays blocked until it replies.
  */
-function resolveHandledRequests({ units, nodes, contexts, root, orchestrator, now }) {
-  const asking = units.filter(unit => unit.statusDetail === 'blocked_on_orchestrator' && unit.report);
+function resolveHandledRequests({ units, nodes, contexts, registry, root, orchestrator, now }) {
+  const asking = units.filter(unit => unit.statusDetail === 'blocked_on_orchestrator' && unit.report && asksOnlyForWork(unit.report));
   if (!asking.length) return;
   const rootContext = contexts.get(root.id);
   const nodeById = new Map();
   for (const [nodeId, c] of contexts) for (const id of c.ids) nodeById.set(id, nodeId);
+  const nodeOf = id => nodeById.get(id) ?? null;
   const fromRoot = item => rootContext.ids.has(item.fromSessionId) || rootContext.ids.has(item.fromProjectSessionId);
   const inbound = [];
   for (const [nodeId, c] of contexts) {
     if (nodeId === root.id) continue;
-    for (const item of c.all.inbound) if (fromRoot(item)) inbound.push({ nodeId, at: item.at, content: item.content });
+    for (const item of c.all.inbound) if (fromRoot(item)) inbound.push({ nodeId, sourceToolCallId: item.sourceToolCallId, content: item.content });
   }
+  // A started session is the one whose id the create returned; an older log without it falls back to the name it was given.
   const nodeOfCreated = item => {
+    if (item.sessionId) return nodeOf(item.sessionId);
     if (!item.name) return null;
     const match = nodes.filter(node => node.name === item.name && node.createdAt != null
       && node.createdAt >= item.at - MINUTE && node.createdAt <= item.at + CREATED_MATCH_MS);
@@ -465,17 +471,35 @@ function resolveHandledRequests({ units, nodes, contexts, root, orchestrator, no
   };
   const unitById = new Map(units.map(unit => [unit.id, unit]));
   for (const unit of asking) {
+    // Another unit's owner, with a branch of its own in the registry or another PR, isn't doing this unit's work.
+    const accepts = nodeId => {
+      const row = registry.byNode.get(nodeId);
+      const other = unitById.get(nodeId);
+      if (row?.branch && row.branch !== unit.branch) return false;
+      return !(other?.pr && unit.pr && !samePr(other.pr, unit.pr)) && !(other?.pr && !unit.pr);
+    };
     const found = dispatchesFor({
       since: unit.report.at, refs: { label: unit.label, pr: unit.pr, commit: unit.report.commit }, unitId: unit.id, rootId: root.id,
-      sent: rootContext.all.sent, inbound, created: rootContext.all.created, nodeOf: id => nodeById.get(id) ?? null, nodeOfCreated,
+      sent: rootContext.all.sent, inbound, sendTimes: rootContext.all.sendTimes, created: rootContext.all.created, nodeOf, nodeOfCreated, accepts,
     });
-    if (!found.size) continue;
-    const helpers = [...found].sort((a, b) => a[1] - b[1]).map(([nodeId, at]) => {
-      const helper = nodeId ? unitById.get(nodeId) ?? null : null;
-      const reportedAt = helper?.report && helper.report.at > at ? helper.report.at : null;
-      const pending = !helper || ACTIVE_DETAILS.has(helper.statusDetail) || (reportedAt === null && helper.endedAt === null);
-      return { name: helper ? helper.label : 'a new session', at, reportedAt, pending };
-    });
+    const helpers = [];
+    let unseen = null;
+    for (const [nodeId, at] of [...found].sort((a, b) => a[1] - b[1])) {
+      const helper = nodeId.startsWith(NEW_SESSION) ? null : unitById.get(nodeId) ?? null;
+      if (!helper) {
+        // A started session not found in the swarm counts only while it may still be starting. Such sessions show as one entry.
+        if (now - at > CREATED_MATCH_MS) continue;
+        if (unseen) { unseen.count += 1; unseen.name = `${unseen.count} new sessions`; continue; }
+        unseen = { name: 'a new session', count: 1, at, reportedAt: null, endedAt: null, pending: true };
+        helpers.push(unseen);
+        continue;
+      }
+      const reportedAt = helper.report && helper.report.at > at ? helper.report.at : null;
+      const endedAt = reportedAt === null ? helper.endedAt ?? null : null;
+      const pending = ACTIVE_DETAILS.has(helper.statusDetail) || (reportedAt === null && endedAt === null);
+      helpers.push({ name: helper.label, at, reportedAt, endedAt, pending });
+    }
+    if (!helpers.length) continue;
     const names = joinWords(helpers.map(helper => helper.name));
     const pending = helpers.filter(helper => helper.pending);
     let since;
@@ -487,8 +511,15 @@ function resolveHandledRequests({ units, nodes, contexts, root, orchestrator, no
       reason = `After its request, the orchestrator gave work for this unit to ${names}. It waits for ${waitingFor} to report.`;
       label = `Waiting for ${waitingFor}`;
     } else {
-      since = Math.max(...helpers.map(helper => helper.reportedAt ?? helper.at));
-      reason = `After its request, the orchestrator gave work for this unit to ${names}, and ${helpers.length > 1 ? 'they have' : 'it has'} reported since. `
+      const reported = helpers.filter(helper => helper.reportedAt !== null);
+      const ended = helpers.filter(helper => helper.reportedAt === null);
+      const has = list => (list.length > 1 ? 'have' : 'has');
+      const outcome = [
+        reported.length ? `${joinWords(reported.map(helper => helper.name))} ${has(reported)} reported` : null,
+        ended.length ? `${joinWords(ended.map(helper => helper.name))} ${has(ended)} ended without a report` : null,
+      ].filter(Boolean).join(', and ');
+      since = Math.max(...helpers.map(helper => helper.reportedAt ?? helper.endedAt ?? helper.at));
+      reason = `After its request, the orchestrator gave work for this unit to ${names}. Since then, ${outcome}. `
         + 'The next step is the orchestrator\'s or the user\'s.';
       label = orchestrator.status === 'question' || orchestrator.status === 'plan' ? 'Waiting for the user' : 'Waiting for the orchestrator\'s next step';
     }
@@ -839,7 +870,7 @@ export function buildSnapshot(input) {
     startedAt: root.createdAt ?? rootContext.all.firstEventAt ?? now, now, thresholds,
   });
   const orchestrator = sessionView(input, rootContext, labels.get(root.id), evaluation, null, null, []);
-  resolveHandledRequests({ units, nodes, contexts, root, orchestrator, now });
+  resolveHandledRequests({ units, nodes, contexts, registry, root, orchestrator, now });
   const needs = buildNeeds(contexts, root.id, labels, flags);
   const planned = plannedEntries(plan);
   const subagents = buildSubagentUnits(input, rootContext, root, [...labels.values(), ...planned.map(entry => entry.label)], extraFeed, subagentLabels);

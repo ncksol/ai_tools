@@ -104,12 +104,13 @@ export function recordToolStart(state, name, args, callId, at) {
       at, toolCallId: callId, source: state.source, target: typeof args.session_id === 'string' ? args.session_id : null,
       purpose: typeof args.purpose === 'string' ? args.purpose : null, message, failed: false,
     }, LIMITS.sent);
+    pushBounded(state.sendTimes, { toolCallId: callId, at, failed: false }, LIMITS.sendTimes);
     countPrMentions(state, message, at);
   } else if (name === 'create_session') {
     const kickoff = args.kickoff && typeof args.kickoff === 'object' ? args.kickoff : {};
     pushBounded(state.created, {
       at, toolCallId: callId, name: typeof args.name === 'string' ? args.name : null,
-      prompt: clip(typeof kickoff.prompt === 'string' ? kickoff.prompt : '', 8000) ?? '', failed: false,
+      prompt: clip(typeof kickoff.prompt === 'string' ? kickoff.prompt : '', 8000) ?? '', sessionId: null, failed: false,
     }, LIMITS.created);
   } else if (name === 'save_session_automation') {
     const clear = args.clear === true || args.clear === 'true';
@@ -120,10 +121,20 @@ export function recordToolStart(state, name, args, callId, at) {
   }
 }
 
+// The app's create_session result: "Created session '<name>' (id: <id>) ...".
+const CREATED_ID_RE = /\(id:\s*([^\s)]+)\)/;
+
 export function recordToolComplete(state, callId, data) {
-  if (data.success !== false) return;
-  const entry = state.sent.find(item => item.toolCallId === callId) ?? state.created.find(item => item.toolCallId === callId);
+  const created = state.created.find(item => item.toolCallId === callId);
+  if (data.success !== false) {
+    const content = typeof data.result?.content === 'string' ? data.result.content : '';
+    if (created) created.sessionId = CREATED_ID_RE.exec(content)?.[1] ?? null;
+    return;
+  }
+  const entry = state.sent.find(item => item.toolCallId === callId) ?? created;
   if (entry) entry.failed = true;
+  const send = state.sendTimes.find(item => item.toolCallId === callId);
+  if (send) send.failed = true;
 }
 
 export function recordTaskComplete(state, data, at) {

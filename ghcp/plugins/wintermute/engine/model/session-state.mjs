@@ -80,8 +80,10 @@ export function createSessionState(id, { subagentUnits = false } = {}) {
     // first time each leaves running.
     descendants: new Map(), subagentOutcomes: { completed: 0, failed: 0, cancelled: 0 },
     sent: [], inbound: [], lastInboundAt: null, lastHumanAt: null, taskCompletes: [],
-    // Sessions it started with create_session: { at, toolCallId, name, prompt, failed }, the latest LIMITS.created.
-    created: [],
+    // Sessions it started with create_session: { at, toolCallId, name, prompt, sessionId, failed }, the latest LIMITS.created.
+    // `sendTimes` keeps { toolCallId, at, failed } of each sent session message, longer than `sent`, to time a copy that another
+    // session received (its envelope's source_tool_call_id) by when it was sent, not when it arrived.
+    created: [], sendTimes: [],
     // Reply index: `outboundSeq` counts the session's own outbound events (a sent session message, a task completion); `replyIndex`
     // maps each sender id to { seq, times }: the time of the first message from it after each such event, ascending and bounded.
     // Unlike the rolling `inbound` list, later messages never push a recorded reply out (see messages.mjs).
@@ -1061,6 +1063,7 @@ export function mergeStates(states) {
     }
     merged.sent.push(...state.sent);
     merged.created.push(...state.created);
+    merged.sendTimes.push(...state.sendTimes);
     merged.inbound.push(...state.inbound);
     // Reply times per sender across the CLI sessions (`seq` has no meaning in the merged view); sorted and bounded after the loop.
     for (const [sender, entry] of state.replyIndex) {
@@ -1096,7 +1099,7 @@ export function mergeStates(states) {
   }
   while (merged.replyIndex.size > LIMITS.replySenders) merged.replyIndex.delete(merged.replyIndex.keys().next().value);
   capSubagents(merged);
-  for (const list of [merged.sent, merged.created, merged.inbound, merged.taskCompletes, merged.feed, merged.marks, merged.automation.saves]) list.sort(byAt);
+  for (const list of [merged.sent, merged.created, merged.sendTimes, merged.inbound, merged.taskCompletes, merged.feed, merged.marks, merged.automation.saves]) list.sort(byAt);
   merged.automation.wakes.sort((a, b) => a - b);
   merged.busySpans.sort((a, b) => a[0] - b[0]);
   merged.waitSpans.sort((a, b) => a[0] - b[0]);

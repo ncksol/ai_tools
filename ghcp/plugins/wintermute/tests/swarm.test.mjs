@@ -9,6 +9,7 @@ import { ACTIVE_DETAILS } from '../engine/model/status.mjs';
 import { summarizeRun } from '../engine/model/history.mjs';
 import { createPrLookup } from '../engine/model/pr-lookup.mjs';
 import { LIMITS } from '../engine/model/state-utils.mjs';
+import { namesUnit } from '../engine/model/dispatch.mjs';
 import { HOUR, MINUTE } from '../engine/time.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { fold } from './helpers/fold.mjs';
@@ -2031,59 +2032,72 @@ test('a reply that is the first message of a later CLI session of the unit still
 
 const ASKED = at(30);
 const DISPATCHED = ASKED + 26_000;
+const WORK_ONLY = 'Awaiting the planned re-review and separate claims check on this head';
 
 /**
- * The contract swarm where api reports needs_input at minute 30 for its planned re-review and claims check. 26 s later the
- * orchestrator sends `dispatch` texts to its reviewer rv-api and claims checker claims-api (or starts them with create_session
- * when `create`), not to api. Each helper in `reported` reports complete at minute 34; the others are still working.
+ * The contract swarm where api reports needs_input at minute 30 with `blockers`. 26 s later the orchestrator sends `dispatch` texts
+ * to its reviewer rv-api and claims checker claims-api (to `targets` when given), or starts them with create_session when
+ * `create`, not to api. Each helper in `reported` reports complete at minute 34; the others are still working, or ended without a
+ * report when in `archived`. `adjust(data, root)` changes the data and the orchestrator's log before the snapshot.
  */
-function handledSwarm({ dispatch = ['Re-review !4711 at its new head abc1234.', 'Claims check for !4711 at abc1234.'], create = false, reported = ['rv-api', 'claims-api'], now = at(38) } = {}) {
+function handledSwarm({
+  blockers = WORK_ONLY, dispatch = ['Re-review !4711 at its new head abc1234.', 'Claims check for !4711 at abc1234.'], targets = null,
+  create = false, createdIds = false, reported = ['rv-api', 'claims-api'], archived = [], now = at(38), adjust = null,
+} = {}) {
   const data = input(true);
   const helpers = [['rv-api', 'ws-rv', 'cli-rv', 'Review api'], ['claims-api', 'ws-cc', 'cli-cc', 'Claims api']];
   for (const [label, id, cli, name] of helpers) {
     data.app.workspaces.set(id, {
       id, projectId: 'project-1', worktreeId: null, name, branch: null, createdAt: create ? DISPATCHED + 2000 : at(10),
-      archivedAt: null, sessionId: cli, creatorSessionId: null, coordinatingCreatorSessionId: null, createdPr: null,
+      archivedAt: archived.includes(label) ? at(35) : null, sessionId: cli, creatorSessionId: null, coordinatingCreatorSessionId: null, createdPr: null,
     });
     data.app.parentLinks.push({ childId: id, parentId: 'ws-root' });
     data.app.aliases.push({ sessionId: cli, workspaceId: id, createdAt: T0 });
     data.sessionDbs.get('cli-root').children.push({
-      unit: label, session_id: id, title: name, todo_id: null, branch: null, base_branch: null, pr_provider: null, pr_repo: null, pr_id: null,
+      unit: label, session_id: id, title: name, todo_id: null, branch: null, base_branch: 'feature/api', pr_provider: null, pr_repo: null, pr_id: null,
       pr_url: null, outcome: null, created_at: iso(10), updated_at: iso(10), ended_at: null,
     });
   }
-  data.forest = buildForest(data.app);
 
   const api = new EventLog(at(5));
   api.start(); api.turnStart();
   api.at(ASKED);
-  api.report('ws-root', 'swarm-status: needs_input unit=api pr=ado:4711 commit=abc1234\nSummary: Ready for the planned re-review.\nBlockers:\n- Awaiting the planned re-review and separate claims check on this head', 'needs_input');
+  api.report('ws-root', `swarm-status: needs_input unit=api pr=ado:4711 commit=abc1234\nSummary: Ready at abc1234.\nBlockers:\n- ${blockers}`, 'needs_input');
   api.at(ASKED + 1000); api.turnEnd();
   data.states.set('cli-api', fold(api, 'cli-api'));
 
   const root = new EventLog(T0);
   root.start();
   root.at(DISPATCHED); root.turnStart();
-  dispatch.forEach((text, index) => {
-    if (create) root.tool('create_session', { name: helpers[index][3], kickoff: { prompt: text } });
-    else root.report(helpers[index][1], text);
+  const callIds = dispatch.map((text, index) => {
+    if (!create) return root.report((targets ?? helpers.map(helper => helper[1]))[index], text);
+    const id = root.tool('create_session', { name: helpers[index][3], kickoff: { prompt: text } });
+    root.done(id, { result: createdIds ? `Created session '${helpers[index][3]}' (id: ${helpers[index][1]}) in project 'Sample'. The session will start automatically.` : 'ok' });
+    return id;
   });
   root.at(DISPATCHED + 5000); root.turnEnd();
-
-  helpers.forEach(([label, , cli], index) => {
+  const logs = new Map();
+  helpers.forEach(([label, id, cli], index) => {
     const log = new EventLog(create ? DISPATCHED + 2000 : at(10));
     log.start();
     log.at(DISPATCHED + 3000);
-    if (!create && index < dispatch.length) log.crossSession({ fromSessionId: 'cli-root', fromProjectSessionId: 'ws-root', name: 'Sample story', content: dispatch[index] });
+    if (!create && index < dispatch.length && (!targets || targets[index] === id)) {
+      log.crossSession({ fromSessionId: 'cli-root', fromProjectSessionId: 'ws-root', sourceToolCallId: callIds[index], name: 'Sample story', content: dispatch[index] });
+    }
     log.turnStart();
     if (reported.includes(label)) {
       log.at(at(34) + index * 1000);
       log.report('ws-root', `swarm-status: complete unit=${label} pr=ado:4711 commit=abc1234\nSummary: Clean at abc1234.`, 'handoff');
       log.turnEnd();
-    }
+    } else if (archived.includes(label)) log.turnEnd();
+    logs.set(cli, log);
+  });
+  adjust?.(data, root, logs);
+  data.forest = buildForest(data.app);
+  for (const [cli, log] of logs) {
     data.states.set(cli, fold(log, cli));
     data.alive.set(cli, true);
-  });
+  }
   data.states.set('cli-root', fold(root, 'cli-root'));
   data.now = now;
   const snapshot = buildSnapshot(data);
@@ -2091,37 +2105,112 @@ function handledSwarm({ dispatch = ['Re-review !4711 at its new head abc1234.', 
   return { snapshot, unit: snapshot.units.find(item => item.label === 'api') };
 }
 
+const NO_REPLY = 'It asked the orchestrator for input and has had no reply.';
+const assertBlocked = ({ unit }, note) => assert.deepEqual([unit.statusDetail, unit.since, unit.reason], ['blocked_on_orchestrator', ASKED, NO_REPLY], note);
+
 test('issue #127: after the orchestrator sends the unit\'s review and claims check elsewhere and both report, the unit waits on the orchestrator\'s next step', () => {
   const { snapshot, unit } = handledSwarm();
   assert.equal(snapshot.orchestrator.statusDetail, 'idle');
   assert.deepEqual([unit.report.status, unit.report.repliedAt], ['needs_input', null], 'the report itself is unchanged');
   assert.deepEqual([unit.statusDetail, unit.status, unit.bucket, unit.since], ['idle', 'idle', 'idle', at(34) + 1000]);
   assert.equal(unit.activity.label, 'Waiting for the orchestrator\'s next step');
-  assert.equal(unit.reason, 'After its request, the orchestrator gave work for this unit to rv-api and claims-api, and they have reported since. The next step is the orchestrator\'s or the user\'s.');
-  assert.doesNotMatch(unit.reason, /no reply/);
+  assert.equal(unit.reason, 'After its request, the orchestrator gave work for this unit to rv-api and claims-api. Since then, rv-api and claims-api have reported. The next step is the orchestrator\'s or the user\'s.');
 });
 
 test('issue #127: while the sessions doing the unit\'s work have not reported, the unit waits for them', () => {
   const { unit } = handledSwarm({ reported: ['rv-api'], now: at(36) });
   assert.deepEqual([unit.statusDetail, unit.since, unit.activity.label], ['idle', DISPATCHED, 'Waiting for claims-api']);
   assert.equal(unit.reason, 'After its request, the orchestrator gave work for this unit to rv-api and claims-api. It waits for claims-api to report.');
-  const busy = handledSwarm({ reported: [], now: at(32) }).unit;
-  assert.equal(busy.activity.label, 'Waiting for rv-api and claims-api');
+  assert.equal(handledSwarm({ reported: [], now: at(32) }).unit.activity.label, 'Waiting for rv-api and claims-api');
+});
+
+test('issue #127: a session that ended without a report is not described as having reported', () => {
+  const { unit } = handledSwarm({ reported: ['rv-api'], archived: ['claims-api'] });
+  assert.equal(unit.statusDetail, 'idle');
+  assert.equal(unit.reason, 'After its request, the orchestrator gave work for this unit to rv-api and claims-api. Since then, rv-api has reported, and claims-api has ended without a report. The next step is the orchestrator\'s or the user\'s.');
 });
 
 test('issue #127: work counts when it names the unit\'s label, PR or report commit, also as a create_session kickoff', () => {
-  for (const text of ['Review unit api before it merges.', 'Review PR !4711.', 'Check https://dev.azure.com/o/p/_git/r/pullrequest/4711', 'Check commit abc1234def0.']) {
-    assert.equal(handledSwarm({ dispatch: [text], reported: ['rv-api'] }).unit.statusDetail, 'idle', text);
-  }
+  for (const text of [
+    'Review unit api before it merges.', 'Review the api.', 'Review PR !4711.', 'Check https://dev.azure.com/org/project/_git/repo/pullrequest/4711',
+    'Check https://org.visualstudio.com/project/_git/repo/pullrequest/4711', 'Check commit abc1234def0.',
+  ]) assert.equal(handledSwarm({ dispatch: [text], reported: ['rv-api'] }).unit.statusDetail, 'idle', text);
   const created = handledSwarm({ create: true, reported: [], now: at(32) }).unit;
   assert.deepEqual([created.statusDetail, created.activity.label], ['idle', 'Waiting for rv-api and claims-api']);
 });
 
+test('issue #127: a started helper is bound by the id its create returned, so a rename doesn\'t leave it pending', () => {
+  const rename = data => { data.app.workspaces.get('ws-rv').name = 'Renamed reviewer'; data.app.workspaces.get('ws-cc').name = 'Renamed checker'; };
+  const { unit } = handledSwarm({ create: true, createdIds: true, adjust: rename });
+  assert.deepEqual([unit.statusDetail, unit.activity.label], ['idle', 'Waiting for the orchestrator\'s next step']);
+  // Without the returned id and with no session of its name, a started session counts only while it may still be starting.
+  assert.equal(handledSwarm({ create: true, adjust: rename, reported: [], now: DISPATCHED + 5 * MINUTE }).unit.activity.label, 'Waiting for 2 new sessions');
+  assertBlocked(handledSwarm({ create: true, adjust: rename, reported: [], now: DISPATCHED + 11 * MINUTE }), 'not pending for ever');
+});
+
 test('issue #127: a unit stays blocked on the orchestrator when it never acts, or its messages name other work', () => {
-  for (const dispatch of [[], ['Review PR !47110 for the ui unit at abc1239.'], ['Review the api-v2 branch (#4711).']]) {
-    const { unit } = handledSwarm({ dispatch, reported: [] });
-    assert.deepEqual([unit.statusDetail, unit.since, unit.reason], ['blocked_on_orchestrator', ASKED, 'It asked the orchestrator for input and has had no reply.'], JSON.stringify(dispatch));
+  for (const dispatch of [[], ['Review PR !47110 for the ui unit at abc1239.'], ['Review the api-v2 branch (#4711).'], ['Review api.v2 next.']]) {
+    assertBlocked(handledSwarm({ dispatch, reported: [] }), JSON.stringify(dispatch));
   }
+  // The same PR number in another repository, by URL or qualified reference.
+  for (const text of ['Review https://dev.azure.com/other/project/_git/repo/pullrequest/4711', 'Review https://org.visualstudio.com/project/_git/other/pullrequest/4711']) {
+    assertBlocked(handledSwarm({ dispatch: [text], reported: [] }), text);
+  }
+});
+
+test('issue #127: a request for a decision or an approval stays blocked until the orchestrator replies, whatever it sends others', () => {
+  assertBlocked(handledSwarm({ blockers: 'Please give the go-ahead to open the PR once its review is clean.' }), 'approval request');
+  assertBlocked(handledSwarm({ blockers: 'Should the schema keep the old column? The review can start after that.' }), 'decision request');
+  // A request only for work, with messages that name the unit only to put it off, or that go to another unit's owner.
+  assertBlocked(handledSwarm({ dispatch: ['Do not start the review of !4711; wait until I answer the owner\'s schema question.'], reported: [] }), 'stand-down');
+  assertBlocked(handledSwarm({ dispatch: ['api is still waiting for approval; continue with ui.'], targets: ['ws-ui'], reported: [] }), 'other owner');
+});
+
+test('issue #127: work is timed when the orchestrator sent it, not when it arrived, and outlasts the orchestrator\'s message list', () => {
+  // Sent before the report and delivered after it: not an answer to it.
+  const early = root => {
+    root.at(ASKED - 10_000);
+    const id = root.report('ws-rv', 'Re-review !4711 when it is ready.');
+    return id;
+  };
+  let earlyId = null;
+  assertBlocked(handledSwarm({
+    dispatch: [], reported: [],
+    adjust: (data, root, logs) => {
+      const fresh = new EventLog(T0);
+      fresh.start();
+      earlyId = early(fresh);
+      root.events.unshift(...fresh.events.slice(1));
+      logs.get('cli-rv').at(DISPATCHED);
+      logs.get('cli-rv').crossSession({ fromSessionId: 'cli-root', fromProjectSessionId: 'ws-root', sourceToolCallId: earlyId, name: 'Sample story', content: 'Re-review !4711 when it is ready.' });
+    },
+  }), 'delayed delivery');
+  // A copy whose send the orchestrator's log doesn't have can't be timed.
+  assertBlocked(handledSwarm({
+    dispatch: [], reported: [],
+    adjust: (data, root, logs) => logs.get('cli-rv').crossSession({ fromSessionId: 'cli-root', fromProjectSessionId: 'ws-root', sourceToolCallId: 'call-unknown', name: 'Sample story', content: 'Re-review !4711.' }),
+  }), 'untimed copy');
+  // More than LIMITS.sent later messages push the send out of the orchestrator's list; the helper's copy still times it.
+  const busy = handledSwarm({
+    reported: [],
+    adjust: (data, root) => {
+      root.at(DISPATCHED + 10_000);
+      for (let index = 0; index < LIMITS.sent + 5; index += 1) root.report('ws-docs', `Docs note ${index}.`);
+    },
+  }).unit;
+  assert.deepEqual([busy.statusDetail, busy.since, busy.activity.label], ['idle', DISPATCHED, 'Waiting for rv-api and claims-api']);
+});
+
+test('namesUnit compares a qualified PR reference by provider, repository and number, and labels by the label alphabet', () => {
+  const github = { provider: 'github', id: 42, repo: 'acme/api' };
+  assert.equal(namesUnit('Review acme/api#42.', { pr: github }), true);
+  assert.equal(namesUnit('Review https://github.com/acme/api/pull/42 now', { pr: github }), true);
+  assert.equal(namesUnit('Review #42.', { pr: github }), true);
+  assert.equal(namesUnit('Review https://github.com/acme/web/pull/42 now', { pr: github }), false);
+  assert.equal(namesUnit('Review acme/web#42.', { pr: github }), false);
+  assert.equal(namesUnit('Review api.v2 and v1.api.', { label: 'api' }), false);
+  assert.equal(namesUnit('Review api.', { label: 'api' }), true);
+  assert.equal(namesUnit('Review api.v2.', { label: 'api.v2' }), true);
 });
 
 test('a fallback label fits within 32 characters from the 1,000th launch, even with a long agent type', () => {
