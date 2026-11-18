@@ -806,6 +806,8 @@ function onToolComplete(state, data, at) {
   if (data.success === false) pushBounded(state.recent.failures, at, LIMITS.recent);
   if (data.success === true && tool && !POLLING_TOOLS.has(tool.name)) {
     state.workedSinceCompaction = true;
+    // Spinning counts only failures since the last real work, so a session that recovered from a burst is not flagged.
+    state.recent.failures.length = 0;
   }
   const wait = state.waits.get(id);
   if (wait) {

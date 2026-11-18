@@ -194,10 +194,31 @@ test('an open task call exempts a session from silent busy only while its sub-ag
   assert.equal(evaluate(fold(failed), T0 + 11 * MINUTE).detail, 'silent');
 });
 
+test('failures count toward spinning only after the last successful non-polling call', () => {
+  const recovered = busyLog();
+  for (let i = 0; i < 16; i += 1) recovered.done(recovered.tool('view', { path: `wrong/${i}` }), { success: false });
+  recovered.done(recovered.tool('view', { path: 'right/a.mjs' }));
+  assert.equal(evaluate(fold(recovered), T0 + MINUTE).detail, 'busy');
+  const polled = busyLog();
+  for (let i = 0; i < 6; i += 1) polled.done(polled.tool('view', { path: `wrong/${i}` }), { success: false });
+  polled.done(polled.tool('read_agent', { agent_id: 'a', wait: true }));
+  polled.done(polled.tool('read_bash', { shellId: 's', delay: 5 }));
+  const result = evaluate(fold(polled), T0 + MINUTE);
+  assert.equal(result.detail, 'spinning');
+  assert.match(result.reason, /\b6 failed tool calls\b/);
+  const split = busyLog();
+  for (let i = 0; i < 3; i += 1) split.done(split.tool('view', { path: `wrong/${i}` }), { success: false });
+  split.done(split.tool('view', { path: 'right/a.mjs' }));
+  for (let i = 3; i < 6; i += 1) split.done(split.tool('view', { path: `wrong/${i}` }), { success: false });
+  assert.equal(evaluate(fold(split), T0 + MINUTE).detail, 'busy');
+});
+
 test('spinning: failures, the same call in a row within a prompt or an unattended denial', () => {
   const failing = busyLog();
   for (let i = 0; i < 5; i += 1) failing.done(failing.tool('view', { path: `missing-${i}` }), { success: false });
-  assert.equal(evaluate(fold(failing), T0 + MINUTE).detail, 'spinning');
+  const failed = evaluate(fold(failing), T0 + MINUTE);
+  assert.equal(failed.detail, 'spinning');
+  assert.match(failed.reason, /\b5 failed tool calls\b/);
   const repeating = busyLog();
   for (let i = 0; i < 3; i += 1) repeating.done(repeating.tool('bash', { command: 'npm test' }));
   const result = evaluate(fold(repeating), T0 + MINUTE);
@@ -240,7 +261,7 @@ test('successful work keeps a session busy until a compaction has no intervening
   log.push('session.compaction_complete');
   const result = evaluate(fold(log), T0 + MINUTE);
   assert.equal(result.detail, 'spinning');
-  assert.match(result.reason, /\b2 context compactions\b.*without intervening work/);
+  assert.match(result.reason, /\b2 context compactions\b.*with no work between them/);
 });
 
 for (const minutes of [10, 40]) {
@@ -257,7 +278,7 @@ for (const minutes of [10, 40]) {
     log.push('session.compaction_complete');
     const result = evaluate(fold(log), T0 + minutes * MINUTE + 1000);
     assert.equal(result.detail, 'spinning');
-    assert.match(result.reason, /\b2 context compactions\b.*without intervening work/);
+    assert.match(result.reason, /\b2 context compactions\b.*with no work between them/);
   });
 }
 
@@ -266,7 +287,7 @@ test('overlapping no-work pairs count each compaction once, even at the same tim
   for (let i = 0; i < 3; i += 1) log.push('session.compaction_complete');
   const result = evaluate(fold(log), T0 + MINUTE);
   assert.equal(result.detail, 'spinning');
-  assert.match(result.reason, /\b3 context compactions\b.*without intervening work/);
+  assert.match(result.reason, /\b3 context compactions\b.*with no work between them/);
 });
 
 for (const [gap, run] of [
@@ -288,7 +309,7 @@ for (const [gap, run] of [
     log.push('session.compaction_complete');
     const result = evaluate(fold(log), T0 + MINUTE);
     assert.equal(result.detail, 'spinning');
-    assert.match(result.reason, /\b2 context compactions\b.*without intervening work/);
+    assert.match(result.reason, /\b2 context compactions\b.*with no work between them/);
   });
 }
 
