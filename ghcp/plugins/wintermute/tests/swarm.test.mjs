@@ -2027,6 +2027,103 @@ test('a reply that is the first message of a later CLI session of the unit still
   assert.deepEqual([unit.report.status, unit.report.at, unit.report.repliedAt], ['needs_input', at(30), at(40)]);
 });
 
+// --- A request the orchestrator handled without a reply to the unit (issue #127) ---
+
+const ASKED = at(30);
+const DISPATCHED = ASKED + 26_000;
+
+/**
+ * The contract swarm where api reports needs_input at minute 30 for its planned re-review and claims check. 26 s later the
+ * orchestrator sends `dispatch` texts to its reviewer rv-api and claims checker claims-api (or starts them with create_session
+ * when `create`), not to api. Each helper in `reported` reports complete at minute 34; the others are still working.
+ */
+function handledSwarm({ dispatch = ['Re-review !4711 at its new head abc1234.', 'Claims check for !4711 at abc1234.'], create = false, reported = ['rv-api', 'claims-api'], now = at(38) } = {}) {
+  const data = input(true);
+  const helpers = [['rv-api', 'ws-rv', 'cli-rv', 'Review api'], ['claims-api', 'ws-cc', 'cli-cc', 'Claims api']];
+  for (const [label, id, cli, name] of helpers) {
+    data.app.workspaces.set(id, {
+      id, projectId: 'project-1', worktreeId: null, name, branch: null, createdAt: create ? DISPATCHED + 2000 : at(10),
+      archivedAt: null, sessionId: cli, creatorSessionId: null, coordinatingCreatorSessionId: null, createdPr: null,
+    });
+    data.app.parentLinks.push({ childId: id, parentId: 'ws-root' });
+    data.app.aliases.push({ sessionId: cli, workspaceId: id, createdAt: T0 });
+    data.sessionDbs.get('cli-root').children.push({
+      unit: label, session_id: id, title: name, todo_id: null, branch: null, base_branch: null, pr_provider: null, pr_repo: null, pr_id: null,
+      pr_url: null, outcome: null, created_at: iso(10), updated_at: iso(10), ended_at: null,
+    });
+  }
+  data.forest = buildForest(data.app);
+
+  const api = new EventLog(at(5));
+  api.start(); api.turnStart();
+  api.at(ASKED);
+  api.report('ws-root', 'swarm-status: needs_input unit=api pr=ado:4711 commit=abc1234\nSummary: Ready for the planned re-review.\nBlockers:\n- Awaiting the planned re-review and separate claims check on this head', 'needs_input');
+  api.at(ASKED + 1000); api.turnEnd();
+  data.states.set('cli-api', fold(api, 'cli-api'));
+
+  const root = new EventLog(T0);
+  root.start();
+  root.at(DISPATCHED); root.turnStart();
+  dispatch.forEach((text, index) => {
+    if (create) root.tool('create_session', { name: helpers[index][3], kickoff: { prompt: text } });
+    else root.report(helpers[index][1], text);
+  });
+  root.at(DISPATCHED + 5000); root.turnEnd();
+
+  helpers.forEach(([label, , cli], index) => {
+    const log = new EventLog(create ? DISPATCHED + 2000 : at(10));
+    log.start();
+    log.at(DISPATCHED + 3000);
+    if (!create && index < dispatch.length) log.crossSession({ fromSessionId: 'cli-root', fromProjectSessionId: 'ws-root', name: 'Sample story', content: dispatch[index] });
+    log.turnStart();
+    if (reported.includes(label)) {
+      log.at(at(34) + index * 1000);
+      log.report('ws-root', `swarm-status: complete unit=${label} pr=ado:4711 commit=abc1234\nSummary: Clean at abc1234.`, 'handoff');
+      log.turnEnd();
+    }
+    data.states.set(cli, fold(log, cli));
+    data.alive.set(cli, true);
+  });
+  data.states.set('cli-root', fold(root, 'cli-root'));
+  data.now = now;
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  return { snapshot, unit: snapshot.units.find(item => item.label === 'api') };
+}
+
+test('issue #127: after the orchestrator sends the unit\'s review and claims check elsewhere and both report, the unit waits on the orchestrator\'s next step', () => {
+  const { snapshot, unit } = handledSwarm();
+  assert.equal(snapshot.orchestrator.statusDetail, 'idle');
+  assert.deepEqual([unit.report.status, unit.report.repliedAt], ['needs_input', null], 'the report itself is unchanged');
+  assert.deepEqual([unit.statusDetail, unit.status, unit.bucket, unit.since], ['idle', 'idle', 'idle', at(34) + 1000]);
+  assert.equal(unit.activity.label, 'Waiting for the orchestrator\'s next step');
+  assert.equal(unit.reason, 'After its request, the orchestrator gave work for this unit to rv-api and claims-api, and they have reported since. The next step is the orchestrator\'s or the user\'s.');
+  assert.doesNotMatch(unit.reason, /no reply/);
+});
+
+test('issue #127: while the sessions doing the unit\'s work have not reported, the unit waits for them', () => {
+  const { unit } = handledSwarm({ reported: ['rv-api'], now: at(36) });
+  assert.deepEqual([unit.statusDetail, unit.since, unit.activity.label], ['idle', DISPATCHED, 'Waiting for claims-api']);
+  assert.equal(unit.reason, 'After its request, the orchestrator gave work for this unit to rv-api and claims-api. It waits for claims-api to report.');
+  const busy = handledSwarm({ reported: [], now: at(32) }).unit;
+  assert.equal(busy.activity.label, 'Waiting for rv-api and claims-api');
+});
+
+test('issue #127: work counts when it names the unit\'s label, PR or report commit, also as a create_session kickoff', () => {
+  for (const text of ['Review unit api before it merges.', 'Review PR !4711.', 'Check https://dev.azure.com/o/p/_git/r/pullrequest/4711', 'Check commit abc1234def0.']) {
+    assert.equal(handledSwarm({ dispatch: [text], reported: ['rv-api'] }).unit.statusDetail, 'idle', text);
+  }
+  const created = handledSwarm({ create: true, reported: [], now: at(32) }).unit;
+  assert.deepEqual([created.statusDetail, created.activity.label], ['idle', 'Waiting for rv-api and claims-api']);
+});
+
+test('issue #127: a unit stays blocked on the orchestrator when it never acts, or its messages name other work', () => {
+  for (const dispatch of [[], ['Review PR !47110 for the ui unit at abc1239.'], ['Review the api-v2 branch (#4711).']]) {
+    const { unit } = handledSwarm({ dispatch, reported: [] });
+    assert.deepEqual([unit.statusDetail, unit.since, unit.reason], ['blocked_on_orchestrator', ASKED, 'It asked the orchestrator for input and has had no reply.'], JSON.stringify(dispatch));
+  }
+});
+
 test('a fallback label fits within 32 characters from the 1,000th launch, even with a long agent type', () => {
   const longType = 'general-purpose-with-a-really-long-agent-type-name';
   const { data } = quietSwarm(root => {

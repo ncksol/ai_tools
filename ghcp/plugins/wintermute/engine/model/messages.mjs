@@ -105,6 +105,12 @@ export function recordToolStart(state, name, args, callId, at) {
       purpose: typeof args.purpose === 'string' ? args.purpose : null, message, failed: false,
     }, LIMITS.sent);
     countPrMentions(state, message, at);
+  } else if (name === 'create_session') {
+    const kickoff = args.kickoff && typeof args.kickoff === 'object' ? args.kickoff : {};
+    pushBounded(state.created, {
+      at, toolCallId: callId, name: typeof args.name === 'string' ? args.name : null,
+      prompt: clip(typeof kickoff.prompt === 'string' ? kickoff.prompt : '', 8000) ?? '', failed: false,
+    }, LIMITS.created);
   } else if (name === 'save_session_automation') {
     const clear = args.clear === true || args.clear === 'true';
     const minutes = Number(args.every_minutes);
@@ -116,7 +122,7 @@ export function recordToolStart(state, name, args, callId, at) {
 
 export function recordToolComplete(state, callId, data) {
   if (data.success !== false) return;
-  const entry = state.sent.find(item => item.toolCallId === callId);
+  const entry = state.sent.find(item => item.toolCallId === callId) ?? state.created.find(item => item.toolCallId === callId);
   if (entry) entry.failed = true;
 }
 

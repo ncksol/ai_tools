@@ -128,7 +128,7 @@ Children can't start sub-agents or sessions. A child that needs another agent se
 4. If an idle session already has the context the job needs, and its model and effort suit the job's tier or review row (and, for a review, a judge or a second opinion, its vendor), send the job to it. A review of a session's own work never goes to that session. A claims check goes only to a claims checker, never to another idle agent because it has the context: start a new one, or use the unit's idle claims checker (see "Claims check" in "Evidence and review").
 5. Otherwise, create a helper session: a one-off session, or an owner session if the job will have follow-ups. Write its brief yourself, from the user's words and the request, and choose its tier from "Models and effort".
 
-A child's request for an independent review of its unit becomes that unit's regular or critical review (see "Evidence and review"). If that review is already planned or running, don't start another: tell the child which unit has it.
+A child's request for an independent review of its unit becomes that unit's regular or critical review, and a request for its claims check becomes that unit's claims check (see "Evidence and review"). If that job is already planned or running, don't start another: tell the child which unit has it. When you start a unit's planned review or claims check in response to its owner's report, tell the owner too, even though the job goes to another session: the dashboard shows a `needs_input` report with no reply as waiting on you.
 
 Then tell the requester straight away whether to wait for the result or carry on with other work, and which unit has the job.
 
@@ -306,6 +306,7 @@ Blockers: none
 Which status to use:
 
 - Send only results, blockers and questions. A reply to a status check from the orchestrator, when work continues and nothing is needed, is progress. When your objective is done and you are only waiting, for example for reviews of your open PR, the reply is complete.
+- When your objective is done and your pushed commit only waits for its planned review and claims check, which the orchestrator starts, report complete, not needs_input. Use needs_input only when you need a decision, an answer or a helper.
 - A request for the go-ahead to open a PR, take one out of draft or merge, and any question for the orchestrator, is needs_input, with the decision you need under Blockers:. Then call task_complete and wait for the reply.
 - A request for a helper agent, which you can't start yourself, is needs_input, with the job under Blockers:. Then call task_complete and wait for the reply.
 - After two failed attempts at the same problem, stop and report blocked with your diagnosis.
