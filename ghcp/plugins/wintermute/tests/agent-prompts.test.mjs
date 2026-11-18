@@ -37,7 +37,9 @@ test('a status-check reply while only waiting for PR reviews is complete, in bot
 test('a unit that only waits for its planned review and claims check reports complete, and the orchestrator tells it who has them', () => {
   const line = '- When your objective is done and your pushed commit only waits for its planned review and claims check, which the orchestrator starts, report complete, not needs_input. Use needs_input only when you need a decision, an answer or a helper.';
   for (const name of AGENTS) assert.ok(agent(name).includes(line), name);
-  assert.ok(agent(ORCHESTRATOR).includes('When you start a unit\'s planned review or claims check in response to its owner\'s report, tell the owner too, even though the job goes to another session'));
+  const core = agent(ORCHESTRATOR);
+  assert.ok(core.includes('When an owner\'s `needs_input` report asks for its unit\'s review or claims check and you start that job in another session, send the owner a message that names the unit with the job'));
+  assert.ok(core.includes('Don\'t message an owner whose latest report is `complete` only to say that its review or claims check has started'));
 });
 
 const ROUTING = [
