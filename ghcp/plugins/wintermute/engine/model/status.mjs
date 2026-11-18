@@ -147,7 +147,7 @@ function spinningReason(state, now, t) {
     pairedCompactions.add(i - 1);
     pairedCompactions.add(i);
   }
-  if (pairedCompactions.size >= t.spinningCompactions) return `${pairedCompactions.size} context compactions in pairs without intervening work`;
+  if (pairedCompactions.size >= t.spinningCompactions) return `${pairedCompactions.size} context compactions with no work between them`;
   if (inWindow(state.recent.denials) > 0) return 'a permission request denied with no one to ask';
   return null;
 }

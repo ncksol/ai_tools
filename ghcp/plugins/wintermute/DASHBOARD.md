@@ -88,7 +88,7 @@ A session counts as **stuck** when:
 
 - a model call, tool call or sub-agent has gone quiet for longer than its limit;
 - it is busy but has written nothing for 10 minutes, and no open tool call or sub-agent has a limit of its own;
-- in its last 30 minutes of busy time, it had at least 5 failed tool calls, made the same tool call 3 times in a row within one prompt (polling calls don't count), or compacted its context twice or more;
+- in its last 30 minutes of busy time, it had at least 5 failed tool calls since its last successful tool call, made the same tool call 3 times in a row within one prompt, or compacted its context twice with no successful tool call between the two compactions (polling calls, such as `read_bash` or `read_agent`, don't count as a successful call or as a repeat);
 - it has been idle for 30 minutes after a progress report, with no task finished and no monitor due.
 
 A session waiting for your answer is never stuck. The detail panel names the rule that fired and its numbers. The rules are in `engine/model/status.mjs` and their limits in `engine/config.mjs`.
