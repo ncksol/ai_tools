@@ -1,5 +1,7 @@
 import { oneLine } from '../text.mjs';
 
+export const POLLING_TOOLS = new Set(['read_bash', 'read_powershell', 'read_agent', 'list_agents', 'list_bash', 'list_powershell', 'get_session', 'get_sessions_status', 'list_sessions_and_chats', 'get_session_automation']);
+
 /** Caps that keep a session's state small however long its log grows. */
 export const LIMITS = Object.freeze({
   feed: 120, marks: 400, sent: 40, sendTimes: 1000, created: 40, inbound: 80, taskCompletes: 20, recent: 200, spans: 5000, saves: 50, wakes: 500, subagents: 500, subagentIndex: 20_000,

@@ -3,7 +3,7 @@ import { MAX_FINISHED_SUBAGENT_UNITS } from '../schema.mjs';
 import { clip, oneLine, ownString } from '../text.mjs';
 import { maxTime, minTime, parseTime } from '../time.mjs';
 import { recordTaskComplete, recordToolComplete, recordToolStart, recordUserMessage } from './messages.mjs';
-import { LIMITS, addFeed, addMark, pushBounded } from './state-utils.mjs';
+import { LIMITS, POLLING_TOOLS, addFeed, addMark, pushBounded } from './state-utils.mjs';
 
 /** Large event types the reducer does not need; only their timestamps are read. */
 export const SKIP_TYPES = new Set([
@@ -94,7 +94,7 @@ export function createSessionState(id, { subagentUnits = false } = {}) {
     // The last work of a process that a later start or resume found with work open: it ended mid-work with no shutdown.
     // Like shutdownAt, it holds only while no work follows it (see evaluateStatus).
     cutOffAt: null,
-    recent: { failures: [], calls: [], compactions: [], denials: [] }, prompts: 0,
+    recent: { failures: [], calls: [], compactions: [], denials: [] }, workedSinceCompaction: false, prompts: 0,
     feed: [], marks: [], prMentions: new Map(), source: null,
   };
 }
@@ -297,7 +297,8 @@ function onMainEvent(state, type, data, at) {
       addFeed(state, at, 'error', `error${typeof data.errorType === 'string' ? `: ${data.errorType}` : ''}`);
       break;
     case 'session.compaction_complete':
-      pushBounded(state.recent.compactions, at, LIMITS.recent);
+      pushBounded(state.recent.compactions, { at, hadWork: state.workedSinceCompaction }, LIMITS.recent);
+      state.workedSinceCompaction = false;
       addFeed(state, at, 'compaction', 'compacted its context');
       break;
     case 'permission.completed':
@@ -799,9 +800,13 @@ function resultText(data) {
 function onToolComplete(state, data, at) {
   const id = typeof data.toolCallId === 'string' ? data.toolCallId : null;
   if (!id) return;
+  const tool = state.openTools.get(id);
   state.openTools.delete(id);
   if (state.turn) state.turn.progressAt = at;
   if (data.success === false) pushBounded(state.recent.failures, at, LIMITS.recent);
+  if (data.success === true && tool && !POLLING_TOOLS.has(tool.name)) {
+    state.workedSinceCompaction = true;
+  }
   const wait = state.waits.get(id);
   if (wait) {
     closeWait(state, id, wait, at);

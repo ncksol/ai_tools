@@ -6,6 +6,12 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.2.4 — 2026-11-18
+
+### Fixed
+
+- Context compactions count toward Spinning only when two consecutive compactions occur in the status window without a successful non-polling tool call between them (#129). Failed calls and polling do not count as progress.
+
 ## 1.2.3 — 2026-11-18
 
 ### Fixed

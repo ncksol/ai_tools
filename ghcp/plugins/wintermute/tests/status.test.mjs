@@ -194,7 +194,7 @@ test('an open task call exempts a session from silent busy only while its sub-ag
   assert.equal(evaluate(fold(failed), T0 + 11 * MINUTE).detail, 'silent');
 });
 
-test('spinning: failures, the same call in a row within a prompt, close compactions or an unattended denial', () => {
+test('spinning: failures, the same call in a row within a prompt or an unattended denial', () => {
   const failing = busyLog();
   for (let i = 0; i < 5; i += 1) failing.done(failing.tool('view', { path: `missing-${i}` }), { success: false });
   assert.equal(evaluate(fold(failing), T0 + MINUTE).detail, 'spinning');
@@ -218,21 +218,87 @@ test('spinning: failures, the same call in a row within a prompt, close compacti
     waking.done(waking.tool('bash', { command: 'az repos pr show --id 4711' }));
   }
   assert.equal(evaluate(fold(waking), T0 + MINUTE).detail, 'busy');
-  const compacting = busyLog();
-  compacting.push('session.compaction_complete', {});
-  compacting.push('session.compaction_complete', {});
-  const compacted = evaluate(fold(compacting), T0 + MINUTE);
-  assert.equal(compacted.detail, 'spinning');
-  assert.equal(compacted.reason, 'In its last 30 min of busy time: 2 context compactions within 30 min.');
+  const denied = busyLog();
+  denied.push('permission.completed', { decisionSource: 'unattended_fallback', result: { kind: 'denied-no-approval-rule-and-could-not-request-from-user' } });
+  assert.equal(evaluate(fold(denied), T0 + MINUTE).detail, 'spinning');
+});
+
+test('successful work keeps a session busy until a compaction has no intervening work', () => {
+  const log = busyLog();
+  const read = log.tool('view', { path: 'a.mjs' });
+  log.push('session.compaction_complete');
+  log.wait(1000);
+  log.done(read); // The completion, not the start, falls between compactions.
+  log.wait(1000);
+  log.push('session.compaction_complete');
+  log.wait(1000);
+  log.done(log.tool('edit', { path: 'a.mjs' }));
+  log.wait(1000);
+  log.push('session.compaction_complete');
+  assert.equal(evaluate(fold(log), T0 + MINUTE).detail, 'busy');
+  log.wait(1000);
+  log.push('session.compaction_complete');
+  const result = evaluate(fold(log), T0 + MINUTE);
+  assert.equal(result.detail, 'spinning');
+  assert.match(result.reason, /\b2 context compactions\b.*without intervening work/);
+});
+
+for (const minutes of [10, 40]) {
+  test(`only the no-work pair counts after ${minutes} busy minutes of successful edits`, () => {
+    const log = busyLog();
+    log.push('session.compaction_complete');
+    for (let i = 0; i < minutes; i += 1) {
+      log.wait(MINUTE);
+      log.done(log.tool('edit', { path: `file-${i}.mjs` }));
+    }
+    log.push('session.compaction_complete');
+    assert.equal(evaluate(fold(log), T0 + minutes * MINUTE).detail, 'busy');
+    log.wait(1000);
+    log.push('session.compaction_complete');
+    const result = evaluate(fold(log), T0 + minutes * MINUTE + 1000);
+    assert.equal(result.detail, 'spinning');
+    assert.match(result.reason, /\b2 context compactions\b.*without intervening work/);
+  });
+}
+
+test('overlapping no-work pairs count each compaction once, even at the same timestamp', () => {
+  const log = busyLog();
+  for (let i = 0; i < 3; i += 1) log.push('session.compaction_complete');
+  const result = evaluate(fold(log), T0 + MINUTE);
+  assert.equal(result.detail, 'spinning');
+  assert.match(result.reason, /\b3 context compactions\b.*without intervening work/);
+});
+
+for (const [gap, run] of [
+  ['no calls', () => {}],
+  ['a failed call', log => log.done(log.tool('view', { path: 'missing.mjs' }), { success: false })],
+  ['only polling calls', log => {
+    log.done(log.tool('get_session', { session_id: 'ws-child' }));
+    log.done(log.tool('read_bash', { shellId: 'shell-1' }));
+  }],
+]) {
+  test(`compactions with ${gap} between them cause spinning`, () => {
+    const log = busyLog();
+    log.done(log.tool('view', { path: 'a.mjs' })); // Work before the first compaction does not separate the pair.
+    log.wait(1000);
+    log.push('session.compaction_complete');
+    log.wait(1000);
+    run(log);
+    log.wait(1000);
+    log.push('session.compaction_complete');
+    const result = evaluate(fold(log), T0 + MINUTE);
+    assert.equal(result.detail, 'spinning');
+    assert.match(result.reason, /\b2 context compactions\b.*without intervening work/);
+  });
+}
+
+test('compactions more than 30 minutes apart do not cause spinning', () => {
   const spaced = busyLog();
   spaced.push('session.compaction_complete', {});
   spaced.wait(5 * MINUTE); spaced.turnEnd();
   spaced.wait(60 * MINUTE); spaced.turnStart();
   spaced.push('session.compaction_complete', {});
   assert.equal(evaluate(fold(spaced), T0 + 66 * MINUTE).detail, 'busy');
-  const denied = busyLog();
-  denied.push('permission.completed', { decisionSource: 'unattended_fallback', result: { kind: 'denied-no-approval-rule-and-could-not-request-from-user' } });
-  assert.equal(evaluate(fold(denied), T0 + MINUTE).detail, 'spinning');
 });
 
 test('a repeat streak ends at the next prompt, automation wake or cross-session message', () => {
