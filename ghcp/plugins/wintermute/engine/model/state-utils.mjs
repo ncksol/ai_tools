@@ -2,7 +2,7 @@ import { oneLine } from '../text.mjs';
 
 /** Caps that keep a session's state small however long its log grows. */
 export const LIMITS = Object.freeze({
-  feed: 120, marks: 400, sent: 40, inbound: 80, taskCompletes: 20, recent: 200, spans: 5000, saves: 50, wakes: 500, subagents: 500, subagentIndex: 20_000,
+  feed: 120, marks: 400, sent: 40, sendTimes: 1000, created: 40, inbound: 80, taskCompletes: 20, recent: 200, spans: 5000, saves: 50, wakes: 500, subagents: 500, subagentIndex: 20_000,
   subagentTypes: 100, prMentions: 200,
   // Reply index (see messages.mjs): senders tracked, and first-after-outbound times kept per sender.
   replySenders: 50, replyTimes: 200,

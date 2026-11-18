@@ -9,6 +9,7 @@ import { ACTIVE_DETAILS } from '../engine/model/status.mjs';
 import { summarizeRun } from '../engine/model/history.mjs';
 import { createPrLookup } from '../engine/model/pr-lookup.mjs';
 import { LIMITS } from '../engine/model/state-utils.mjs';
+import { namesUnit } from '../engine/model/dispatch.mjs';
 import { HOUR, MINUTE } from '../engine/time.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { fold } from './helpers/fold.mjs';
@@ -2025,6 +2026,200 @@ test('a reply that is the first message of a later CLI session of the unit still
   data.states.set('cli-api', fold(current, 'cli-api'));
   const unit = buildSnapshot(data).units.find(item => item.id === 'ws-api');
   assert.deepEqual([unit.report.status, unit.report.at, unit.report.repliedAt], ['needs_input', at(30), at(40)]);
+});
+
+// --- A request the orchestrator handled without a reply to the unit (issue #127) ---
+
+const ASKED = at(30);
+const DISPATCHED = ASKED + 26_000;
+const WORK_ONLY = 'Awaiting the planned re-review and separate claims check on this head';
+
+/**
+ * The contract swarm where api reports needs_input at minute 30 with `blockers`. 26 s later the orchestrator sends `dispatch` texts
+ * to its reviewer rv-api and claims checker claims-api, or starts them with create_session when
+ * `create`, not to api. Each helper in `reported` reports complete at minute 34; the others are still working, or ended without a
+ * report when in `archived`. `adjust(data, root, logs)` changes the data and
+ * the logs before the snapshot. `reply` is a message from the orchestrator that api receives at minute 36.
+ */
+function handledSwarm({
+  blockers = WORK_ONLY, dispatch = ['Re-review !4711 at its new head abc1234.', 'Claims check for !4711 at abc1234.'],
+  create = false, createdIds = false, reported = ['rv-api', 'claims-api'], archived = [], now = at(38), adjust = null, reply = null,
+} = {}) {
+  const data = input(true);
+  const helpers = [['rv-api', 'ws-rv', 'cli-rv', 'Review api'], ['claims-api', 'ws-cc', 'cli-cc', 'Claims api']];
+  for (const [label, id, cli, name] of helpers) {
+    data.app.workspaces.set(id, {
+      id, projectId: 'project-1', worktreeId: null, name, branch: null, createdAt: create ? DISPATCHED + 2000 : at(10),
+      archivedAt: archived.includes(label) ? at(35) : null, sessionId: cli, creatorSessionId: null, coordinatingCreatorSessionId: null, createdPr: null,
+    });
+    data.app.parentLinks.push({ childId: id, parentId: 'ws-root' });
+    data.app.aliases.push({ sessionId: cli, workspaceId: id, createdAt: T0 });
+    data.sessionDbs.get('cli-root').children.push({
+      unit: label, session_id: id, title: name, todo_id: null, branch: null, base_branch: 'feature/api', pr_provider: null, pr_repo: null, pr_id: null,
+      pr_url: null, outcome: null, created_at: iso(10), updated_at: iso(10), ended_at: null,
+    });
+  }
+
+  const api = new EventLog(at(5));
+  api.start(); api.turnStart();
+  api.at(ASKED);
+  api.report('ws-root', `swarm-status: needs_input unit=api pr=ado:4711 commit=abc1234\nSummary: Ready at abc1234.\nBlockers:\n- ${blockers}`, 'needs_input');
+  api.at(ASKED + 1000); api.turnEnd();
+  if (reply) {
+    api.at(at(36));
+    api.crossSession({ fromSessionId: 'cli-root', fromProjectSessionId: 'ws-root', sourceToolCallId: 'call-reply', name: 'Sample story', content: reply });
+  }
+  data.states.set('cli-api', fold(api, 'cli-api'));
+
+  const root = new EventLog(T0);
+  root.start();
+  root.at(DISPATCHED); root.turnStart();
+  const callIds = dispatch.map((text, index) => {
+    if (!create) return root.report(helpers[index][1], text);
+    const id = root.tool('create_session', { name: helpers[index][3], kickoff: { prompt: text } });
+    root.done(id, { result: createdIds ? `Created session '${helpers[index][3]}' (id: ${helpers[index][1]}) in project 'Sample'. The session will start automatically.` : 'ok' });
+    return id;
+  });
+  root.at(DISPATCHED + 5000); root.turnEnd();
+  const logs = new Map();
+  helpers.forEach(([label, id, cli], index) => {
+    const log = new EventLog(create ? DISPATCHED + 2000 : at(10));
+    log.start();
+    log.at(DISPATCHED + 3000);
+    if (!create && index < dispatch.length) {
+      log.crossSession({ fromSessionId: 'cli-root', fromProjectSessionId: 'ws-root', sourceToolCallId: callIds[index], name: 'Sample story', content: dispatch[index] });
+    }
+    log.turnStart();
+    if (reported.includes(label)) {
+      log.at(at(34) + index * 1000);
+      log.report('ws-root', `swarm-status: complete unit=${label} pr=ado:4711 commit=abc1234\nSummary: Clean at abc1234.`, 'handoff');
+      log.turnEnd();
+    } else if (archived.includes(label)) log.turnEnd();
+    logs.set(cli, log);
+  });
+  adjust?.(data, root, logs);
+  data.forest = buildForest(data.app);
+  for (const [cli, log] of logs) {
+    data.states.set(cli, fold(log, cli));
+    data.alive.set(cli, true);
+  }
+  data.states.set('cli-root', fold(root, 'cli-root'));
+  data.now = now;
+  const snapshot = buildSnapshot(data);
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  return { snapshot, unit: snapshot.units.find(item => item.label === 'api') };
+}
+
+const NO_REPLY = 'It asked the orchestrator for input and has had no reply.';
+const assertBlocked = ({ unit }, note) => assert.deepEqual([unit.statusDetail, unit.since, unit.reason], ['blocked_on_orchestrator', ASKED, NO_REPLY], note);
+const workReason = list => `It asked the orchestrator for input. Since then, the orchestrator has sent or started work that names this unit: ${list}. It hasn't replied to this unit yet.`;
+/** Blocked on the orchestrator exactly as with no work sent, with `list` as the reason. */
+const assertStillBlocked = ({ unit }, list, note) => {
+  const never = handledSwarm({ dispatch: [], reported: [] }).unit;
+  assert.deepEqual([unit.statusDetail, unit.status, unit.bucket, unit.since, unit.activity.label],
+    [never.statusDetail, never.status, never.bucket, never.since, never.activity.label], note);
+  assert.equal(never.statusDetail, 'blocked_on_orchestrator');
+  if (list) assert.equal(unit.reason, workReason(list), note);
+};
+
+test('issue #127: after the orchestrator sends the unit\'s review and claims check elsewhere and both report, the unit stays blocked but its reason names them', () => {
+  const { snapshot, unit } = handledSwarm();
+  assert.equal(snapshot.orchestrator.statusDetail, 'idle');
+  assert.deepEqual([unit.report.status, unit.report.repliedAt], ['needs_input', null], 'the report itself is unchanged');
+  assertStillBlocked({ unit }, 'rv-api (has reported) and claims-api (has reported)');
+  assert.ok(!unit.reason.includes('has had no reply'));
+  assertBlocked(handledSwarm({ dispatch: [], reported: [] }), 'never acts: no reply');
+});
+
+test('issue #127: the reason gives each session\'s state: working, reported, or ended without a report', () => {
+  assertStillBlocked(handledSwarm({ reported: ['rv-api'], now: at(36) }), 'rv-api (has reported) and claims-api (working)');
+  assertStillBlocked(handledSwarm({ reported: [], now: at(32) }), 'rv-api (working) and claims-api (working)');
+  assertStillBlocked(handledSwarm({ reported: ['rv-api'], archived: ['claims-api'] }), 'rv-api (has reported) and claims-api (ended without a report)');
+});
+
+test('issue #127: only a reply to the unit clears its block', () => {
+  const { unit } = handledSwarm({ reply: 'rv-api and claims-api have your review and claims check.' });
+  assert.equal(unit.report.repliedAt, at(36));
+  assert.notEqual(unit.statusDetail, 'blocked_on_orchestrator');
+});
+
+test('issue #127: whatever the request or the message says, the unit\'s status stays as with no work sent; only the reason changes', () => {
+  for (const blockers of [
+    'Awaiting the planned review.\n- Please provide the target branch name.', 'Awaiting your sign-off after the review.',
+    'Please give the go-ahead to open the PR once its review is clean.',
+  ]) assertStillBlocked(handledSwarm({ blockers }), 'rv-api (has reported) and claims-api (has reported)', blockers);
+  for (const text of [
+    'Do not start the review of !4711; wait until I answer the owner\'s schema question.', 'Review !4711. Do not review unrelated changes.',
+    'Review !4711. Do not start subagents.',
+  ]) assertStillBlocked(handledSwarm({ dispatch: [text], reported: [], now: at(32) }), 'rv-api (working)', text);
+});
+
+test('issue #127: work names the unit by its label, PR or report commit, also as a create_session kickoff', () => {
+  for (const text of [
+    'Review unit api before it merges.', 'Review the api.', 'Review PR !4711.', 'Check https://dev.azure.com/org/project/_git/repo/pullrequest/4711',
+    'Check https://org.visualstudio.com/project/_git/repo/pullrequest/4711', 'Check commit abc1234def0.',
+  ]) assertStillBlocked(handledSwarm({ dispatch: [text], reported: ['rv-api'] }), 'rv-api (has reported)', text);
+  assertStillBlocked(handledSwarm({ create: true, reported: [], now: at(32) }), 'rv-api (working) and claims-api (working)');
+});
+
+test('issue #127: a started helper is bound by the id its create returned, so a rename doesn\'t lose it', () => {
+  const rename = data => { data.app.workspaces.get('ws-rv').name = 'Renamed reviewer'; data.app.workspaces.get('ws-cc').name = 'Renamed checker'; };
+  assertStillBlocked(handledSwarm({ create: true, createdIds: true, adjust: rename }), 'rv-api (has reported) and claims-api (has reported)');
+  // Without the returned id and with no session of its name, a started session counts only while it may still be starting.
+  assertStillBlocked(handledSwarm({ create: true, adjust: rename, reported: [], now: DISPATCHED + 5 * MINUTE }), '2 new sessions (starting)');
+  assertBlocked(handledSwarm({ create: true, adjust: rename, reported: [], now: DISPATCHED + 11 * MINUTE }), 'not for ever');
+});
+
+test('issue #127: messages that name other work leave the reason as no reply', () => {
+  for (const dispatch of [['Review PR !47110 for the ui unit at abc1239.'], ['Review the api-v2 branch (#4711).'], ['Review api.v2 next.']]) {
+    assertBlocked(handledSwarm({ dispatch, reported: [] }), JSON.stringify(dispatch));
+  }
+  // The same PR number in another repository, by URL or qualified reference.
+  for (const text of ['Review https://dev.azure.com/other/project/_git/repo/pullrequest/4711', 'Review https://org.visualstudio.com/project/_git/other/pullrequest/4711']) {
+    assertBlocked(handledSwarm({ dispatch: [text], reported: [] }), text);
+  }
+});
+
+test('issue #127: work is timed when the orchestrator sent it, not when it arrived, and outlasts the orchestrator\'s message list', () => {
+  // Sent before the report and delivered after it: not work since the report.
+  assertBlocked(handledSwarm({
+    dispatch: [], reported: [],
+    adjust: (data, root, logs) => {
+      const fresh = new EventLog(T0);
+      fresh.start();
+      fresh.at(ASKED - 10_000);
+      const earlyId = fresh.report('ws-rv', 'Re-review !4711 when it is ready.');
+      root.events.unshift(...fresh.events.slice(1));
+      logs.get('cli-rv').at(DISPATCHED);
+      logs.get('cli-rv').crossSession({ fromSessionId: 'cli-root', fromProjectSessionId: 'ws-root', sourceToolCallId: earlyId, name: 'Sample story', content: 'Re-review !4711 when it is ready.' });
+    },
+  }), 'delayed delivery');
+  // A copy whose send the orchestrator's log doesn't have can't be timed.
+  assertBlocked(handledSwarm({
+    dispatch: [], reported: [],
+    adjust: (data, root, logs) => logs.get('cli-rv').crossSession({ fromSessionId: 'cli-root', fromProjectSessionId: 'ws-root', sourceToolCallId: 'call-unknown', name: 'Sample story', content: 'Re-review !4711.' }),
+  }), 'untimed copy');
+  // More than LIMITS.sent later messages push the send out of the orchestrator's list; the helper's copy still times it.
+  assertStillBlocked(handledSwarm({
+    reported: [], now: at(32),
+    adjust: (data, root) => {
+      root.at(DISPATCHED + 10_000);
+      for (let index = 0; index < LIMITS.sent + 5; index += 1) root.report('ws-docs', `Docs note ${index}.`);
+    },
+  }), 'rv-api (working) and claims-api (working)');
+});
+
+test('namesUnit compares a qualified PR reference by provider, repository and number, and labels by the label alphabet', () => {
+  const github = { provider: 'github', id: 42, repo: 'acme/api' };
+  assert.equal(namesUnit('Review acme/api#42.', { pr: github }), true);
+  assert.equal(namesUnit('Review https://github.com/acme/api/pull/42 now', { pr: github }), true);
+  assert.equal(namesUnit('Review PR #42.', { pr: github }), true);
+  assert.equal(namesUnit('Investigate issue #42.', { pr: github }), false, 'a bare #42 may be an issue');
+  assert.equal(namesUnit('Review https://github.com/acme/web/pull/42 now', { pr: github }), false);
+  assert.equal(namesUnit('Review acme/web#42.', { pr: github }), false);
+  assert.equal(namesUnit('Review api.v2 and v1.api.', { label: 'api' }), false);
+  assert.equal(namesUnit('Review api.', { label: 'api' }), true);
+  assert.equal(namesUnit('Review api.v2.', { label: 'api.v2' }), true);
 });
 
 test('a fallback label fits within 32 characters from the 1,000th launch, even with a long agent type', () => {

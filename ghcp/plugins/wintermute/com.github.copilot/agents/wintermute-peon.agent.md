@@ -97,6 +97,7 @@ Blockers: none
 Which status to use:
 
 - Send only results, blockers and questions. A reply to a status check from the orchestrator, when work continues and nothing is needed, is progress. When your objective is done and you are only waiting, for example for reviews of your open PR, the reply is complete.
+- When your objective is done and your pushed commit only waits for its planned review and claims check, which the orchestrator starts, report complete, not needs_input. Use needs_input only when you need a decision, an answer or a helper.
 - A request for the go-ahead to open a PR, take one out of draft or merge, and any question for the orchestrator, is needs_input, with the decision you need under Blockers:. Then call task_complete and wait for the reply.
 - A request for a helper agent, which you can't start yourself, is needs_input, with the job under Blockers:. Then call task_complete and wait for the reply.
 - After two failed attempts at the same problem, stop and report blocked with your diagnosis.

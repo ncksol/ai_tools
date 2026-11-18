@@ -3,6 +3,7 @@ import { clip, firstLine, oneLine } from '../text.mjs';
 import { MINUTE, maxTime, minTime } from '../time.mjs';
 import { UNIT_LABEL_RE, normaliseRegistry, parseQuestionTag, parseReportBody, parseStatusLine, purposeToStatus } from './contract.mjs';
 import { descendants, resolveNodeId } from './forest.mjs';
+import { NEW_SESSION, dispatchesFor } from './dispatch.mjs';
 import { setRunStats } from './run-stats.mjs';
 import { effortOf, mergeStates } from './session-state.mjs';
 import { deriveMonitor, deriveStage, hostOf, mentionFits, otherOwner, prView, registryPrs, resolveOutcome, resolvePr, splitReviewed } from './stage.mjs';
@@ -435,6 +436,64 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
   return unit;
 }
 
+const joinWords = words => (words.length < 2 ? words.join('') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`);
+const CREATED_MATCH_MS = 10 * MINUTE;
+
+/**
+ * The reason of a unit blocked on the orchestrator whose request the orchestrator may have handled without a reply to it (issue
+ * #127), for example by sending the unit's review and claims check to other sessions. Only a reply to the unit clears its block;
+ * its status, bucket and since stay as they are. When, after the report, the orchestrator sent or started work whose text names
+ * the unit (dispatch.mjs), the reason lists those sessions and their state instead of saying the request has had no reply. The
+ * match is only on the text, so the reason says the work names the unit, not that it answers the request.
+ */
+function describeHandledRequests({ units, nodes, contexts, root, now }) {
+  const asking = units.filter(unit => unit.statusDetail === 'blocked_on_orchestrator' && unit.report);
+  if (!asking.length) return;
+  const rootContext = contexts.get(root.id);
+  const nodeById = new Map();
+  for (const [nodeId, c] of contexts) for (const id of c.ids) nodeById.set(id, nodeId);
+  const nodeOf = id => nodeById.get(id) ?? null;
+  const fromRoot = item => rootContext.ids.has(item.fromSessionId) || rootContext.ids.has(item.fromProjectSessionId);
+  const inbound = [];
+  for (const [nodeId, c] of contexts) {
+    if (nodeId === root.id) continue;
+    for (const item of c.all.inbound) if (fromRoot(item)) inbound.push({ nodeId, sourceToolCallId: item.sourceToolCallId, content: item.content });
+  }
+  // A started session is the one whose id the create returned; an older log without it falls back to the name it was given.
+  const nodeOfCreated = item => {
+    if (item.sessionId) return nodeOf(item.sessionId);
+    if (!item.name) return null;
+    const match = nodes.filter(node => node.name === item.name && node.createdAt != null
+      && node.createdAt >= item.at - MINUTE && node.createdAt <= item.at + CREATED_MATCH_MS);
+    return match.sort((a, b) => a.createdAt - b.createdAt)[0]?.id ?? null;
+  };
+  const unitById = new Map(units.map(unit => [unit.id, unit]));
+  for (const unit of asking) {
+    const found = dispatchesFor({
+      since: unit.report.at, refs: { label: unit.label, pr: unit.pr, commit: unit.report.commit }, unitId: unit.id, rootId: root.id,
+      sent: rootContext.all.sent, inbound, sendTimes: rootContext.all.sendTimes, created: rootContext.all.created, nodeOf, nodeOfCreated,
+    });
+    const helpers = [];
+    let unseen = 0;
+    for (const [nodeId, at] of [...found].sort((a, b) => a[1] - b[1])) {
+      const helper = nodeId.startsWith(NEW_SESSION) ? null : unitById.get(nodeId) ?? null;
+      if (!helper) {
+        // A started session not found in the swarm counts only while it may still be starting.
+        if (now - at <= CREATED_MATCH_MS) unseen += 1;
+        continue;
+      }
+      const state = helper.report && helper.report.at > at ? 'has reported'
+        : ACTIVE_DETAILS.has(helper.statusDetail) ? 'working'
+          : helper.endedAt ? 'ended without a report' : 'no report yet';
+      helpers.push(`${helper.label} (${state})`);
+    }
+    if (unseen) helpers.push(`${unseen > 1 ? `${unseen} new sessions` : 'a new session'} (starting)`);
+    if (!helpers.length) continue;
+    unit.reason = 'It asked the orchestrator for input. Since then, the orchestrator has sent or started work that names this unit: '
+      + `${joinWords(helpers)}. It hasn't replied to this unit yet.`;
+  }
+}
+
 function planFromTodos(db, units, registry) {
   const todos = db?.todos ?? [];
   const todoOfUnit = new Map();
@@ -777,6 +836,7 @@ export function buildSnapshot(input) {
     startedAt: root.createdAt ?? rootContext.all.firstEventAt ?? now, now, thresholds,
   });
   const orchestrator = sessionView(input, rootContext, labels.get(root.id), evaluation, null, null, []);
+  describeHandledRequests({ units, nodes, contexts, root, now });
   const needs = buildNeeds(contexts, root.id, labels, flags);
   const planned = plannedEntries(plan);
   const subagents = buildSubagentUnits(input, rootContext, root, [...labels.values(), ...planned.map(entry => entry.label)], extraFeed, subagentLabels);

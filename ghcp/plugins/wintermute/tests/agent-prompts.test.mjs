@@ -34,6 +34,14 @@ test('a status-check reply while only waiting for PR reviews is complete, in bot
   for (const name of AGENTS) assert.ok(agent(name).includes(line), name);
 });
 
+test('a unit that only waits for its planned review and claims check reports complete, and the orchestrator tells it who has them', () => {
+  const line = '- When your objective is done and your pushed commit only waits for its planned review and claims check, which the orchestrator starts, report complete, not needs_input. Use needs_input only when you need a decision, an answer or a helper.';
+  for (const name of AGENTS) assert.ok(agent(name).includes(line), name);
+  const core = agent(ORCHESTRATOR);
+  assert.ok(core.includes('When an owner\'s `needs_input` report asks for its unit\'s review or claims check and you start that job in another session, send the owner a message that names the unit with the job'));
+  assert.ok(core.includes('Don\'t message an owner whose latest report is `complete` only to say that its review or claims check has started'));
+});
+
 const ROUTING = [
   '  - Before you choose who does a job, decide whether it is a review or a claims check. A review looks for defects. A claims check confirms what the owner says it delivered, at the pushed commit; the owner\'s own report is not that proof. If a request asks for both, such as "re-check the fix and refresh the test claims", split it into two jobs: the review part goes to its reviewer, and the claims part goes to a claims checker.',
   '  - Every claims check goes to a claims checker at the claims check row, with its model and effort set explicitly: a new one, or the unit\'s idle claims checker from an earlier check of the same unit, which checks the new head from its own fresh fetch. This includes a request to refresh earlier claims, and the claims check of your own unit. Never give a claims check to a reviewer, a judge or any other agent because it already has the context, and never give a claims checker a reviewer\'s model or effort. A model or effort the user named for claims checks overrides the row.',

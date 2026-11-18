@@ -6,6 +6,13 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.2.3 — 2026-11-18
+
+### Fixed
+
+- A unit blocked on the orchestrator no longer reads "has had no reply" when the orchestrator has acted on its `needs_input` report by sending work to other sessions, such as the unit's reviewer or claims checker, without messaging the unit (#127). The reason now names those sessions and their state (working, has reported, or ended without a report) and says the orchestrator hasn't replied to the unit yet. The unit stays blocked on the orchestrator until the orchestrator replies to it, so this never hides a request. Work counts when a message or a new session's kickoff from the orchestrator, sent after the report, names the unit's label, PR or report commit. A message counts from when the orchestrator sent it, not when it arrived; a PR named with its repository must match the unit's provider, repository and number; and a started session is followed by the id its create returned, so renaming it doesn't matter.
+- `wintermute-peon` reports `complete`, not `needs_input`, when its pushed commit only waits for its planned review and claims check. When an owner's `needs_input` report asks for its review or claims check, `wintermute-core` tells the owner which unit has the job when it starts it, which clears the owner's block on the dashboard. It doesn't message an owner that reported `complete` just to say this.
+
 ## 1.2.2 — 2026-11-17
 
 ### Fixed
