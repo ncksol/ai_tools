@@ -1,5 +1,6 @@
 import { formatDuration } from '../time.mjs';
 import { hasOpenWork } from './session-state.mjs';
+import { POLLING_TOOLS } from './state-utils.mjs';
 
 /** Details that keep a run live: real work, a hang, or a wait on the user inside an open turn. */
 export const ACTIVE_DETAILS = new Set([
@@ -40,7 +41,6 @@ const QUICK_TOOLS = new Set([
   'rename_session', 'rename_branch', 'save_session_automation', 'get_session_automation', 'list_repositories', 'add_repository', 'await_repository_creation', 'publish_chat_update',
   'view', 'create', 'edit', 'apply_patch', 'str_replace_editor', 'grep', 'glob', 'rg', 'tool_search_tool', 'sql', 'store_memory', 'vote_memory', 'skill',
 ]);
-const POLLING_TOOLS = new Set(['read_bash', 'read_powershell', 'read_agent', 'list_agents', 'list_bash', 'list_powershell', 'get_session', 'get_sessions_status', 'list_sessions_and_chats', 'get_session_automation']);
 const IDLE_DETAILS = new Set(['idle', 'stopped', 'crashed', 'failed', 'stalled', 'blocked', 'blocked_on_orchestrator']);
 /** Units that are over: they neither keep a swarm busy nor count as idle work. */
 const ENDED_DETAILS = new Set(['archived', 'merged', 'completed', 'cancelled']);
@@ -138,8 +138,8 @@ function spinningReason(state, now, t) {
     longest = Math.max(longest, run);
   }
   if (longest >= t.spinningRepeats) return `the same tool call ${longest} times in a row`;
-  const compactions = state.recent.compactions.filter(at => at >= from && now - at <= t.spinningWindowMs).length;
-  if (compactions >= t.spinningCompactions) return `${compactions} context compactions within ${formatDuration(t.spinningWindowMs)}`;
+  const compactions = state.recent.compactions.filter(({ at, hadWork }) => !hadWork && at >= from && now - at <= t.spinningWindowMs).length;
+  if (compactions >= t.spinningCompactions) return `${compactions} context compactions without intervening work`;
   if (inWindow(state.recent.denials) > 0) return 'a permission request denied with no one to ask';
   return null;
 }
