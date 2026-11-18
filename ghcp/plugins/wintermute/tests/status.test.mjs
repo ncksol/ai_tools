@@ -240,7 +240,33 @@ test('successful work keeps a session busy until a compaction has no intervening
   log.push('session.compaction_complete');
   const result = evaluate(fold(log), T0 + MINUTE);
   assert.equal(result.detail, 'spinning');
-  assert.match(result.reason, /2 context compactions without intervening work/);
+  assert.match(result.reason, /\b2 context compactions\b.*without intervening work/);
+});
+
+for (const minutes of [10, 40]) {
+  test(`only the no-work pair counts after ${minutes} busy minutes of successful edits`, () => {
+    const log = busyLog();
+    log.push('session.compaction_complete');
+    for (let i = 0; i < minutes; i += 1) {
+      log.wait(MINUTE);
+      log.done(log.tool('edit', { path: `file-${i}.mjs` }));
+    }
+    log.push('session.compaction_complete');
+    assert.equal(evaluate(fold(log), T0 + minutes * MINUTE).detail, 'busy');
+    log.wait(1000);
+    log.push('session.compaction_complete');
+    const result = evaluate(fold(log), T0 + minutes * MINUTE + 1000);
+    assert.equal(result.detail, 'spinning');
+    assert.match(result.reason, /\b2 context compactions\b.*without intervening work/);
+  });
+}
+
+test('overlapping no-work pairs count each compaction once, even at the same timestamp', () => {
+  const log = busyLog();
+  for (let i = 0; i < 3; i += 1) log.push('session.compaction_complete');
+  const result = evaluate(fold(log), T0 + MINUTE);
+  assert.equal(result.detail, 'spinning');
+  assert.match(result.reason, /\b3 context compactions\b.*without intervening work/);
 });
 
 for (const [gap, run] of [
@@ -262,7 +288,7 @@ for (const [gap, run] of [
     log.push('session.compaction_complete');
     const result = evaluate(fold(log), T0 + MINUTE);
     assert.equal(result.detail, 'spinning');
-    assert.match(result.reason, /2 context compactions without intervening work/);
+    assert.match(result.reason, /\b2 context compactions\b.*without intervening work/);
   });
 }
 

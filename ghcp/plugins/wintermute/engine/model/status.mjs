@@ -138,8 +138,16 @@ function spinningReason(state, now, t) {
     longest = Math.max(longest, run);
   }
   if (longest >= t.spinningRepeats) return `the same tool call ${longest} times in a row`;
-  const compactions = state.recent.compactions.filter(({ at, hadWork }) => !hadWork && at >= from && now - at <= t.spinningWindowMs).length;
-  if (compactions >= t.spinningCompactions) return `${compactions} context compactions without intervening work`;
+  const { compactions } = state.recent;
+  const inCompactionWindow = at => at >= from && now - at <= t.spinningWindowMs;
+  const pairedCompactions = new Set();
+  for (let i = 1; i < compactions.length; i += 1) {
+    const { at, hadWork } = compactions[i];
+    if (hadWork || !inCompactionWindow(at) || !inCompactionWindow(compactions[i - 1].at)) continue;
+    pairedCompactions.add(i - 1);
+    pairedCompactions.add(i);
+  }
+  if (pairedCompactions.size >= t.spinningCompactions) return `${pairedCompactions.size} context compactions in pairs without intervening work`;
   if (inWindow(state.recent.denials) > 0) return 'a permission request denied with no one to ask';
   return null;
 }

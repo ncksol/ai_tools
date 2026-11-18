@@ -10,7 +10,7 @@ After merging, run `npm run release:publish -- --dry-run`, then `npm run release
 
 ### Fixed
 
-- A context compaction no longer counts toward Spinning if a successful non-polling tool call finished since the previous compaction (#129). Failed calls and polling do not count as progress.
+- Context compactions count toward Spinning only when two consecutive compactions occur in the status window without a successful non-polling tool call between them (#129). Failed calls and polling do not count as progress.
 
 ## 1.2.3 — 2026-11-18
 

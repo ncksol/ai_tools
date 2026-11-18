@@ -804,8 +804,7 @@ function onToolComplete(state, data, at) {
   state.openTools.delete(id);
   if (state.turn) state.turn.progressAt = at;
   if (data.success === false) pushBounded(state.recent.failures, at, LIMITS.recent);
-  // Only work between compactions qualifies; the first compaction has no preceding gap.
-  if (state.recent.compactions.length && data.success === true && tool && !POLLING_TOOLS.has(tool.name)) {
+  if (data.success === true && tool && !POLLING_TOOLS.has(tool.name)) {
     state.workedSinceCompaction = true;
   }
   const wait = state.waits.get(id);
