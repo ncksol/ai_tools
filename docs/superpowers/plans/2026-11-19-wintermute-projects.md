@@ -263,6 +263,17 @@ test('a bold label that is only inside a code fence does not count as a label', 
   const body = `${coordinatorBody({ labels: ['Follow-up jobs'] })}\n\`\`\`markdown\n- **Security review**: a sample.\n\`\`\`\n`;
   assertReported(await errorsFor({ [COORDINATOR_SKILL]: skillText(COORDINATOR_SKILL, { body }) }), 'refers to "Security review"');
 });
+
+test('a row without outer pipes right after the tier table is reported instead of being left out of the copy', async () => {
+  const errors = await errorsFor({}, editCore(policy.table, `${policy.table}\nExample | fixture only | sample note`));
+  assertReported(errors, `${POLICY_AGENT}: "## Models and effort" has a line right after its table`);
+});
+
+test('a heading with closing hashes counts as a second "## Models and effort" section', async () => {
+  const second = `\n## Models and effort ##\n\n${changedTable()}\n\n${policy.neverUse}\n`;
+  const errors = await errorsFor({}, (repo, root) => writeFileSync(path.join(root, POLICY_AGENT), `${coreText}${second}`));
+  assertReported(errors, `${POLICY_AGENT}: has 2 "## Models and effort" sections`);
+});
 ````
 
 - [ ] **Step 2: Run the tests to see them fail**
@@ -288,7 +299,8 @@ export const POLICY_AGENT = `${AGENTS_DIR}/wintermute-core.agent.md`;
 export const POLICY_SECTION = 'Models and effort';
 const NEVER_USE = 'Never use these:';
 const FENCE = /^\s*(`{3,}|~{3,})(.*)$/;
-const HEADING = /^## (.+?)\s*$/;
+/** A level-two ATX heading: up to three spaces of indent, and an optional closing run of hashes, which isn't part of the name. */
+const HEADING = /^ {0,3}##[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/;
 const SEPARATOR = /^\|(?:\s*:?-{3,}:?\s*\|)+\s*$/;
 
 /**
@@ -346,12 +358,14 @@ export function tierTable(section) {
   const runs = [];
   let delimiters = 0;
   let current = null;
+  let continued = false;
   for (const { line, fenced } of markFences(section)) {
     if (!fenced && isDelimiterRow(line)) delimiters += 1;
     if (!fenced && line.startsWith('|')) {
       if (!current) runs.push(current = []);
       current.push(line);
     } else {
+      if (current && line.trim() !== '') continued = true;
       current = null;
     }
   }
@@ -362,6 +376,7 @@ export function tierTable(section) {
   const [rows] = runs;
   if (rows.length < 3 || !SEPARATOR.test(rows[1])) return { table: null, error: 'has lines that start with "|" but are not a table with a header row, a separator row and body rows' };
   if (rows.some(row => columns(row) !== columns(rows[0]))) return { table: null, error: 'has a table whose rows have different numbers of columns' };
+  if (continued) return { table: null, error: 'has a line right after its table, with no blank line between, that Markdown reads as another table row' };
   return { table: rows.join('\n'), error: null };
 }
 
@@ -476,7 +491,7 @@ async function validatePolicyCopy(root, skillText) {
 - [ ] **Step 4: Run the tests to see them pass**
 
 Run: `node --test tests/validate-skills.test.mjs && npm test`
-Expected: the 13 new tests pass, then the whole suite passes with 13 more tests than before this task. `npm run validate` doesn't run the new checks yet: Task 3 wires them in.
+Expected: the 15 new tests pass, then the whole suite passes with 15 more tests than before this task. `npm run validate` doesn't run the new checks yet: Task 3 wires them in.
 
 - [ ] **Step 5: Commit**
 
@@ -492,7 +507,7 @@ git commit -m "feat(wintermute): validate the Projects skills and their copy of 
 
 **Interfaces:**
 - Consumes: `validateSkills` (Task 1).
-- Produces: the child-side contract that the coordinator skill (Task 3) relies on: the scope check on `<copilot_project_child_session>` plus the coordinator's instruction; jobs from assignments, and a PR change only when its assignment names the action, repository, PR or branch, base and head and carries the user's go-ahead through `source_user_message`; separate assignments for a draft, a publish and a merge; a read of the head and base before and after a publish; no merge on Azure DevOps; a result file and a normal handoff for work with no commit; two-line handoffs with "Partial:"; `blocked` with `purpose: "error"`; `assignment_id` on every report; result files with commit, commands, exit codes and counts; publishing at review-ready only.
+- Produces: the child-side contract that the coordinator skill (Task 3) relies on: the scope check on `<copilot_project_child_session>` plus the coordinator's instruction; jobs from assignments, and a PR change only when its assignment names the action, repository, PR or branch, base and head and carries the user's go-ahead through `source_user_message`; separate assignments for a draft, a publish and a merge; a read of the head, base and merge base before and after a publish, with no rollback; no merge on Azure DevOps; a result file and a normal handoff for work with no commit; two-line handoffs with "Partial:"; `blocked` with `purpose: "error"`; `assignment_id` on every report; result files with commit, commands, exit codes and counts; publishing at review-ready only.
 
 - [ ] **Step 1: Run the skill check to see it fail**
 
@@ -560,20 +575,20 @@ Each message from your coordinator that gives you new work, a revision, a rerun 
 As the owner of a unit:
 
 1. Implement, test and push to your unit's branch. Hand off with `commit=`. Open no PR in this step.
-2. If an assignment authorizes a draft PR for CI, open it as a draft from your unit's branch against the PR base your kickoff names: the branch your PR targets, which is your parent unit's branch when your unit is stacked. Hand off with `pr=`.
+2. If an assignment authorizes a draft PR for CI at a named commit, check right before you act that your branch's head on the remote is that commit; if it isn't, don't open the PR: report `blocked`. Open it as a draft from your unit's branch against the PR base your kickoff names: the branch your PR targets, which is your parent unit's branch when your unit is stacked. A draft for CI needs no passed checks, and it is not review-ready. Hand off with `pr=`.
 3. For each fix that a review or a claims check asks for: fix, test, push, and hand off with the new `commit=`.
-4. On an assignment that authorizes publishing at a named commit:
-   - Right before you act, read your branch's head on the remote and, if the PR exists, its repository, base branch, head commit and state. If any of them differs from the assignment, don't act: report `blocked`.
+4. On an assignment that authorizes publishing at a named commit, base branch and merge base:
+   - Right before you act, fetch, then read your branch's head on the remote, its merge base with the base branch (`git merge-base <head> origin/<base>`) and, if the PR exists, its repository, base branch, head commit and state. If any of them differs from the assignment, don't act: report `blocked`.
    - Open the PR ready for review against the base branch the assignment names, or take your draft out of draft.
-   - Read the PR back. If its head or base differs from the assignment, put it back to draft (`gh pr ready <number> -R <owner>/<repo> --undo` on GitHub, `az repos pr update --id <id> --draft true` on Azure DevOps), and report `blocked`.
+   - Read the PR back. If its head or base differs from the assignment, make no other change to the PR and don't publish it to the Inbox: report `blocked`, with the head and base you expected and the ones you read.
    - Otherwise publish it (see "Publishing"), and hand off with `pr=`.
-5. Merge only on an assignment that tells you to, into the base branch and at the commit it names. Right before you merge, read the PR once: if its repository, base branch or head commit differs from the assignment, don't merge; report it as `blocked`. On GitHub, merge with `gh pr merge <number> -R <owner>/<repo> --squash --match-head-commit <sha>`, which refuses a moved head, and never delete the source branch. Then read the PR back, and hand off only when it reports merged into that base from that head. On Azure DevOps, don't merge: no command in `wintermute-pr-commands` ties the completion to a head commit. Report `blocked`, so that your coordinator can ask the user.
+5. Merge only on an assignment that tells you to, into the base branch, at the commit and with the merge base it names. Right before you merge, fetch and read the PR once: if its repository, base branch, head commit, or the merge base of its head with that base differs from the assignment, don't merge; report it as `blocked`. On GitHub, merge with `gh pr merge <number> -R <owner>/<repo> --squash --match-head-commit <sha>`, which refuses a moved head, and never delete the source branch. Then read the PR back, and hand off only when it reports merged into that base from that head. On Azure DevOps, don't merge: no command in `wintermute-pr-commands` ties the completion to a head commit. Report `blocked`, so that your coordinator can ask the user.
 
 When your unit's work has no commit, such as research, a document or an investigation, write the result to a file in the folder your kickoff names, and hand off with a link to it. There is no PR. Publish the file only when your coordinator says it is review-ready (see "Publishing").
 
 When your work is done and only waits for its review and claims check, which your coordinator starts, hand off. Don't ask for them with `needs_input`, and never ask for a go-ahead with `needs_input`: hand off and wait for the next assignment.
 
-A claims check or a test run that your brief asks for writes a result file in the folder your kickoff names, with the commit (`git rev-parse HEAD`), each command exactly as you ran it, its exit code, and the test counts.
+A review, a claims check or a test run that your brief asks for writes a result file in the folder your kickoff names. The file names the commit (`git rev-parse HEAD`) and its merge base with the base branch your brief names (`git merge-base HEAD origin/<base>`). A claims check or a test run also gives each command exactly as you ran it, its exit code, and the test counts.
 
 ## Output format
 
@@ -636,7 +651,7 @@ The app asks you to publish review-ready output in your own thread before you re
 - A PR is review-ready when an assignment authorizes you to publish it at a commit whose review and claims check are clean. Once it is open and ready for review at that commit and base (see "Assignments and gates"), publish it with `publish_chat_update` (attachment `kind: "pr"`, with its web URL), then hand off. A draft PR that you opened for CI is not review-ready: don't publish it.
 - A document, or any other file, preview or issue, is review-ready when your coordinator says so in an assignment. Publish a file from your own session files folder: copy it there if it is somewhere else, then attach it with `location: "session"` and its path relative to that folder, with a short human name. Then hand off.
 
-Publish each material revision once. If `publish_chat_update` fails, report it as `blocked`. If you don't have the tool, hand off the verified output, a file linked by its full path or a PR by its web URL, so that your coordinator can publish it. Publish nothing before it is review-ready. Publishing is not approval, and it grants no go-ahead.
+Publish each material revision once. If `publish_chat_update` fails, report it as `blocked`. If you don't have the tool, hand off the verified output, a file in your session files folder linked by its full path, or a PR by its web URL, so that your coordinator can publish it. Publish nothing before it is review-ready. Publishing is not approval, and it grants no go-ahead.
 ````
 
 - [ ] **Step 3: Run the skill check again**
@@ -689,7 +704,7 @@ You are the coordinator of a GitHub Copilot app Project. The Project's own UI st
 
 > Wintermute: this Project follows the `wintermute-project` skill. If that skill's rules aren't in your context, load it before you do anything else.
 
-**Turning it on.** When the user types `/wintermute-project` and your Project memory doesn't have the opt-in line, add the line with `update_project_memory`. The tool replaces the whole memory, so save your current memory text unchanged with the line added, within 8,192 bytes. Tell the user in one line what you saved. If you can't save it, tell the user that wintermute stays on only for messages that start with `/wintermute-project`, and that they can add the line in the Project's memory settings.
+**Turning it on.** When the user types `/wintermute-project` and your Project memory doesn't have the opt-in line, add the line with `update_project_memory`. The tool replaces the whole memory, so save your current memory text unchanged with the line added, within 8,192 bytes. Tell the user in one line what you saved. If you can't save it, tell the user that wintermute stays on only for messages that start with `/wintermute-project`, and that they can add the line in the Project's memory settings. Until the line is saved, start nothing that outlives your current turn, such as a child session: its later reports wouldn't reach you under this skill.
 
 **Turning it off.** When the user asks you to turn wintermute off in this Project:
 
@@ -784,9 +799,9 @@ A `task` sub-agent doesn't use the worker skill. Its prompt gives its role, the 
 
 Reading PR state, CI and policies is a quick job. Merging after the go-ahead is one too:
 
-- Merge only the PR that the go-ahead named, into the base branch it named, at the head commit it named, and only when the unit's checks passed at that head against that base (see "Reports and gates").
+- Merge only the PR that the go-ahead named, into the base branch it named, at the head commit it named, and only when the unit's checks passed at that head against that base, with the same merge base (see "Reports and gates").
 - If the owner may be working on the PR, first tell it, with its current `assignment_id`, that you will merge, and wait for its handoff that it has paused.
-- Right before the merge, read the PR once and compare its repository, base branch, head commit and state with the go-ahead. If any of them differs, don't merge: tell the user what changed and ask again.
+- Right before the merge, read the PR once and compare its repository, base branch, head commit and state with the go-ahead, and its merge base with the checked one (on GitHub, `gh api repos/<owner>/<repo>/compare/<base>...<head> --jq .merge_base_commit.sha`). If any of them differs, don't merge: tell the user what changed and ask again.
 - On GitHub, use `gh pr merge <number> -R <owner>/<repo> --squash --match-head-commit <sha>`. It refuses a moved head but doesn't check the base, so the read just before it is your base check. No GitHub write in `wintermute-pr-commands` is verified, so tell the user that this command is untested there. Never delete the source branch.
 - On Azure DevOps, no command in `wintermute-pr-commands` ties the completion to a head commit, so don't complete the PR yourself: ask the user to complete it, with the base branch and head commit to check first.
 - If the target branch has moved since the final panel, size the new integration as a follow-up job before you merge (see "Follow-up jobs").
@@ -823,7 +838,8 @@ Every child session's kickoff prompt:
 - gives the child its unit label and the task's target branch, and, for an owner, its PR base: the branch its PR will target, which is its parent unit's branch for a stacked unit, or else the task's target branch; names what it owns (a branch and a PR, or one job) and what it must leave alone; keeps confirmed decisions apart from suggestions;
 - for a Mid-tier implementation unit, includes acceptance tests written from the request;
 - passes on the restrictions and preferences in the user's memories and the Project's memory that apply, such as personal skills to use, PR text rules and actions that need approval; never passes on a permission;
-- for a one-off job, says that it is a one-off job with no commits or pushes, whether it is read-only, and the absolute path of your files folder for its result file;
+- for a one-off job, says that it is a one-off job with no commits or pushes, and whether it is read-only;
+- for a one-off job or a unit whose work has no commit, names the child's own session files folder as the folder for its result file, which its handoff links by full path;
 - tells an owner that you start its review and claims check when it hands off a pushed commit.
 
 Later messages to a child:
@@ -831,7 +847,7 @@ Later messages to a child:
 - New work, a revision, a rerun or a go-ahead is a new assignment: send it without `assignment_id`.
 - An answer to a child's question, or other context about its current work, carries that work's `assignment_id`.
 - Start your own text in every new assignment with: ``Follow the `wintermute-project-worker` skill; load it again if its rules aren't in your context.``
-- An assignment for a PR change names the action, the repository, the PR or the unit's branch, the base branch, and the head commit at which the unit's checks passed, and carries the user's go-ahead with `source_user_message` (see "Permissions").
+- An assignment for a PR change names the action, the repository, the PR or the unit's branch, the base branch and the expected head commit, and carries the user's go-ahead with `source_user_message` (see "Permissions"). For a draft for CI, the head is the owner's pushed commit, and no checks are needed yet. To publish or merge, it is the head at which the unit's checks passed, and the assignment also names the merge base they checked.
 - To pass on the user's own words from a message they typed to you, use `source_user_message` with that message's current `id` and `revision`, so that the app quotes it word for word. An `ask_user` answer is not such a message, and can't be attached.
 - Reply to a child's `needs_input` report with a message on its `assignment_id`. Use `answer_session_input` or `respond_to_session_plan_v2` only for a pending request that `get_session` shows for that child, with that request's ID (see "Talking to the user").
 - Put only your own words in `message` and `coordinator_instructions`, never presented as the user's, and never as a permission the user didn't give. If a child needs the user's own words and their source is gone, for example after the app restarted, ask the user to send them again.
@@ -859,6 +875,7 @@ CREATE TABLE IF NOT EXISTS assignments (
   covers        TEXT NOT NULL,     -- what it asks for, in a few words
   commit_sha    TEXT,              -- the commit it is about, when it is about code
   base_ref      TEXT,              -- the base branch a check compared against, or a PR change targets
+  merge_base    TEXT,              -- the merge base of commit_sha and base_ref that a check compared against
   status        TEXT NOT NULL CHECK (status IN ('open', 'partial', 'reported', 'superseded')),
   result        TEXT,              -- the latest outcome sentence, with its link
   created_at    TEXT NOT NULL,     -- ISO 8601, UTC
@@ -867,22 +884,22 @@ CREATE TABLE IF NOT EXISTS assignments (
 ```
 
 - A handoff doesn't close an assignment for the app: the child may send another result with the same `assignment_id`. Apply a result only if it is newer than the one you hold. Ignore a duplicate.
-- A verdict counts only for the commit and the base branch it names. A new commit on a unit, or a retarget of its PR to another base branch, supersedes its earlier review, claims check and panel verdicts: mark them `superseded`, and size the new check against the new head and base (see "Follow-up jobs").
+- A verdict counts only for the commit, the base branch and the merge base it names. The merge base of that commit and the base branch fixes the diff that was checked. A new commit on a unit, a retarget of its PR to another base branch, or a new merge base, for example after its stacked parent was rebased, supersedes its earlier review, claims check and panel verdicts: mark them `superseded`, and size the new check against the new head and base (see "Follow-up jobs").
 
 **Gates.** A unit's work is a chain of assignments:
 
 1. Kickoff: the owner implements, tests and pushes, then hands off with `commit=`. It opens no PR yet.
-2. CI that runs only on PRs: if the repository's required checks run only on PRs, get the go-ahead to open a draft PR for CI. With it, send the owner an assignment that authorizes the draft (see "Kickoff prompts and forwarding"). Without it, the claims check uses local test runs and reports CI as not run.
-3. Checks: start the unit's review and its claims check at the pushed commit, against the unit's PR base (see "Evidence and review"), and for the last unit of a task in a repository, the final panel. Each fix they ask for is a new assignment to the owner.
-4. Publish: when the review and the claims check are clean at the same commit and base, get the go-ahead to open the PR ready for review, or to take the draft out of draft, at that commit. Then send the owner an assignment that names that commit and base. The owner checks its branch and the PR right before and after it acts, publishes the PR to the Inbox and hands off with `pr=`. If it reports that the head or base had changed, that go-ahead is spent: size the new check and ask again.
-5. Merge: when the unit's review, its claims check and, for the last unit of its task in its repository, the final panel are all clean at the PR's head and base, get the go-ahead to merge, and merge the PR yourself (see "Merging").
+2. CI that runs only on PRs: if the repository's required checks run only on PRs, get the go-ahead to open a draft PR for CI at the owner's pushed commit. It needs no passed checks, and the draft is not review-ready. With it, send the owner an assignment that authorizes the draft (see "Kickoff prompts and forwarding"). Without it, the claims check uses local test runs and reports CI as not run.
+3. Checks: start the unit's review and its claims check at the pushed commit, against the unit's PR base; each names the merge base it checked (see "Evidence and review"). For the last unit of a task in a repository, also start the final panel. Each fix they ask for is a new assignment to the owner.
+4. Publish: when the review and the claims check are clean at the same commit, base and merge base, get the go-ahead to open the PR ready for review, or to take the draft out of draft, at that commit. Then send the owner an assignment that names that commit, base and merge base. The owner checks its branch and the PR right before and after it acts, publishes the PR to the Inbox and hands off with `pr=`. If it reports that the head, base or merge base had changed, that go-ahead is spent: size the new check and ask again. If the PR is already out of draft at a head or base that wasn't checked, tell the user and ask them to put it back to draft; neither you nor a child may.
+5. Merge: when the unit's review, its claims check and, for the last unit of its task in its repository, the final panel are all clean at the PR's head, base and merge base, get the go-ahead to merge, and merge the PR yourself (see "Merging").
 6. After the last merge of a task in a repository into the task's target branch, run a claims check on that branch at the merge commit. A merge into a parent unit's branch doesn't get this check. A task with PRs ends when every repository it changed has passed this check.
 
 A unit whose work has no commit, such as research, a document or an investigation, has no PR and no publish or merge gate. Its owner hands off a result file; its check is the one in "Work with no commit" (see "Evidence and review"). A task with no PR ends when its results passed their checks and you reported them to the user.
 
 **Status checks.** Don't ask a child for a progress report: its reply would never reach you. `notify_on_idle: "once"` sends one idle notice; it doesn't watch the child. When a child is idle and one of its assignments has no final result, check it with `get_session`, then send it a message with that `assignment_id` that asks for its result as a handoff, or its blocker as an error. The app sends "The session finished without sending a handoff." only for an assignment with no report at all; it is not a report: check that child with `get_session`.
 
-**Ending work.** Keep a unit's reviewer and claims checker until the unit merges, and the final panel's judges until the task's last merge in their repository, so that they can take re-checks. Archive a child only when it is idle and has no open assignment, PR or automation; tell a busy child to stop first. An owner with commits also needs them pushed, and its PR merged or closed. Any other child, such as a one-off job or an owner with no commit, needs its result recorded and its worktree clean, with no commits of its own. After a task ends, archive its remaining children. Set `outcome` in `children` before you archive, and record each archive in `child_notes`.
+**Ending work.** Keep a unit's reviewer and claims checker until the unit merges, and the final panel's judges until the task's last merge in their repository, so that they can take re-checks. Archive a child only when it is idle and has no open assignment, PR or automation; tell a busy child to stop first. An owner with commits also needs them pushed, and its PR merged or closed; if it never had a PR, it needs the user's decision on the unit. Any other child, such as a one-off job or an owner with no commit, needs its result recorded and its worktree clean, with no commits of its own. After a task ends, archive its remaining children. Set `outcome` in `children` before you archive, and record each archive in `child_notes`.
 
 ## State and registry
 
@@ -936,7 +953,7 @@ Keep your state in your session SQL database with the `sql` tool, not in files.
 ## Evidence and review
 
 - A report of "done" or "tests pass" without evidence is unverified: ask the owner for the evidence. A test run that ran no tests is not evidence.
-- **Claims check**: before every merge, every publish, and before you tell the user that repository work is finished, a claims checker confirms the owner's claims at the pushed commit, against the unit's PR base: the tests ran at that commit, with counts; the repository's required checks passed at that commit, or are reported as not run when it has none; and the scope matches the brief. It is a one-off child session at the claims check row, read-only, created with `base_branch` set to the branch, working from its own fresh fetch, and it writes a result file with the commit, each command, its exit code and the counts. Keep it until the unit merges, so that it can check later commits. A reviewer, a judge, the owner or you never does a claims check.
+- **Claims check**: before every merge, every publish, and before you tell the user that repository work is finished, a claims checker confirms the owner's claims at the pushed commit, against the unit's PR base: the tests ran at that commit, with counts; the repository's required checks passed at that commit, or are reported as not run when it has none; and the scope matches the brief. It is a one-off child session at the claims check row, read-only, created with `base_branch` set to the branch, working from its own fresh fetch, and it writes a result file with the commit, its merge base with the base branch, each command, its exit code and the counts. Keep it until the unit merges, so that it can check later commits. A reviewer, a judge, the owner or you never does a claims check.
 - **Work with no commit**, such as research, a document or a plan, has its evidence in the file itself: the file at an absolute path, its sources with links, and, for a load-bearing document, a fact-check from another vendor. That fact-check is the check before you publish it or call it finished.
 - **Regular review**: every unit gets one review before it merges, from one reviewer at the regular review row, never from the author's vendor. Opus- or Sonnet-written code goes to Astra, Astra- or Sol-written code goes to Opus, and Argon- or Carbon-written code can go to either. Scope the brief to the unit's request and its risky code paths, and tell the reviewer to report every finding. Run it as a one-off child session with `base_branch` set to the unit's branch.
 - **Critical review**: a critical unit gets a critical review instead, at the critical review row, run the same way.
@@ -1091,7 +1108,7 @@ Change nothing else in the file, so that a removal is two lines (design 8.8).
 - [ ] **Step 6: Run every check**
 
 Run: `node --test tests/validate-skills-plugin.test.mjs && npm test && npm run validate && git status --short com.github.copilot`
-Expected: the integration test passes; the suite passes with 14 more tests than before Task 1; validation ends with "Plugin validation passed: manifests, root marketplace entry, packaged agents, CHANGELOG and required files."; and `git status` prints nothing for the agents.
+Expected: the integration test passes; the suite passes with 16 more tests than before Task 1; validation ends with "Plugin validation passed: manifests, root marketplace entry, packaged agents, CHANGELOG and required files."; and `git status` prints nothing for the agents.
 
 - [ ] **Step 7: Commit**
 
@@ -1135,7 +1152,7 @@ The plugin also has two skills for [Copilot app Projects](https://docs.github.co
 A Project can't run `wintermute-core` as its agent, because the app doesn't allow custom agents in a Project or its sessions. Instead, the `wintermute-project` skill gives the Project's own coordinator the same rules: units, a model and effort for every job, an independent review from another vendor and a claims check before every merge, and at most two repair cycles. Its child sessions load `wintermute-project-worker`, which tells them how to report through the Project. The Project's Overview, Inbox, Library and Automations work as usual.
 
 - **Turn it on** in a Project by starting a message with `/wintermute-project`, followed by your request. The coordinator saves a line in the Project's memory, so that it keeps following the skill. In a Project without that line, the skill acts only on a message that starts with `/wintermute-project`. Without the command or the line, the Project works as usual.
-- **Go-aheads stay with you.** The coordinator opens, publishes or merges a PR, or approves a plan, only after your go-ahead for it in the Project's conversation, or within a standing permission you gave there. A memory never counts as one. It asks for a PR go-ahead in the chat, because a child session acts on a PR only when it sees your own reply. Each PR change is checked against the commit that passed its review and claims check. On Azure DevOps you complete PRs yourself, because no tested command there ties a merge to that commit. Retargets, build re-queues, and reviewer and label changes stay with you.
+- **Go-aheads stay with you.** The coordinator opens, publishes or merges a PR, or approves a plan, only after your go-ahead for it in the Project's conversation, or within a standing permission you gave there. A memory never counts as one. It asks for a PR go-ahead in the chat, because a child session acts on a PR only when it sees your own reply. A PR is published or merged only at the commit that passed its review and claims check; a draft opened only to run CI needs your go-ahead, but no passed checks. On Azure DevOps you complete PRs yourself, because no tested command there ties a merge to the checked commit. Retargets, build re-queues, and reviewer and label changes stay with you.
 - **If it stops following the rules**, for example after a long conversation was compacted, start a message with `/wintermute-project` again.
 - **Turn it off** by asking the Project to turn wintermute off. It asks what to do with open work, and removes the line from the Project's memory with your consent.
 
@@ -1187,7 +1204,7 @@ In `CHANGELOG.md`, under the new `## <version> — <date>` heading that Step 4 w
 ```markdown
 ### Added
 
-- Two experimental skills for GitHub Copilot app Projects. `wintermute-project` gives a Project's own coordinator wintermute's rules: units, a model and effort for every job, an independent review from another vendor and a claims check before every merge, and at most two repair cycles. The Project's Overview, Inbox, Library and Automations work as usual. `wintermute-project-worker` gives the Project's child sessions their rules for assignments, reports and publishing. The skills act only on a message that starts with `/wintermute-project`, or in a Project whose memory has the opt-in line that the command saves; anywhere else the Project works as usual. They open, publish or merge a PR only after the user's go-ahead for it, at the commit that passed its review and claims check. They are an evaluation and may be removed. The agents are unchanged.
+- Two experimental skills for GitHub Copilot app Projects. `wintermute-project` gives a Project's own coordinator wintermute's rules: units, a model and effort for every job, an independent review from another vendor and a claims check before every merge, and at most two repair cycles. The Project's Overview, Inbox, Library and Automations work as usual. `wintermute-project-worker` gives the Project's child sessions their rules for assignments, reports and publishing. The skills act only on a message that starts with `/wintermute-project`, or in a Project whose memory has the opt-in line that the command saves; anywhere else the Project works as usual. They open, publish or merge a PR only after the user's go-ahead for it, and publish or merge it only at the commit that passed its review and claims check. They are an evaluation and may be removed. The agents are unchanged.
 - `npm run validate` checks both skills, and fails when the tier table or the "Never use these:" list in `wintermute-project` differs from the one in `wintermute-core`, or when either can't be read without guessing.
 ```
 
@@ -1822,7 +1839,7 @@ In `ghcp/plugins/wintermute/CHANGELOG.md`, under the new heading, replace `- TOD
 (cd ghcp/plugins/wintermute && npm test && npm run validate)
 ```
 
-Expected: PASS, with 14 tests fewer than before this task, ending with "Plugin validation passed: manifests, root marketplace entry, packaged agents, CHANGELOG and required files."
+Expected: PASS, with 16 tests fewer than before this task (1,170 to 1,154 from `main` at `7e7ded4`), ending with "Plugin validation passed: manifests, root marketplace entry, packaged agents, CHANGELOG and required files."
 
 - [ ] **Step 8: Stage exactly the expected paths, and compare**
 
