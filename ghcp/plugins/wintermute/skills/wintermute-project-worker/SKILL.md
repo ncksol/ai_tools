@@ -40,20 +40,20 @@ Each message from your coordinator that gives you new work, a revision, a rerun 
 As the owner of a unit:
 
 1. Implement, test and push to your unit's branch. Hand off with `commit=`. Open no PR in this step.
-2. If an assignment authorizes a draft PR for CI, open it as a draft from your unit's branch against the PR base your kickoff names: the branch your PR targets, which is your parent unit's branch when your unit is stacked. Hand off with `pr=`.
+2. If an assignment authorizes a draft PR for CI at a named commit, check right before you act that your branch's head on the remote is that commit; if it isn't, don't open the PR: report `blocked`. Open it as a draft from your unit's branch against the PR base your kickoff names: the branch your PR targets, which is your parent unit's branch when your unit is stacked. A draft for CI needs no passed checks, and it is not review-ready. Hand off with `pr=`.
 3. For each fix that a review or a claims check asks for: fix, test, push, and hand off with the new `commit=`.
-4. On an assignment that authorizes publishing at a named commit:
-   - Right before you act, read your branch's head on the remote and, if the PR exists, its repository, base branch, head commit and state. If any of them differs from the assignment, don't act: report `blocked`.
+4. On an assignment that authorizes publishing at a named commit, base branch and merge base:
+   - Right before you act, fetch, then read your branch's head on the remote, its merge base with the base branch (`git merge-base <head> origin/<base>`) and, if the PR exists, its repository, base branch, head commit and state. If any of them differs from the assignment, don't act: report `blocked`.
    - Open the PR ready for review against the base branch the assignment names, or take your draft out of draft.
-   - Read the PR back. If its head or base differs from the assignment, put it back to draft (`gh pr ready <number> -R <owner>/<repo> --undo` on GitHub, `az repos pr update --id <id> --draft true` on Azure DevOps), and report `blocked`.
+   - Read the PR back. If its head or base differs from the assignment, make no other change to the PR and don't publish it to the Inbox: report `blocked`, with the head and base you expected and the ones you read.
    - Otherwise publish it (see "Publishing"), and hand off with `pr=`.
-5. Merge only on an assignment that tells you to, into the base branch and at the commit it names. Right before you merge, read the PR once: if its repository, base branch or head commit differs from the assignment, don't merge; report it as `blocked`. On GitHub, merge with `gh pr merge <number> -R <owner>/<repo> --squash --match-head-commit <sha>`, which refuses a moved head, and never delete the source branch. Then read the PR back, and hand off only when it reports merged into that base from that head. On Azure DevOps, don't merge: no command in `wintermute-pr-commands` ties the completion to a head commit. Report `blocked`, so that your coordinator can ask the user.
+5. Merge only on an assignment that tells you to, into the base branch, at the commit and with the merge base it names. Right before you merge, fetch and read the PR once: if its repository, base branch, head commit, or the merge base of its head with that base differs from the assignment, don't merge; report it as `blocked`. On GitHub, merge with `gh pr merge <number> -R <owner>/<repo> --squash --match-head-commit <sha>`, which refuses a moved head, and never delete the source branch. Then read the PR back, and hand off only when it reports merged into that base from that head. On Azure DevOps, don't merge: no command in `wintermute-pr-commands` ties the completion to a head commit. Report `blocked`, so that your coordinator can ask the user.
 
 When your unit's work has no commit, such as research, a document or an investigation, write the result to a file in the folder your kickoff names, and hand off with a link to it. There is no PR. Publish the file only when your coordinator says it is review-ready (see "Publishing").
 
 When your work is done and only waits for its review and claims check, which your coordinator starts, hand off. Don't ask for them with `needs_input`, and never ask for a go-ahead with `needs_input`: hand off and wait for the next assignment.
 
-A claims check or a test run that your brief asks for writes a result file in the folder your kickoff names, with the commit (`git rev-parse HEAD`), each command exactly as you ran it, its exit code, and the test counts.
+A review, a claims check or a test run that your brief asks for writes a result file in the folder your kickoff names. The file names the commit (`git rev-parse HEAD`) and its merge base with the base branch your brief names (`git merge-base HEAD origin/<base>`). A claims check or a test run also gives each command exactly as you ran it, its exit code, and the test counts.
 
 ## Output format
 
@@ -116,4 +116,4 @@ The app asks you to publish review-ready output in your own thread before you re
 - A PR is review-ready when an assignment authorizes you to publish it at a commit whose review and claims check are clean. Once it is open and ready for review at that commit and base (see "Assignments and gates"), publish it with `publish_chat_update` (attachment `kind: "pr"`, with its web URL), then hand off. A draft PR that you opened for CI is not review-ready: don't publish it.
 - A document, or any other file, preview or issue, is review-ready when your coordinator says so in an assignment. Publish a file from your own session files folder: copy it there if it is somewhere else, then attach it with `location: "session"` and its path relative to that folder, with a short human name. Then hand off.
 
-Publish each material revision once. If `publish_chat_update` fails, report it as `blocked`. If you don't have the tool, hand off the verified output, a file linked by its full path or a PR by its web URL, so that your coordinator can publish it. Publish nothing before it is review-ready. Publishing is not approval, and it grants no go-ahead.
+Publish each material revision once. If `publish_chat_update` fails, report it as `blocked`. If you don't have the tool, hand off the verified output, a file in your session files folder linked by its full path, or a PR by its web URL, so that your coordinator can publish it. Publish nothing before it is review-ready. Publishing is not approval, and it grants no go-ahead.
