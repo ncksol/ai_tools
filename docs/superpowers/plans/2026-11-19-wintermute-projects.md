@@ -83,7 +83,7 @@ graph LR
 | `skills/wintermute-project-worker/SKILL.md` (create) | `projects-skills` | The child sessions' rules. |
 | `skills/wintermute-project/SKILL.md` (create) | `projects-skills` | The Project coordinator's rules, with the copied tier table and list. |
 | `README.md`, `CHANGELOG.md`, `plugin.json`, `package.json`, `.github/plugin/marketplace.json`, `.github/copilot-instructions.md` (modify) | `projects-skills` | Docs, the copy rule, the PR exception and the version. |
-| `$OUT/<tag>-notes.md`, `$OUT/<tag>-check.md`, `$OUT/<tag>-snapshot.json` (outside the repository) | `projects-smoke`, `projects-real-task` | The user's notes, the checker's report and the dashboard snapshot, for each tag. Private. |
+| `$OUT/<tag>-notes.md`, `$OUT/<tag>-check.md`, `$OUT/<tag>-check-snapshot.json`, and `recheck` in place of `check` for a second check (outside the repository) | `projects-smoke`, `projects-real-task` | The user's notes, each checker's report and its dashboard snapshot, for each tag. Private. |
 | `docs/superpowers/plans/<date>-wintermute-projects-phase-2.md` (create) | `projects-phase2-plan` | The Phase 2 plan. `<date>` is the day it is written. |
 
 ---
@@ -1277,10 +1277,10 @@ The orchestrator saves it as `$OUT/<tag>-notes.md`.
 
 ### Task 7: Check the smoke check
 
-A one-off checker session, read-only, at Sol `high` (design 8.12). Its kickoff gives the tag, `$OUT`, the user's notes and this task. It sends no message to the evaluated sessions and changes nothing outside `$OUT`.
+A one-off checker session, read-only, at Sol `high` (design 8.12). Its kickoff gives the tag, `$OUT`, the user's notes, this task, and its output name `<name>`: `check` for the first check, `recheck` for a second check on the same logs. It sends no message to the evaluated sessions and changes nothing outside `$OUT`.
 
 **Files (outside the repository):**
-- Create: `$OUT/<tag>-check.md`, `$OUT/<tag>-snapshot.json`
+- Create: `$OUT/<tag>-<name>.md`, `$OUT/<tag>-<name>-snapshot.json`
 
 **Interfaces:**
 - Consumes: the tag, the commit and the user's notes (Task 6).
@@ -1289,8 +1289,8 @@ A one-off checker session, read-only, at Sol `high` (design 8.12). Its kickoff g
 - [ ] **Step 1: Find the sessions**
 
 ```bash
-TAG=<tag>; OUT=<OUT>; DB="$HOME/.copilot/data.db"
-for f in "$OUT/$TAG-check.md" "$OUT/$TAG-snapshot.json"; do [ -e "$f" ] && echo "exists: $f"; done; echo "checked outputs"
+TAG=<tag>; NAME=<name>; OUT=<OUT>; DB="$HOME/.copilot/data.db"
+for f in "$OUT/$TAG-$NAME.md" "$OUT/$TAG-$NAME-snapshot.json"; do [ -e "$f" ] && echo "exists: $f"; done; echo "checked outputs"
 sqlite3 -readonly -json "$DB" "SELECT s.id, s.title, s.created_at, s.model, s.reasoning_effort FROM persistent_projects p JOIN sessions s ON s.id = p.session_id WHERE s.title IN ('$TAG-project', '$TAG-negative') ORDER BY s.created_at"
 ```
 
@@ -1298,11 +1298,11 @@ Expected: only `checked outputs`, then exactly two rows, titled `<tag>-project` 
 
 ```bash
 P=<P>; DB="$HOME/.copilot/data.db"
-sqlite3 -readonly -json "$DB" "SELECT 'workspace' AS kind, w.id AS child, w.name, w.branch, w.created_pr_html_url, w.archived_at, (SELECT group_concat(id, ' ') FROM (SELECT a.session_id AS id FROM workspace_session_aliases a WHERE a.workspace_id = w.id UNION SELECT w.session_id WHERE w.session_id IS NOT NULL)) AS session_ids FROM workspaces w WHERE w.creator_session_id = '$P' OR w.coordinating_creator_session_id = '$P' OR w.id IN (SELECT child_workspace_id FROM persistent_project_assignments WHERE coordinator_session_id = '$P') UNION ALL SELECT 'chat', l.session_id, s.title, NULL, NULL, s.archived_at, l.session_id FROM chat_parent_links l LEFT JOIN sessions s ON s.id = l.session_id WHERE l.parent_session_id = '$P' UNION ALL SELECT 'assigned', a.child_session_id, s.title, NULL, NULL, s.archived_at, a.child_session_id FROM persistent_project_assignments a LEFT JOIN sessions s ON s.id = a.child_session_id WHERE a.coordinator_session_id = '$P' AND a.child_workspace_id IS NULL AND a.child_session_id NOT IN (SELECT session_id FROM chat_parent_links WHERE parent_session_id = '$P')"
+sqlite3 -readonly -json "$DB" "SELECT 'workspace' AS kind, w.id AS child, w.name, w.branch, w.created_pr_html_url, w.created_at, w.archived_at, (SELECT group_concat(id, ' ') FROM (SELECT a.session_id AS id FROM workspace_session_aliases a WHERE a.workspace_id = w.id UNION SELECT w.session_id WHERE w.session_id IS NOT NULL UNION SELECT pa.child_session_id FROM persistent_project_assignments pa WHERE pa.child_workspace_id = w.id AND pa.child_session_id IS NOT NULL)) AS session_ids FROM workspaces w WHERE w.creator_session_id = '$P' OR w.coordinating_creator_session_id = '$P' OR w.id IN (SELECT child_workspace_id FROM persistent_project_assignments WHERE coordinator_session_id = '$P') UNION ALL SELECT 'chat', l.session_id, s.title, NULL, NULL, s.created_at, s.archived_at, l.session_id FROM chat_parent_links l LEFT JOIN sessions s ON s.id = l.session_id WHERE l.parent_session_id = '$P' UNION ALL SELECT DISTINCT 'assigned', a.child_session_id, s.title, NULL, NULL, s.created_at, s.archived_at, a.child_session_id FROM persistent_project_assignments a LEFT JOIN sessions s ON s.id = a.child_session_id WHERE a.coordinator_session_id = '$P' AND a.child_workspace_id IS NULL AND a.child_session_id NOT IN (SELECT session_id FROM chat_parent_links WHERE parent_session_id = '$P')"
 sqlite3 -readonly -json "$DB" "SELECT id AS assignment_id, child_workspace_id, child_session_id, source_tool_call_id, forward_tool_call_id FROM persistent_project_assignments WHERE coordinator_session_id = '$P'"
 ```
 
-Expected: one child, and one assignment for it. The child's `session_ids` are `<KID>` below, separated by spaces; its assignment's `assignment_id` is `A`. More than one child fails S2.
+Expected: one child. Its `session_ids` are `<KID>` below, separated by spaces. Its assignment from the `create_session` (Step 3) is `A`; a later assignment to the same child, for example to publish its result file, is allowed. More than one child fails S2.
 
 - [ ] **Step 2: S1, the opt-in**
 
@@ -1314,11 +1314,11 @@ jq -c 'select(.agentId==null and .type=="tool.execution_start") | {line: input_l
 jq -c 'select(.agentId==null and (.type=="assistant.message" or .type=="assistant.turn_end")) | {line: input_line_number, type, tools: (.data.toolRequests // [] | length), text: (.data.content // "" | .[0:60])}' "$L"
 ```
 
-Pass for the opted-in Project, in this order: the first typed message starts with `/wintermute-project` and the tag; an own `skill.invoked` with `name` `wintermute-project`, `source` `plugin` and `plugin` `wintermute`; the first own session tool (`create_session`, `send_session_message`, `open_pr_session` or `open_issue_session`). The first assistant text starts with `wintermute-project rules loaded.`.
+Pass for the opted-in Project, in this order: the first typed message starts with `/wintermute-project` and the tag; an own `skill.invoked` with `name` `wintermute-project`, `source` `plugin` and `plugin` `wintermute`; the first own session tool (`create_session`, `send_session_message`, `open_pr_session` or `open_issue_session`). The first assistant text after that message starts with `wintermute-project rules loaded.`.
 
-Run the same four commands with `P=<N>`. Pass for the negative Project: its first typed message is the negative prompt with the tag; an assistant message with `tools` 0 and some text is followed by an `assistant.turn_end`; and between the prompt and that turn end there is no own call to `sql`, `update_project_memory`, `get_session`, `create_session`, `send_session_message`, `open_pr_session`, `open_issue_session`, `task`, `publish_chat_update`, `save_session_automation`, `relay_session_input`, `answer_session_input`, `respond_to_session_plan_v2`, `archive_session`, a shell tool, or a tool that changes files (`edit`, `create`, `apply_patch` or similar). List every own tool call in that turn, and say whether `wintermute-project` loaded.
+Run the same four commands with `P=<N>`. Pass for the negative Project: its first typed message is the negative prompt with the tag; the whole interaction, from that message to the next typed message or the end of the log, ends with an assistant message with `tools` 0 and some text, then an `assistant.turn_end`, and that reply doesn't start with `wintermute-project rules loaded.`; and in that interaction there is no own call to `sql`, `update_project_memory`, `get_session`, `create_session`, `send_session_message`, `open_pr_session`, `open_issue_session`, `task`, `publish_chat_update`, `save_session_automation`, `relay_session_input`, `answer_session_input`, `respond_to_session_plan_v2`, `archive_session`, a shell tool, a tool that changes files (`edit`, `create`, `apply_patch` or similar), or any other tool that changes state or delegates, such as `create_pull_request`. List every own tool call in that interaction, and say whether `wintermute-project` loaded.
 
-Rule out: no negative log, prompt or completed turn (not measured); a forbidden call after a `wintermute-project` load (fail); a forbidden call with no such load (not measured: "ordinary Project behaviour; the control didn't hold"); a message with tool requests taken as the reply; a load of `wintermute-project-worker`, from another plugin or source, or after the first session tool.
+Rule out: no negative log, prompt or completed turn (not measured); a forbidden call after a `wintermute-project` load (fail); a forbidden call with no such load (not measured: "ordinary Project behaviour; the control didn't hold"); a message with tool requests taken as the reply; an `assistant.turn_end` in the middle of the interaction taken as its end; a load of `wintermute-project-worker`, from another plugin or source, or after the first session tool.
 
 - [ ] **Step 3: S2, the dispatch**
 
@@ -1346,7 +1346,7 @@ for S in $KID; do
 done
 ```
 
-The child's final report is the last call to `<P>` with `purpose` `handoff`. With its `id` and its session:
+The child's final report on `A` is the last call to `<P>` with `purpose` `handoff` and `assignment` `A` whose `Summary:` doesn't start with "Partial:". With its `id` and its session:
 
 ```bash
 P=<P>; S=<session ID that holds the final report>; ID=<id of the final report>; DB="$HOME/.copilot/data.db"
@@ -1370,15 +1370,15 @@ done
 gh pr list -R ncksol/ai_tools --state all --head <the child's branch from Step 1> --json number,url
 ```
 
-Take the last call that ran `npm test` and the last that ran `npm run validate`. Pass: for each, its own completion has `success` true and `exit` 0, or, for an async shell, the `read_bash` results for that shell ID run up to one whose `marker` says `completed with exit code 0`; the output of that same shell, up to then, has a `pass` count above 0 and `fail 0` (as `ℹ` or `#` lines), and `validated` true for `npm run validate`; the commands ran in `ghcp/plugins/wintermute` at the commit from the notes, which the result file names; no denied call; the mode in effect at each command, the latest mode line before it, is `autopilot`; no command ran `git commit`, `git push` or `gh pr create`; Step 1's `created_pr_html_url` is null and the PR list prints `[]`; and the handoff says the worktree is clean. Rule out: an exit code or output from another call; a pipe that hides the exit code; a command that only prints the words; a denial, which fails S4 even if a later call passed; the current `sessions.mode` or the `async` flag, which are not the mode at the command.
+Take the last call that ran `npm test` and the last that ran `npm run validate`. Pass: for each, its own completion has `success` true and `exit` 0, or, for an async shell, the `read_bash` results for that shell ID run up to one whose `marker` says `completed with exit code 0`; the output of that same shell, up to then, shows its command's success: a `pass` count above 0 and `fail 0` (as `ℹ` or `#` lines) for `npm test`, and `validated` true for `npm run validate`, or both for one `npm test && npm run validate` run; the commands ran in `ghcp/plugins/wintermute` at the commit from the notes, which the result file names; no denied call; the mode in effect at each command, the latest mode line before it, is `autopilot`; no command ran `git commit`, `git push` or `gh pr create`; Step 1's `created_pr_html_url` is null and the PR list prints `[]`; and the handoff says the worktree is clean. Rule out: an exit code or output from another call; a pipe that hides the exit code; a command that only prints the words; a denial, which fails S4 even if a later call passed; the current `sessions.mode` or the `async` flag, which are not the mode at the command.
 
 - [ ] **Step 6: Costs and time**
 
 ```bash
-P=<P>; N=<N>; KID="<session IDs of the child>"; TAG=<tag>; OUT=<OUT>; DB="$HOME/.copilot/data.db"
+P=<P>; N=<N>; KID="<session IDs of the child>"; TAG=<tag>; NAME=<name>; OUT=<OUT>; DB="$HOME/.copilot/data.db"
 cd "$HOME/.copilot/installed-plugins/ai-tools/wintermute"
-if node scripts/swarm-snapshot.mjs --swarm "$P" --no-pr-lookup > "$OUT/$TAG-snapshot.json"; then
-  jq -c '{usd: .cost.usd, byModel: .cost.byModel, coordinator: {model: .orchestrator.model, effort: .orchestrator.effort, credits: .orchestrator.cost.credits, subagents: (.orchestrator.subagents | length)}, units: [.units[] | {label: .label, model: .model, effort: .effort, credits: .cost.credits, subagents: (.subagents | length)}]}' "$OUT/$TAG-snapshot.json"
+if node scripts/swarm-snapshot.mjs --swarm "$P" --no-pr-lookup > "$OUT/$TAG-$NAME-snapshot.json"; then
+  jq -c '{usd: .cost.usd, byModel: .cost.byModel, coordinator: {model: .orchestrator.model, effort: .orchestrator.effort, credits: .orchestrator.cost.credits, subagents: (.orchestrator.subagents | length)}, units: [.units[] | {label: .label, model: .model, effort: .effort, credits: .cost.credits, subagents: (.subagents | length)}]}' "$OUT/$TAG-$NAME-snapshot.json"
 else
   echo "no swarm for $P: dashboard numbers unavailable"
 fi
@@ -1391,14 +1391,14 @@ Write the dashboard's total for the opted-in Project, or "unavailable"; the `dat
 
 ```bash
 P=<P>; L="$HOME/.copilot/session-state/$P/events.jsonl"
-jq -c 'select(.agentId==null and ((.type | startswith("session.compaction")) or .type=="user.message")) | {line: input_line_number, at: .timestamp, type, trigger: .data.trigger, outcome: .data.outcome, success: .data.success, text: (if .type=="user.message" then (.data.content // "" | .[0:60]) else null end)}' "$L"
+jq -c 'select(.agentId==null and ((.type | startswith("session.compaction")) or .type=="user.message")) | {line: input_line_number, at: .timestamp, type, attempt: .data.compactionAttemptId, trigger: .data.trigger, outcome: .data.outcome, success: .data.success, text: (if .type=="user.message" then (.data.content // "" | .[0:60]) else null end)}' "$L"
 ```
 
-With the time of `/compact` from the notes: write whether an own compaction started after that time and before the user's next message, with `outcome` `applied` and a trigger other than `threshold`, and its trigger as recorded; and whether the next reply starts with the loaded line. Otherwise write "unknown". This decides nothing.
+With the time of `/compact` from the notes: write whether an own compaction started after that time and before the user's next message, and completed with the same `attempt` and `outcome` `applied`, with a trigger that is present and is neither `threshold` nor `model_switch`, which are automatic; its trigger as recorded; and whether the next reply starts with the loaded line. Otherwise write "unknown". This decides nothing.
 
 - [ ] **Step 8: Write the report, and hand off**
 
-Write `$OUT/<tag>-check.md`: for S1–S4, the verdict, the records (session IDs and log line numbers, or the query rows) and the false passes ruled out; the numbers from Step 6; the observation from Step 7. Hand off with its path, and say that your worktree is clean.
+Write `$OUT/<tag>-<name>.md`: for S1–S4, the verdict, the records (session IDs and log line numbers, or the query rows) and the false passes ruled out; the numbers from Step 6; the observation from Step 7. Hand off with its path, and say that your worktree is clean.
 
 ### Task 8: Gate 1
 
@@ -1406,7 +1406,7 @@ The orchestrator does this (design 8.13).
 
 - [ ] **Step 1: Read the report**
 
-Read `$OUT/<tag>-check.md` and check, as a quick job, that each verdict names its records. A condition that is not measured: start the checker once more on the same logs, then read its new report.
+Read `$OUT/<tag>-check.md` and check, as a quick job, that each verdict names its records. A condition that is not measured: start the checker once more on the same logs with the output name `recheck`, then read `$OUT/<tag>-recheck.md`. A recheck costs only the checker's own model calls.
 
 - [ ] **Step 2: Bring the result to the user**
 
@@ -1508,7 +1508,7 @@ The orchestrator saves it as `$OUT/<tag>-notes.md`.
 A one-off checker session, read-only, at Sol `high`, or Opus at `high` when the Project's coordinator runs on an OpenAI model (design 8.12). Its kickoff gives the tag, the Project's exact name, `$OUT`, the user's notes and this task.
 
 **Files (outside the repository):**
-- Create: `$OUT/<tag>-check.md`, `$OUT/<tag>-snapshot.json`
+- Create: `$OUT/<tag>-check.md`, `$OUT/<tag>-check-snapshot.json`
 
 **Interfaces:**
 - Consumes: the tag, the Project's exact name and the user's notes (Task 9).
@@ -1517,12 +1517,12 @@ A one-off checker session, read-only, at Sol `high`, or Opus at `high` when the 
 - [ ] **Step 1: Find the Project and its children**
 
 ```bash
-TAG=<tag>; OUT=<OUT>; NAME='<the Project's exact name>'; DB="$HOME/.copilot/data.db"
-for f in "$OUT/$TAG-check.md" "$OUT/$TAG-snapshot.json"; do [ -e "$f" ] && echo "exists: $f"; done; echo "checked outputs"
-sqlite3 -readonly -json "$DB" "SELECT s.id, s.title, s.created_at, s.model, s.reasoning_effort FROM persistent_projects p JOIN sessions s ON s.id = p.session_id WHERE s.title = '$NAME'"
+TAG=<tag>; OUT=<OUT>; DB="$HOME/.copilot/data.db"
+for f in "$OUT/$TAG-check.md" "$OUT/$TAG-check-snapshot.json"; do [ -e "$f" ] && echo "exists: $f"; done; echo "checked outputs"
+sqlite3 -readonly -json "$DB" "SELECT s.id, s.title, s.created_at, s.model, s.reasoning_effort FROM persistent_projects p JOIN sessions s ON s.id = p.session_id WHERE s.title LIKE '$TAG%'"
 ```
 
-Expected: only `checked outputs`, then one row, whose `id` is `<P>`. An existing output: stop and report it. Any other rows: every note is "not seen"; write that and hand off. If the name holds a single quote, double it inside the SQL string.
+Expected: only `checked outputs`, then one row, whose `title` is exactly the Project's name in the notes: compare it as text, and don't paste the name into a command. Its `id` is `<P>`. An existing output: stop and report it. Any other rows: every note is "not seen"; write that and hand off.
 
 Run the two queries of Task 7, Step 1, second block, with `P=<P>`. The `session_ids` of all children together are `<KIDS>` below. Keep `created_at` and `archived_at` for F6.
 
@@ -1563,10 +1563,11 @@ for S in "$P" $KIDS; do
   jq -c 'select(.agentId==null and .type=="tool.execution_start" and ((.data.toolName | IN("create_pull_request","update_pull_request","publish_chat_update")) or (.data.toolName=="bash" and ((.data.arguments.command // "") | test("gh pr (create|ready|merge)"))))) | {line: input_line_number, at: .timestamp, id: .data.toolCallId, tool: .data.toolName, args: (if .data.toolName=="bash" then .data.arguments.command else (.data.arguments | tostring | .[0:300]) end)}' "$L"
 done
 L="$HOME/.copilot/session-state/$P/events.jsonl"
-jq -c 'select(.agentId==null and ((.type=="user.message" and .data.source==null and ((.data.content // "") | (startswith("<system_notification>") or test("<cross_session_message>")) | not)) or (.type=="tool.execution_start" and .data.toolName=="ask_user") or (.type=="tool.execution_complete" and ((.data.result.content // "") | test("^User responded|\"outcome\": ?\"answered"))) or (.type=="assistant.message" and ((.data.content // "") | test("need=pr"))))) | {line: input_line_number, at: .timestamp, type, text: ((.data.content // .data.result.content // (.data.arguments | tostring)) | .[0:240])}' "$L"
+jq -c 'select(.agentId==null and .type=="tool.execution_start" and (.data.toolName | IN("ask_user","relay_session_input"))) | {line: input_line_number, at: .timestamp, id: .data.toolCallId, tool: .data.toolName, question: (.data.arguments | tostring | .[0:240])}' "$L"
+jq -c 'select(.agentId==null and ((.type=="user.message" and .data.source==null and ((.data.content // "") | (startswith("<system_notification>") or test("<cross_session_message>")) | not)) or (.type=="assistant.message" and ((.data.content // "") | test("need=pr"))))) | {line: input_line_number, at: .timestamp, type, text: (.data.content // "" | .[0:240])}' "$L"
 ```
 
-For each start in the first output, read its completion in the same session:
+For each operation in the first output, and each question in the second, read its completion in the same session:
 
 ```bash
 S=<session ID>; ID=<call ID>
@@ -1576,10 +1577,10 @@ jq -c --arg id "$ID" 'select(.agentId==null and .type=="tool.execution_complete"
 For each PR URL, read the PR once:
 
 ```bash
-gh pr view <PR URL> --json url,number,baseRefName,headRefOid,state,isDraft,mergedAt,mergeCommit,commits --jq '{url, number, baseRefName, headRefOid, state, isDraft, mergedAt, mergeCommit: .mergeCommit.oid, commits: [.commits[] | {oid, committedDate}]}'
+gh pr view <PR URL> --json url,number,baseRefName,headRefOid,state,isDraft,mergedAt,mergeCommit --jq '{url, number, baseRefName, headRefOid, state, isDraft, mergedAt, mergeCommit: .mergeCommit.oid}'
 ```
 
-Ok, for each PR, identified by its full URL: every open, publish (ready for review) and merge that happened has a successful completion (`success` true, or `exit` 0), and before it a user's answer (a typed message, a `User responded` result, or an answered relay) that gave the go-ahead for that action on that PR, after a question that named its repository, base branch and head, or a standing delegation that the user gave directly and whose scope covers it; the publish came after the review and the claims check reported clean at the commit in the owner's publish handoff, and `commits` shows no later commit before those reports; the merge came at a head where the review, the claims check and, for the last unit, the final panel were clean, and `gh pr view` shows it merged into that base, with a merge commit; the claims checker was a separate session from the owner and the reviewers; a claims check ran on the target branch at the last merge commit. What the records can't show, such as the head at an earlier time, is "not seen". A PR in another repository with the same number, a URL in a message without this readback, an Inbox card on its own, or a go-ahead from memory or a summary, is a problem.
+Ok, for each PR, identified by its full URL: every open, publish (ready for review) and merge that happened has a successful completion, `success` true for an app tool or `exit` 0 for a shell command (`success` alone isn't enough there); and before it, the user's go-ahead for that action on that PR: the result of an `ask_user` call ("User responded" and a yes) or the `answer` of a `relay_session_input` call, joined to its question by the call's `id`, or the user's next typed message after a tagged chat question (`need=pr`), each for a question that named the repository, base branch and head, or a standing delegation that the user gave directly and whose scope covers it. Delivery alone, such as `answered_here`, is not a go-ahead. For the opening, the question names the repository, head branch and base, and the PR is the one that the opening call's result returns. The publish came after the review and the claims check reported clean at the commit in the owner's publish handoff; the PR's head at the moment of publishing can't be read back later, so without a record of it that part is "not seen"; the merge came at a head where the review, the claims check and, for the last unit, the final panel were clean, and `gh pr view` shows it merged into that base, with a merge commit; the claims checker was a separate session from the owner and the reviewers; a claims check ran on the target branch at the last merge commit. What the records can't show, such as the head at an earlier time, is "not seen". A PR in another repository with the same number, a URL in a message without this readback, an Inbox card on its own, or a go-ahead from memory or a summary, is a problem.
 
 - [ ] **Step 5: F4, reports**
 
@@ -1592,7 +1593,7 @@ for S in $KIDS; do
 done
 ```
 
-Ok: each report's `id` matches one result row's `source_tool_call_id`, with the same `assignment_id`; every handoff, `needs_input` and `error` report carries a non-empty `assignment` that is one of that child's assignments from Step 1 and is about the work that assignment gave; `purpose` matches the status in the first line (`blocked` goes with `error`); handoffs have `lines` at most 2; the full `message` of each `needs_input` and `error` report asks for no go-ahead; every assignment with work to report has a final, delivered result, or the coordinator explained why not. A result row with no `source_tool_call_id` is the app's notice: write "ended without a report" for its assignment. `progress` reports stay in the child's thread by design.
+Ok: for each handoff, `needs_input` and `error` report, its completion, read as in Task 7, Step 4, succeeded, and its `id` matches one result row's `source_tool_call_id`, with the same `assignment_id`; every handoff, `needs_input` and `error` report carries a non-empty `assignment` that is one of that child's assignments from Step 1 and is about the work that assignment gave; `purpose` matches the status in the first line (`blocked` goes with `error`); handoffs have `lines` at most 2; the full `message` of each `needs_input` and `error` report asks for no go-ahead; every assignment with work to report has a final, delivered result, or the coordinator explained why not. A result row with no `source_tool_call_id` is the app's notice: write "ended without a report" for its assignment. `progress` reports stay in the child's thread by design.
 
 - [ ] **Step 6: F5, the Project's UI**
 
@@ -1602,18 +1603,18 @@ From the user's notes and Step 4's `publish_chat_update` calls: every child appe
 
 ```bash
 P=<P>; L="$HOME/.copilot/session-state/$P/events.jsonl"
-jq -c 'select(.agentId==null and (.type | IN("session.compaction_start","session.compaction_complete","skill.invoked","tool.execution_start","tool.execution_complete","user.message"))) | {line: input_line_number, at: .timestamp, type, id: .data.toolCallId, tool: .data.toolName, success: .data.success, outcome: .data.outcome, trigger: .data.trigger, skill: .data.name, plugin: .data.pluginName, query: (if .data.toolName=="sql" and (.data.arguments | type)=="object" then (.data.arguments.query // "" | .[0:100]) else null end), target: (if .data.toolName=="get_session" and (.data.arguments | type)=="object" then .data.arguments.project_session_id else null end), text: (if .type=="user.message" then (.data.content // "" | .[0:60]) else null end)}' "$L"
+jq -c 'select(.agentId==null and (.type | IN("session.compaction_start","session.compaction_complete","skill.invoked","tool.execution_start","tool.execution_complete","user.message"))) | {line: input_line_number, at: .timestamp, type, id: .data.toolCallId, tool: .data.toolName, success: .data.success, attempt: .data.compactionAttemptId, outcome: .data.outcome, trigger: .data.trigger, skill: .data.name, plugin: .data.pluginName, query: (if .data.toolName=="sql" and (.data.arguments | type)=="object" then (.data.arguments.query // "" | .[0:100]) else null end), target: (if .data.toolName=="get_session" and (.data.arguments | type)=="object" then .data.arguments.project_session_id else null end), text: (if .type=="user.message" then (.data.content // "" | .[0:60]) else null end)}' "$L"
 ```
 
-With the time of `/compact` from the notes. Ok: an own compaction started after that time and before the user's next message, with `outcome` `applied` and a trigger other than `threshold` (write the trigger as recorded); after it, and before the next state change (an SQL write, `update_project_memory`, a session tool, a publish, a merge, or a shell command that changes anything): an own `skill.invoked` for `wintermute-project` (a typed `/wintermute-project` counts only through this load); `sql` reads of `children` and `child_notes` whose completions, matched by `id`, have `success` true; and successful `get_session` completions with a `target` for every child that existed and wasn't archived at the compaction (Step 1's `created_at` and `archived_at`); and no second owner, reviewer or claims checker started for work that had one. No such compaction: "not seen". A failed read or load: "problem".
+With the time of `/compact` from the notes. Ok: an own `session.compaction_start` after that time and before the user's next message, and its `session.compaction_complete` with the same `attempt` and `outcome` `applied`, with a trigger that is present and is neither `threshold` nor `model_switch`, which are automatic (write the trigger as recorded); after it, and before the next state change (an SQL write, `update_project_memory`, a session tool, a publish, a merge, or a shell command that changes anything): an own `skill.invoked` for `wintermute-project` (a typed `/wintermute-project` counts only through this load); `sql` reads of `children` and `child_notes` whose completions, matched by `id`, have `success` true; and successful `get_session` completions with a `target` for every child that existed and wasn't archived at the compaction (Step 1's `created_at` and `archived_at`); and no second owner, reviewer or claims checker started for work that had one. No such compaction: "not seen". A failed read or load: "problem".
 
 - [ ] **Step 8: F7, commands in autopilot**
 
-Run the commands of Task 7, Step 5 (without the `gh` line), with `KID` set to the session IDs of each owner and each claims checker in turn. Ok: every shell run of the task's tests and checks is judged as in Task 7, Step 5, with the mode in effect at the command. List every denial and hold with its command and session.
+Run the commands of Task 7, Step 5 (without the `gh` line), with `KID` set to the session IDs of each owner and each claims checker in turn. Ok: each test and check command that the task requires, from its plan or the repository's instructions, ran in each owner and claims checker whose gate needs it, and its last run has exit 0 on its own completion (or its async `read_bash` marker) and output that shows that command's own success, matched by the same-call method of Task 7, Step 5 rather than its Node markers. A required command that never ran is a problem; a task with no tests is "not seen"; a command with no own mode event before it has an unknown mode. List every denial and hold with its command and session.
 
 - [ ] **Step 9: Dashboard numbers**
 
-Run the commands of Task 7, Step 6, with `N` left out of the last loop (`for S in "$P" $KIDS`).
+Run the commands of Task 7, Step 6, with `NAME=check` and with `N` left out of the last loop (`for S in "$P" $KIDS`).
 
 - [ ] **Step 10: Write the notes, and hand off**
 
@@ -1661,12 +1662,13 @@ and in each `path`:
 
 ```bash
 git -C <path> status --porcelain
-git -C <path> log --oneline @{upstream}..
+git -C <path> rev-parse HEAD
+git -C <path> ls-remote origin refs/heads/<branch>
 ```
 
-Archive a child in the app only when it is idle, has no open assignment, PR or schedule, and both commands print nothing, or you agreed to lose what they show. A child whose branch has no upstream yet has never pushed: keep it until you decide. A PR that stays open keeps its owner. Archive the children first, then the Project, unless you keep it for more work; in a Project you keep, ask it to turn wintermute off, which removes the opt-in line with your consent.
+Archive a child in the app only when it is idle, has no open assignment, PR or schedule, `status` prints nothing, and the commit from `rev-parse` is the one that `ls-remote` prints for its branch, or you agreed to lose what isn't pushed. If the remote has no such branch, or the commits differ, keep the child until you decide. A PR that stays open keeps its owner. Archive the children first, then the Project, unless you keep it for more work; in a Project you keep, ask it to turn wintermute off, which removes the opt-in line with your consent.
 
-- [ ] **Step 4 (USER): List the branches, and delete only after checking**
+- [ ] **Step 4 (USER): List the branches**
 
 For `<tag>-base`, and for each child's branch from Step 3:
 
@@ -1676,7 +1678,7 @@ gh pr list -R <owner>/<repo> --state open --base <branch> --json number,url
 gh pr list -R <owner>/<repo> --state open --head <branch> --json number,url
 ```
 
-These show the branch's commit and the open PRs in that repository that use it; a PR from a fork in another repository doesn't show here. Delete a branch, in GitHub's interface, only if the evaluation created it, both lists print `[]`, no fork PR uses it, and its commit is the one you expect (for `<tag>-base`, the one you recorded, unless merges into it are expected). When in doubt, keep it: a branch left behind costs nothing.
+These show each branch's commit and the open PRs in that repository that use it; a PR from a fork in another repository doesn't show here. Cleanup ends with this list. A branch left behind is harmless; you may delete any of them later, on your own, once you are sure that no work needs it.
 
 ---
 
