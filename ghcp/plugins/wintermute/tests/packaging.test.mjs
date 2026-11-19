@@ -77,7 +77,7 @@ test('the server and the UI import only Node built-ins and their own modules; th
   for (const file of [...serverFiles, ...uiFiles, extensionFile]) {
     for (const match of readFileSync(file, 'utf8').matchAll(imports)) {
       const specifier = match[1] ?? match[2];
-      const allowed = specifier.startsWith('.') || (!file.startsWith(path.join(root, 'ui')) && specifier.startsWith('node:')) || (file === extensionFile && specifier === '@github/copilot-sdk/extension');
+      const allowed = specifier.startsWith('.') || (!file.startsWith(path.join(root, 'ui')) && specifier.startsWith('node:')) || (file === extensionFile && ['@microsoft/copilot-sdk/extension', '@github/copilot-sdk/extension'].includes(specifier));
       assert.ok(allowed, `${name(file)} imports ${specifier}`);
     }
   }

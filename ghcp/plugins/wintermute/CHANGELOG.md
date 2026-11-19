@@ -6,6 +6,12 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.2.6 — 2026-11-19
+
+### Fixed
+
+- The dashboard canvas extension loads on Copilot CLI runtime 1.0.114 and later, which renamed the extension SDK to `@microsoft/copilot-sdk` (#134). The extension imports `@microsoft/copilot-sdk/extension` and falls back to `@github/copilot-sdk/extension` only when the new package is missing, so it still loads on earlier runtimes. Any other load error is reported as is, and when neither package resolves the error names both.
+
 ## 1.2.5 — 2026-11-18
 
 ### Fixed

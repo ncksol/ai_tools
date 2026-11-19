@@ -248,8 +248,9 @@ test('a closed canvas stops watching the shared server', async () => {
   }
 });
 
-// A stand-in for the SDK the Copilot runtime provides to extensions.
-const SDK_STUB = `export class CanvasError extends Error {
+// A stand-in for the SDK the Copilot runtime provides to extensions. It records which package name was loaded.
+const sdkStub = scope => `globalThis.swarmDashboardSdk = '${scope}';
+export class CanvasError extends Error {
   constructor(code, message) {
     super(message);
     this.code = code;
@@ -262,13 +263,18 @@ export async function joinSession(config) {
 }
 `;
 
-/** Lay out a plugin copy whose extension resolves @github/copilot-sdk/extension to the stub. */
-function stagedExtension() {
+/**
+ * Lay out a plugin copy whose extension resolves the SDK packages given in `sdks` (scope to module source) to stubs.
+ * Runtime 1.0.114 maps @microsoft/copilot-sdk; earlier runtimes map @github/copilot-sdk.
+ */
+function stagedExtension(sdks = { github: sdkStub('github') }) {
   const dir = tempDir('swarm-extension-');
-  const sdk = path.join(dir, 'node_modules', '@github', 'copilot-sdk');
-  mkdirSync(sdk, { recursive: true });
-  writeFileSync(path.join(sdk, 'package.json'), JSON.stringify({ name: '@github/copilot-sdk', type: 'module', exports: { './extension': './extension.mjs' } }));
-  writeFileSync(path.join(sdk, 'extension.mjs'), SDK_STUB);
+  for (const [scope, source] of Object.entries(sdks)) {
+    const sdk = path.join(dir, 'node_modules', `@${scope}`, 'copilot-sdk');
+    mkdirSync(sdk, { recursive: true });
+    writeFileSync(path.join(sdk, 'package.json'), JSON.stringify({ name: `@${scope}/copilot-sdk`, type: 'module', exports: { './extension': './extension.mjs' } }));
+    writeFileSync(path.join(sdk, 'extension.mjs'), source);
+  }
   const plugin = path.join(dir, 'plugin');
   const folder = path.join(plugin, 'com.github.copilot', 'extensions', 'swarm-dashboard');
   mkdirSync(folder, { recursive: true });
@@ -277,6 +283,46 @@ function stagedExtension() {
   symlinkSync(path.join(root, 'server'), path.join(plugin, 'server'), 'dir');
   return pathToFileURL(path.join(folder, 'extension.mjs')).href;
 }
+
+/** Load a staged extension with a free port and return which SDK it used and the canvas ids it joined with. */
+async function loadExtension(sdks) {
+  delete globalThis.swarmDashboardSdk;
+  delete globalThis.swarmDashboardJoined;
+  process.env.SWARM_DASHBOARD_PORT = String(await freePort());
+  try {
+    const extension = await import(stagedExtension(sdks));
+    await extension.canvasHost.dispose();
+    return { sdk: globalThis.swarmDashboardSdk, canvases: globalThis.swarmDashboardJoined.canvases.map(canvas => canvas.declaration.id) };
+  } finally {
+    delete process.env.SWARM_DASHBOARD_PORT;
+  }
+}
+
+test('the extension loads the SDK under its new name, its old name, and prefers the new one', async () => {
+  assert.deepEqual(await loadExtension({ microsoft: sdkStub('microsoft') }), { sdk: 'microsoft', canvases: ['swarm-dashboard'] });
+  assert.deepEqual(await loadExtension({ github: sdkStub('github') }), { sdk: 'github', canvases: ['swarm-dashboard'] });
+  assert.deepEqual(await loadExtension({ microsoft: sdkStub('microsoft'), github: sdkStub('github') }), { sdk: 'microsoft', canvases: ['swarm-dashboard'] });
+});
+
+test('an SDK that fails for another reason is not hidden by the fallback', async () => {
+  delete globalThis.swarmDashboardSdk;
+  const sdks = { microsoft: "throw new TypeError('sdk exploded');\n", github: sdkStub('github') };
+  await assert.rejects(import(stagedExtension(sdks)), error => error instanceof TypeError && error.message === 'sdk exploded');
+  assert.equal(globalThis.swarmDashboardSdk, undefined, 'the @github SDK was not loaded');
+});
+
+test('an SDK whose own dependency is missing is reported, even when that dependency has a similar name', async () => {
+  delete globalThis.swarmDashboardSdk;
+  const broken = scope => `import '@${scope}/copilot-sdk-core';\n`;
+  const names = scope => error => error.code === 'ERR_MODULE_NOT_FOUND' && error.message.includes(`'@${scope}/copilot-sdk-core'`);
+  await assert.rejects(import(stagedExtension({ microsoft: broken('microsoft'), github: sdkStub('github') })), names('microsoft'));
+  assert.equal(globalThis.swarmDashboardSdk, undefined, 'the @github SDK was not loaded');
+  await assert.rejects(import(stagedExtension({ github: broken('github') })), names('github'));
+});
+
+test('with no SDK the error names both package names', async () => {
+  await assert.rejects(import(stagedExtension({})), error => error.message.includes("'@microsoft/copilot-sdk/extension'") && error.message.includes("'@github/copilot-sdk/extension'"));
+});
 
 test('the extension joins with one canvas that opens the shared page', async () => {
   const entry = stagedExtension();

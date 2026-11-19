@@ -38,8 +38,8 @@ export async function validateDashboard(root, manifest, pkg) {
   }
   try {
     const source = await readFile(path.join(root, EXTENSION_DIR, 'extension.mjs'), 'utf8');
-    // Match the specifier alone: PR 1's import guard scans scripts/ for import statements and would count a quoted one.
-    if (!source.includes("'@github/copilot-sdk/extension'") || !/\bjoinSession\(/.test(source) || !source.includes("id: 'swarm-dashboard'")) {
+    // Match each import() expression with an escaped regex: the import guard scans scripts/ for literal import statements.
+    if (!/\bimport\(\s*'@microsoft\/copilot-sdk\/extension'\s*\)/.test(source) || !/\bimport\(\s*'@github\/copilot-sdk\/extension'\s*\)/.test(source) || !/\bjoinSession\(/.test(source) || !source.includes("id: 'swarm-dashboard'")) {
       errors.push(`${EXTENSION_DIR}/extension.mjs must join the session with the swarm-dashboard canvas`);
     }
     if (/console\.(log|info|debug|dir|table)\(|process\.stdout/.test(source)) errors.push(`${EXTENSION_DIR}/extension.mjs must not write to stdout`);
