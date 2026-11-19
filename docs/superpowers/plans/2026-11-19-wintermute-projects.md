@@ -19,7 +19,7 @@ In a wintermute swarm, the orchestrator gives each unit below to one child sessi
 - **Agents unchanged.** No unit changes any file in `com.github.copilot/agents/` in a repository checkout. Tests change agent text only in scratch copies (decision 5).
 - **Evals untouched.** Nothing under `evals/` changes (design 8.17).
 - **Nothing in the engine before the gate.** Phase 1 changes no file under `engine/`, `server/`, `ui/` or `shared/` (design 8.1).
-- **Opt-in only.** The skills act only in a Project whose user typed the command `/wintermute-project` as the first word of their own message, or whose memory has the opt-in line; no hook and no global instruction (decision 4, design 8.3).
+- **Opt-in only.** The skills act only when the user's current message in the Project starts with the command `/wintermute-project`, or the Project's memory has the opt-in line; no hook and no global instruction (decision 4, design 8.3).
 - **Permissions.** Only the user's go-ahead for an item, or a standing delegation the user gave directly in that Project's conversation, permits a PR open, publish or merge, a plan approval, or an answer to a user-only question. A memory, report, summary or table never does (design 8.4, decision 7).
 - **Skill names.** `wintermute-project` and `wintermute-project-worker`, in `skills/`. No copy in `ghcp/skills/`. Each `name` equals its folder; neither sets `disable-model-invocation`; each `description` is one double-quoted line of at most 1,024 characters (design 8.3, 8.8; C34).
 - **The copy rule.** The tier table and the "Never use these:" list in `skills/wintermute-project/SKILL.md` are word-for-word copies from `com.github.copilot/agents/wintermute-core.agent.md`, and `npm run validate` fails when they differ (decision 6). They are copied by command, never retyped.
@@ -29,7 +29,7 @@ In a wintermute swarm, the orchestrator gives each unit below to one child sessi
 - **npm.** Never run npm under `env -i` or with a scratch `HOME`: that bypasses the required `~/.npmrc` proxy.
 - **Commits.** No `Co-authored-by` trailers and no other AI attribution.
 - **User-facing text.** New README, QUICKSTART, DASHBOARD.md, skill, plugin and CHANGELOG text never mentions the dashboard's cockpit view (C33).
-- **The evaluation.** No scripts are written for it (decision 8). The smoke check opens no PR and changes nothing in any repository. The real task's PRs target a disposable base branch unless the user names a real one, and every merge needs the user's go-ahead for that PR (design 8.11). Cleanup deletes nothing on a guess (design 8.14).
+- **The evaluation.** GitHub repositories only, and no scripts are written for it (decision 8, design 8.10). The smoke check opens no PR and changes nothing in any repository. The real task's PRs target a disposable base branch, created with one API call, unless the user names a real one, and every open, publish and merge needs the user's go-ahead for that PR (design 8.11). No step deletes a branch (design 8.14).
 - **Private records.** Checker reports, the user's notes and dashboard snapshots stay in the orchestrator's session files folder, called `$OUT` below, which the orchestrator names in each kickoff. Only the outcome, in one or two sentences, goes into the repository (design 8.13).
 
 ## Units
@@ -453,7 +453,7 @@ git commit -m "feat(wintermute): validate the Projects skills and their copy of 
 
 **Interfaces:**
 - Consumes: `validateSkills` (Task 1).
-- Produces: the child-side contract that the coordinator skill (Task 3) relies on: the scope check on `<copilot_project_child_session>` plus the coordinator's instruction; permissions only from assignments; separate assignments for a draft, a publish and a merge; two-line handoffs with "Partial:"; `blocked` with `purpose: "error"`; `assignment_id` on every report; result files with commit, commands, exit codes and counts; publishing at review-ready only.
+- Produces: the child-side contract that the coordinator skill (Task 3) relies on: the scope check on `<copilot_project_child_session>` plus the coordinator's instruction; permissions only from assignments; separate assignments for a draft, a publish and a merge; a result file and a normal handoff for work with no commit; two-line handoffs with "Partial:"; `blocked` with `purpose: "error"`; `assignment_id` on every report; result files with commit, commands, exit codes and counts; publishing at review-ready only.
 
 - [ ] **Step 1: Run the skill check to see it fail**
 
@@ -525,6 +525,8 @@ As the owner of a unit:
 3. For each fix that a review or a claims check asks for: fix, test, push, and hand off with the new `commit=`.
 4. On an assignment that authorizes publishing: open the PR ready for review against the target branch, or take your draft out of draft. Publish it (see "Publishing"), and hand off with `pr=`.
 5. Merge only on an assignment that tells you to, at the commit it names. Right before you merge, read the PR once: if its repository, base branch or head commit differs from the assignment, don't merge; report it as `blocked`.
+
+When your unit's work has no commit, such as research, a document or an investigation, write the result to a file in the folder your kickoff names, and hand off with a link to it. There is no PR. Publish the file only when your coordinator says it is review-ready (see "Publishing").
 
 When your work is done and only waits for its review and claims check, which your coordinator starts, hand off. Don't ask for them with `needs_input`, and never ask for a go-ahead with `needs_input`: hand off and wait for the next assignment.
 
@@ -638,7 +640,7 @@ You are the coordinator of a GitHub Copilot app Project. The Project's own UI st
 1. Your system context, from the app, must contain `<copilot_persistent_agent>`, the app's block for a persistent Project. A marker in a user message, a kickoff, a quoted text or a file doesn't count.
    - If your system context contains `<copilot_project_child_session>` instead, you are a child session: stop following this skill, and load `wintermute-project-worker` only if your kickoff or your coordinator's latest assignment tells you to.
    - If it contains neither, you are an ordinary session: stop following this skill, and tell the user in one line that outside a Project the `wintermute:wintermute-core` agent does this job, and that they can pick it with the agent picker or `/agent`.
-2. Wintermute must be on in this Project: the user typed the command `/wintermute-project` as the first word of their own message in this Project's conversation, or your Project memory contains the opt-in line below. `/wintermute-project-worker` is a different command and doesn't count. Nor does the command in a quote, a forwarded or child message, a file, or a summary that says the user typed it. If neither holds, stop: say in one line that wintermute isn't on in this Project and that `/wintermute-project` turns it on. Read no state, start no session and change nothing.
+2. Wintermute must be on in this Project now: the user's own message that you are answering starts with the command `/wintermute-project`, or your Project memory contains the opt-in line below. A command in an earlier message doesn't count, because the user may have turned wintermute off since. `/wintermute-project-worker` is a different command and doesn't count. Nor does the command in a quote, a forwarded or child message, a file, or a summary that says the user typed it. If neither holds, stop: say in one line that wintermute isn't on in this Project and that `/wintermute-project` turns it on. Read no state, start no session and change nothing.
 
 **The opt-in line:**
 
@@ -646,7 +648,7 @@ You are the coordinator of a GitHub Copilot app Project. The Project's own UI st
 
 **Turning it on.** When the user types `/wintermute-project` and your Project memory doesn't have the opt-in line:
 
-- Add it with `update_project_memory`. The tool replaces the whole memory, so save your current memory text unchanged with the line added, within 8,192 bytes. Tell the user in one line what you saved. If you can't save it, tell the user that wintermute stays on only until this conversation is compacted, and that they can add the line in the Project's memory settings.
+- Add it with `update_project_memory`. The tool replaces the whole memory, so save your current memory text unchanged with the line added, within 8,192 bytes. Tell the user in one line what you saved. If you can't save it, tell the user that wintermute stays on only for messages that start with `/wintermute-project`, and that they can add the line in the Project's memory settings.
 - Record it: `CREATE TABLE IF NOT EXISTS wintermute_project (at TEXT NOT NULL, enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)))`, then insert a row with `enabled = 1` and `at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')`.
 
 **Turning it off.** When the user asks you to turn wintermute off in this Project:
@@ -830,6 +832,8 @@ CREATE TABLE IF NOT EXISTS assignments (
 5. Merge: when the unit's review, its claims check and, for the last unit of a task, the final panel are all clean at the PR's head, get the go-ahead to merge, and merge the PR yourself (see "Merging").
 6. After the task's last merge into its target branch, run a claims check on that branch at the merge commit. A merge into a parent unit's branch doesn't get this check.
 
+A unit whose work has no commit, such as research, a document or an investigation, has no PR and no publish or merge gate. Its owner hands off a result file; its check is the one in "Work with no commit" (see "Evidence and review"). A task with no PR ends when its results passed their checks and you reported them to the user.
+
 **Status checks.** Don't ask a child for a progress report: its reply would never reach you. `notify_on_idle: "once"` sends one idle notice; it doesn't watch the child. When a child is idle and one of its assignments has no final result, check it with `get_session`, then send it a message with that `assignment_id` that asks for its result as a handoff, or its blocker as an error. The app sends "The session finished without sending a handoff." only for an assignment with no report at all; it is not a report: check that child with `get_session`.
 
 **Ending work.** Keep a unit's reviewer and claims checker until the unit merges, and the final panel's judges until the task's last merge, so that they can take re-checks. Archive a child only when it is idle, has no open assignment, PR or automation, and its branch is pushed; tell a busy child to stop first. After the post-merge claims check, archive the task's children. Archive any other one-off session when you have recorded its result and its worktree is clean. Set `outcome` in `children` before you archive, and record each archive in `child_notes`.
@@ -848,7 +852,7 @@ Keep your state in your session SQL database with the `sql` tool, not in files.
     request    TEXT NOT NULL,     -- the user's request, quoted
     target     TEXT NOT NULL,     -- the branch the task's PRs merge into
     created_at TEXT NOT NULL,     -- ISO 8601, UTC
-    ended_at   TEXT               -- ISO 8601, UTC; set after the task's last merge and claims check
+    ended_at   TEXT               -- ISO 8601, UTC; set after the task's last merge and claims check, or, with no PR, after its results passed their checks
   );
   ```
 
@@ -1083,7 +1087,7 @@ The plugin also has two skills for [Copilot app Projects](https://docs.github.co
 
 A Project can't run `wintermute-core` as its agent, because the app doesn't allow custom agents in a Project or its sessions. Instead, the `wintermute-project` skill gives the Project's own coordinator the same rules: units, a model and effort for every job, an independent review from another vendor and a claims check before every merge, and at most two repair cycles. Its child sessions load `wintermute-project-worker`, which tells them how to report through the Project. The Project's Overview, Inbox, Library and Automations work as usual.
 
-- **Turn it on** in a Project by typing `/wintermute-project` with your request. The coordinator saves a line in the Project's memory, so that it keeps following the skill. In a Project without that line, the skill does nothing.
+- **Turn it on** in a Project by typing `/wintermute-project` with your request. The coordinator saves a line in the Project's memory, so that it keeps following the skill. In a Project without that line, the skill acts only on a message that starts with `/wintermute-project`.
 - **Go-aheads stay with you.** The coordinator opens, publishes or merges a PR, or approves a plan, only after your go-ahead for it in the Project's conversation, or within a standing permission you gave there. A memory never counts as one. Retargets and label changes stay with you.
 - **If it stops following the rules**, for example after a long conversation was compacted, type `/wintermute-project` again.
 - **Turn it off** by asking the Project to turn wintermute off. It asks what to do with open work, and removes the line from the Project's memory with your consent.
@@ -1165,9 +1169,9 @@ Hand off with the pushed commit. The orchestrator starts the second opinion, the
 
 ## Phase 1, units `projects-smoke` and `projects-real-task`
 
-These units are user steps and read-only checks. They commit nothing to the repository and write no script. The orchestrator brings each **USER** step to the user and waits for "done", and names `$OUT`, its own session files folder, in each checker's kickoff.
+These units are user steps and read-only checks. They commit nothing to the repository and write no script. The orchestrator brings each **USER** step to the user and waits for "done", and names `$OUT`, its own session files folder, in each checker's kickoff. The evaluation uses GitHub repositories only (design 8.10).
 
-In the checker steps, shell variables don't carry over between steps: each step sets the ones it uses. A session's log is `$HOME/.copilot/session-state/<session ID>/events.jsonl`. "Own" events of a session are those with no top-level `agentId`; events with one belong to a sub-agent.
+In the checker steps, shell variables don't carry over between steps: each step sets the ones it uses. A session's log is `$HOME/.copilot/session-state/<session ID>/events.jsonl`. An "own" event of a session has no top-level `agentId`; an event with one belongs to a sub-agent. A "typed message" is an own `user.message` with no `source` that doesn't start with `<system_notification>` and has no `<cross_session_message>`.
 
 ### Task 5 (USER): Update the plugin, and confirm what the app loads
 
@@ -1192,22 +1196,15 @@ In the app, open **Customize → Installed**: `wintermute` is enabled at that ve
 
 ### Task 6 (USER): The smoke check
 
-Design 8.10. Caps: 30 minutes from Step 5 to the child's handoff, and $12 for `<tag>-project` on the dashboard. Write your notes as you go in the form in Step 9.
+Design 8.10. Caps: 30 minutes from Step 6 to the child's handoff, and $12 for `<tag>-project` on the dashboard. Write your notes as you go in the form in Step 10.
 
-- [ ] **Step 1 (USER): Choose the tag, and note the starting point**
+- [ ] **Step 1 (USER): Choose the tag**
 
-In a terminal:
-
-```bash
-date -u +wm-smoke-%Y%m%d-%H%M
-git ls-remote https://github.com/ncksol/ai_tools refs/heads/main
-```
-
-The first line is the tag; use it everywhere below as `<tag>`. The second line starts with `main`'s commit: note it. Note the app's current approval settings, and don't change them until the check is over.
+In a terminal, `date -u +wm-smoke-%Y%m%d-%H%M` prints the tag; use it everywhere below as `<tag>`. Tell the orchestrator the tag; it checks that nothing in `$OUT` starts with it yet, and you choose a new one if something does. Note the app's current approval settings, and don't change them until the check is over.
 
 - [ ] **Step 2 (USER): Create the opted-in Project**
 
-In the app: **Projects → + → New project**. Name it `<tag>-project`, add the repository `ncksol/ai_tools`, and choose Claude Opus at `high` if the app offers a model and effort. Note what the picker shows, and whether `/wintermute-project` appears in the command list when you type `/`. Don't send anything yet.
+In the app: **Projects → + → New project**. Name it `<tag>-project` and add the repository `ncksol/ai_tools`. If the app offers a model and effort, choose Claude Opus at `high`; either way, note what it showed. Note whether `/wintermute-project` appears in the command list when you type `/`. Don't send anything yet.
 
 - [ ] **Step 3 (USER): Create the negative Project**
 
@@ -1223,157 +1220,181 @@ Send exactly this to `<tag>-negative`, with your tag in place of `<tag>`:
 
 Wait for its reply. Note whether the reply starts with `wintermute-project rules loaded.` (it must not).
 
-- [ ] **Step 5 (USER): Opt in and dispatch one job (S1–S4)**
+- [ ] **Step 5 (USER): Read `main`'s commit, and open the dashboard**
 
-Send exactly this to `<tag>-project`, with your tag in place of `<tag>`:
+In a terminal:
 
-```text
-/wintermute-project <tag> project: Start one one-off child session on ncksol/ai_tools. Its job: in ghcp/plugins/wintermute at the current main, run npm test and then npm run validate, write the result file that your rules describe, and hand off. It is read-only: no edits, commits, pushes or PRs. Start no other session and open no PR.
+```bash
+git ls-remote https://github.com/ncksol/ai_tools refs/heads/main
 ```
 
-Note the time. Open the swarm dashboard; the Project appears on it once its child exists.
+The line starts with `main`'s commit: note all 40 characters as `<commit>`. Open the swarm dashboard: the `swarm-dashboard` canvas, or, if it doesn't open, run `node scripts/swarm-dashboard.mjs` in `~/.copilot/installed-plugins/ai-tools/wintermute` and open `http://127.0.0.1:7927/`.
 
-- [ ] **Step 6 (USER): Watch, without helping**
+- [ ] **Step 6 (USER): Opt in and dispatch one job (S1–S4)**
 
-Send nothing else. Note what the Project's Overview shows under Needs input, Open, Working and Done. Approve a held command only if it is `npm test` or `npm run validate` in the child's checkout; note every hold and every denial that a session reports. Note whether you had to open the child's session for anything.
+Send exactly this to `<tag>-project`, with your tag and commit in place of `<tag>` and `<commit>`:
 
-- [ ] **Step 7 (USER): Stop at a cap**
+```text
+/wintermute-project <tag> project: Start one one-off child session on ncksol/ai_tools. Its job: in ghcp/plugins/wintermute at commit <commit> of main (check that commit out, detached, if the checkout is at another one), run npm test and then npm run validate, write the result file that your rules describe, and hand off. It is read-only: no edits, commits, pushes or PRs. Start no other session and open no PR.
+```
 
-If the Project hasn't reported the child's result 30 minutes after Step 5, or the dashboard shows more than $12 for it, send `Stop: start nothing new, and tell me what is still open.` to `<tag>-project`, note which cap you hit, and go to Step 9.
+Note the time. If the app doesn't accept the message, or the reply doesn't start with `wintermute-project rules loaded.`, note what happened and go to Step 10: S1 has failed. The Project appears on the dashboard once its child exists.
 
-- [ ] **Step 8 (USER): Try `/compact` (observation only)**
+- [ ] **Step 7 (USER): Watch, without helping**
 
-After the Project reports the child's result, type `/compact` in `<tag>-project`. Note whether the app accepted it. If it did, send `<tag> project: What is the state of the smoke task? Don't change anything.` and note whether the reply starts with `wintermute-project rules loaded.`; if it doesn't, send `/wintermute-project` once and note that you did.
+Send nothing else. Note what the Project's Overview shows under Needs input, Open, Working and Done. Approve a held command only if it is `npm test` or `npm run validate`, or the checkout of `<commit>`, in the child's checkout; note every hold and every denial that a session reports. Note whether you had to open the child's session for anything.
 
-- [ ] **Step 9 (USER): Tell the orchestrator**
+- [ ] **Step 8 (USER): Stop at a cap**
+
+If the Project hasn't reported the child's result 30 minutes after Step 6, or the dashboard shows more than $12 for it, send `Stop: start nothing new, and tell me what is still open.` to `<tag>-project`, note which cap you hit, and go to Step 10. If the dashboard doesn't show the Project, the 30 minutes still apply.
+
+- [ ] **Step 9 (USER): Try `/compact` (observation only)**
+
+After the Project reports the child's result, note the clock time and type `/compact` in `<tag>-project`. Note whether the app accepted it. If it did, send `<tag> project: What is the state of the smoke task? Don't change anything.` and note whether the reply starts with `wintermute-project rules loaded.`; if it doesn't, send `/wintermute-project` once and note that you did.
+
+- [ ] **Step 10 (USER): Tell the orchestrator**
 
 Send the orchestrator this text, filled in:
 
 ```text
 smoke done
 Tag: <tag>
-main at the start: <commit>
+Commit in the prompt: <commit>
 Approval settings: <what they were>
-Model picker: project <what it showed>; negative <what it showed>
+Model picker: project <what it showed, or none>; negative <what it showed, or none>
 /wintermute-project listed before the first message: <yes or no>
+The app accepted the opt-in message, and the reply started with the loaded line: <yes, or what happened>
 Negative Project's reply started with "wintermute-project rules loaded.": <yes or no>
 Overview of the project: <Needs input, Open, Working and Done, and anything confusing>
 Command holds or denials: <none, or each one and where>
 I opened the child session: <no, or why>
 Result reported at: <time, or the cap I hit>
-Dashboard cost at the end: <dollars>
-/compact accepted: <yes or no>; reply started with the loaded line: <yes, no or not tried>; I sent /wintermute-project again: <yes or no>
+Dashboard cost at the end: <dollars, or not shown>
+/compact typed at: <time>; accepted: <yes or no>; reply started with the loaded line: <yes, no or not tried>; I sent /wintermute-project again: <yes or no>
 ```
 
 The orchestrator saves it as `$OUT/<tag>-notes.md`.
 
 ### Task 7: Check the smoke check
 
-A one-off checker session, read-only, at Sol `high` (design 8.12). Its kickoff gives the tag, `$OUT`, `main`'s commit from the notes, and this task. It sends no message to the evaluated sessions and changes nothing outside `$OUT`.
+A one-off checker session, read-only, at Sol `high` (design 8.12). Its kickoff gives the tag, `$OUT`, the user's notes and this task. It sends no message to the evaluated sessions and changes nothing outside `$OUT`.
 
 **Files (outside the repository):**
 - Create: `$OUT/<tag>-check.md`, `$OUT/<tag>-snapshot.json`
 
 **Interfaces:**
-- Consumes: the tag and the user's notes (Task 6).
+- Consumes: the tag, the commit and the user's notes (Task 6).
 - Produces: S1–S4, each pass, fail or not measured, with the records found and the false passes ruled out; the dashboard numbers; the `/compact` observation.
 
 - [ ] **Step 1: Find the sessions**
 
 ```bash
-TAG=<tag>; DB="$HOME/.copilot/data.db"
-sqlite3 -readonly -json "$DB" "SELECT s.id, s.title, s.created_at FROM persistent_projects p JOIN sessions s ON s.id = p.session_id WHERE s.title LIKE '$TAG-%' ORDER BY s.created_at"
+TAG=<tag>; OUT=<OUT>; DB="$HOME/.copilot/data.db"
+for f in "$OUT/$TAG-check.md" "$OUT/$TAG-snapshot.json"; do [ -e "$f" ] && echo "exists: $f"; done; echo "checked outputs"
+sqlite3 -readonly -json "$DB" "SELECT s.id, s.title, s.created_at, s.model, s.reasoning_effort FROM persistent_projects p JOIN sessions s ON s.id = p.session_id WHERE s.title IN ('$TAG-project', '$TAG-negative') ORDER BY s.created_at"
 ```
 
-Expected: exactly two rows, titled `<tag>-project` and `<tag>-negative`. Their `id` values are `<P>` and `<N>` below. Any other result: S1–S4 are not measured; write that in the report and hand off.
+Expected: only `checked outputs`, then exactly two rows, titled `<tag>-project` and `<tag>-negative`. Their `id` values are `<P>` and `<N>` below. An existing output: stop and report it. Any other rows: S1–S4 are not measured; write that in the report and hand off.
 
 ```bash
 P=<P>; DB="$HOME/.copilot/data.db"
-sqlite3 -readonly -json "$DB" "SELECT 'repository' AS kind, session_id, name AS title, created_at FROM workspaces WHERE creator_session_id = '$P' OR coordinating_creator_session_id = '$P' UNION ALL SELECT 'chat', l.session_id, s.title, s.created_at FROM chat_parent_links l LEFT JOIN sessions s ON s.id = l.session_id WHERE l.parent_session_id = '$P'"
-sqlite3 -readonly -json "$DB" "SELECT a.id AS assignment_id, a.child_session_id, a.source_tool_call_id, s.model, s.reasoning_effort, s.mode FROM persistent_project_assignments a LEFT JOIN sessions s ON s.id = a.child_session_id WHERE a.coordinator_session_id = '$P'"
+sqlite3 -readonly -json "$DB" "SELECT 'workspace' AS kind, w.id AS child, w.name, w.branch, w.created_pr_html_url, w.archived_at, (SELECT group_concat(id, ' ') FROM (SELECT a.session_id AS id FROM workspace_session_aliases a WHERE a.workspace_id = w.id UNION SELECT w.session_id WHERE w.session_id IS NOT NULL)) AS session_ids FROM workspaces w WHERE w.creator_session_id = '$P' OR w.coordinating_creator_session_id = '$P' OR w.id IN (SELECT child_workspace_id FROM persistent_project_assignments WHERE coordinator_session_id = '$P') UNION ALL SELECT 'chat', l.session_id, s.title, NULL, NULL, s.archived_at, l.session_id FROM chat_parent_links l LEFT JOIN sessions s ON s.id = l.session_id WHERE l.parent_session_id = '$P' UNION ALL SELECT 'assigned', a.child_session_id, s.title, NULL, NULL, s.archived_at, a.child_session_id FROM persistent_project_assignments a LEFT JOIN sessions s ON s.id = a.child_session_id WHERE a.coordinator_session_id = '$P' AND a.child_workspace_id IS NULL AND a.child_session_id NOT IN (SELECT session_id FROM chat_parent_links WHERE parent_session_id = '$P')"
+sqlite3 -readonly -json "$DB" "SELECT id AS assignment_id, child_workspace_id, child_session_id, source_tool_call_id, forward_tool_call_id FROM persistent_project_assignments WHERE coordinator_session_id = '$P'"
 ```
 
-Expected: one child session, and one assignment for it. Its `child_session_id` is `<C>` below, and its `assignment_id` is `A`. More than one child session fails S2.
+Expected: one child, and one assignment for it. The child's `session_ids` are `<KID>` below, separated by spaces; its assignment's `assignment_id` is `A`. More than one child fails S2.
 
 - [ ] **Step 2: S1, the opt-in**
 
 ```bash
 P=<P>; L="$HOME/.copilot/session-state/$P/events.jsonl"
-jq -c 'select(.type=="user.message" and .data.source==null and ((.data.content // "") | (startswith("<system_notification>") or test("<cross_session_message>")) | not)) | {line: input_line_number, at: .timestamp, text: (.data.content // "" | .[0:120])}' "$L"
-jq -c 'select(.type=="skill.invoked") | {line: input_line_number, at: .timestamp, name: .data.name, source: .data.source, plugin: .data.pluginName, trigger: .data.trigger}' "$L"
-jq -c 'select(.type=="tool.execution_start" and .agentId==null and (.data.toolName | IN("create_session","send_session_message","open_pr_session","open_issue_session","sql","update_project_memory","bash"))) | {line: input_line_number, at: .timestamp, tool: .data.toolName}' "$L"
-jq -c 'select(.type=="assistant.message" and .agentId==null and ((.data.content // "") != "")) | {line: input_line_number, start: (.data.content | .[0:60])}' "$L"
+jq -c 'select(.agentId==null and .type=="user.message" and .data.source==null and ((.data.content // "") | (startswith("<system_notification>") or test("<cross_session_message>")) | not)) | {line: input_line_number, at: .timestamp, text: (.data.content // "" | .[0:160])}' "$L"
+jq -c 'select(.agentId==null and .type=="skill.invoked") | {line: input_line_number, at: .timestamp, name: .data.name, source: .data.source, plugin: .data.pluginName, trigger: .data.trigger}' "$L"
+jq -c 'select(.agentId==null and .type=="tool.execution_start") | {line: input_line_number, at: .timestamp, tool: .data.toolName}' "$L"
+jq -c 'select(.agentId==null and (.type=="assistant.message" or .type=="assistant.turn_end")) | {line: input_line_number, type, tools: (.data.toolRequests // [] | length), text: (.data.content // "" | .[0:60])}' "$L"
 ```
 
-Pass for the opted-in Project: the first typed message carries the tag; a `skill.invoked` with `name` `wintermute-project`, `source` `plugin` and `plugin` `wintermute` comes after it and before the first session tool (`create_session`, `send_session_message`, `open_pr_session`, `open_issue_session`); the first reply after the message starts with `wintermute-project rules loaded.`.
+Pass for the opted-in Project, in this order: the first typed message starts with `/wintermute-project` and the tag; an own `skill.invoked` with `name` `wintermute-project`, `source` `plugin` and `plugin` `wintermute`; the first own session tool (`create_session`, `send_session_message`, `open_pr_session` or `open_issue_session`). The first assistant text starts with `wintermute-project rules loaded.`.
 
-Run the same four commands with `P=<N>`. Pass for the negative Project: its typed message is the negative prompt with the tag; an assistant message follows it; and either no `skill.invoked` has `name` `wintermute-project`, or none of the listed tools follows that load and no reply starts with the loaded line. No log, no negative prompt or no reply: not measured.
+Run the same four commands with `P=<N>`. Pass for the negative Project: its first typed message is the negative prompt with the tag; an assistant message with `tools` 0 and some text is followed by an `assistant.turn_end`; and between the prompt and that turn end there is no own call to `sql`, `update_project_memory`, `get_session`, `create_session`, `send_session_message`, `open_pr_session`, `open_issue_session`, `task`, `publish_chat_update`, `save_session_automation`, `relay_session_input`, `answer_session_input`, `respond_to_session_plan_v2`, `archive_session`, a shell tool, or a tool that changes files (`edit`, `create`, `apply_patch` or similar). List every own tool call in that turn, and say whether `wintermute-project` loaded.
 
-Rule out: a load of `wintermute-project-worker`, a load whose `source` isn't `plugin` or whose `plugin` isn't `wintermute`, and a load after the first session tool.
+Rule out: no negative log, prompt or completed turn (not measured); a forbidden call after a `wintermute-project` load (fail); a forbidden call with no such load (not measured: "ordinary Project behaviour; the control didn't hold"); a message with tool requests taken as the reply; a load of `wintermute-project-worker`, from another plugin or source, or after the first session tool.
 
 - [ ] **Step 3: S2, the dispatch**
 
 ```bash
-P=<P>; L="$HOME/.copilot/session-state/$P/events.jsonl"
-jq -c 'select(.type=="tool.execution_start" and .agentId==null and (.data.toolName | IN("create_session","open_pr_session","open_issue_session"))) | {line: input_line_number, id: .data.toolCallId, tool: .data.toolName, kickoff: (.data.arguments.kickoff // {} | {model, reasoning_effort, agent, mode})}' "$L"
-jq -c 'select(.type=="tool.execution_complete" and .agentId==null and (.data.result.content // "" | test("Assignment ID"))) | {line: input_line_number, id: .data.toolCallId, success: .data.success, result: .data.result.content}' "$L"
-C=<C>; LC="$HOME/.copilot/session-state/$C/events.jsonl"
-jq -c 'select((.type=="session.start" or .type=="session.resume" or .type=="session.model_change") and .agentId==null) | {line: input_line_number, type, model: (.data.selectedModel // .data.newModel), effort: .data.reasoningEffort}' "$LC"
-jq -c 'select(.type=="tool.execution_start" and .agentId==null) | {line: input_line_number, tool: .data.toolName, model: .data.model}' "$LC" | head -3
+P=<P>; KID="<session IDs of the child>"; DB="$HOME/.copilot/data.db"; L="$HOME/.copilot/session-state/$P/events.jsonl"
+jq -c 'select(.agentId==null and .type=="tool.execution_start" and (.data.toolName | IN("create_session","open_pr_session","open_issue_session"))) | {line: input_line_number, id: .data.toolCallId, tool: .data.toolName, kickoff: (.data.arguments.kickoff // {} | {model, reasoning_effort, agent, mode})}' "$L"
+jq -c 'select(.agentId==null and .type=="tool.execution_complete" and (.data.result.content // "" | test("Assignment ID"))) | {line: input_line_number, id: .data.toolCallId, success: .data.success, result: .data.result.content}' "$L"
+for S in $KID; do
+  LC="$HOME/.copilot/session-state/$S/events.jsonl"; echo "== $S"
+  jq -c 'select(.agentId==null and (.type | IN("session.start","session.resume","session.model_change"))) | {line: input_line_number, type, model: (.data.selectedModel // .data.newModel), effort: .data.reasoningEffort}' "$LC"
+  jq -c 'select(.agentId==null and .type=="tool.execution_start") | {line: input_line_number, tool: .data.toolName, model: .data.model}' "$LC" | head -3
+  sqlite3 -readonly -json "$DB" "SELECT id, model, reasoning_effort FROM sessions WHERE id = '$S'"
+done
 ```
 
-Pass: one session tool call, a `create_session` with `model` and `reasoning_effort` set and `agent` null; its completion succeeded, names `C` and gives the assignment ID `A`; the child's last own model event before its first own tool call, and that call's `model`, match the request; the `model` and `reasoning_effort` from Step 1's assignment query match too. Rule out: a `session.model_change` with a top-level `agentId`, which belongs to a sub-agent. No child log: not measured.
+Pass: one session tool call, a `create_session` with `model` and `reasoning_effort` set and `agent` null; its completion succeeded, names the child and gives `A`; the child's last own model event before its first own tool call, that call's `model`, and the `sessions` row all match the request. Rule out: a `session.model_change` with a top-level `agentId`, which isn't printed here because it belongs to a sub-agent. No child log: not measured. If the notes say the app offered no model choice, write the Project's effective model from its own model events.
 
 - [ ] **Step 4: S3, the handoff**
 
 ```bash
-C=<C>; LC="$HOME/.copilot/session-state/$C/events.jsonl"
-jq -c 'select(.type=="tool.execution_start" and .agentId==null and .data.toolName=="send_session_message") | {line: input_line_number, id: .data.toolCallId, to: .data.arguments.session_id, purpose: .data.arguments.purpose, assignment: .data.arguments.assignment_id, message: .data.arguments.message}' "$LC"
-jq -c 'select(.type=="tool.execution_complete" and .agentId==null and .data.toolCallId=="<id from the line above>") | {success: .data.success, result: .data.result.content}' "$LC"
-P=<P>; DB="$HOME/.copilot/data.db"
-sqlite3 -readonly -json "$DB" "SELECT assignment_id, child_session_id, purpose, created_at, delivered_at_ms FROM persistent_project_results WHERE coordinator_session_id = '$P'"
+P=<P>; KID="<session IDs of the child>"
+for S in $KID; do
+  LC="$HOME/.copilot/session-state/$S/events.jsonl"; echo "== $S"
+  jq -c 'select(.agentId==null and .type=="tool.execution_start" and .data.toolName=="send_session_message") | {line: input_line_number, id: .data.toolCallId, to: .data.arguments.session_id, purpose: .data.arguments.purpose, assignment: .data.arguments.assignment_id, message: .data.arguments.message}' "$LC"
+done
 ```
 
-Pass: a call to `P` with `purpose` `handoff`, `assignment` equal to `A` (non-empty), and a message whose first line is `swarm-status: complete unit=<label>` and whose `Summary:` doesn't start with "Partial:"; its completion succeeded; a `persistent_project_results` row with `assignment_id` `A`, `child_session_id` `C`, `purpose` `handoff` and a `delivered_at_ms`. Rule out: an empty or null `assignment` (two missing IDs are not a match), another assignment's ID, and a "Partial:" handoff. A successful send with no delivered row: not measured.
+The child's final report is the last call to `<P>` with `purpose` `handoff`. With its `id` and its session:
+
+```bash
+P=<P>; S=<session ID that holds the final report>; ID=<id of the final report>; DB="$HOME/.copilot/data.db"
+jq -c --arg id "$ID" 'select(.agentId==null and .type=="tool.execution_complete" and .data.toolCallId==$id) | {success: .data.success, result: .data.result.content}' "$HOME/.copilot/session-state/$S/events.jsonl"
+sqlite3 -readonly -json "$DB" "SELECT assignment_id, child_session_id, purpose, source_tool_call_id, created_at, delivered_at_ms FROM persistent_project_results WHERE coordinator_session_id = '$P' AND source_tool_call_id = '$ID'"
+```
+
+Pass: the call has `assignment` equal to `A` (non-empty), a first line `swarm-status: complete unit=<label>` and a `Summary:` line that doesn't start with "Partial:"; its completion succeeded; one result row, with `assignment_id` `A`, `child_session_id` one of `<KID>`, `purpose` `handoff` and a `delivered_at_ms`. Rule out: an empty or null `assignment` (two missing IDs are not a match), another assignment's ID, a "Partial:" handoff, and a delivered row of an earlier report on `A`. A row with no `delivered_at_ms`: not measured.
 
 - [ ] **Step 5: S4, the tests**
 
 ```bash
-C=<C>; LC="$HOME/.copilot/session-state/$C/events.jsonl"
-jq -c 'select(.type=="tool.execution_start" and .agentId==null and (.data.toolName | IN("bash","read_bash"))) | {line: input_line_number, id: .data.toolCallId, tool: .data.toolName, mode: .data.arguments.mode, shell: .data.arguments.shellId, command: .data.arguments.command}' "$LC"
-jq -c 'select(.type=="tool.execution_complete" and .agentId==null and .data.toolCallId=="<id of a test, validate or read_bash call>") | {success: .data.success, exit: .data.shellExecution.exitCode, error: .data.error.code, tail: (.data.result.content // "" | .[-600:])}' "$LC"
-jq -c 'select(.type=="tool.execution_complete" and .data.error.code=="denied") | {line: input_line_number, id: .data.toolCallId}' "$LC"
-DB="$HOME/.copilot/data.db"; sqlite3 -readonly -json "$DB" "SELECT s.mode, w.branch, w.created_pr_html_url FROM sessions s LEFT JOIN workspaces w ON w.session_id = s.id WHERE s.id = '$C'"
+KID="<session IDs of the child>"
+for S in $KID; do
+  LC="$HOME/.copilot/session-state/$S/events.jsonl"; echo "== $S"
+  jq -c 'select(.agentId==null and (.type=="session.mode_changed" or (.type=="user.message" and .data.agentMode != null))) | {line: input_line_number, type, mode: (.data.newMode // .data.agentMode)}' "$LC"
+  jq -c 'select(.agentId==null and .type=="tool.execution_start" and (.data.toolName | IN("bash","read_bash","write_bash"))) | {line: input_line_number, id: .data.toolCallId, tool: .data.toolName, async: (.data.arguments.mode == "async"), shell: .data.arguments.shellId, command: .data.arguments.command}' "$LC"
+  jq -c 'select(.agentId==null and .type=="tool.execution_complete" and (.data.shellExecution != null or ((.data.result.content // "") | test("shellId: ")))) | {line: input_line_number, id: .data.toolCallId, success: .data.success, exit: .data.shellExecution.exitCode, marker: [(.data.result.content // "") | scan("<shellId: [^ ]+ completed with exit code [0-9]+")], counts: [(.data.result.content // "") | scan("(?:ℹ|#) (?:tests|pass|fail) [0-9]+")], validated: ((.data.result.content // "") | test("Plugin validation passed"))}' "$LC"
+  jq -c 'select(.type=="tool.execution_complete" and .data.error.code=="denied") | {line: input_line_number, id: .data.toolCallId}' "$LC"
+done
+gh pr list -R ncksol/ai_tools --state all --head <the child's branch from Step 1> --json number,url
 ```
 
-Run the second command for the last call that ran `npm test`, the last that ran `npm run validate`, and, for a command started in async mode, the last `read_bash` with its shell ID. Then, with the `branch` from the last command:
+Take the last call that ran `npm test` and the last that ran `npm run validate`. Pass: for each, its own completion has `success` true and `exit` 0, or, for an async shell, the `read_bash` results for that shell ID run up to one whose `marker` says `completed with exit code 0`; the output of that same shell, up to then, has a `pass` count above 0 and `fail 0` (as `ℹ` or `#` lines), and `validated` true for `npm run validate`; the commands ran in `ghcp/plugins/wintermute` at the commit from the notes, which the result file names; no denied call; the mode in effect at each command, the latest mode line before it, is `autopilot`; no command ran `git commit`, `git push` or `gh pr create`; Step 1's `created_pr_html_url` is null and the PR list prints `[]`; and the handoff says the worktree is clean. Rule out: an exit code or output from another call; a pipe that hides the exit code; a command that only prints the words; a denial, which fails S4 even if a later call passed; the current `sessions.mode` or the `async` flag, which are not the mode at the command.
+
+- [ ] **Step 6: Costs and time**
 
 ```bash
-gh pr list -R ncksol/ai_tools --state all --head <branch> --json number,url
-```
-
-Pass: for each test and validate run, `success` true and `exit` 0 (or, for async, the `read_bash` output says `completed with exit code 0`), and the same output shows `ℹ pass` above 0 and `ℹ fail 0` for `npm test`, and `Plugin validation passed` for `npm run validate`; the commands ran in `ghcp/plugins/wintermute` at `main`'s commit from the notes (the result file's commit); no denied call; `mode` is `autopilot`; `created_pr_html_url` is null and the PR list prints `[]`; no command ran `git commit`, `git push` or `gh pr create`; and the handoff says the worktree is clean. Rule out: an exit code or output from another call; a pipe that hides the exit code; a command that only prints the words; a denial, which fails S4 even if a later call passed.
-
-- [ ] **Step 6: Dashboard numbers and time**
-
-```bash
-P=<P>; N=<N>; TAG=<tag>; OUT=<OUT>; DB="$HOME/.copilot/data.db"
+P=<P>; N=<N>; KID="<session IDs of the child>"; TAG=<tag>; OUT=<OUT>; DB="$HOME/.copilot/data.db"
 cd "$HOME/.copilot/installed-plugins/ai-tools/wintermute"
-node scripts/swarm-snapshot.mjs --swarm "$P" --no-pr-lookup > "$OUT/$TAG-snapshot.json"
-jq -c '{usd: .cost.usd, byModel: .cost.byModel, coordinator: {model: .orchestrator.model, effort: .orchestrator.effort, credits: .orchestrator.cost.credits, subagents: (.orchestrator.subagents | length)}, units: [.units[] | {label: .label, model: .model, effort: .effort, credits: .cost.credits, subagents: (.subagents | length)}]}' "$OUT/$TAG-snapshot.json"
-sqlite3 -readonly "$DB" "SELECT id, total_nano_aiu / 1e11 AS usd FROM sessions WHERE id = '$N'"
+if node scripts/swarm-snapshot.mjs --swarm "$P" --no-pr-lookup > "$OUT/$TAG-snapshot.json"; then
+  jq -c '{usd: .cost.usd, byModel: .cost.byModel, coordinator: {model: .orchestrator.model, effort: .orchestrator.effort, credits: .orchestrator.cost.credits, subagents: (.orchestrator.subagents | length)}, units: [.units[] | {label: .label, model: .model, effort: .effort, credits: .cost.credits, subagents: (.subagents | length)}]}' "$OUT/$TAG-snapshot.json"
+else
+  echo "no swarm for $P: dashboard numbers unavailable"
+fi
+for S in "$P" "$N" $KID; do sqlite3 -readonly "$DB" "SELECT id, title, total_nano_aiu / 1e11 AS usd FROM sessions WHERE id = '$S'"; done
 ```
 
-Write the opted-in Project's dollars, the negative Project's dollars, and the minutes from the opt-in message's timestamp (Step 2) to the handoff's `delivered_at_ms` (Step 4). These are for the record; the caps were the user's to act on.
+Write the dashboard's total for the opted-in Project, or "unavailable"; the `data.db` cost of each session, labelled as such; and the minutes from the opt-in message (Step 2) to the final report's `delivered_at_ms` (Step 4). These are for the record; the caps were the user's to act on.
 
 - [ ] **Step 7: The `/compact` observation**
 
 ```bash
 P=<P>; L="$HOME/.copilot/session-state/$P/events.jsonl"
-jq -c 'select((.type | startswith("session.compaction")) and .agentId==null) | {line: input_line_number, at: .timestamp, type, trigger: .data.trigger, success: .data.success}' "$L"
+jq -c 'select(.agentId==null and ((.type | startswith("session.compaction")) or .type=="user.message")) | {line: input_line_number, at: .timestamp, type, trigger: .data.trigger, outcome: .data.outcome, success: .data.success, text: (if .type=="user.message" then (.data.content // "" | .[0:60]) else null end)}' "$L"
 ```
 
-Write whether an own compaction follows the user's `/compact` in time, with its trigger as recorded, and whether the next reply starts with the loaded line. This decides nothing.
+With the time of `/compact` from the notes: write whether an own compaction started after that time and before the user's next message, with `outcome` `applied` and a trigger other than `threshold`, and its trigger as recorded; and whether the next reply starts with the loaded line. Otherwise write "unknown". This decides nothing.
 
 - [ ] **Step 8: Write the report, and hand off**
 
@@ -1381,150 +1402,153 @@ Write `$OUT/<tag>-check.md`: for S1–S4, the verdict, the records (session IDs 
 
 ### Task 8: Gate 1
 
-The orchestrator does this.
+The orchestrator does this (design 8.13).
 
 - [ ] **Step 1: Read the report**
 
-Read `$OUT/<tag>-check.md` and check, as a quick job, that each verdict names its records.
+Read `$OUT/<tag>-check.md` and check, as a quick job, that each verdict names its records. A condition that is not measured: start the checker once more on the same logs, then read its new report.
 
-- [ ] **Step 2: Decide the next step (design 8.10)**
+- [ ] **Step 2: Bring the result to the user**
 
-- S1–S4 all pass: ask the user, tagged `[unit=* need=question]`, with the report's verdicts, the dashboard numbers and the user's notes, whether to start the real task (Task 9).
-- A fail caused by the skill text, with the fix round unused: a patch PR on the two skills through the normal gates; after it merges, Tasks 5–8 again with a new tag.
-- Not measured: start the checker again on the same logs; if it is still not measured, Tasks 6–8 once more with a new tag; after that, the user decides, and the record says what was not measured.
-- Any other fail, or a second one: bring the no-go to the user with the report, as in Task 11.
+Send the user, tagged `[unit=* need=question]`, the verdicts, the costs and the user's notes, with one of these questions:
+
+- S1–S4 all pass: "Run the real task (Task 9), or stop here? If you stop: remove the skills, or keep them for later?"
+- A fail caused by the skill text, with the fix round unused: "Try the fix round (a patch PR on the two skills, then a new smoke check), or stop and remove the skills?"
+- Any other result, including a condition still not measured: "The smoke check didn't pass. Remove the skills, or run a new smoke check?" A new smoke check is offered only when the negative control didn't hold or a record was missing.
 
 - [ ] **Step 3 (USER): Clean up the smoke check**
 
-Task 12, for `<tag>-project` and `<tag>-negative`.
+Task 12, for `<tag>-project` and `<tag>-negative`, before anything else runs.
+
+- [ ] **Step 4: Act on the answer**
+
+The real task: Task 9. The fix round: the patch PR through the normal gates, then Tasks 5–8 with a new tag. A new smoke check: Tasks 6–8 with a new tag. Removal: record the outcome, then Task 13. Keeping the skills for later: record it, and stop.
 
 ### Task 9 (USER): The real task
 
-Design 8.11. Only after a passing smoke check, and only if you agreed in Task 8.
+Design 8.11. Only after a passing smoke check, and only if you chose it in Task 8.
 
-- [ ] **Step 1 (USER): Choose the task, the tag and the budget**
+- [ ] **Step 1 (USER): Choose the task, the tag, the budget and the time limit**
 
-Choose one real task, of the kind you would normally give to `wintermute-core`. In a terminal, `date -u +wm-eval-%Y%m%d` prints the tag; use it as `<tag>` below. Write down the most you will spend on the task. Note the app's approval settings, and don't change them during the task.
+Choose one real task in a GitHub repository, of the kind you would normally give to `wintermute-core`. In a terminal, `date -u +wm-eval-%Y%m%d-%H%M` prints the tag; use it as `<tag>` below, and tell the orchestrator, which checks that nothing in `$OUT` starts with it yet. Write down the most you will spend, and a time limit. The dashboard shows the Project only once it has a child session: if the task may be done by sub-agents alone, such as some research, the time limit is what you watch. Note the app's approval settings, and don't change them during the task.
 
 - [ ] **Step 2 (USER): Choose the target branch**
 
 If the task will open PRs, choose its target:
 
-- the default, a disposable base branch: in a checkout of the task's repository, with `<target>` the branch the work would normally merge into, run
+- the default, a disposable base branch. With the task's repository as `<owner>/<repo>` and `<target>` the branch the work would normally merge into, run:
 
   ```bash
-  git fetch origin <target>
-  git ls-remote --exit-code origin refs/heads/<tag>-base; echo "exit $?"
+  gh api repos/<owner>/<repo>/git/ref/heads/<target> --jq .object.sha
   ```
 
-  Expected: `exit 2`, so the branch doesn't exist yet. Then run
+  It prints the target's commit: use it as `<commit>`. Then:
 
   ```bash
-  git push origin "refs/remotes/origin/<target>:refs/heads/<tag>-base"
+  gh api -X POST repos/<owner>/<repo>/git/refs -f ref=refs/heads/<tag>-base -f sha=<commit> --jq '{ref: .ref, sha: .object.sha}'
+  gh api repos/<owner>/<repo>/git/ref/heads/<tag>-base --jq .object.sha
   ```
 
-  Expected: `* [new branch]`, and note the commit it printed. Any other output: stop, and don't use that branch;
+  Expected: `{"ref":"refs/heads/<tag>-base","sha":"<commit>"}`, then `<commit>` again. Note it. If the first command fails, for example because the branch already exists, don't use that branch: choose a new tag and start this step again;
 - or the real branch, for work that should land; then every merge into it needs your go-ahead for that PR, as usual.
 
 A task that opens no PR needs neither.
 
 - [ ] **Step 3 (USER): Create the Project**
 
-In the app, create a Project whose name starts with `<tag>`, for example `<tag> orders API`, with the task's repository, and choose the model and effort you would use for a coordinator. Open the swarm dashboard.
+In the app, create a Project whose name starts with `<tag>`, for example `<tag> orders API`, with the task's repository. If the app offers a model and effort, choose the ones you would use for a coordinator; either way, note what it showed. Note the Project's exact name. Open the swarm dashboard, as in Task 6, Step 5.
 
 - [ ] **Step 4 (USER): Opt in and give the task**
 
 Send, with your tag, task and target branch:
 
 ```text
-/wintermute-project <tag>: <the task, as you would write it>. Target branch: <tag>-base, or the real branch you chose. Show me the plan and wait for my approval before you start.
+/wintermute-project <tag>: <the task, as you would write it>. Target branch: <tag>-base, or the real branch you chose, or none if there is no PR. Show me the plan and wait for my approval before you start.
 ```
+
+If the app doesn't accept the message, or the reply doesn't start with `wintermute-project rules loaded.`, note what happened and go to Step 8.
 
 - [ ] **Step 5 (USER): Work as usual, and take notes**
 
-Review the plan, answer questions and give go-aheads as you normally would. Before you give a merge go-ahead, check that the question names the repository, the PR, its base branch and its head commit. Note as you go: what you had to click, watch or wait for; anything confusing; any time you opened a child's session to unblock it; every hold and denial; what the Overview and the Inbox showed, and when.
+Review the plan, answer questions and give go-aheads as you normally would. Before you give a go-ahead to open, publish or merge a PR, check that the question names the repository, the PR, its base branch and its head commit. Note as you go: what you had to click, watch or wait for; anything confusing; any time you opened a child's session to unblock it; every hold and denial; what the Overview and the Inbox showed, and when.
 
 - [ ] **Step 6 (USER): Try `/compact` once**
 
-While children are working, or after the last merge, type `/compact` in the Project. Note whether the app accepted it. If it did, send `<tag>: What is the state of the task? Don't change anything.` and note whether the reply starts with `wintermute-project rules loaded.`; if it doesn't, send `/wintermute-project` once and note that you did.
+While children are working, or after the last merge, note the clock time and type `/compact` in the Project. Note whether the app accepted it. If it did, send `<tag>: What is the state of the task? Don't change anything.` and note whether the reply starts with `wintermute-project rules loaded.`; if it doesn't, send `/wintermute-project` once and note that you did.
 
-- [ ] **Step 7 (USER): Stop at the budget**
+- [ ] **Step 7 (USER): Stop at the budget or the time limit**
 
-If the dashboard shows the Project at your budget, send `Stop: start nothing new, and tell me what is still open.`, and note it.
+If the dashboard shows the Project at your budget, or the time limit passes, send `Stop: start nothing new, and tell me what is still open.`, and note it.
 
 - [ ] **Step 8 (USER): Tell the orchestrator**
 
-When the work is merged, or you stopped it, send the orchestrator this text, filled in:
+When the work is merged, when you accept the result of a task with no PR, or when you stopped it, send the orchestrator this text, filled in:
 
 ```text
 real task done
 Tag: <tag>
-Project name: <name>
+Project name, exactly: <name>
 Task, in one line: <what it was>
-Target branch: <tag>-base at <commit>, or <the real branch>
-Budget: <dollars>; dashboard cost at the end: <dollars>
+How it ended: <merged, result accepted, or stopped, and why>
+Target branch: <tag>-base at <commit>, or <the real branch>, or none
+Budget and time limit: <dollars, minutes>; dashboard cost at the end: <dollars, or not shown>
+Model picker: <what it showed, or none>
 Approval settings: <what they were>
 Clicks, waits and confusion: <notes>
 Opened a child's session to unblock it: <no, or when and why>
 Holds and denials: <none, or each one and where>
 Overview and Inbox: <what showed, and when>
-/compact accepted: <yes or no>; reply started with the loaded line: <yes, no or not tried>; I sent /wintermute-project again: <yes or no>
+/compact typed at: <time>; accepted: <yes or no>; reply started with the loaded line: <yes, no or not tried>; I sent /wintermute-project again: <yes or no>
 ```
 
 The orchestrator saves it as `$OUT/<tag>-notes.md`.
 
 ### Task 10: Check the real task
 
-A one-off checker session, read-only, at Sol `high`, or Opus at `high` when the Project's coordinator runs on an OpenAI model (design 8.12). Its kickoff gives the tag, the Project's name, `$OUT`, the user's notes and this task.
+A one-off checker session, read-only, at Sol `high`, or Opus at `high` when the Project's coordinator runs on an OpenAI model (design 8.12). Its kickoff gives the tag, the Project's exact name, `$OUT`, the user's notes and this task.
 
 **Files (outside the repository):**
 - Create: `$OUT/<tag>-check.md`, `$OUT/<tag>-snapshot.json`
 
 **Interfaces:**
-- Consumes: the tag, the Project's name and the user's notes (Task 9).
-- Produces: one short note for each of F1–F7, "ok", "problem" or "not seen", with its records; the dashboard numbers.
+- Consumes: the tag, the Project's exact name and the user's notes (Task 9).
+- Produces: one short note for each of F1–F7, "ok", "problem" or "not seen", with its records; the dashboard numbers, or "unavailable".
 
 - [ ] **Step 1: Find the Project and its children**
 
 ```bash
-TAG=<tag>; DB="$HOME/.copilot/data.db"
-sqlite3 -readonly -json "$DB" "SELECT s.id, s.title, s.created_at, s.model, s.reasoning_effort FROM persistent_projects p JOIN sessions s ON s.id = p.session_id WHERE s.title LIKE '$TAG%' ORDER BY s.created_at"
+TAG=<tag>; OUT=<OUT>; NAME='<the Project's exact name>'; DB="$HOME/.copilot/data.db"
+for f in "$OUT/$TAG-check.md" "$OUT/$TAG-snapshot.json"; do [ -e "$f" ] && echo "exists: $f"; done; echo "checked outputs"
+sqlite3 -readonly -json "$DB" "SELECT s.id, s.title, s.created_at, s.model, s.reasoning_effort FROM persistent_projects p JOIN sessions s ON s.id = p.session_id WHERE s.title = '$NAME'"
 ```
 
-Expected: one row, whose title is the Project's name from the notes. Its `id` is `P`. Any other result: every note is "not seen"; write that and hand off.
+Expected: only `checked outputs`, then one row, whose `id` is `<P>`. An existing output: stop and report it. Any other rows: every note is "not seen"; write that and hand off. If the name holds a single quote, double it inside the SQL string.
 
-```bash
-P=<P>; DB="$HOME/.copilot/data.db"
-sqlite3 -readonly -json "$DB" "SELECT 'repository' AS kind, session_id, name AS title, created_at FROM workspaces WHERE creator_session_id = '$P' OR coordinating_creator_session_id = '$P' UNION ALL SELECT 'chat', l.session_id, s.title, s.created_at FROM chat_parent_links l LEFT JOIN sessions s ON s.id = l.session_id WHERE l.parent_session_id = '$P'"
-sqlite3 -readonly -json "$DB" "SELECT a.id AS assignment_id, a.child_session_id, s.model, s.reasoning_effort, s.mode FROM persistent_project_assignments a LEFT JOIN sessions s ON s.id = a.child_session_id WHERE a.coordinator_session_id = '$P'"
-sqlite3 -readonly -json "$DB" "SELECT assignment_id, child_session_id, purpose, substr(content, 1, 160) AS content, delivered_at_ms FROM persistent_project_results WHERE coordinator_session_id = '$P'"
-```
-
-The child sessions' IDs are `KIDS` below, separated by spaces.
+Run the two queries of Task 7, Step 1, second block, with `P=<P>`. The `session_ids` of all children together are `<KIDS>` below. Keep `created_at` and `archived_at` for F6.
 
 - [ ] **Step 2: F1, skill loads**
 
 ```bash
-P=<P>; KIDS="<child IDs>"
+P=<P>; KIDS="<all child session IDs>"
 for S in "$P" $KIDS; do
   L="$HOME/.copilot/session-state/$S/events.jsonl"; echo "== $S"
-  jq -c 'select(.type=="skill.invoked") | {line: input_line_number, name: .data.name, source: .data.source, plugin: .data.pluginName}' "$L"
-  jq -c 'select(.type=="tool.execution_start" and .agentId==null and .data.toolName!="skill") | {line: input_line_number, first_tool: .data.toolName}' "$L" | head -1
+  jq -c 'select(.agentId==null and .type=="skill.invoked") | {line: input_line_number, name: .data.name, source: .data.source, plugin: .data.pluginName}' "$L"
+  jq -c 'select(.agentId==null and .type=="tool.execution_start" and .data.toolName!="skill") | {line: input_line_number, first_tool: .data.toolName}' "$L" | head -1
 done
 ```
 
-Ok: `P` loads `wintermute-project` from source `plugin`, plugin `wintermute`, after the opt-in message and before its first session tool; each child loads `wintermute-project-worker` the same way before its first own tool other than `skill`; no child loads `wintermute-project`.
+Ok: `<P>` loads `wintermute-project` from source `plugin`, plugin `wintermute`, after the opt-in message and before its first session tool; each child loads `wintermute-project-worker` the same way before its first own tool other than `skill`; no child loads `wintermute-project`.
 
 - [ ] **Step 3: F2, models**
 
 ```bash
-P=<P>; KIDS="<child IDs>"; L="$HOME/.copilot/session-state/$P/events.jsonl"
-jq -c 'select(.type=="tool.execution_start" and .agentId==null and (.data.toolName | IN("create_session","open_pr_session","open_issue_session"))) | {line: input_line_number, tool: .data.toolName, name: .data.arguments.name, kickoff: (.data.arguments.kickoff // {} | {model, reasoning_effort, agent, mode})}' "$L"
-jq -c 'select(.type=="tool.execution_start" and .agentId==null and .data.toolName=="task") | {line: input_line_number, id: .data.toolCallId, agent_type: .data.arguments.agent_type, model: .data.arguments.model, effort: .data.arguments.reasoning_effort}' "$L"
+P=<P>; KIDS="<all child session IDs>"; L="$HOME/.copilot/session-state/$P/events.jsonl"
+jq -c 'select(.agentId==null and .type=="tool.execution_start" and (.data.toolName | IN("create_session","open_pr_session","open_issue_session"))) | {line: input_line_number, tool: .data.toolName, name: .data.arguments.name, kickoff: (.data.arguments.kickoff // {} | {model, reasoning_effort, agent, mode})}' "$L"
+jq -c 'select(.agentId==null and .type=="tool.execution_start" and .data.toolName=="task") | {line: input_line_number, id: .data.toolCallId, agent_type: .data.arguments.agent_type, model: .data.arguments.model, effort: .data.arguments.reasoning_effort}' "$L"
 jq -c 'select(.type=="subagent.started") | {line: input_line_number, call: .data.toolCallId, model: .data.model}' "$L"
 for S in $KIDS; do
   echo "== $S"
-  jq -c 'select((.type=="session.start" or .type=="session.resume" or .type=="session.model_change") and .agentId==null) | {line: input_line_number, model: (.data.selectedModel // .data.newModel), effort: .data.reasoningEffort}' "$HOME/.copilot/session-state/$S/events.jsonl"
+  jq -c 'select(.agentId==null and (.type | IN("session.start","session.resume","session.model_change"))) | {line: input_line_number, model: (.data.selectedModel // .data.newModel), effort: .data.reasoningEffort}' "$HOME/.copilot/session-state/$S/events.jsonl"
 done
 ```
 
@@ -1533,34 +1557,42 @@ Ok: each session request sets `model` and `reasoning_effort` and no `agent`, and
 - [ ] **Step 4: F3, PR gates (only if the task opened PRs)**
 
 ```bash
-P=<P>; KIDS="<child IDs>"
+P=<P>; KIDS="<all child session IDs>"
 for S in "$P" $KIDS; do
   L="$HOME/.copilot/session-state/$S/events.jsonl"; echo "== $S"
-  jq -c 'select(.type=="tool.execution_start" and .agentId==null and .data.toolName=="bash" and (.data.arguments.command | test("gh pr (create|ready|merge)|az repos pr (create|update)"))) | {line: input_line_number, id: .data.toolCallId, command: .data.arguments.command}' "$L"
-  jq -c 'select(.type=="tool.execution_start" and .agentId==null and .data.toolName=="publish_chat_update") | {line: input_line_number, attachments: [.data.arguments.attachments[]? | {kind, url}]}' "$L"
+  jq -c 'select(.agentId==null and .type=="tool.execution_start" and ((.data.toolName | IN("create_pull_request","update_pull_request","publish_chat_update")) or (.data.toolName=="bash" and ((.data.arguments.command // "") | test("gh pr (create|ready|merge)"))))) | {line: input_line_number, at: .timestamp, id: .data.toolCallId, tool: .data.toolName, args: (if .data.toolName=="bash" then .data.arguments.command else (.data.arguments | tostring | .[0:300]) end)}' "$L"
 done
-jq -c 'select(.type=="user.message" and .data.source==null and ((.data.content // "") | startswith("<system_notification>") | not)) | {line: input_line_number, at: .timestamp, text: (.data.content // "" | .[0:200])}' "$HOME/.copilot/session-state/$P/events.jsonl"
+L="$HOME/.copilot/session-state/$P/events.jsonl"
+jq -c 'select(.agentId==null and ((.type=="user.message" and .data.source==null and ((.data.content // "") | (startswith("<system_notification>") or test("<cross_session_message>")) | not)) or (.type=="tool.execution_start" and .data.toolName=="ask_user") or (.type=="tool.execution_complete" and ((.data.result.content // "") | test("^User responded|\"outcome\": ?\"answered"))) or (.type=="assistant.message" and ((.data.content // "") | test("need=pr"))))) | {line: input_line_number, at: .timestamp, type, text: ((.data.content // .data.result.content // (.data.arguments | tostring)) | .[0:240])}' "$L"
 ```
 
-For each PR URL, read it once:
+For each start in the first output, read its completion in the same session:
 
 ```bash
-gh pr view <PR URL> --json url,number,baseRefName,headRefOid,state,mergedAt,mergeCommit
+S=<session ID>; ID=<call ID>
+jq -c --arg id "$ID" 'select(.agentId==null and .type=="tool.execution_complete" and .data.toolCallId==$id) | {at: .timestamp, success: .data.success, exit: .data.shellExecution.exitCode, result: (.data.result.content // "" | .[0:300])}' "$HOME/.copilot/session-state/$S/events.jsonl"
 ```
 
-Ok: each PR, identified by its full URL, was published only after its review and claims check reported clean at the published head (their handoffs' `commit=`); it merged only after the user's typed go-ahead for that PR, which followed a question that named its repository, base branch and head, and only at a head where its review, its claims check and, for the task's last unit, the final panel were clean; `gh pr view` shows it merged into that base, with a merge commit; the claims checker was a separate session from the owner and the reviewers; a claims check ran on the target branch at the last merge commit. A PR in another repository with the same number, a URL in a message without this readback, or a go-ahead taken from memory or a summary, is a problem.
+For each PR URL, read the PR once:
+
+```bash
+gh pr view <PR URL> --json url,number,baseRefName,headRefOid,state,isDraft,mergedAt,mergeCommit,commits --jq '{url, number, baseRefName, headRefOid, state, isDraft, mergedAt, mergeCommit: .mergeCommit.oid, commits: [.commits[] | {oid, committedDate}]}'
+```
+
+Ok, for each PR, identified by its full URL: every open, publish (ready for review) and merge that happened has a successful completion (`success` true, or `exit` 0), and before it a user's answer (a typed message, a `User responded` result, or an answered relay) that gave the go-ahead for that action on that PR, after a question that named its repository, base branch and head, or a standing delegation that the user gave directly and whose scope covers it; the publish came after the review and the claims check reported clean at the commit in the owner's publish handoff, and `commits` shows no later commit before those reports; the merge came at a head where the review, the claims check and, for the last unit, the final panel were clean, and `gh pr view` shows it merged into that base, with a merge commit; the claims checker was a separate session from the owner and the reviewers; a claims check ran on the target branch at the last merge commit. What the records can't show, such as the head at an earlier time, is "not seen". A PR in another repository with the same number, a URL in a message without this readback, an Inbox card on its own, or a go-ahead from memory or a summary, is a problem.
 
 - [ ] **Step 5: F4, reports**
 
 ```bash
-KIDS="<child IDs>"
+P=<P>; KIDS="<all child session IDs>"; DB="$HOME/.copilot/data.db"
+sqlite3 -readonly -json "$DB" "SELECT sequence, source_tool_call_id, assignment_id, child_session_id, purpose, substr(content, 1, 200) AS content, delivered_at_ms FROM persistent_project_results WHERE coordinator_session_id = '$P' ORDER BY sequence"
 for S in $KIDS; do
   echo "== $S"
-  jq -c 'select(.type=="tool.execution_start" and .agentId==null and .data.toolName=="send_session_message") | {line: input_line_number, to: .data.arguments.session_id, purpose: .data.arguments.purpose, assignment: .data.arguments.assignment_id, lines: (.data.arguments.message | split("\n") | map(select(length > 0)) | length), first: (.data.arguments.message | split("\n")[0])}' "$HOME/.copilot/session-state/$S/events.jsonl"
+  jq -c 'select(.agentId==null and .type=="tool.execution_start" and .data.toolName=="send_session_message") | {line: input_line_number, at: .timestamp, id: .data.toolCallId, to: .data.arguments.session_id, purpose: .data.arguments.purpose, assignment: .data.arguments.assignment_id, lines: ((.data.arguments.message // "") | split("\n") | map(select(length > 0)) | length), message: .data.arguments.message}' "$HOME/.copilot/session-state/$S/events.jsonl"
 done
 ```
 
-Ok: every handoff, `needs_input` and `error` report carries a non-empty `assignment` from Step 1's assignments for that child; `purpose` matches the status in `first` (`blocked` goes with `error`); handoffs have `lines` at most 2; no `needs_input` asks for a go-ahead; every assignment with work to report has a final result in Step 1's results, or the coordinator explained why not. `progress` reports stay in the child's thread by design.
+Ok: each report's `id` matches one result row's `source_tool_call_id`, with the same `assignment_id`; every handoff, `needs_input` and `error` report carries a non-empty `assignment` that is one of that child's assignments from Step 1 and is about the work that assignment gave; `purpose` matches the status in the first line (`blocked` goes with `error`); handoffs have `lines` at most 2; the full `message` of each `needs_input` and `error` report asks for no go-ahead; every assignment with work to report has a final, delivered result, or the coordinator explained why not. A result row with no `source_tool_call_id` is the app's notice: write "ended without a report" for its assignment. `progress` reports stay in the child's thread by design.
 
 - [ ] **Step 6: F5, the Project's UI**
 
@@ -1570,88 +1602,81 @@ From the user's notes and Step 4's `publish_chat_update` calls: every child appe
 
 ```bash
 P=<P>; L="$HOME/.copilot/session-state/$P/events.jsonl"
-jq -c 'select((.type | startswith("session.compaction")) and .agentId==null) | {line: input_line_number, at: .timestamp, type, trigger: .data.trigger, success: .data.success}' "$L"
-jq -c 'select((.type=="tool.execution_start" and .agentId==null) or .type=="skill.invoked" or (.type=="user.message" and .data.source==null)) | {line: input_line_number, at: .timestamp, type, tool: .data.toolName, skill: .data.name, query: (.data.arguments.query // "" | .[0:80])}' "$L"
+jq -c 'select(.agentId==null and (.type | IN("session.compaction_start","session.compaction_complete","skill.invoked","tool.execution_start","tool.execution_complete","user.message"))) | {line: input_line_number, at: .timestamp, type, id: .data.toolCallId, tool: .data.toolName, success: .data.success, outcome: .data.outcome, trigger: .data.trigger, skill: .data.name, plugin: .data.pluginName, query: (if .data.toolName=="sql" and (.data.arguments | type)=="object" then (.data.arguments.query // "" | .[0:100]) else null end), target: (if .data.toolName=="get_session" and (.data.arguments | type)=="object" then .data.arguments.project_session_id else null end), text: (if .type=="user.message" then (.data.content // "" | .[0:60]) else null end)}' "$L"
 ```
 
-Ok: an own compaction follows the user's `/compact` from the notes (write its trigger as recorded; a missing or unknown trigger is written as such); after it and before the next state change (an SQL write, `update_project_memory`, a session tool, a publish, a merge, or a shell command that changes anything), the skill loads again or the user typed `/wintermute-project` once, `children` and `child_notes` are read, `get_session` covers every child that existed and wasn't archived at the compaction, and no second owner, reviewer or claims checker starts for work that has one. No compaction bound to the user's command: "not seen".
+With the time of `/compact` from the notes. Ok: an own compaction started after that time and before the user's next message, with `outcome` `applied` and a trigger other than `threshold` (write the trigger as recorded); after it, and before the next state change (an SQL write, `update_project_memory`, a session tool, a publish, a merge, or a shell command that changes anything): an own `skill.invoked` for `wintermute-project` (a typed `/wintermute-project` counts only through this load); `sql` reads of `children` and `child_notes` whose completions, matched by `id`, have `success` true; and successful `get_session` completions with a `target` for every child that existed and wasn't archived at the compaction (Step 1's `created_at` and `archived_at`); and no second owner, reviewer or claims checker started for work that had one. No such compaction: "not seen". A failed read or load: "problem".
 
 - [ ] **Step 8: F7, commands in autopilot**
 
-```bash
-KIDS="<child IDs>"
-for S in $KIDS; do
-  L="$HOME/.copilot/session-state/$S/events.jsonl"; echo "== $S"
-  jq -c 'select(.type=="tool.execution_start" and .agentId==null and .data.toolName=="bash" and (.data.arguments.command | test("npm (test|run)|node --test|pytest|dotnet test|go test|cargo test"))) | {line: input_line_number, id: .data.toolCallId, mode: .data.arguments.mode, command: .data.arguments.command}' "$L"
-  jq -c 'select(.type=="tool.execution_complete" and .agentId==null and .data.shellExecution != null) | {line: input_line_number, id: .data.toolCallId, exit: .data.shellExecution.exitCode}' "$L"
-  jq -c 'select(.type=="tool.execution_complete" and .data.error.code=="denied") | {line: input_line_number, id: .data.toolCallId}' "$L"
-done
-```
-
-Ok: owners and claims checkers ran the task's tests and checks, each judged by its own exit code and output as in Task 7, Step 5. List every denial and hold with its command and session.
+Run the commands of Task 7, Step 5 (without the `gh` line), with `KID` set to the session IDs of each owner and each claims checker in turn. Ok: every shell run of the task's tests and checks is judged as in Task 7, Step 5, with the mode in effect at the command. List every denial and hold with its command and session.
 
 - [ ] **Step 9: Dashboard numbers**
 
-```bash
-P=<P>; TAG=<tag>; OUT=<OUT>
-cd "$HOME/.copilot/installed-plugins/ai-tools/wintermute"
-node scripts/swarm-snapshot.mjs --swarm "$P" --no-pr-lookup > "$OUT/$TAG-snapshot.json"
-jq -c '{usd: .cost.usd, byModel: .cost.byModel, coordinator: {model: .orchestrator.model, effort: .orchestrator.effort, credits: .orchestrator.cost.credits, subagents: (.orchestrator.subagents | length)}, units: [.units[] | {label: .label, model: .model, effort: .effort, credits: .cost.credits, subagents: (.subagents | length)}]}' "$OUT/$TAG-snapshot.json"
-```
+Run the commands of Task 7, Step 6, with `N` left out of the last loop (`for S in "$P" $KIDS`).
 
 - [ ] **Step 10: Write the notes, and hand off**
 
-Write `$OUT/<tag>-check.md`: one short note for each of F1–F7 ("ok", "problem" with what happened, or "not seen"), each with its records (session IDs and log line numbers, or query rows); any hard failure from design 8.13, named as one; the dashboard numbers. Hand off with its path, and say that your worktree is clean.
+Write `$OUT/<tag>-check.md`: one short note for each of F1–F7 ("ok", "problem" with what happened, or "not seen"), each with its records (session IDs and log line numbers, or query rows); any hard failure from design 8.13, named as one; the dashboard numbers, or "unavailable" with the `data.db` costs. Hand off with its path, and say that your worktree is clean.
 
 ### Task 11: The gate
 
 - [ ] **Step 1: Bring the evidence to the user**
 
-The orchestrator sends the user, tagged `[unit=* need=question]`: the dashboard numbers (total cost, cost by model, sub-agents, each child's model and effort), the checker's F1–F7 notes, any hard failure named as one with a recommendation of no-go (design 8.13), and the user's own notes. Then it asks: "For your next task of this kind, would you run it in a Project with this skill rather than with `wintermute-core` in an ordinary session? Go or no-go?"
+The orchestrator sends the user, tagged `[unit=* need=question]`: the dashboard numbers (total cost, cost by model, sub-agents, each child's model and effort), or "unavailable" with the `data.db` costs; the checker's F1–F7 notes; any hard failure named as one, with a recommendation of no-go (design 8.13); and the user's own notes. Then it asks: "For your next task of this kind, would you run it in a Project with this skill rather than with `wintermute-core` in an ordinary session? Go or no-go?"
 
 - [ ] **Step 2 (USER): Decide**
 
-- **Go:** the orchestrator records the decision, with the user's reason if they give one, and any hard failure the user accepted, in its notes. Then Task 12 and Task 14.
+- **Go:** the orchestrator records the decision, with the user's reason if they give one, and any hard failure the user accepted. Then Task 12 and Task 14.
 - **No-go:** the orchestrator records it. Then Task 12 and Task 13.
-- **Fix round**, if a problem came from the skill text and the round is unused: a patch PR on the two skills through the normal gates, then Tasks 5–8 again with a new tag, and the real task again only if the user wants.
+- **Fix round**, if a problem came from the skill text, the round is unused and the user wants it: a patch PR on the two skills through the normal gates, then Tasks 5–8 again with a new tag, and the real task again only if the user chooses it.
 
 ### Task 12 (USER): Clean up
 
-Design 8.14. After the smoke check, after the real task, and after any stop. Do each item yourself, or tell the orchestrator to do one named item. Delete nothing on a guess.
+Design 8.14. After the smoke check, after the real task, before a new smoke check, and after any stop. Do each item yourself, or tell the orchestrator to do one named item. No step deletes a branch.
 
-- [ ] **Step 1 (USER): Stop the work**
+- [ ] **Step 1 (USER): Stop and settle the work**
 
-Send `Stop: start nothing new, and tell me what is still open.` to the Project if anything is still working. Wait until its Overview shows nothing under Working.
+Send `Stop: start nothing new, and tell me what is still open.` to the Project if anything is still working, and wait until its Overview shows nothing under Working. Answer or cancel every held question and command. In the Project's Automations tab, clear any schedule that the evaluation created.
 
 - [ ] **Step 2 (USER): Decide about each open PR**
 
-In a terminal, with the task's repository as `<owner>/<repo>`:
+With the task's repository as `<owner>/<repo>` and the date from the tag as `YYYY-MM-DD`:
 
 ```bash
-gh pr list -R <owner>/<repo> --state open --search "created:>=<the date from the tag, as YYYY-MM-DD>" --json number,url,headRefName,baseRefName
+gh pr list -R <owner>/<repo> --state open --search "created:>=<YYYY-MM-DD>" --json number,url,headRefName,baseRefName,author
 ```
 
 For each PR that the evaluation opened, decide: merge it under the normal go-ahead, leave it open, or close it.
 
 - [ ] **Step 3 (USER): Archive the sessions**
 
-In the app, archive the Project's child sessions first, each only when it is idle and its worktree is clean or its changes are pushed. Then archive the Project, unless you keep it for more work; in a Project you keep, ask it to turn wintermute off, which removes the opt-in line with your consent.
-
-- [ ] **Step 4 (USER): Delete branches, only after checking them**
-
-For each branch that the evaluation created (`<tag>-base`, and the branches of the evaluation's children), in a checkout of its repository:
+For each child session, find its worktree:
 
 ```bash
+sqlite3 -readonly -json "$HOME/.copilot/data.db" "SELECT w.name, w.branch, t.path FROM workspaces w JOIN worktrees t ON t.id = w.worktree_id WHERE w.creator_session_id = '<the Project's session ID>' OR w.coordinating_creator_session_id = '<the Project's session ID>'"
+```
+
+and in each `path`:
+
+```bash
+git -C <path> status --porcelain
+git -C <path> log --oneline @{upstream}..
+```
+
+Archive a child in the app only when it is idle, has no open assignment, PR or schedule, and both commands print nothing, or you agreed to lose what they show. A child whose branch has no upstream yet has never pushed: keep it until you decide. A PR that stays open keeps its owner. Archive the children first, then the Project, unless you keep it for more work; in a Project you keep, ask it to turn wintermute off, which removes the opt-in line with your consent.
+
+- [ ] **Step 4 (USER): List the branches, and delete only after checking**
+
+For `<tag>-base`, and for each child's branch from Step 3:
+
+```bash
+gh api repos/<owner>/<repo>/git/ref/heads/<branch> --jq .object.sha
 gh pr list -R <owner>/<repo> --state open --base <branch> --json number,url
 gh pr list -R <owner>/<repo> --state open --head <branch> --json number,url
-git ls-remote origin refs/heads/<branch>
 ```
 
-Delete it only if both lists print `[]`, its commit is the one you expect, and any merged work on it that should land elsewhere has landed, or you chose to drop it:
-
-```bash
-git push origin --delete <branch>
-```
+These show the branch's commit and the open PRs in that repository that use it; a PR from a fork in another repository doesn't show here. Delete a branch, in GitHub's interface, only if the evaluation created it, both lists print `[]`, no fork PR uses it, and its commit is the one you expect (for `<tag>-base`, the one you recorded, unless merges into it are expected). When in doubt, keep it: a branch left behind costs nothing.
 
 ---
 
