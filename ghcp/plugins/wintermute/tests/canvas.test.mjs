@@ -311,6 +311,15 @@ test('an SDK that fails for another reason is not hidden by the fallback', async
   assert.equal(globalThis.swarmDashboardSdk, undefined, 'the @github SDK was not loaded');
 });
 
+test('an SDK whose own dependency is missing is reported, even when that dependency has a similar name', async () => {
+  delete globalThis.swarmDashboardSdk;
+  const broken = scope => `import '@${scope}/copilot-sdk-core';\n`;
+  const names = scope => error => error.code === 'ERR_MODULE_NOT_FOUND' && error.message.includes(`'@${scope}/copilot-sdk-core'`);
+  await assert.rejects(import(stagedExtension({ microsoft: broken('microsoft'), github: sdkStub('github') })), names('microsoft'));
+  assert.equal(globalThis.swarmDashboardSdk, undefined, 'the @github SDK was not loaded');
+  await assert.rejects(import(stagedExtension({ github: broken('github') })), names('github'));
+});
+
 test('with no SDK the error names both package names', async () => {
   await assert.rejects(import(stagedExtension({})), error => error.message.includes("'@microsoft/copilot-sdk/extension'") && error.message.includes("'@github/copilot-sdk/extension'"));
 });

@@ -1,20 +1,25 @@
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { CANVAS_TITLE, createCanvasHost } from '../../../server/canvas-host.mjs';
 import { createDefaultEngine } from '../../../server/engines.mjs';
 import { resolvePort } from '../../../server/shared.mjs';
 
 // Runtime 1.0.114 renamed the SDK it maps for extensions from @github/copilot-sdk to @microsoft/copilot-sdk, with no alias.
-// Try the new name first and fall back to the old one only when the new package is missing.
+// Try the new name first and fall back to the old one only when the new package itself is missing for this file:
+// a missing package that the SDK imports, even one with a similar name, is a real error and is rethrown.
+const missing = (error, name) =>
+  error?.code === 'ERR_MODULE_NOT_FOUND' && String(error.message).includes(`Cannot find package '${name}' imported from ${fileURLToPath(import.meta.url)}`);
+
 async function loadSdk() {
   try {
     return await import('@microsoft/copilot-sdk/extension');
   } catch (error) {
-    if (error?.code !== 'ERR_MODULE_NOT_FOUND' || !String(error.message).includes("'@microsoft/copilot-sdk")) throw error;
+    if (!missing(error, '@microsoft/copilot-sdk')) throw error;
   }
   try {
     return await import('@github/copilot-sdk/extension');
   } catch (error) {
-    if (error?.code !== 'ERR_MODULE_NOT_FOUND' || !String(error.message).includes("'@github/copilot-sdk")) throw error;
+    if (!missing(error, '@github/copilot-sdk')) throw error;
     throw new Error("Cannot find the Copilot SDK: neither '@microsoft/copilot-sdk/extension' nor '@github/copilot-sdk/extension' resolves", { cause: error });
   }
 }
