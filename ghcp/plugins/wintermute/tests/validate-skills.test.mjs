@@ -154,3 +154,14 @@ test('a bold label that is only inside a code fence does not count as a label', 
   const body = `${coordinatorBody({ labels: ['Follow-up jobs'] })}\n\`\`\`markdown\n- **Security review**: a sample.\n\`\`\`\n`;
   assertReported(await errorsFor({ [COORDINATOR_SKILL]: skillText(COORDINATOR_SKILL, { body }) }), 'refers to "Security review"');
 });
+
+test('a row without outer pipes right after the tier table is reported instead of being left out of the copy', async () => {
+  const errors = await errorsFor({}, editCore(policy.table, `${policy.table}\nExample | fixture only | sample note`));
+  assertReported(errors, `${POLICY_AGENT}: "## Models and effort" has a line right after its table`);
+});
+
+test('a heading with closing hashes counts as a second "## Models and effort" section', async () => {
+  const second = `\n## Models and effort ##\n\n${changedTable()}\n\n${policy.neverUse}\n`;
+  const errors = await errorsFor({}, (repo, root) => writeFileSync(path.join(root, POLICY_AGENT), `${coreText}${second}`));
+  assertReported(errors, `${POLICY_AGENT}: has 2 "## Models and effort" sections`);
+});

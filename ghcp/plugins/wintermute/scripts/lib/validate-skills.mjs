@@ -11,7 +11,8 @@ export const POLICY_AGENT = `${AGENTS_DIR}/wintermute-core.agent.md`;
 export const POLICY_SECTION = 'Models and effort';
 const NEVER_USE = 'Never use these:';
 const FENCE = /^\s*(`{3,}|~{3,})(.*)$/;
-const HEADING = /^## (.+?)\s*$/;
+/** A level-two ATX heading: up to three spaces of indent, and an optional closing run of hashes, which isn't part of the name. */
+const HEADING = /^ {0,3}##[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/;
 const SEPARATOR = /^\|(?:\s*:?-{3,}:?\s*\|)+\s*$/;
 
 /**
@@ -69,12 +70,14 @@ export function tierTable(section) {
   const runs = [];
   let delimiters = 0;
   let current = null;
+  let continued = false;
   for (const { line, fenced } of markFences(section)) {
     if (!fenced && isDelimiterRow(line)) delimiters += 1;
     if (!fenced && line.startsWith('|')) {
       if (!current) runs.push(current = []);
       current.push(line);
     } else {
+      if (current && line.trim() !== '') continued = true;
       current = null;
     }
   }
@@ -85,6 +88,7 @@ export function tierTable(section) {
   const [rows] = runs;
   if (rows.length < 3 || !SEPARATOR.test(rows[1])) return { table: null, error: 'has lines that start with "|" but are not a table with a header row, a separator row and body rows' };
   if (rows.some(row => columns(row) !== columns(rows[0]))) return { table: null, error: 'has a table whose rows have different numbers of columns' };
+  if (continued) return { table: null, error: 'has a line right after its table, with no blank line between, that Markdown reads as another table row' };
   return { table: rows.join('\n'), error: null };
 }
 
