@@ -10,63 +10,78 @@ export const PROJECT_SKILLS = Object.freeze([COORDINATOR_SKILL, WORKER_SKILL]);
 export const POLICY_AGENT = `${AGENTS_DIR}/wintermute-core.agent.md`;
 export const POLICY_SECTION = 'Models and effort';
 const NEVER_USE = 'Never use these:';
-const FENCE = /^\s*```/;
+const FENCE = /^\s*(`{3,}|~{3,})(.*)$/;
 const HEADING = /^## (.+?)\s*$/;
 const SEPARATOR = /^\|(?:\s*:?-{3,}:?\s*\|)+\s*$/;
 
-/** The `## ` headings of a Markdown text, outside code fences, in order. */
-export function headingsOf(text) {
+/**
+ * The lines of a Markdown text, each marked fenced when it opens, closes or sits inside a code fence.
+ * A fence opens with three or more backticks or tildes, and only a run of the same character, at least as long, with nothing after it closes it.
+ */
+function markFences(text) {
   const out = [];
-  let fenced = false;
+  let open = null;
   for (const line of text.split(/\r?\n/)) {
-    if (FENCE.test(line)) {
-      fenced = !fenced;
-      continue;
+    const match = FENCE.exec(line);
+    if (open === null) {
+      const opens = match !== null && !(match[1][0] === '`' && match[2].includes('`'));
+      if (opens) open = match[1];
+      out.push({ line, fenced: opens });
+    } else {
+      if (match && match[1][0] === open[0] && match[1].length >= open.length && match[2].trim() === '') open = null;
+      out.push({ line, fenced: true });
     }
-    const match = fenced ? null : HEADING.exec(line);
-    if (match) out.push(match[1]);
   }
   return out;
 }
 
-/** The body of the `## <name>` section, up to the next `## ` heading outside a code fence; null when there is none. */
+/** The `## ` headings of a Markdown text, outside code fences, in order. */
+export function headingsOf(text) {
+  return markFences(text).flatMap(({ line, fenced }) => {
+    const match = fenced ? null : HEADING.exec(line);
+    return match ? [match[1]] : [];
+  });
+}
+
+/** The body of the first `## <name>` section, up to the next `## ` heading outside a code fence; null when there is none. */
 export function sectionOf(text, name) {
-  const lines = text.split(/\r?\n/);
-  let fenced = false;
+  const lines = markFences(text);
   let start = -1;
   for (let index = 0; index < lines.length; index += 1) {
-    if (FENCE.test(lines[index])) {
-      fenced = !fenced;
-      continue;
-    }
-    const match = fenced ? null : HEADING.exec(lines[index]);
+    const match = lines[index].fenced ? null : HEADING.exec(lines[index].line);
     if (!match) continue;
-    if (start >= 0) return lines.slice(start, index).join('\n');
+    if (start >= 0) return lines.slice(start, index).map(entry => entry.line).join('\n');
     if (match[1] === name) start = index + 1;
   }
-  return start >= 0 ? lines.slice(start).join('\n') : null;
+  return start >= 0 ? lines.slice(start).map(entry => entry.line).join('\n') : null;
 }
 
 const columns = row => row.trim().replace(/^\|/, '').replace(/\|$/, '').split(/(?<!\\)\|/).length;
 
-/** The one Markdown table in a section, outside code fences: { table, error }. */
+/** A table's delimiter row, such as `|---|:--:|` or `--- | ---`, with or without outer pipes. */
+function isDelimiterRow(line) {
+  if (!line.includes('|')) return false;
+  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').every(cell => /^\s*:?-+:?\s*$/.test(cell));
+}
+
+/** The one Markdown table in a section, outside code fences: { table, error }. Every delimiter row outside a fence counts as a table. */
 export function tierTable(section) {
   const runs = [];
-  let fenced = false;
+  let delimiters = 0;
   let current = null;
-  for (const line of section.split(/\r?\n/)) {
-    if (FENCE.test(line)) {
-      fenced = !fenced;
-      current = null;
-    } else if (!fenced && line.startsWith('|')) {
+  for (const { line, fenced } of markFences(section)) {
+    if (!fenced && isDelimiterRow(line)) delimiters += 1;
+    if (!fenced && line.startsWith('|')) {
       if (!current) runs.push(current = []);
       current.push(line);
     } else {
       current = null;
     }
   }
-  if (runs.length === 0) return { table: null, error: 'has no table' };
-  if (runs.length > 1) return { table: null, error: `has ${runs.length} tables; the copy rule needs exactly one` };
+  const tables = Math.max(runs.length, delimiters);
+  if (tables === 0) return { table: null, error: 'has no table' };
+  if (tables > 1) return { table: null, error: `has ${tables} tables; the copy rule needs exactly one` };
+  if (runs.length === 0) return { table: null, error: 'has a table whose rows don\'t start with "|"' };
   const [rows] = runs;
   if (rows.length < 3 || !SEPARATOR.test(rows[1])) return { table: null, error: 'has lines that start with "|" but are not a table with a header row, a separator row and body rows' };
   if (rows.some(row => columns(row) !== columns(rows[0]))) return { table: null, error: 'has a table whose rows have different numbers of columns' };
@@ -96,6 +111,8 @@ export function neverUseList(section) {
 
 /** The tier table and the "Never use these:" list of a file's "## Models and effort" section, with any reason they can't be read. */
 export function policyBlocks(text) {
+  const count = headingsOf(text).filter(heading => heading === POLICY_SECTION).length;
+  if (count > 1) return { table: null, neverUse: null, errors: [`has ${count} "## ${POLICY_SECTION}" sections; the copy rule needs exactly one`] };
   const section = sectionOf(text, POLICY_SECTION);
   if (section === null) return { table: null, neverUse: null, errors: [`has no "## ${POLICY_SECTION}" section`] };
   const table = tierTable(section);
@@ -112,7 +129,8 @@ export function quotedNames(text) {
   return [...new Set([...text.matchAll(/"([A-Z][^"\n]*)"/g)].map(match => match[1]))];
 }
 
-const boldLabels = text => [...text.matchAll(/\*\*([^*\n]+)\*\*/g)].map(match => match[1]);
+/** The bold labels of a Markdown text, outside code fences. */
+const boldLabels = text => markFences(text).filter(entry => !entry.fenced).flatMap(({ line }) => [...line.matchAll(/\*\*([^*\n]+)\*\*/g)].map(match => match[1]));
 
 function firstDifferentLine(expected, actual) {
   const left = expected.split('\n');

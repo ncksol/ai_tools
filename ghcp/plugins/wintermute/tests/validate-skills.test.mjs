@@ -133,3 +133,24 @@ test('each broken packaging rule is reported', async () => {
   const copied = await errorsFor({}, repo => mkdirSync(path.join(repo, 'ghcp/skills', WORKER_SKILL), { recursive: true }));
   assertReported(copied, `ghcp/skills/${WORKER_SKILL}: the plugin ships this skill`);
 });
+
+test('a second "## Models and effort" section in wintermute-core is reported instead of being ignored', async () => {
+  const second = `\n## Models and effort\n\n${changedTable()}\n\n${policy.neverUse}\n`;
+  const errors = await errorsFor({}, (repo, root) => writeFileSync(path.join(root, POLICY_AGENT), `${coreText}${second}`));
+  assertReported(errors, `${POLICY_AGENT}: has 2 "## Models and effort" sections`);
+});
+
+test('a tier table inside a tilde code fence is not read as the table', async () => {
+  const errors = await errorsFor({}, editCore(policy.table, `~~~markdown\n${policy.table}\n~~~`));
+  assertReported(errors, `${POLICY_AGENT}: "## Models and effort" has no table`);
+});
+
+test('a second table without leading pipes is counted as a table', async () => {
+  const errors = await errorsFor({}, editCore(policy.table, `${policy.table}\n\nTier | Note\n--- | ---\nLow | added only in wintermute-core`));
+  assertReported(errors, `${POLICY_AGENT}: "## Models and effort" has 2 tables`);
+});
+
+test('a bold label that is only inside a code fence does not count as a label', async () => {
+  const body = `${coordinatorBody({ labels: ['Follow-up jobs'] })}\n\`\`\`markdown\n- **Security review**: a sample.\n\`\`\`\n`;
+  assertReported(await errorsFor({ [COORDINATOR_SKILL]: skillText(COORDINATOR_SKILL, { body }) }), 'refers to "Security review"');
+});
