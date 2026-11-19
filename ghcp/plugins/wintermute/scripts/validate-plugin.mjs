@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateDashboard } from './lib/validate-dashboard.mjs';
 import { validatePackage } from './lib/validate-package.mjs';
+import { validateSkills } from './lib/validate-skills.mjs';
 import { isStableVersion } from './lib/release.mjs';
 
 export const PLUGIN_NAME = 'wintermute';
@@ -91,6 +92,7 @@ export async function validatePlugin(root, repositoryRoot) {
   }
   errors.push(...await validatePackage(root, repositoryRoot, manifest));
   errors.push(...await validateDashboard(root, manifest, pkg));
+  errors.push(...await validateSkills(root, repositoryRoot));
   return errors;
 }
 
