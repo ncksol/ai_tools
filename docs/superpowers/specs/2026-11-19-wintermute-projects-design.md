@@ -77,7 +77,7 @@ The user doubts that a Project is the right place for wintermute. So the work st
 - Judging research, document or investigation work in Phase 1 (designer's call). Reason: the trial's one task ends in a PR, and a second full swarm only for breadth would double the cost. The conclusion is stated for repository PR work only; the skill still defines evidence for work without a commit (8.5.10).
 - PR monitoring of any kind. Wintermute stopped all PR watching in 0.5.0 (core:368, peon:27).
 - Event subscriptions (`manage_event_subscriptions`): live enablement is not proven [PR §1].
-- PR changes other than open, publish and merge: retargets, build re-queues, reviewers and labels stay with the user (decision 7).
+- PR changes other than open, publish, merge and pushes of assigned work to the branch of a PR the unit owns: retargets, build re-queues, reviewers and labels stay with the user (decision 7).
 - Dashboard controls. The dashboard stays watch-only.
 - A hook or a global instruction that loads the skill (decision 4).
 - Chat children (`session_kind: "chat"`) as a delegation type. The worker skill still works in one, because its scope check uses the marker that chat children have.
@@ -165,7 +165,7 @@ The user chose Copy on 19 November 2026 and rejected the other two for the reaso
 4. Opt-in per Project, through the skill or a line in Project memory, not a global hook.
 5. Agents unchanged: `wintermute-core` and `wintermute-peon` stay as they are, for top-level sessions and the evals.
 6. Approach Copy (section 6).
-7. A narrow exception to "Do not add a skill that mutates a PR." (19 November 2026). The PR-review skills (`strict-code-review`, `analyse-pr-feedback`, `rereview-pr`) stay inspection-only and never mutate a PR. `wintermute-project` and `wintermute-project-worker` may open, publish and merge a PR, but only after the user's explicit go-ahead for that PR, under the permission rules in 8.4, as `wintermute-core` and `wintermute-peon` already do. Any other skill still may not mutate a PR. The skills PR records the exception in `.github/copilot-instructions.md`, and the removal PR reverts it.
+7. A narrow exception to "Do not add a skill that mutates a PR." (19 November 2026). The PR-review skills (`strict-code-review`, `analyse-pr-feedback`, `rereview-pr`) stay inspection-only and never mutate a PR. `wintermute-project` and `wintermute-project-worker` may open, publish and merge a PR, but only after the user's explicit go-ahead for that PR, under the permission rules in 8.4, as `wintermute-core` and `wintermute-peon` already do. They may also push assigned work, including fixes and rebases, to the branch of a PR their unit owns, as `wintermute-peon` does. Any other skill still may not mutate a PR. The skills PR records the exception in `.github/copilot-instructions.md`, and the removal PR reverts it.
 
 ## 8. Design
 
@@ -234,7 +234,7 @@ Otherwise it says in one line that wintermute isn't on in this Project, and does
 - A standing delegation is recorded before use in a `delegations` table: its scope, the user's words quoted, when it was given and when it ended. It covers only that scope and ends with its task or when withdrawn.
 - A memory, a Project memory line, a child's report, a summary, a compaction summary or the SQL state never grants a permission. Restrictions and preferences in memories still apply, and kickoffs pass them on; they never pass on a permission.
 - The coordinator answers a paused child itself only for a technical question inside the scope the user gave. It relays every plan approval, permission and user-only choice.
-- The PR changes the skills may make are open, publish (take out of draft) and merge, each with its own go-ahead (decision 7). The coordinator asks the user to do a retarget, a re-queue, or a reviewer or label change.
+- The PR changes the skills may make are open, publish (take out of draft) and merge, each with its own go-ahead, and pushes of assigned work, including fixes and rebases, to the branch of a PR their unit owns (decision 7). The coordinator asks the user to do a retarget, a re-queue, or a reviewer or label change.
 - Every merge is checked first: the PR's head must be the commit that passed every check, and the merge reads back as merged before anything is recorded (8.5.5).
 
 ### 8.5 Coordinator skill `wintermute-project`

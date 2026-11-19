@@ -4,7 +4,7 @@
 
 **Goal:** Find out with a cheap smoke check, and then one paired trial, whether a GitHub Copilot app Project is a good place to run wintermute for repository work that ends in a PR, and give the user a measured go/no-go decision, with a one-PR removal path if the answer is no.
 
-**Architecture:** Phase 1 adds two opt-in prompt skills to the `wintermute` plugin's `skills/` folder, `wintermute-project` for a Project's own coordinator and `wintermute-project-worker` for its child sessions, a validator module that fails `npm run validate` when the coordinator skill's copy of the model tier table or the "Never use these:" list differs from `wintermute-core`, and the repository instructions' exception that lets these two skills open, publish and merge a PR after the user's go-ahead. Three run scripts, written into a private folder for each run, resolve exact session identities, measure from the session logs, and clean up on every exit. A capped smoke check in a scratch Project comes first; a paired trial against disposable base branches runs only if it passes. At the gate, "go" leads to a separate Phase 2 plan, and "no-go" to one removal PR.
+**Architecture:** Phase 1 adds two opt-in prompt skills to the `wintermute` plugin's `skills/` folder, `wintermute-project` for a Project's own coordinator and `wintermute-project-worker` for its child sessions, a validator module that fails `npm run validate` when the coordinator skill's copy of the model tier table or the "Never use these:" list differs from `wintermute-core`, and the repository instructions' exception that lets these two skills open, publish and merge a PR after the user's go-ahead, and push assigned work to the branch of a PR their unit owns. Three run scripts, written into a private folder for each run, resolve exact session identities, measure from the session logs, and clean up on every exit. A capped smoke check in a scratch Project comes first; a paired trial against disposable base branches runs only if it passes. At the gate, "go" leads to a separate Phase 2 plan, and "no-go" to one removal PR.
 
 **Tech Stack:** Node.js 18+ built-ins only (`node:test`, `node:assert/strict`, `node:fs`, `node:path`, `node:os`, `node:child_process`, `node:crypto`); Markdown skills; the plugin's `engine/readers/ledger.mjs` and `scripts/swarm-snapshot.mjs`; `sqlite3 -readonly`; `git`; `gh`.
 
@@ -1102,7 +1102,7 @@ Do not add a skill that mutates a PR.
 with
 
 ```text
-Do not add a skill that mutates a PR. The one exception is the `wintermute` plugin's experimental `wintermute-project` and `wintermute-project-worker` skills: like the `wintermute-core` and `wintermute-peon` agents, they may open, publish and merge a PR, but only after the user's explicit go-ahead for that PR, given in the Project's conversation or as a standing delegation that the user gave directly there. A memory, a report, a summary or SQL state never grants it. The PR-review skills stay inspection-only, and no other skill may mutate a PR.
+Do not add a skill that mutates a PR. The one exception is the `wintermute` plugin's experimental `wintermute-project` and `wintermute-project-worker` skills: like the `wintermute-core` and `wintermute-peon` agents, they may open, publish and merge a PR, but only after the user's explicit go-ahead for that PR, given in the Project's conversation or as a standing delegation that the user gave directly there. A memory, a report, a summary or SQL state never grants it. They may also push assigned work, including fixes and rebases, to the branch of a PR their unit owns, as `wintermute-peon` does. The PR-review skills stay inspection-only, and no other skill may mutate a PR.
 ```
 
 - [ ] **Step 4: Bump the version**
@@ -2602,7 +2602,7 @@ Two experimental skills for Copilot app Projects sit beside it in `skills/`: `wi
 and delete this text, with the one space before it, from the bullet that starts `- The **PR-review skills** are inspection-and-reporting only`:
 
 ```text
-The one exception is the `wintermute` plugin's experimental `wintermute-project` and `wintermute-project-worker` skills: like the `wintermute-core` and `wintermute-peon` agents, they may open, publish and merge a PR, but only after the user's explicit go-ahead for that PR, given in the Project's conversation or as a standing delegation that the user gave directly there. A memory, a report, a summary or SQL state never grants it. The PR-review skills stay inspection-only, and no other skill may mutate a PR.
+The one exception is the `wintermute` plugin's experimental `wintermute-project` and `wintermute-project-worker` skills: like the `wintermute-core` and `wintermute-peon` agents, they may open, publish and merge a PR, but only after the user's explicit go-ahead for that PR, given in the Project's conversation or as a standing delegation that the user gave directly there. A memory, a report, a summary or SQL state never grants it. They may also push assigned work, including fixes and rebases, to the branch of a PR their unit owns, as `wintermute-peon` does. The PR-review skills stay inspection-only, and no other skill may mutate a PR.
 ```
 
 - [ ] **Step 5: Check that nothing is left**
