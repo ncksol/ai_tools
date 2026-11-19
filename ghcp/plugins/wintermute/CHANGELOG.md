@@ -6,6 +6,13 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.3.0 — 2026-11-19
+
+### Added
+
+- Two experimental skills for GitHub Copilot app Projects. `wintermute-project` gives a Project's own coordinator wintermute's rules: units, a model and effort for every job, an independent review from another vendor and a claims check before every merge, and at most two repair cycles. The Project's Overview, Inbox, Library and Automations work as usual. `wintermute-project-worker` gives the Project's child sessions their rules for assignments, reports and publishing. The skills act only in a Project where the user typed `/wintermute-project`, and they open, publish or merge a PR only after the user's go-ahead for it. They are an evaluation and may be removed. The agents are unchanged.
+- `npm run validate` checks both skills, and fails when the tier table or the "Never use these:" list in `wintermute-project` differs from the one in `wintermute-core`.
+
 ## 1.2.6 — 2026-11-19
 
 ### Fixed

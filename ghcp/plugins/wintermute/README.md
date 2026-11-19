@@ -35,6 +35,8 @@ Wintermute is one Copilot plugin with two parts that are released and updated to
 - the `wintermute-core` orchestrator agent for the GitHub Copilot app, which plans work and hands it to child sessions;
 - the [swarm dashboard](DASHBOARD.md), which shows what those sessions are doing.
 
+It also has two experimental skills for Copilot app Projects (see [Projects (experimental)](#projects-experimental)).
+
 Each release is listed in the [CHANGELOG](CHANGELOG.md).
 
 ## Install
@@ -70,6 +72,19 @@ Both agents load the `wintermute-pr-commands` skill (in `skills/`) once before A
 ### Which model to run it on
 
 `wintermute-core` needs a strong model at a high reasoning level to coordinate the work. There's no single recommended setup. Our research points to Claude Opus 5.5 at `high` or `xhigh`, or GPT-6.1 Sol at `high`, as good starting points. That's not a recommendation, so experiment to see what works for you. The agent's "Models and effort" tiers set the model and effort only for the jobs it hands out.
+
+## Projects (experimental)
+
+The plugin also has two skills for [Copilot app Projects](https://docs.github.com/en/copilot/how-tos/github-copilot-app/working-with-projects). They are an evaluation of whether a Project is a good place to run wintermute, and they may be removed.
+
+A Project can't run `wintermute-core` as its agent, because the app doesn't allow custom agents in a Project or its sessions. Instead, the `wintermute-project` skill gives the Project's own coordinator the same rules: units, a model and effort for every job, an independent review from another vendor and a claims check before every merge, and at most two repair cycles. Its child sessions load `wintermute-project-worker`, which tells them how to report through the Project. The Project's Overview, Inbox, Library and Automations work as usual.
+
+- **Turn it on** in a Project by typing `/wintermute-project` with your request. The coordinator saves a line in the Project's memory, so that it keeps following the skill. In a Project without that line, the skill does nothing.
+- **Go-aheads stay with you.** The coordinator opens, publishes or merges a PR, or approves a plan, only after your go-ahead for it in the Project's conversation, or within a standing permission you gave there. A memory never counts as one. Retargets and label changes stay with you.
+- **If it stops following the rules**, for example after a long conversation was compacted, type `/wintermute-project` again.
+- **Turn it off** by asking the Project to turn wintermute off. It asks what to do with open work, and removes the line from the Project's memory with your consent.
+
+The tier table and the "Never use these" list in `wintermute-project` are copies of the ones in `wintermute-core`, and `npm run validate` fails if they differ. The swarm dashboard shows a Project's work once the Project has child sessions.
 
 ## The swarm dashboard
 
