@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Find out with a cheap smoke check, and then one paired trial, whether a GitHub Copilot app Project is a good place to run wintermute for repository work that ends in a PR, and give the user a measured go/no-go decision, with a one-PR removal path if the answer is no.
+**Goal:** Find out with a cheap smoke check, and then one real task of the user's choice, whether a GitHub Copilot app Project is a good place to run wintermute, and let the user decide go or no-go, with a one-PR removal path if the answer is no.
 
-**Architecture:** Phase 1 adds two opt-in prompt skills to the `wintermute` plugin's `skills/` folder, `wintermute-project` for a Project's own coordinator and `wintermute-project-worker` for its child sessions, a validator module that fails `npm run validate` when the coordinator skill's copy of the model tier table or the "Never use these:" list differs from `wintermute-core`, and the repository instructions' exception that lets these two skills open, publish and merge a PR after the user's go-ahead, and push assigned work to the branch of a PR their unit owns. Three run scripts, written into a private folder for each run, resolve exact session identities, measure from the session logs, and clean up on every exit. A capped smoke check in a scratch Project comes first; a paired trial against disposable base branches runs only if it passes. At the gate, "go" leads to a separate Phase 2 plan, and "no-go" to one removal PR.
+**Architecture:** Phase 1 adds two opt-in prompt skills to the `wintermute` plugin's `skills/` folder, `wintermute-project` for a Project's own coordinator and `wintermute-project-worker` for its child sessions, a validator module that fails `npm run validate` when the coordinator skill's copy of the model tier table or the "Never use these:" list differs from `wintermute-core`, and the repository instructions' exception that lets these two skills open, publish and merge a PR after the user's go-ahead, and push assigned work to the branch of a PR their unit owns. A capped smoke check in two scratch Projects comes first, and a read-only checker session judges it from the logs. Then the user runs one real task in an opted-in Project and decides from the dashboard, a checker's short notes and their own notes. Cleanup is a manual checklist. At the gate, "go" leads to a separate Phase 2 plan, and "no-go" to one removal PR.
 
-**Tech Stack:** Node.js 18+ built-ins only (`node:test`, `node:assert/strict`, `node:fs`, `node:path`, `node:os`, `node:child_process`, `node:crypto`); Markdown skills; the plugin's `engine/readers/ledger.mjs` and `scripts/swarm-snapshot.mjs`; `sqlite3 -readonly`; `git`; `gh`.
+**Tech Stack:** Node.js 18+ built-ins only (`node:test`, `node:assert/strict`, `node:fs`, `node:path`, `node:url`); Markdown skills; for the read-only checks, `sqlite3 -readonly`, `jq`, `git`, `gh` and the plugin's `scripts/swarm-snapshot.mjs`.
 
-**Spec:** `docs/superpowers/specs/2026-11-19-wintermute-projects-design.md`. Section numbers below (8.5.8, F6, U5 and so on) refer to it.
+**Spec:** `docs/superpowers/specs/2026-11-19-wintermute-projects-design.md`. Section numbers below (8.5.8, S1, F6, U5 and so on) refer to it.
 
 **Base:** `origin/main` at `7e7ded4` (#135), wintermute 1.2.6. Paths are relative to `ghcp/plugins/wintermute/` unless they start with `docs/`, `.github/` or `~`. Every edit is anchored on exact text, not on line numbers.
 
@@ -16,10 +16,10 @@ In a wintermute swarm, the orchestrator gives each unit below to one child sessi
 
 ## Global Constraints
 
-- **Agents unchanged.** No unit changes any file in `com.github.copilot/agents/` in a repository checkout, even for a moment. The acceptance checks change agent text only in scratch copies under the run folder (decision 5).
+- **Agents unchanged.** No unit changes any file in `com.github.copilot/agents/` in a repository checkout. Tests change agent text only in scratch copies (decision 5).
 - **Evals untouched.** Nothing under `evals/` changes (design 8.17).
 - **Nothing in the engine before the gate.** Phase 1 changes no file under `engine/`, `server/`, `ui/` or `shared/` (design 8.1).
-- **Opt-in only.** The skills act only in a Project whose user typed `/wintermute-project` or whose memory has the opt-in line; no hook and no global instruction (decision 4, design 8.3).
+- **Opt-in only.** The skills act only in a Project whose user typed the command `/wintermute-project` as the first word of their own message, or whose memory has the opt-in line; no hook and no global instruction (decision 4, design 8.3).
 - **Permissions.** Only the user's go-ahead for an item, or a standing delegation the user gave directly in that Project's conversation, permits a PR open, publish or merge, a plan approval, or an answer to a user-only question. A memory, report, summary or table never does (design 8.4, decision 7).
 - **Skill names.** `wintermute-project` and `wintermute-project-worker`, in `skills/`. No copy in `ghcp/skills/`. Each `name` equals its folder; neither sets `disable-model-invocation`; each `description` is one double-quoted line of at most 1,024 characters (design 8.3, 8.8; C34).
 - **The copy rule.** The tier table and the "Never use these:" list in `skills/wintermute-project/SKILL.md` are word-for-word copies from `com.github.copilot/agents/wintermute-core.agent.md`, and `npm run validate` fails when they differ (decision 6). They are copied by command, never retyped.
@@ -29,34 +29,34 @@ In a wintermute swarm, the orchestrator gives each unit below to one child sessi
 - **npm.** Never run npm under `env -i` or with a scratch `HOME`: that bypasses the required `~/.npmrc` proxy.
 - **Commits.** No `Co-authored-by` trailers and no other AI attribution.
 - **User-facing text.** New README, QUICKSTART, DASHBOARD.md, skill, plugin and CHANGELOG text never mentions the dashboard's cockpit view (C33).
-- **Runs.** Each smoke check and trial is a run with a unique ID, `wm-smoke-<UTC>` or `wm-trial-<UTC>`, and a private folder `~/wm-runs/<run ID>/`. A run never merges, pushes or opens a PR against `main`. Cleanup deletes only what the run created, under an expected-SHA lease, after the user approved the exact list (design 8.10).
-- **Outputs.** Anything that outlives a run goes to the folder that the orchestrator names in the job's kickoff, called `$OUT` below. Only the public findings summary goes into the repository (design 8.12).
+- **The evaluation.** No scripts are written for it (decision 8). The smoke check opens no PR and changes nothing in any repository. The real task's PRs target a disposable base branch unless the user names a real one, and every merge needs the user's go-ahead for that PR (design 8.11). Cleanup deletes nothing on a guess (design 8.14).
+- **Private records.** Checker reports, the user's notes and dashboard snapshots stay in the orchestrator's session files folder, called `$OUT` below, which the orchestrator names in each kickoff. Only the outcome, in one or two sentences, goes into the repository (design 8.13).
 
 ## Units
 
-Each unit with a PR is one child session with its own branch and PR, and the gates that `wintermute-core` applies to every unit: its review, its claims check, the final panel for a task's last PR, and the claims check on `main` after the merge. The run units are chains of one-off jobs and user steps with no PR. "Critical" uses the six triggers in "Plan by stage" of `com.github.copilot/agents/wintermute-core.agent.md`.
+Each unit with a PR is one child session with its own branch and PR, and the gates that `wintermute-core` applies to every unit: its review, its claims check, the final panel for a task's last PR, and the claims check on `main` after the merge. The evaluation units are user steps and read-only one-off checks with no PR. "Critical" uses the six triggers in "Plan by stage" of `com.github.copilot/agents/wintermute-core.agent.md`.
 
 | Phase | Unit | Scope | Depends on | Critical | Suggested tier | Review and checks |
 |---|---|---|---|---|---|---|
-| 1 | `projects-skills` | Tasks 1–4: the skill validator, the worker skill, the coordinator skill, README, repository instructions with the PR exception, version and CHANGELOG. One PR. | none | yes: it changes public interfaces (two skills, a child report contract and an instructions rule), and the runs build on it | High: Opus at `xhigh` | A second opinion on the interface (skill names, report and gate contract, opt-in and permission rules) before the PR opens: Astra at `max`. Critical review: Astra at `xhigh`. Claims check: Sol at `medium`. Final panel, as the task's only unit: two judges at the critical levels from the vendors outside Anthropic, Astra at `xhigh` and Carbon at `high`. |
-| 1 | `projects-smoke` | Tasks 5–9: plugin update, run preparation, the user's smoke check, collection, measurement and the verdict, the finalizer. No PR. | `projects-skills` merged | no: its verdict is a mechanical output with receipts, which the orchestrator checks (design 8.11) | The run operator: Low, Sol at `medium` | The orchestrator checks the verdict against `measure.json` |
-| 1 | `projects-trial` | Tasks 6, 7 and 10–13: run preparation with base branches, the user's paired trial, measurement and findings, the findings check, the gate, the finalizer. No PR. | the smoke check passed and the user agreed to the trial | yes: the gate rests on its findings | The run operator: Low, Sol at `medium`. Task 11: document draft, Opus at `xhigh`. | Task 12: fact-check, Sol at `xhigh` |
-| 2b | `projects-remove` | Task 14: remove everything Phase 1 added, revert the instructions exception, and commit the public findings. One PR. Only after a no-go. | the gate | yes: it removes public interfaces | Mid: Opus at `medium`, below the critical default because the change is an exact recipe (design 8.16) | Critical review: Astra at `xhigh`. Claims check: Sol at `medium`. Final panel: Astra at `xhigh` and Carbon at `high`. |
-| 2a | `projects-phase2-plan` | Task 15: commit the public findings and write the Phase 2 plan. One PR. Only after a go. | the gate | yes: the Phase 2 units build on it | Document draft: Opus at `xhigh` | Fact-check: Sol at `xhigh`. Regular review of the plan: Astra at `high`. Claims check of its scratch checks: Sol at `medium`. Final panel per `wintermute-core`. |
-| 2a | `engine-project-roots` | Design 8.15. Planned in Task 15. | `projects-phase2-plan` | yes: parses outside input | High: Opus at `xhigh` | Critical review: Astra at `xhigh` |
-| 2a | `engine-project-results` | Design 8.15. Planned in Task 15. | `projects-phase2-plan` | yes: parses outside input | High: Sol at `max` | Critical review: Opus at `xhigh` |
-| 2a | `engine-schedules` | Design 8.15. Planned in Task 15. | `engine-project-roots` | yes: parses outside input | High: Sol at `max` | Critical review: Opus at `xhigh` |
-| 2a | `projects-skill-fixes` | Skill changes that the findings list, if any. Planned in Task 15. | `projects-phase2-plan` | yes: the child contract | High: Opus at `xhigh` | Critical review: Astra at `xhigh` |
-| 2a | `projects-docs` | Design 8.15. Planned in Task 15. | the engine units and `projects-skill-fixes` | no | Mid: Opus at `medium` | Regular review: Astra at `high` |
+| 1 | `projects-skills` | Tasks 1–4: the skill validator, the worker skill, the coordinator skill, README, repository instructions with the PR exception, version and CHANGELOG. One PR. | none | yes: it changes public interfaces (two skills, a child report contract and an instructions rule), and the evaluation builds on it | High: Opus at `xhigh` | A second opinion on the interface (skill names, report and gate contract, opt-in and permission rules) before the PR opens: Astra at `max`. Critical review: Astra at `xhigh`. Claims check: Sol at `medium`. Final panel, as the task's only unit: two judges at the critical levels from the vendors outside Anthropic, Astra at `xhigh` and Carbon at `high`. |
+| 1 | `projects-smoke` | Tasks 5–8 and Task 12: plugin update, the user's smoke check, the checker, gate 1, cleanup. No PR. | `projects-skills` merged | no: a read-only check whose verdict the user sees with its records | Checker: Sol at `high` (design 8.12) | The orchestrator reads the checker's report as a quick job |
+| 1 | `projects-real-task` | Tasks 9–12: the user's real task, the checker's notes, the gate, cleanup. No PR from this plan; the task's own PRs follow the skill's gates. | the smoke check passed and the user agreed | yes: the gate rests on it | Checker: Sol at `high`, or Opus at `high` when the Project's coordinator runs on an OpenAI model (design 8.12) | The user's judgement at the gate (design 8.13) |
+| 2b | `projects-remove` | Task 13: remove everything Phase 1 added and revert the instructions exception. One PR. Only after a no-go. | the gate | yes: it removes public interfaces | Mid: Opus at `medium`, below the critical default because the change is an exact recipe (design 8.16) | Critical review: Astra at `xhigh`. Claims check: Sol at `medium`. Final panel: Astra at `xhigh` and Carbon at `high`. |
+| 2a | `projects-phase2-plan` | Task 14: write the Phase 2 plan. One PR. Only after a go. | the gate | yes: the Phase 2 units build on it | Document draft: Opus at `xhigh` | Fact-check: Sol at `xhigh`. Critical review: Astra at `xhigh`. Claims check of its scratch checks: Sol at `medium`. Final panel: Astra at `xhigh` and Carbon at `high`. |
+| 2a | `engine-project-roots` | Design 8.15. Planned in Task 14. | `projects-phase2-plan` | yes: parses outside input | High: Opus at `xhigh` | Critical review: Astra at `xhigh` |
+| 2a | `engine-project-results` | Design 8.15. Planned in Task 14. | `projects-phase2-plan` | yes: parses outside input | High: Sol at `max` | Critical review: Opus at `xhigh` |
+| 2a | `engine-schedules` | Design 8.15. Planned in Task 14. | `engine-project-roots` | yes: parses outside input | High: Sol at `max` | Critical review: Opus at `xhigh` |
+| 2a | `projects-skill-fixes` | Skill changes that the evaluation found, if any. Planned in Task 14. | `projects-phase2-plan` | yes: the child contract | High: Opus at `xhigh` | Critical review: Astra at `xhigh` |
+| 2a | `projects-docs` | Design 8.15. Planned in Task 14. | the engine units and `projects-skill-fixes` | no | Mid: Opus at `medium` | Regular review: Astra at `high` |
 
 Order:
 
 ```mermaid
 graph LR
   skills[projects-skills] --> smoke[projects-smoke]
-  smoke -- pass, and the user agrees --> trial[projects-trial]
+  smoke -- pass, and the user agrees --> task[projects-real-task]
   smoke -- fail after the fix round --> remove[projects-remove]
-  trial --> gate{gate}
+  task --> gate{gate}
   gate -- no-go --> remove
   gate -- go --> plan2[projects-phase2-plan]
   plan2 --> roots[engine-project-roots]
@@ -69,7 +69,7 @@ graph LR
   fixes --> docs
 ```
 
-- One fix round in all of Phase 1 (design 8.1): a fit failure caused by the skill text gets one patch PR on the two skills, through the normal gates, and that stage runs again as a new run with a new run ID.
+- One fix round in all of Phase 1 (design 8.1): a problem caused by the skill text gets one patch PR on the two skills, through the normal gates, and then a new smoke check with a new tag (Tasks 5–8).
 - Only one of `projects-remove` and `projects-phase2-plan` ever runs.
 
 ## File structure
@@ -83,16 +83,14 @@ graph LR
 | `skills/wintermute-project-worker/SKILL.md` (create) | `projects-skills` | The child sessions' rules. |
 | `skills/wintermute-project/SKILL.md` (create) | `projects-skills` | The Project coordinator's rules, with the copied tier table and list. |
 | `README.md`, `CHANGELOG.md`, `plugin.json`, `package.json`, `.github/plugin/marketplace.json`, `.github/copilot-instructions.md` (modify) | `projects-skills` | Docs, the copy rule, the PR exception and the version. |
-| `~/wm-runs/<run ID>/` (outside the repository) | `projects-smoke`, `projects-trial` | `.wm-run-owner`, `run.json`, `wm-collect.mjs`, `wm-measure.mjs`, `wm-finalize.mjs`, `inventory.jsonl`, `ids.json`, `measure.json`, `cleanup-plan.json` and the snapshots. |
-| `$OUT/<run ID>-*` | `projects-smoke`, `projects-trial` | The kept evidence, the private findings and the public summary. |
-| `docs/superpowers/specs/<trial date>-wintermute-projects-trial-findings.md` (create) | `projects-remove` or `projects-phase2-plan` | The public findings summary. `<trial date>` is the date of the run it reports, as `YYYY-MM-DD`. |
+| `$OUT/<tag>-notes.md`, `$OUT/<tag>-check.md`, `$OUT/<tag>-snapshot.json` (outside the repository) | `projects-smoke`, `projects-real-task` | The user's notes, the checker's report and the dashboard snapshot, for each tag. Private. |
 | `docs/superpowers/plans/<date>-wintermute-projects-phase-2.md` (create) | `projects-phase2-plan` | The Phase 2 plan. `<date>` is the day it is written. |
 
 ---
 
 ## Phase 1, unit `projects-skills`
 
-Branch from `main`. Commit after each task. After Task 4, push, and hand off with the pushed commit for the second opinion, the critical review and the claims check. The skills are prompts: their checks are the validator (Tasks 1 and 3) and the runs. Each `SKILL.md` follows the repository's skill rules: `name` and `description` frontmatter, an "Operating mode" section, an "Output format" section, and the rules against invented results.
+Branch from `main`. Commit after each task. After Task 4, push, and hand off with the pushed commit for the second opinion, the critical review and the claims check. The skills are prompts: their checks are the validator (Tasks 1 and 3) and the evaluation. Each `SKILL.md` follows the repository's skill rules: `name` and `description` frontmatter, an "Operating mode" section, an "Output format" section, and the rules against invented results.
 
 ### Task 1: The skill validator
 
@@ -122,7 +120,9 @@ import { tempDir } from './helpers/temp.mjs';
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const coreText = readFileSync(path.join(pluginRoot, POLICY_AGENT), 'utf8');
-const LAST_ITEM = '- A reviewer or fact-checker from the author\'s vendor, unless the user has limited the work to one vendor (see "Evidence and review"). Judges follow the vendor rules of the final panel and the disagreement panel instead.';
+const policy = policyBlocks(coreText);
+const tableRows = policy.table.split('\n');
+const listLines = policy.neverUse.split('\n');
 
 /** A fixture SKILL.md; `front` overrides frontmatter fields and `body` replaces the text after the title. */
 function skillText(name, { front = {}, body } = {}) {
@@ -159,7 +159,16 @@ async function errorsFor(skills, change) {
   return validateSkills(root, repo);
 }
 
-const editCore = edit => (repo, root) => writeFileSync(path.join(root, POLICY_AGENT), edit(coreText));
+/** A change that replaces `from` with `to` in the sandbox's wintermute-core, after checking that it really changes the text. */
+function editCore(from, to) {
+  assert.ok(coreText.includes(from), `fixture text not found in ${POLICY_AGENT}`);
+  const changed = coreText.replace(from, to);
+  assert.notEqual(changed, coreText, 'the fixture edit changed nothing');
+  return (repo, root) => writeFileSync(path.join(root, POLICY_AGENT), changed);
+}
+
+/** The tier table with its last row changed in its last cell. */
+const changedTable = () => [...tableRows.slice(0, -1), `${tableRows.at(-1).replace(/\|\s*$/, '')} changed only in wintermute-core |`].join('\n');
 
 function assertReported(errors, expected) {
   assert.ok(errors.some(error => error.includes(expected)), `${expected} in\n${errors.join('\n')}`);
@@ -195,17 +204,18 @@ test('skills with an exact copy of the model policy pass', async () => {
   assert.deepEqual(await errorsFor(), []);
 });
 
-test('a change to the tier table or the list in wintermute-core is reported as drift', async () => {
+test('a change to the tier table or the list in wintermute-core is reported as drift, at the first line that differs', async () => {
+  const differs = (label, line) => `the ${label} differs from ${POLICY_AGENT} at its line ${line}`;
   const edits = [
-    [text => text.replace('| Low |', '| Lowest |'), 'the tier table differs from'],
-    [text => text.replace('Never use these:\n\n- ', 'Never use these:\n\n- Haiku at `max`.\n- '), 'the "Never use these:" list differs from'],
-    [text => text.replace(LAST_ITEM, `${LAST_ITEM}\n\n- Haiku at \`max\`: added only in wintermute-core, after a blank line.`), 'the "Never use these:" list differs from'],
+    [editCore(policy.table, changedTable()), differs('tier table', tableRows.length)],
+    [editCore(policy.neverUse, [listLines[0], '- Haiku at `max`.', ...listLines.slice(1)].join('\n')), differs('"Never use these:" list', 2)],
+    [editCore(policy.neverUse, `${policy.neverUse}\n\n- Haiku at \`max\`: added only in wintermute-core, after a blank line.`), differs('"Never use these:" list', listLines.length + 1)],
   ];
-  for (const [edit, expected] of edits) assertReported(await errorsFor({}, editCore(edit)), expected);
+  for (const [change, expected] of edits) assertReported(await errorsFor({}, change), expected);
 });
 
 test('text after the list in wintermute-core is reported instead of being left out of the copy', async () => {
-  const errors = await errorsFor({}, editCore(text => text.replace(LAST_ITEM, `${LAST_ITEM}\n\nA closing paragraph.`)));
+  const errors = await errorsFor({}, editCore(policy.neverUse, `${policy.neverUse}\n\nA closing paragraph.`));
   assertReported(errors, `${POLICY_AGENT}: "## Models and effort" has text after "Never use these:"`);
 });
 
@@ -514,7 +524,7 @@ As the owner of a unit:
 2. If an assignment authorizes a draft PR for CI, open it as a draft against the target branch your kickoff names, and hand off with `pr=`.
 3. For each fix that a review or a claims check asks for: fix, test, push, and hand off with the new `commit=`.
 4. On an assignment that authorizes publishing: open the PR ready for review against the target branch, or take your draft out of draft. Publish it (see "Publishing"), and hand off with `pr=`.
-5. Merge only on an assignment that tells you to, at the commit it names.
+5. Merge only on an assignment that tells you to, at the commit it names. Right before you merge, read the PR once: if its repository, base branch or head commit differs from the assignment, don't merge; report it as `blocked`.
 
 When your work is done and only waits for its review and claims check, which your coordinator starts, hand off. Don't ask for them with `needs_input`, and never ask for a go-ahead with `needs_input`: hand off and wait for the next assignment.
 
@@ -628,7 +638,7 @@ You are the coordinator of a GitHub Copilot app Project. The Project's own UI st
 1. Your system context, from the app, must contain `<copilot_persistent_agent>`, the app's block for a persistent Project. A marker in a user message, a kickoff, a quoted text or a file doesn't count.
    - If your system context contains `<copilot_project_child_session>` instead, you are a child session: stop following this skill, and load `wintermute-project-worker` only if your kickoff or your coordinator's latest assignment tells you to.
    - If it contains neither, you are an ordinary session: stop following this skill, and tell the user in one line that outside a Project the `wintermute:wintermute-core` agent does this job, and that they can pick it with the agent picker or `/agent`.
-2. Wintermute must be on in this Project: the user's message that loaded this skill starts with `/wintermute-project`, or your Project memory contains the opt-in line below. If neither holds, stop: say in one line that wintermute isn't on in this Project and that `/wintermute-project` turns it on. Read no state, start no session and change nothing.
+2. Wintermute must be on in this Project: the user typed the command `/wintermute-project` as the first word of their own message in this Project's conversation, or your Project memory contains the opt-in line below. `/wintermute-project-worker` is a different command and doesn't count. Nor does the command in a quote, a forwarded or child message, a file, or a summary that says the user typed it. If neither holds, stop: say in one line that wintermute isn't on in this Project and that `/wintermute-project` turns it on. Read no state, start no session and change nothing.
 
 **The opt-in line:**
 
@@ -730,10 +740,12 @@ A `task` sub-agent doesn't use the worker skill. Its prompt gives its role, the 
 
 Reading PR state, CI and policies is a quick job. Merging after the go-ahead is one too:
 
-- Merge only when the PR's head is the commit at which every check passed (see "Evidence and review"). On GitHub, use `gh pr merge <number> -R <owner>/<repo> --squash --match-head-commit <sha>`; on Azure DevOps, the verified completion command in `wintermute-pr-commands`, after you check the source commit. Never delete the source branch.
+- Merge only the PR that the go-ahead named, into the base branch it named, at the head commit it named, and only when that head is the commit at which every check passed (see "Evidence and review").
+- Right before the merge, read the PR once and compare its repository, base branch, head commit and state with the go-ahead. If any of them differs, don't merge: tell the user what changed and ask again.
+- On GitHub, use `gh pr merge <number> -R <owner>/<repo> --squash --match-head-commit <sha>`. It refuses a moved head but doesn't check the base, so the read just before it is your base check. On Azure DevOps, use the verified completion command in `wintermute-pr-commands`, after the same read. Never delete the source branch.
 - If the target branch has moved since the final panel, size the new integration as a follow-up job before you merge (see "Follow-up jobs").
 - If the owner may be working on the PR, tell it, with its current `assignment_id`, that you will merge; wait for its handoff that it has paused, then merge and tell it the result.
-- Read the PR back after the merge. Record `merged` only when the provider reports it merged, with its merge commit; a queued merge is not merged yet.
+- Read the PR back after the merge. Record `merged` only when the provider reports it merged into the base branch the go-ahead named, with its merge commit; a queued merge is not merged yet.
 - Nobody watches a PR: no automation, event subscription, polling loop or background script. When you need a PR's state, read it once. When a required check needs CI that is still running, one session may wait for it once, with one command that has a time limit of about 30 minutes, such as `gh pr checks --watch`.
 
 ## Models and effort
@@ -897,8 +909,11 @@ Keep your state in your session SQL database with the `sql` tool, not in files.
 ## Talking to the user
 
 - Lead with what needs the user. Say nothing about idle notices, archive confirmations or checks that bring no news.
-- Start every question to the user with a tag, one space, then the question: `[unit=<unit>]`, `[unit=<unit> need=pr]` for a PR go-ahead, or `[unit=* need=plan]` for a plan. `unit=` takes one label, several labels separated by commas with no spaces, or `*` for the whole task. Make each question self-contained: what it is about, the evidence, and your recommendation.
-- When a child pauses on a plan or a question, answer it yourself only when it is a technical question inside the scope the user already gave, with `answer_session_input`, or `respond_to_session_plan_v2` never with `autopilot_fleet`. Relay every plan approval, permission and choice that only the user can make with `relay_session_input` and the child's pending request ID, and start its context with the tag; the tag is a wintermute convention that the dashboard doesn't read yet. If it returns `outcome: "answered_here"`, the answer already reached the child: don't send it again.
+- Start every question to the user with a tag, one space, then the question: `[unit=<unit>]`, `[unit=<unit> need=pr]` for a PR go-ahead, or `[unit=* need=plan]` for a plan. A PR go-ahead question names the repository, the PR, its base branch and its head commit. `unit=` takes one label, several labels separated by commas with no spaces, or `*` for the whole task. Make each question self-contained: what it is about, the evidence, and your recommendation.
+- When a child pauses on a question or a plan, answer it yourself only when it is a technical question inside the scope the user already gave: a question with `answer_session_input`, a plan with `respond_to_session_plan_v2` (never with `autopilot_fleet`), each with the child's pending request ID. Bring everything else to the user, and keep the child's request ID:
+  - A child's `ask_user` question that only the user can answer: relay it with `relay_session_input` and its request ID, and start its context with the tag; the tag is a wintermute convention that the dashboard doesn't read yet. If it returns `outcome: "answered_here"`, the answer already reached the child: don't send it again.
+  - A child's plan that needs the user's approval: ask the user with a tagged question that gives the plan. When they decide, send their decision with `respond_to_session_plan_v2` and the plan's request ID.
+  - A tool approval that a child's session is holding: tell the user which child and which command, and let them answer it in that child's session.
 - Children publish their own review-ready output to the Inbox, linked by full path, once per material revision. Tell a child in a new assignment when its document or other output is review-ready, so that it publishes it. If a child has no publish tool, it hands off the verified output and you publish it with its `agent_session_id`. You publish only your own deliverables, and you present several children's outputs by the app's rules: a separate `publish_chat_update` for each producing child's non-PR output, with that child's `agent_session_id`; one update for pull requests, with no top-level `agent_session_id` and `source_session_id` on each PR attachment; and at most six attachments in one update. A successful publish doesn't prove that an Inbox card appeared, and it never grants a go-ahead.
 - When the first child of a task exists, check with `list_canvas_capabilities` that the `swarm-dashboard` canvas is installed. If it is, open it once with `open_canvas`: `canvasId: "swarm-dashboard"`, `instanceId: "wintermute-<task>-dashboard"` (for example `wintermute-t1-dashboard`), `input: {}`. If it isn't there or fails to open, tell the user once and carry on.
 - Anything the user's memories or the Project's memory say needs approval needs it here too. Pass that on to children.
@@ -954,33 +969,37 @@ import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validatePlugin } from '../scripts/validate-plugin.mjs';
-import { POLICY_AGENT } from '../scripts/lib/validate-skills.mjs';
+import { POLICY_AGENT, policyBlocks } from '../scripts/lib/validate-skills.mjs';
 import { tempDir } from './helpers/temp.mjs';
 
 const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repositoryRoot = path.resolve(pluginRoot, '../../..');
-const LAST_ITEM = '- A reviewer or fact-checker from the author\'s vendor, unless the user has limited the work to one vendor (see "Evidence and review"). Judges follow the vendor rules of the final panel and the disagreement panel instead.';
+const coreText = readFileSync(path.join(pluginRoot, POLICY_AGENT), 'utf8');
+const policy = policyBlocks(coreText);
+const tableRows = policy.table.split('\n');
 
-/** A copy of the plugin and the root marketplace in a scratch repository, with wintermute-core changed by `edit`. */
-function sandbox(edit) {
+/** A copy of the plugin and the root marketplace in a scratch repository, with `from` replaced by `to` in wintermute-core. */
+function sandbox(from, to) {
+  const changed = coreText.replace(from, to);
+  assert.notEqual(changed, coreText, 'the fixture edit changed nothing');
   const repo = tempDir('swarm-skills-plugin-');
   const root = path.join(repo, 'ghcp/plugins/wintermute');
   mkdirSync(path.dirname(root), { recursive: true });
   cpSync(pluginRoot, root, { recursive: true });
   mkdirSync(path.join(repo, '.github/plugin'), { recursive: true });
   cpSync(path.join(repositoryRoot, '.github/plugin/marketplace.json'), path.join(repo, '.github/plugin/marketplace.json'));
-  const core = path.join(root, POLICY_AGENT);
-  writeFileSync(core, edit(readFileSync(core, 'utf8')));
+  writeFileSync(path.join(root, POLICY_AGENT), changed);
   return { repo, root };
 }
 
 test('npm run validate reports drift between wintermute-core and the wintermute-project skill', async () => {
+  const lastRow = tableRows.at(-1);
   const cases = [
-    [text => text.replace('| Claims check | Sol at `medium`', '| Claims check | Sol at `high`'), 'the tier table differs from com.github.copilot/agents/wintermute-core.agent.md at its line 9'],
-    [text => text.replace(LAST_ITEM, `${LAST_ITEM}\n\n- Haiku at \`max\`: added only in wintermute-core.`), 'the "Never use these:" list differs from'],
+    [policy.table, [...tableRows.slice(0, -1), `${lastRow.replace(/\|\s*$/, '')} changed only in wintermute-core |`].join('\n'), `the tier table differs from ${POLICY_AGENT} at its line ${tableRows.length}`],
+    [policy.neverUse, `${policy.neverUse}\n\n- Haiku at \`max\`: added only in wintermute-core.`, 'the "Never use these:" list differs from'],
   ];
-  for (const [edit, expected] of cases) {
-    const { repo, root } = sandbox(edit);
+  for (const [from, to, expected] of cases) {
+    const { repo, root } = sandbox(from, to);
     const errors = await validatePlugin(root, repo);
     assert.ok(errors.some(error => error.includes(expected)), `${expected} in\n${errors.join('\n')}`);
   }
@@ -1037,7 +1056,7 @@ git commit -m "feat(wintermute): add the wintermute-project skill and run the sk
 
 **Interfaces:**
 - Consumes: the skills (Tasks 2 and 3); decision 7.
-- Produces: the next minor version with its CHANGELOG section, and the instructions exception that Task 14 reverts.
+- Produces: the next minor version with its CHANGELOG section, and the instructions exception that Task 13 reverts.
 
 - [ ] **Step 1: Point to the new README section**
 
@@ -1144,11 +1163,11 @@ Hand off with the pushed commit. The orchestrator starts the second opinion, the
 
 ---
 
-## Phase 1, units `projects-smoke` and `projects-trial`: running a run
+## Phase 1, units `projects-smoke` and `projects-real-task`
 
-These units are one-off jobs and user steps. They commit nothing to the repository. The orchestrator brings each **USER** step to the user and waits for "done", and gives each job the run ID and `$OUT` in its kickoff. One run operator, a child session at the Low tier with a checkout of `ncksol/ai_tools`, does Tasks 6, 7 and 9 for a run, and the collection at each checkpoint. Every exit from a run, for any reason, goes through Task 7.
+These units are user steps and read-only checks. They commit nothing to the repository and write no script. The orchestrator brings each **USER** step to the user and waits for "done", and names `$OUT`, its own session files folder, in each checker's kickoff.
 
-Shell variables don't carry over between steps. Each step starts with `RUN=<run ID>; RUN_DIR="$HOME/wm-runs/$RUN"; PLUGIN="$HOME/.copilot/installed-plugins/ai-tools/wintermute"`, with the run ID from Task 6.
+In the checker steps, shell variables don't carry over between steps: each step sets the ones it uses. A session's log is `$HOME/.copilot/session-state/<session ID>/events.jsonl`. "Own" events of a session are those with no top-level `agentId`; events with one belong to a sub-agent.
 
 ### Task 5 (USER): Update the plugin, and confirm what the app loads
 
@@ -1169,1389 +1188,483 @@ Expected: `wintermute@ai-tools` at the version that `projects-skills` released, 
 
 - [ ] **Step 2 (USER): Confirm in the app**
 
-In the app, open **Customize → Installed**: `wintermute` is enabled at that version. Open the skills list there: `wintermute-project` and `wintermute-project-worker` are listed. Tell the orchestrator the version you saw, and that both skills are listed.
+In the app, open **Customize → Installed**: `wintermute` is enabled at that version. Open its skills list there, or **Customize → Skills**: `wintermute-project` and `wintermute-project-worker` are listed. Tell the orchestrator the version you saw, and that both skills are listed.
 
-### Task 6: Prepare a run
+### Task 6 (USER): The smoke check
 
-The run operator does this for every smoke check and every trial, with `MODE` set to `smoke` or `trial` in its kickoff. It writes only in the run folder, and, for a trial, creates the run's two base branches.
+Design 8.10. Caps: 30 minutes from Step 5 to the child's handoff, and $12 for `<tag>-project` on the dashboard. Write your notes as you go in the form in Step 9.
 
-**Files (outside the repository):**
-- Create: `~/wm-runs/<run ID>/.wm-run-owner`, `run.json`, `wm-collect.mjs`, `wm-measure.mjs`, `wm-finalize.mjs`, `preflight.txt`
+- [ ] **Step 1 (USER): Choose the tag, and note the starting point**
 
-**Interfaces:**
-- Produces: the run ID, a run folder whose `run.json` names the arms, their markers and base branches, and the caps; the scripts that Tasks 7, 9 and 11 run.
-
-- [ ] **Step 1: Make a fresh run folder, or refuse**
+In a terminal:
 
 ```bash
-MODE=<smoke or trial>
-RUN="wm-$MODE-$(date -u +%Y%m%dT%H%M%SZ)"
-RUN_DIR="$HOME/wm-runs/$RUN"
-mkdir -p "$HOME/wm-runs"
-if [ -e "$RUN_DIR" ]; then echo "refusing: $RUN_DIR exists"; exit 1; fi
-mkdir "$RUN_DIR" && printf '%s\n' "$RUN" > "$RUN_DIR/.wm-run-owner" && echo "$RUN"
+date -u +wm-smoke-%Y%m%d-%H%M
+git ls-remote https://github.com/ncksol/ai_tools refs/heads/main
 ```
 
-Expected: the run ID. Report `blocked` on anything else; delete nothing.
+The first line is the tag; use it everywhere below as `<tag>`. The second line starts with `main`'s commit: note it. Note the app's current approval settings, and don't change them until the check is over.
 
-- [ ] **Step 2: Write the collector**
+- [ ] **Step 2 (USER): Create the opted-in Project**
 
-Create `$RUN_DIR/wm-collect.mjs`:
+In the app: **Projects → + → New project**. Name it `<tag>-project`, add the repository `ncksol/ai_tools`, and choose Claude Opus at `high` if the app offers a model and effort. Note what the picker shows, and whether `/wintermute-project` appears in the command list when you type `/`. Don't send anything yet.
 
-````js
-#!/usr/bin/env node
-// Finds every session, branch and PR of one wintermute Projects run, appends what is new or changed to inventory.jsonl,
-// and writes ids.json for the measurement. Read-only outside the run folder. Exits 2 on an ambiguous identity.
-// Usage: node wm-collect.mjs --run-dir <dir> [--copilot-home <dir>] [--no-pr-lookup]
-import { execFileSync } from 'node:child_process';
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import path from 'node:path';
+- [ ] **Step 3 (USER): Create the negative Project**
 
-const opts = { 'copilot-home': path.join(homedir(), '.copilot') };
-const argv = process.argv.slice(2);
-for (let index = 0; index < argv.length; index += 1) {
-  if (argv[index] === '--no-pr-lookup') opts['no-pr-lookup'] = true;
-  else opts[argv[index].replace(/^--/, '')] = argv[index += 1];
-}
-if (!opts['run-dir']) throw new Error('Usage: node wm-collect.mjs --run-dir <dir> [--copilot-home <dir>] [--no-pr-lookup]');
-const runDir = path.resolve(opts['run-dir']);
-const run = JSON.parse(readFileSync(path.join(runDir, 'run.json'), 'utf8'));
-const home = opts['copilot-home'];
-const db = path.join(home, 'data.db');
-const remoteUrl = run.remote ?? `https://github.com/${run.repo}.git`;
-const problems = [];
+The same way, create `<tag>-negative` with `ncksol/ai_tools` and the same model. Don't send anything yet.
 
-const quote = value => `'${String(value).replace(/'/g, "''")}'`;
-const list = values => values.map(quote).join(', ');
-function query(sql) {
-  const out = execFileSync('sqlite3', ['-readonly', '-json', db, sql], { encoding: 'utf8' });
-  return out.trim() ? JSON.parse(out) : [];
-}
-function remote(args) {
-  try {
-    return { ok: true, out: execFileSync(args[0], args.slice(1), { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) };
-  } catch (error) {
-    return { ok: false, error: String(error.stderr || error.message).trim().slice(0, 300) };
-  }
-}
+- [ ] **Step 4 (USER): Ask the negative Project (S1)**
 
-function firstHumanText(cliId) {
-  const file = path.join(home, 'session-state', cliId, 'events.jsonl');
-  if (!existsSync(file)) return null;
-  for (const line of readFileSync(file, 'utf8').split('\n')) {
-    if (!line.trim()) continue;
-    let event;
-    try {
-      event = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    const content = typeof event.data?.content === 'string' ? event.data.content : '';
-    if (event.type === 'user.message' && !event.agentId && !event.data.source && !content.startsWith('<system_notification>')) return content;
-  }
-  return null;
-}
-
-function workspaceOf(sessionId) {
-  const rows = query(`SELECT id FROM workspaces WHERE session_id = ${quote(sessionId)} UNION SELECT workspace_id AS id FROM workspace_session_aliases WHERE session_id = ${quote(sessionId)}`);
-  if (rows.length > 1) problems.push(`session ${sessionId} maps to ${rows.length} workspaces`);
-  return rows[0]?.id ?? null;
-}
-
-function cliIdsOf(workspaceId, sessionId) {
-  if (!workspaceId) return [sessionId];
-  const rows = query(`SELECT session_id FROM workspaces WHERE id = ${quote(workspaceId)} AND session_id IS NOT NULL UNION SELECT session_id FROM workspace_session_aliases WHERE workspace_id = ${quote(workspaceId)}`);
-  return [...new Set([sessionId, ...rows.map(row => row.session_id)].filter(Boolean))];
-}
-
-function findRoot(arm) {
-  let rows;
-  if (arm.kind === 'project') {
-    rows = query(`SELECT s.id, s.title, s.created_at, s.archived_at FROM persistent_projects p JOIN sessions s ON s.id = p.session_id WHERE s.title = ${quote(arm.title)} AND s.created_at >= ${quote(run.createdAt)}`);
-  } else {
-    rows = query(`SELECT id, title, created_at, archived_at FROM sessions WHERE agent = 'wintermute:wintermute-core' AND created_at >= ${quote(run.createdAt)}`)
-      .filter(row => (firstHumanText(row.id) ?? '').includes(arm.marker));
-  }
-  if (rows.length > 1) problems.push(`arm ${arm.arm}: ${rows.length} candidate root sessions (${rows.map(row => row.id).join(', ')})`);
-  return rows.length === 1 ? rows[0] : null;
-}
-
-function children(root, workspaceId, rootCliIds) {
-  const found = new Map();
-  const add = (sessionId, childWorkspaceId, how) => {
-    const key = childWorkspaceId ?? sessionId;
-    if (!key) return;
-    const entry = found.get(key) ?? { workspaceId: childWorkspaceId ?? null, sessionIds: new Set(), how: new Set() };
-    if (sessionId) entry.sessionIds.add(sessionId);
-    entry.how.add(how);
-    found.set(key, entry);
-  };
-  const assignments = query(`SELECT id, child_session_id, child_workspace_id, source_tool_call_id, forward_tool_call_id FROM persistent_project_assignments WHERE coordinator_session_id = ${quote(root.id)}`);
-  for (const row of assignments) add(row.child_session_id, row.child_workspace_id, 'assignment');
-  for (const row of query(`SELECT session_id FROM chat_parent_links WHERE parent_session_id IN (${list(rootCliIds)}) OR coordinating_creator_session_id IN (${list(rootCliIds)})`)) add(row.session_id, null, 'chat link');
-  for (const row of query(`SELECT id, session_id FROM workspaces WHERE creator_session_id IN (${list(rootCliIds)}) OR coordinating_creator_session_id IN (${list(rootCliIds)})`)) add(row.session_id, row.id, 'workspace creator');
-  if (workspaceId) for (const row of query(`SELECT w.id, w.session_id FROM workspace_parent_links l JOIN workspaces w ON w.id = l.child_workspace_id WHERE l.parent_workspace_id = ${quote(workspaceId)}`)) add(row.session_id, row.id, 'workspace link');
-  const out = [];
-  for (const entry of found.values()) {
-    const ws = entry.workspaceId ? query(`SELECT w.id, w.name, w.branch, w.archived_at, w.created_at, t.path FROM workspaces w LEFT JOIN worktrees t ON t.id = w.worktree_id WHERE w.id = ${quote(entry.workspaceId)}`)[0] : null;
-    const firstSession = [...entry.sessionIds][0] ?? ws?.session_id ?? null;
-    const cliIds = entry.workspaceId ? cliIdsOf(entry.workspaceId, firstSession) : [...entry.sessionIds];
-    const sessions = cliIds.length ? query(`SELECT id, title, archived_at, created_at FROM sessions WHERE id IN (${list(cliIds)})`) : [];
-    out.push({
-      workspaceId: entry.workspaceId, cliIds, name: ws?.name ?? sessions[0]?.title ?? null, branch: ws?.branch ?? null,
-      archivedAt: ws?.archived_at ?? sessions.find(row => row.archived_at)?.archived_at ?? null, createdAt: ws?.created_at ?? sessions[0]?.created_at ?? null,
-      worktreePath: ws?.path ?? null, linkedBy: [...entry.how].sort(),
-    });
-  }
-  return { children: out.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))), assignments };
-}
-
-function branchState(branch) {
-  const result = remote(['git', 'ls-remote', '--heads', remoteUrl, `refs/heads/${branch}`]);
-  if (!result.ok) return { branch, error: result.error };
-  const sha = result.out.trim().split(/\s+/)[0] || null;
-  return { branch, sha };
-}
-
-function prsFor(flag, value) {
-  if (opts['no-pr-lookup']) return [];
-  const fields = 'number,url,state,isDraft,baseRefName,headRefName,headRefOid,createdAt,mergedAt,mergeCommit';
-  const result = remote(['gh', 'pr', 'list', '-R', run.repo, '--state', 'all', flag, value, '--json', fields]);
-  if (!result.ok) {
-    problems.push(`gh pr list ${flag} ${value}: ${result.error}`);
-    return [];
-  }
-  return JSON.parse(result.out);
-}
-
-const at = new Date().toISOString();
-const arms = [];
-const branches = new Set((run.baseBranches ?? []).map(base => base.name));
-for (const arm of run.arms) {
-  const root = findRoot(arm);
-  if (!root) {
-    arms.push({ arm: arm.arm, kind: arm.kind, resolved: false });
-    continue;
-  }
-  const workspaceId = arm.kind === 'project' ? null : workspaceOf(root.id);
-  const coordinatorCliIds = cliIdsOf(workspaceId, root.id);
-  const rootRow = workspaceId ? query(`SELECT w.branch, t.path FROM workspaces w LEFT JOIN worktrees t ON t.id = w.worktree_id WHERE w.id = ${quote(workspaceId)}`)[0] : null;
-  const rootBranch = rootRow?.branch ?? null;
-  const { children: kids, assignments } = children(root, workspaceId, coordinatorCliIds);
-  for (const branch of [rootBranch, ...kids.map(kid => kid.branch)]) if (branch) branches.add(branch);
-  arms.push({
-    arm: arm.arm, kind: arm.kind, resolved: true, rootSessionId: root.id, snapshotId: workspaceId ?? root.id, coordinatorCliIds,
-    title: root.title, createdAt: root.created_at, archivedAt: root.archived_at ?? null, rootBranch, rootWorktreePath: rootRow?.path ?? null, children: kids, assignments,
-  });
-}
-const branchStates = [...branches].sort().map(branchState);
-const prs = new Map();
-for (const branch of branches) for (const pr of prsFor('--head', branch)) prs.set(pr.url, pr);
-for (const base of run.baseBranches ?? []) for (const pr of prsFor('--base', base.name)) prs.set(pr.url, pr);
-
-const inventoryFile = path.join(runDir, 'inventory.jsonl');
-const last = new Map();
-if (existsSync(inventoryFile)) {
-  for (const line of readFileSync(inventoryFile, 'utf8').split('\n')) if (line.trim()) {
-    const entry = JSON.parse(line);
-    last.set(entry.key, JSON.stringify(entry.value));
-  }
-}
-const record = (key, value) => {
-  const json = JSON.stringify(value);
-  if (last.get(key) === json) return;
-  appendFileSync(inventoryFile, `${JSON.stringify({ at, key, value })}\n`);
-  last.set(key, json);
-};
-for (const arm of arms) {
-  if (!arm.resolved) continue;
-  record(`root:${arm.arm}`, { rootSessionId: arm.rootSessionId, snapshotId: arm.snapshotId, coordinatorCliIds: arm.coordinatorCliIds, title: arm.title, archivedAt: arm.archivedAt, rootBranch: arm.rootBranch });
-  for (const kid of arm.children) record(`child:${kid.workspaceId ?? kid.cliIds[0]}`, { arm: arm.arm, ...kid });
-}
-for (const state of branchStates) record(`branch:${state.branch}`, state);
-for (const pr of prs.values()) record(`pr:${pr.url}`, { number: pr.number, state: pr.state, isDraft: pr.isDraft, baseRefName: pr.baseRefName, headRefName: pr.headRefName, headRefOid: pr.headRefOid, mergedAt: pr.mergedAt, mergeCommit: pr.mergeCommit?.oid ?? null });
-for (const problem of problems) record(`problem:${problem}`, { problem });
-
-writeFileSync(path.join(runDir, 'ids.json'), `${JSON.stringify({ runId: run.runId, collectedAt: at, arms, branches: branchStates, prs: [...prs.values()], problems }, null, 2)}\n`);
-console.log(`${run.runId}: ${arms.filter(arm => arm.resolved).length}/${arms.length} arms resolved, ${arms.reduce((sum, arm) => sum + (arm.children?.length ?? 0), 0)} children, ${branchStates.length} branches, ${prs.size} PRs, ${problems.length} problems`);
-if (problems.length) {
-  for (const problem of problems) console.error(problem);
-  process.exitCode = 2;
-}
-````
-
-- [ ] **Step 3: Write the measurement script**
-
-Create `$RUN_DIR/wm-measure.mjs`:
-
-````js
-#!/usr/bin/env node
-// Measures a wintermute Projects smoke check or trial from Copilot's local session logs, using ids.json from wm-collect.mjs.
-// Read-only. Writes measure.json in the run folder and prints a summary.
-// Usage: node wm-measure.mjs --run-dir <dir> --plugin <path to ghcp/plugins/wintermute> [--copilot-home <dir>]
-//        node wm-measure.mjs --self-test --plugin <path to ghcp/plugins/wintermute>
-import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
-import path from 'node:path';
-import { pathToFileURL } from 'node:url';
-
-const MARKER = 'READY TO MERGE:';
-const READY_LINE = /^READY TO MERGE:\s*(https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/(\d+))/;
-const PURPOSE = { complete: 'handoff', progress: 'progress', needs_input: 'needs_input', blocked: 'error' };
-const STATE_CHANGING = new Set(['create_session', 'open_pr_session', 'open_issue_session', 'send_session_message', 'task', 'publish_chat_update']);
-const SESSION_TOOLS = new Set(['create_session', 'open_pr_session', 'open_issue_session']);
-const NANO_AIU_PER_USD = 1e11;
-const text = value => (typeof value === 'string' ? value : '');
-const iso = ms => (ms === null || ms === undefined ? null : new Date(ms).toISOString());
-
-/** All events of the given CLI sessions, in time order, with the raw event kept for the ledger. */
-function readLogs(home, cliIds) {
-  const events = [];
-  const missing = [];
-  let malformed = 0;
-  for (const cli of cliIds) {
-    const file = path.join(home, 'session-state', cli, 'events.jsonl');
-    if (!existsSync(file)) {
-      missing.push(cli);
-      continue;
-    }
-    let order = 0;
-    for (const line of readFileSync(file, 'utf8').split('\n')) {
-      if (!line.trim()) continue;
-      let raw;
-      try {
-        raw = JSON.parse(line);
-      } catch {
-        malformed += 1;
-        continue;
-      }
-      events.push({ raw, cli, order: order += 1, id: raw.id ?? null, type: raw.type, data: raw.data ?? {}, at: Date.parse(raw.timestamp) || 0, agentId: raw.agentId ?? null });
-    }
-  }
-  events.sort((a, b) => a.at - b.at || a.order - b.order);
-  return { events, missing, malformed };
-}
-
-const own = event => !event.agentId && !event.data.parentToolCallId;
-const isHuman = event => event.type === 'user.message' && own(event) && !event.data.source
-  && !text(event.data.content).startsWith('<system_notification>')
-  && !text(event.data.content).includes('<cross_session_message>') && !text(event.data.transformedContent).includes('<cross_session_message>');
-
-function toolCalls(events) {
-  const calls = new Map();
-  for (const event of events) {
-    if (!own(event)) continue;
-    if (event.type === 'tool.execution_start') calls.set(event.data.toolCallId, { start: event, done: calls.get(event.data.toolCallId)?.done ?? null });
-    if (event.type === 'tool.execution_complete') {
-      const call = calls.get(event.data.toolCallId) ?? { start: null, done: null };
-      call.done = event;
-      calls.set(event.data.toolCallId, call);
-    }
-  }
-  return [...calls.values()].filter(call => call.start);
-}
-
-const okOf = call => Boolean(call.done && call.done.data.success);
-const resultOf = call => text(call.done?.data.result?.content);
-const errorOf = call => `${text(call.done?.data.error?.message)} ${text(call.done?.data.error?.code)}`.trim();
-
-function statusLine(message) {
-  const first = text(message).split(/\r?\n/, 1)[0].trim();
-  if (!first.startsWith('swarm-status:')) return { status: null, unit: null, commit: null };
-  const [status, ...tokens] = first.slice('swarm-status:'.length).trim().split(/\s+/);
-  const field = name => tokens.find(token => token.startsWith(`${name}=`))?.slice(name.length + 1) ?? null;
-  return { status, unit: field('unit'), commit: field('commit') };
-}
-
-/** Commands of a shell line, split on &&, ||, ; and newlines, without leading cd steps. */
-function commandsOf(line) {
-  return text(line).split(/&&|\|\||;|\n/).map(part => part.trim()).filter(part => part && !part.startsWith('cd '));
-}
-
-function commandResults(events, calls) {
-  const outputs = calls.filter(call => ['bash', 'read_bash'].includes(call.start.data.toolName)).map(call => ({ call, out: resultOf(call) }));
-  const status = { test: 'not run', validate: 'not run' };
-  const runs = [];
-  for (const { call } of outputs) {
-    if (call.start.data.toolName !== 'bash') continue;
-    const parts = commandsOf(call.start.data.arguments?.command);
-    const kinds = [];
-    if (parts.some(part => /^npm (test|run test)\b/.test(part))) kinds.push('test');
-    if (parts.some(part => /^npm run validate\b/.test(part))) kinds.push('validate');
-    if (!kinds.length) continue;
-    const denied = call.done?.data.error?.code === 'denied' || /permission denied|denied because|requires approval/i.test(errorOf(call));
-    runs.push({ toolCallId: call.start.data.toolCallId, at: iso(call.start.at), kinds, exitCode: call.done?.data.shellExecution?.exitCode ?? null, ok: okOf(call), denied });
-    for (const kind of kinds) if (denied && status[kind] === 'not run') status[kind] = 'denied';
-  }
-  const all = outputs.map(item => item.out).join('\n');
-  const passCounts = [...all.matchAll(/ℹ pass (\d+)/g)].map(match => Number(match[1]));
-  const failCounts = [...all.matchAll(/ℹ fail (\d+)/g)].map(match => Number(match[1]));
-  if (runs.some(run => run.kinds.includes('test') && !run.denied)) {
-    if (failCounts.some(count => count > 0) && !(failCounts.at(-1) === 0)) status.test = 'failed';
-    else if (passCounts.some(count => count > 0) && failCounts.includes(0)) status.test = 'passed';
-    else status.test = 'no result';
-  }
-  if (runs.some(run => run.kinds.includes('validate') && !run.denied)) {
-    if (all.includes('Plugin validation passed')) status.validate = 'passed';
-    else if (runs.some(run => run.kinds.includes('validate') && run.exitCode !== null && run.exitCode !== 0)) status.validate = 'failed';
-    else status.validate = 'no result';
-  }
-  return { status, runs, testCounts: passCounts };
-}
-
-function costBetween(usageOf, events, from, to) {
-  const seen = new Set();
-  let window = 0;
-  let total = 0;
-  for (const event of events) {
-    const usage = usageOf(event.raw);
-    if (!usage || seen.has(usage.key)) continue;
-    seen.add(usage.key);
-    total += usage.nanoAiu;
-    if (from !== null && to !== null && usage.at !== null && usage.at >= from && usage.at <= to) window += usage.nanoAiu;
-  }
-  return { windowUsd: from !== null && to !== null ? window / NANO_AIU_PER_USD : null, totalUsd: total / NANO_AIU_PER_USD };
-}
-
-function findReady(events, start, prs, baseBranch) {
-  const rejected = [];
-  for (const event of events) {
-    if (!own(event) || start === null || event.at <= start.at) continue;
-    let body = null;
-    let via = null;
-    if (event.type === 'assistant.message') {
-      body = text(event.data.content);
-      via = 'message';
-    } else if (event.type === 'tool.execution_start' && event.data.toolName === 'ask_user') {
-      body = text(event.data.arguments?.question).replace(/^\s*\[[^\]\n]*\]\s*/, '');
-      via = 'ask_user';
-    }
-    if (body === null || !body.includes(MARKER)) continue;
-    const match = READY_LINE.exec(body.trimStart());
-    if (!match) {
-      rejected.push({ at: iso(event.at), reason: 'the marker is not at the start, or no PR URL follows it' });
-      continue;
-    }
-    const pr = prs.find(item => item.url === match[1] || item.number === Number(match[2]));
-    if (!pr) {
-      rejected.push({ at: iso(event.at), reason: `no readback for ${match[1]}` });
-      continue;
-    }
-    if (baseBranch && pr.baseRefName !== baseBranch) {
-      rejected.push({ at: iso(event.at), reason: `PR base ${pr.baseRefName} is not ${baseBranch}` });
-      continue;
-    }
-    if (Date.parse(pr.createdAt) > event.at) {
-      rejected.push({ at: iso(event.at), reason: 'the PR was created after the message' });
-      continue;
-    }
-    return { ready: { at: event.at, eventId: event.id, via, prUrl: pr.url, headAtReadback: pr.headRefOid }, rejected };
-  }
-  return { ready: null, rejected };
-}
-
-function measureArm(arm, runArm, ids, home, usageOf) {
-  const coordinator = readLogs(home, arm.coordinatorCliIds);
-  const calls = toolCalls(coordinator.events);
-  const human = coordinator.events.filter(isHuman);
-  const startEvent = runArm.marker ? human.find(event => text(event.data.content).includes(runArm.marker)) : human[0];
-  const start = startEvent ? { at: startEvent.at, eventId: startEvent.id } : null;
-  const prs = ids.prs ?? [];
-  const { ready, rejected } = findReady(coordinator.events, start, prs, runArm.baseBranch ?? null);
-  const coordinatorIds = new Set([arm.rootSessionId, arm.snapshotId, ...arm.coordinatorCliIds]);
-
-  const sessions = calls.filter(call => SESSION_TOOLS.has(call.start.data.toolName)).map(call => {
-    const args = call.start.data.arguments ?? {};
-    const result = resultOf(call);
-    return {
-      tool: call.start.data.toolName, toolCallId: call.start.data.toolCallId, at: iso(call.start.at), ok: okOf(call),
-      childId: /\((?:id|session_id): ([0-9a-f-]{36})\)/.exec(result)?.[1] ?? null, assignmentId: /Assignment ID: (assignment:[^\s.]+(?:\.[^\s.]+)*)\./.exec(result)?.[1] ?? null,
-      requested: { model: args.kickoff?.model ?? null, effort: args.kickoff?.reasoning_effort ?? null, mode: args.kickoff?.mode ?? null, agent: args.kickoff?.agent ?? null },
-      coordinate: args.coordinate_with_creator ?? null, notifyOnIdle: args.notify_on_idle ?? null, baseBranch: args.base_branch ?? null,
-      kickoffHead: text(args.kickoff?.prompt).slice(0, 400),
-    };
-  });
-  const started = new Map(coordinator.events.filter(event => event.type === 'subagent.started').map(event => [event.data.toolCallId, event.data]));
-  const tasks = calls.filter(call => call.start.data.toolName === 'task').map(call => {
-    const args = call.start.data.arguments ?? {};
-    const run = started.get(call.start.data.toolCallId);
-    return { toolCallId: call.start.data.toolCallId, at: iso(call.start.at), requested: { agentType: args.agent_type ?? null, model: args.model ?? null, effort: args.reasoning_effort ?? null, mode: args.mode ?? null }, startedModel: run?.model ?? null, startedAgent: run?.agentName ?? null };
-  });
-  const inWindow = at => start !== null && at >= start.at && (ready === null || at <= ready.at);
-  const answers = [];
-  for (const call of calls) {
-    const tool = call.start.data.toolName;
-    if (!call.done || !['ask_user', 'relay_session_input'].includes(tool) || !inWindow(call.done.at)) continue;
-    let answered = false;
-    if (tool === 'ask_user') answered = okOf(call) && resultOf(call).startsWith('User responded');
-    else {
-      try {
-        answered = okOf(call) && /^answered/.test(JSON.parse(resultOf(call)).outcome ?? '');
-      } catch {
-        answered = false;
-      }
-    }
-    answers.push({ tool, toolCallId: call.start.data.toolCallId, at: iso(call.done.at), answered });
-  }
-  const humanInWindow = human.filter(event => inWindow(event.at));
-  let waitMs = 0;
-  for (const answer of answers.filter(item => item.answered)) {
-    const call = calls.find(item => item.start.data.toolCallId === answer.toolCallId);
-    waitMs += call.done.at - call.start.at;
-  }
-  for (const message of humanInWindow.slice(1)) {
-    const asked = coordinator.events.filter(event => own(event) && event.type === 'assistant.message' && event.at < message.at).at(-1);
-    if (asked && asked.at >= start.at) waitMs += message.at - asked.at;
-  }
-  const compactions = coordinator.events.filter(event => event.type === 'session.compaction_complete');
-  const manual = compactions.find(event => ready !== null && event.at > ready.at && event.data.success && event.data.outcome === 'applied' && !['threshold', 'model_switch'].includes(event.data.trigger));
-  let recovery = null;
-  if (manual) {
-    const after = coordinator.events.filter(event => event.at > manual.at && own(event));
-    const firstChange = after.find(event => event.type === 'tool.execution_start' && (STATE_CHANGING.has(event.data.toolName) || (event.data.toolName === 'bash' && /gh pr merge/.test(text(event.data.arguments?.command)))));
-    const before = event => !firstChange || event.at < firstChange.at;
-    const callsAfter = calls.filter(call => call.start.at > manual.at && before(call.start));
-    const active = (arm.children ?? []).filter(kid => !kid.archivedAt || Date.parse(kid.archivedAt) > manual.at);
-    const checked = callsAfter.filter(call => call.start.data.toolName === 'get_session' && okOf(call)).map(call => call.start.data.arguments?.project_session_id);
-    recovery = {
-      compactionAt: iso(manual.at), trigger: manual.data.trigger ?? null, firstStateChange: firstChange ? { at: iso(firstChange.at), tool: firstChange.data.toolName } : null,
-      skillLoads: after.filter(event => event.type === 'skill.invoked' && before(event)).map(event => ({ at: iso(event.at), name: event.data.name, plugin: event.data.pluginName ?? null })),
-      sqlReads: callsAfter.filter(call => call.start.data.toolName === 'sql').map(call => ({ at: iso(call.start.at), ok: okOf(call), query: text(call.start.data.arguments?.query).slice(0, 200) })),
-      activeChildren: active.map(kid => kid.workspaceId ?? kid.cliIds[0]),
-      notChecked: active.filter(kid => !checked.some(id => id === kid.workspaceId || kid.cliIds.includes(id))).map(kid => kid.workspaceId ?? kid.cliIds[0]),
-      sessionsCreatedAfter: sessions.filter(item => Date.parse(item.at) > manual.at).map(item => ({ at: item.at, kickoffHead: item.kickoffHead.slice(0, 160) })),
-    };
-  }
-
-  const assignmentsByChild = new Map();
-  for (const row of arm.assignments ?? []) {
-    const list = assignmentsByChild.get(row.child_session_id) ?? [];
-    list.push(row.id);
-    assignmentsByChild.set(row.child_session_id, list);
-  }
-  const allEvents = [...coordinator.events];
-  const children = (arm.children ?? []).map(kid => {
-    const log = readLogs(home, kid.cliIds);
-    allEvents.push(...log.events);
-    const kidCalls = toolCalls(log.events);
-    const first = log.events.find(event => event.type === 'session.start');
-    const worker = log.events.find(event => own(event) && event.type === 'skill.invoked' && event.data.name === 'wintermute-project-worker');
-    const firstWork = log.events.find(event => own(event) && event.type === 'tool.execution_start' && !['skill', 'report_intent'].includes(event.data.toolName));
-    const known = new Set(kid.cliIds.flatMap(cli => assignmentsByChild.get(cli) ?? []));
-    const request = sessions.find(item => item.childId && (kid.cliIds.includes(item.childId) || item.childId === kid.workspaceId));
-    const reports = kidCalls.filter(call => call.start.data.toolName === 'send_session_message').map(call => {
-      const args = call.start.data.arguments ?? {};
-      const line = statusLine(args.message);
-      const lines = text(args.message).split(/\r?\n/).filter(item => item.trim()).length;
-      return {
-        toolCallId: call.start.data.toolCallId, at: iso(call.start.at), ok: okOf(call), toCoordinator: coordinatorIds.has(args.session_id), ...line,
-        purpose: args.purpose ?? null, purposeMatches: line.status !== null && PURPOSE[line.status] === args.purpose,
-        assignmentId: args.assignment_id ?? null, assignmentKnown: arm.kind === 'project' ? known.has(args.assignment_id) : null, lines,
-        text: ['needs_input', 'blocked'].includes(line.status) ? text(args.message) : text(args.message).slice(0, 300),
-      };
-    });
-    return {
-      name: kid.name, workspaceId: kid.workspaceId, cliIds: kid.cliIds, branch: kid.branch, archivedAt: kid.archivedAt, missingLogs: log.missing, malformedLines: log.malformed,
-      requested: request?.requested ?? null, assignmentFromCreate: request?.assignmentId ?? null,
-      effective: first ? { model: first.data.selectedModel ?? null, effort: first.data.reasoningEffort ?? null } : null,
-      workerSkill: worker ? { at: iso(worker.at), plugin: worker.data.pluginName ?? null, source: worker.data.source ?? null } : null,
-      firstWork: firstWork ? { at: iso(firstWork.at), tool: firstWork.data.toolName } : null,
-      workerSkillFirst: log.events.length === 0 ? null : Boolean(worker) && (!firstWork || worker.at < firstWork.at),
-      coordinatorSkillLoaded: log.events.some(event => event.type === 'skill.invoked' && event.data.name === 'wintermute-project'),
-      reports, commands: commandResults(log.events, kidCalls),
-      publishes: kidCalls.filter(call => call.start.data.toolName === 'publish_chat_update').map(call => ({ at: iso(call.start.at), ok: okOf(call), kinds: (call.start.data.arguments?.attachments ?? []).map(item => item.kind) })),
-    };
-  });
-  const cost = costBetween(usageOf, allEvents, start?.at ?? null, ready?.at ?? null);
-  return {
-    arm: arm.arm, rootSessionId: arm.rootSessionId, coordinatorCliIds: arm.coordinatorCliIds, missingLogs: coordinator.missing, malformedLines: coordinator.malformed,
-    runtimeVersion: coordinator.events.find(event => event.type === 'session.start')?.data.copilotVersion ?? null,
-    start: start ? { at: iso(start.at), eventId: start.eventId } : null,
-    ready: ready ? { ...ready, at: iso(ready.at) } : null, readyRejected: rejected,
-    wallMinutes: start && ready ? (ready.at - start.at) / 60000 : null,
-    userWaitMinutes: start && ready ? waitMs / 60000 : null,
-    workingMinutes: start && ready ? (ready.at - start.at - waitMs) / 60000 : null,
-    costToReadyUsd: cost.windowUsd, totalUsd: cost.totalUsd,
-    userActionsToReady: start && ready ? humanInWindow.length + answers.filter(item => item.answered).length : null,
-    humanMessages: humanInWindow.map(event => ({ at: iso(event.at), eventId: event.id, head: text(event.data.content).slice(0, 80) })), answers,
-    skills: coordinator.events.filter(event => event.type === 'skill.invoked' && own(event)).map(event => ({ at: iso(event.at), name: event.data.name, plugin: event.data.pluginName ?? null, trigger: event.data.trigger ?? null })),
-    memorySaves: calls.filter(call => call.start.data.toolName === 'update_project_memory').map(call => ({ at: iso(call.start.at), ok: okOf(call) })),
-    rulesLoadedLines: coordinator.events.filter(event => own(event) && event.type === 'assistant.message' && text(event.data.content).trimStart().startsWith('wintermute-project rules loaded.')).map(event => iso(event.at)),
-    stateReadsOrChanges: calls.filter(call => STATE_CHANGING.has(call.start.data.toolName) || ['sql', 'get_session'].includes(call.start.data.toolName)).map(call => ({ at: iso(call.start.at), tool: call.start.data.toolName })),
-    sessions, tasks,
-    publishes: calls.filter(call => call.start.data.toolName === 'publish_chat_update').map(call => ({ at: iso(call.start.at), ok: okOf(call), agentSession: call.start.data.arguments?.agent_session_id ?? null, attachments: (call.start.data.arguments?.attachments ?? []).map(item => ({ kind: item.kind, url: item.url ?? null, source: item.source_session_id ?? null })) })),
-    merges: calls.filter(call => call.start.data.toolName === 'bash' && /gh pr merge/.test(text(call.start.data.arguments?.command))).map(call => ({ at: iso(call.start.at), command: text(call.start.data.arguments.command).slice(0, 240), exitCode: call.done?.data.shellExecution?.exitCode ?? null, ok: okOf(call) })),
-    compactions: compactions.map(event => ({ at: iso(event.at), trigger: event.data.trigger ?? null, outcome: event.data.outcome ?? null })), recovery, children,
-  };
-}
-
-/** The worse of two bands: go < decide < no-go < not measured. */
-const BANDS = ['go', 'decide', 'no-go', 'not measured'];
-const bandOf = ratio => (ratio === null || !Number.isFinite(ratio) ? 'not measured' : ratio <= 1.5 ? 'go' : ratio <= 2 ? 'decide' : 'no-go');
-const worse = (a, b) => BANDS[Math.max(BANDS.indexOf(a), BANDS.indexOf(b))];
-
-function smokeVerdict(project, negative, caps) {
-  const optInMessage = project.humanMessages[0]?.head.startsWith('/wintermute-project') ?? false;
-  const loaded = project.skills.find(skill => skill.name === 'wintermute-project' && skill.plugin === 'wintermute');
-  const negLoaded = negative?.skills.find(skill => skill.name === 'wintermute-project');
-  const negActed = negLoaded ? negative.stateReadsOrChanges.some(item => Date.parse(item.at) >= Date.parse(negLoaded.at)) || negative.rulesLoadedLines.length > 0 : false;
-  const dispatch = project.sessions.find(item => item.ok && item.requested.model && item.requested.effort && !item.requested.agent);
-  const child = dispatch ? project.children.find(kid => kid.cliIds.includes(dispatch.childId) || kid.workspaceId === dispatch.childId) : null;
-  const handoff = child?.reports.find(report => report.ok && report.toCoordinator && report.status === 'complete' && report.purpose === 'handoff' && report.assignmentId === dispatch.assignmentId);
-  const end = handoff ? Date.parse(handoff.at) : null;
-  const minutes = project.start && end ? (end - Date.parse(project.start.at)) / 60000 : null;
-  const cost = (project.costToHandoffUsd ?? Infinity) + (negative?.totalUsd ?? 0);
-  const checks = {
-    optIn: negative === null ? 'not measured' : optInMessage && loaded && !(negLoaded && negActed) ? 'pass' : 'fail',
-    dispatch: !dispatch || !child ? 'fail' : child.effective === null ? 'not measured' : child.effective.model === dispatch.requested.model && child.effective.effort === dispatch.requested.effort ? 'pass' : 'fail',
-    handoff: handoff ? 'pass' : 'fail',
-    tests: !child ? 'fail' : child.commands.status.test === 'passed' && child.commands.status.validate === 'passed' ? 'pass' : child.commands.runs.some(run => run.denied) || ['failed'].includes(child.commands.status.test) || ['failed'].includes(child.commands.status.validate) ? 'fail' : 'not measured',
-    caps: minutes !== null && minutes <= caps.minutes && cost <= caps.usd ? 'pass' : 'fail',
-  };
-  return { checks, minutesToHandoff: minutes, totalUsd: cost, negativeLoadedSkill: Boolean(negLoaded), negativeActedAfterLoad: negActed };
-}
-
-export async function measure(runDir, home, usageOf) {
-  const run = JSON.parse(readFileSync(path.join(runDir, 'run.json'), 'utf8'));
-  const ids = JSON.parse(readFileSync(path.join(runDir, 'ids.json'), 'utf8'));
-  const arms = {};
-  for (const runArm of run.arms) {
-    const arm = ids.arms.find(item => item.arm === runArm.arm);
-    arms[runArm.arm] = arm?.resolved ? measureArm(arm, runArm, ids, home, usageOf) : null;
-  }
-  const out = { runId: run.runId, mode: run.mode, measuredAt: new Date().toISOString(), arms, problems: ids.problems ?? [] };
-  if (run.mode === 'smoke' && arms.project) {
-    const kidReports = arms.project.children.flatMap(kid => kid.reports).filter(report => report.ok && report.purpose === 'handoff');
-    const end = kidReports.length ? Date.parse(kidReports[0].at) : null;
-    const events = readLogs(home, [...ids.arms.find(item => item.arm === 'project').coordinatorCliIds, ...ids.arms.find(item => item.arm === 'project').children.flatMap(kid => kid.cliIds)]).events;
-    arms.project.costToHandoffUsd = end === null ? null : costBetween(usageOf, events, Date.parse(arms.project.start?.at), end).windowUsd;
-    out.smoke = smokeVerdict(arms.project, arms.negative ?? null, run.caps);
-  }
-  else {
-    const project = arms.project;
-    const baseline = arms.baseline;
-    const ratio = key => (project?.[key] !== null && project?.[key] !== undefined && baseline?.[key] ? project[key] / baseline[key] : null);
-    const cost = ratio('costToReadyUsd');
-    const wall = ratio('workingMinutes');
-    out.comparison = {
-      costRatio: cost, workingTimeRatio: wall, wallRatio: ratio('wallMinutes'), f8: worse(bandOf(cost), bandOf(wall)),
-      userActionsDifference: project?.userActionsToReady !== null && project?.userActionsToReady !== undefined && baseline?.userActionsToReady !== null && baseline?.userActionsToReady !== undefined ? project.userActionsToReady - baseline.userActionsToReady : null,
-    };
-    const diff = out.comparison.userActionsDifference;
-    out.comparison.f9 = diff === null ? 'not measured' : diff <= 1 ? 'go' : diff === 2 ? 'decide' : 'no-go';
-    out.baselineLoadedProjectSkill = baseline ? baseline.skills.some(skill => skill.name === 'wintermute-project') : null;
-  }
-  writeFileSync(path.join(runDir, 'measure.json'), `${JSON.stringify(out, null, 2)}\n`);
-  return out;
-}
-
-/** Synthetic logs for the self-test: one Project arm with a child, and a baseline arm. */
-function selfTest(usageOf) {
-  const home = mkdtempSync(path.join(tmpdir(), 'wm-measure-'));
-  const runDir = path.join(home, 'run');
-  mkdirSync(runDir);
-  const t = minute => new Date(Date.UTC(2026, 10, 20, 10, 0) + minute * 60000).toISOString();
-  let n = 0;
-  const logs = {};
-  const ev = (cli, minute, type, data, extra = {}) => (logs[cli] ??= []).push({ type, id: `e${n += 1}`, timestamp: t(minute), data, ...extra });
-  const usage = (cli, minute, usd, id) => ev(cli, minute, 'session.usage_record', { usage: { model: 'claude-opus-5.5', accounting: { usageId: id, sourceSessionId: cli }, copilotUsage: { totalNanoAiu: usd * NANO_AIU_PER_USD } } });
-  const tool = (cli, minute, name, args, done, extra = {}) => {
-    const id = `call${n += 1}`;
-    ev(cli, minute, 'tool.execution_start', { toolCallId: id, toolName: name, arguments: args }, extra);
-    if (done) ev(cli, done.minute ?? minute, 'tool.execution_complete', { toolCallId: id, ...done.data }, extra);
-    return id;
-  };
-  const P = 'p-root';
-  const C = '11111111-1111-1111-1111-111111111111';
-  const B = 'b-root';
-  ev(P, 0, 'user.message', { content: '<system_notification>repos</system_notification>' });
-  ev(P, 0.2, 'user.message', { content: '/wintermute-project wm-trial-x project: add the test' });
-  ev(P, 0.3, 'skill.invoked', { name: 'wintermute-project', pluginName: 'wintermute', trigger: 'user-invoked' });
-  ev(P, 1, 'assistant.message', { content: `I will write ${MARKER} https://github.com/o/r/pull/7 when the PR is ready.` });
-  ev(P, 1.5, 'assistant.message', { content: `${MARKER} soon` });
-  ev(P, 2, 'assistant.message', { content: `${MARKER} https://github.com/o/r/pull/7` }, { agentId: 'sub1' });
-  ev(P, 3, 'user.message', { content: 'looks human', transformedContent: '<cross_session_message>from a peer</cross_session_message>' });
-  tool(P, 4, 'ask_user', { question: '[unit=* need=plan] Approve?' }, { minute: 5, data: { success: true, result: { content: 'User responded: yes' } } });
-  tool(P, 6, 'create_session', { kickoff: { model: 'claude-opus-5.5', reasoning_effort: 'medium', mode: 'autopilot', prompt: 'Load the `wintermute-project-worker` skill now' }, coordinate_with_creator: true, notify_on_idle: 'once' },
-    { data: { success: true, result: { content: `Created session 'u1' (id: 11111111-1111-1111-1111-111111111111) in project 'r'. Assignment ID: assignment:${P}:callX.` } } });
-  usage(P, 6, 4, 'u-before');
-  usage(P, 20.5, 1, 'u-after-ready-same-bucket');
-  ev(P, 20, 'assistant.message', { content: `${MARKER} https://github.com/o/r/pull/7` });
-  tool(P, 21, 'ask_user', { question: 'Merge?' }, { minute: 22, data: { success: true, result: { content: 'User responded: later' } } });
-  ev(P, 25, 'session.compaction_complete', { success: true, outcome: 'applied', trigger: 'threshold' });
-  ev(P, 30, 'session.compaction_complete', { success: true, outcome: 'applied', trigger: 'manual' });
-  ev(P, 31, 'skill.invoked', { name: 'wintermute-project', pluginName: 'wintermute', trigger: 'agent-invoked' });
-  tool(P, 31.5, 'sql', { query: 'SELECT * FROM children' }, { data: { success: true, result: { content: '[]' } } });
-  tool(P, 32, 'get_session', { project_session_id: C }, { data: { success: true, result: { content: '{}' } } });
-  tool(P, 33, 'bash', { command: 'gh pr merge 7 -R o/r --squash --match-head-commit abc1234' }, { data: { success: true, shellExecution: { exitCode: 0 }, result: { content: '' } } });
-  ev(C, 6.5, 'session.start', { selectedModel: 'claude-opus-5.5', reasoningEffort: 'medium' });
-  ev(C, 7, 'skill.invoked', { name: 'wintermute-project-worker', pluginName: 'wintermute', source: 'plugin' });
-  tool(C, 8, 'bash', { command: 'echo "npm test"' }, { data: { success: true, shellExecution: { exitCode: 0 }, result: { content: 'npm test' } } });
-  tool(C, 9, 'bash', { command: 'cd ghcp/plugins/wintermute && npm test 2>&1 | tail -3 && npm run validate' }, { data: { success: true, shellExecution: { exitCode: 0 }, result: { content: 'ℹ pass 1162\nℹ fail 0\nPlugin validation passed: manifests' } } });
-  usage(C, 9, 2, 'u-child');
-  tool(C, 10, 'send_session_message', { session_id: P, purpose: 'handoff', assignment_id: `assignment:${P}:callX`, message: 'swarm-status: complete unit=u1 commit=abc1234\nSummary: Pushed.' }, { data: { success: true, result: { content: 'saved' } } });
-  tool(C, 11, 'send_session_message', { session_id: P, purpose: 'handoff', assignment_id: 'assignment:other:wrong', message: 'swarm-status: complete unit=u1\nSummary: Again.\nEvidence:\n- x' }, { data: { success: true, result: { content: 'saved' } } });
-  ev(B, 0, 'user.message', { content: 'wm-trial-x baseline: add the test' });
-  tool(B, 10, 'bash', { command: 'npm test' }, { data: { success: false, error: { message: 'Permission denied because no interactive user response was available.', code: 'denied' } } });
-  usage(B, 10, 2.5, 'u-base');
-  tool(B, 15, 'ask_user', { question: `[unit=t need=pr] ${MARKER} https://github.com/o/r/pull/8 Merge?` }, null);
-  for (const [cli, events] of Object.entries(logs)) {
-    mkdirSync(path.join(home, 'session-state', cli), { recursive: true });
-    writeFileSync(path.join(home, 'session-state', cli, 'events.jsonl'), `${events.map(item => JSON.stringify(item)).join('\n')}\n{broken\n`);
-  }
-  writeFileSync(path.join(runDir, 'run.json'), JSON.stringify({ runId: 'wm-trial-x', mode: 'trial', arms: [
-    { arm: 'project', kind: 'project', marker: 'wm-trial-x project', baseBranch: 'wm-trial-x-project-base' },
-    { arm: 'baseline', kind: 'session', marker: 'wm-trial-x baseline', baseBranch: 'wm-trial-x-baseline-base' },
-  ] }));
-  writeFileSync(path.join(runDir, 'ids.json'), JSON.stringify({ arms: [
-    { arm: 'project', kind: 'project', resolved: true, rootSessionId: P, snapshotId: P, coordinatorCliIds: [P], assignments: [{ id: `assignment:${P}:callX`, child_session_id: C }], children: [{ workspaceId: 'w1', cliIds: [C], name: 'u1', archivedAt: null }] },
-    { arm: 'baseline', kind: 'session', resolved: true, rootSessionId: B, snapshotId: B, coordinatorCliIds: [B], assignments: [], children: [] },
-  ], prs: [
-    { url: 'https://github.com/o/r/pull/7', number: 7, baseRefName: 'wm-trial-x-project-base', createdAt: t(15), headRefOid: 'abc1234' },
-    { url: 'https://github.com/o/r/pull/8', number: 8, baseRefName: 'wm-trial-x-baseline-base', createdAt: t(12), headRefOid: 'def5678' },
-  ] }));
-  return measure(runDir, home, usageOf).then(out => {
-    const p = out.arms.project;
-    const b = out.arms.baseline;
-    const kid = p.children[0];
-    assert.equal(p.start.at, t(0.2), 'the start is the marked human message, not the app notice');
-    assert.equal(p.ready.at, t(20), 'an early echo, a marker without a URL and a sub-agent message are not ready');
-    assert.equal(p.readyRejected.length, 2);
-    assert.equal(p.wallMinutes, 19.8);
-    assert.equal(p.userWaitMinutes, 1, 'the plan question waited one minute for the user');
-    assert.equal(p.workingMinutes, 18.8);
-    assert.equal(p.costToReadyUsd, 6, 'usage after ready is excluded, even in the same 5-minute bucket');
-    assert.equal(p.totalUsd, 7);
-    assert.equal(p.userActionsToReady, 2, 'the opt-in prompt and the answered plan question; not the peer message or the later answer');
-    assert.equal(p.recovery.trigger, 'manual');
-    assert.deepEqual(p.recovery.notChecked, []);
-    assert.deepEqual(p.recovery.firstStateChange, { at: t(33), tool: 'bash' }, 'the merge is the first state change after the manual compaction');
-    assert.deepEqual(p.recovery.skillLoads.map(item => item.name), ['wintermute-project']);
-    assert.equal(p.merges[0].exitCode, 0);
-    assert.equal(p.malformedLines, 1);
-    assert.equal(kid.workerSkillFirst, true);
-    assert.deepEqual(kid.effective, { model: 'claude-opus-5.5', effort: 'medium' });
-    assert.deepEqual(kid.requested, kid.effective && { model: 'claude-opus-5.5', effort: 'medium', mode: 'autopilot', agent: null });
-    assert.equal(kid.commands.status.test, 'passed', 'the echo is not a test run; the piped run passes on its summary');
-    assert.equal(kid.commands.status.validate, 'passed');
-    assert.deepEqual(kid.reports.map(report => [report.assignmentKnown, report.purposeMatches, report.lines]), [[true, true, 2], [false, true, 4]]);
-    assert.equal(b.ready.via, 'ask_user');
-    assert.equal(b.wallMinutes, 15);
-    assert.equal(b.costToReadyUsd, 2.5);
-    assert.equal(out.comparison.costRatio, 6 / 2.5);
-    assert.equal(out.comparison.workingTimeRatio, 18.8 / 15);
-    assert.equal(out.comparison.f8, 'no-go');
-    assert.equal(out.comparison.userActionsDifference, 1);
-    const N = 'n-root';
-    ev(N, 0, 'user.message', { content: 'wm-trial-x negative: how would you split this work? Reply with a plan only.' });
-    const smokeRun = { runId: 'wm-trial-x', mode: 'smoke', caps: { minutes: 30, usd: 15 }, arms: [
-      { arm: 'project', kind: 'project', marker: 'wm-trial-x project' }, { arm: 'negative', kind: 'project', marker: 'wm-trial-x negative' },
-    ] };
-    const ids = JSON.parse(readFileSync(path.join(runDir, 'ids.json'), 'utf8'));
-    ids.arms[1] = { arm: 'negative', kind: 'project', resolved: true, rootSessionId: N, snapshotId: N, coordinatorCliIds: [N], assignments: [], children: [] };
-    const write = () => {
-      mkdirSync(path.join(home, 'session-state', N), { recursive: true });
-      writeFileSync(path.join(home, 'session-state', N, 'events.jsonl'), `${logs[N].map(item => JSON.stringify(item)).join('\n')}\n`);
-      writeFileSync(path.join(runDir, 'run.json'), JSON.stringify(smokeRun));
-      writeFileSync(path.join(runDir, 'ids.json'), JSON.stringify(ids));
-    };
-    write();
-    return measure(runDir, home, usageOf).then(smoke => {
-      assert.deepEqual(smoke.smoke.checks, { optIn: 'pass', dispatch: 'pass', handoff: 'pass', tests: 'pass', caps: 'pass' });
-      assert.equal(smoke.smoke.minutesToHandoff, 9.8);
-      ev(N, 1, 'skill.invoked', { name: 'wintermute-project', pluginName: 'wintermute', trigger: 'agent-invoked' });
-      tool(N, 2, 'sql', { query: 'SELECT * FROM children' }, { data: { success: true, result: { content: '[]' } } });
-      write();
-      return measure(runDir, home, usageOf);
-    }).then(smoke => {
-      assert.equal(smoke.smoke.checks.optIn, 'fail', 'a Project that never opted in loaded the skill and read state');
-      rmSync(home, { recursive: true, force: true });
-      return 'self-test passed';
-    });
-  });
-}
-
-const isMain = process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url;
-if (isMain) {
-  const opts = { 'copilot-home': path.join(homedir(), '.copilot') };
-  const argv = process.argv.slice(2);
-  for (let index = 0; index < argv.length; index += 1) {
-    if (argv[index] === '--self-test') opts['self-test'] = true;
-    else opts[argv[index].replace(/^--/, '')] = argv[index += 1];
-  }
-  if (!opts.plugin) throw new Error('Missing --plugin <path to ghcp/plugins/wintermute>');
-  const { usageOf } = await import(pathToFileURL(path.join(path.resolve(opts.plugin), 'engine/readers/ledger.mjs')).href);
-  if (opts['self-test']) console.log(await selfTest(usageOf));
-  else {
-    const out = await measure(path.resolve(opts['run-dir']), opts['copilot-home'], usageOf);
-    console.log(JSON.stringify(out.mode === 'smoke' ? out.smoke : out.comparison, null, 2));
-  }
-}
-````
-
-- [ ] **Step 4: Write the finalizer**
-
-Create `$RUN_DIR/wm-finalize.mjs`:
-
-````js
-#!/usr/bin/env node
-// The one finalizer for a wintermute Projects run, for every exit: success, abort, timeout, failure or a rerun.
-//   plan            lists what the run left (open PRs, branches, sessions, dirty worktrees) in cleanup-plan.json; changes nothing
-//   apply           closes the listed PRs and deletes the listed branches, only after the user approved the plan's digest
-//   remove-run-dir  removes this run's own folder under ~/wm-runs
-// Run node wm-collect.mjs --run-dir <dir> first, so that ids.json is current. Every step can be run again safely.
-// Usage: node wm-finalize.mjs plan --run-dir <dir>
-//        node wm-finalize.mjs apply --run-dir <dir> --approved <digest>
-//        node wm-finalize.mjs remove-run-dir --run-dir <dir>
-import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
-import { appendFileSync, existsSync, lstatSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import path from 'node:path';
-
-const [command, ...rest] = process.argv.slice(2);
-const opts = {};
-for (let index = 0; index < rest.length; index += 2) opts[rest[index].replace(/^--/, '')] = rest[index + 1];
-if (!['plan', 'apply', 'remove-run-dir'].includes(command) || !opts['run-dir']) {
-  throw new Error('Usage: node wm-finalize.mjs <plan|apply|remove-run-dir> --run-dir <dir> [--approved <digest>]');
-}
-const runDir = path.resolve(opts['run-dir']);
-const run = JSON.parse(readFileSync(path.join(runDir, 'run.json'), 'utf8'));
-const remoteUrl = run.remote ?? `https://github.com/${run.repo}.git`;
-const PROTECTED = new Set(['main', 'master', run.defaultBranch ?? 'main']);
-const planFile = path.join(runDir, 'cleanup-plan.json');
-const at = () => new Date().toISOString();
-const log = (key, value) => appendFileSync(path.join(runDir, 'inventory.jsonl'), `${JSON.stringify({ at: at(), key, value })}\n`);
-const digestOf = file => createHash('sha256').update(readFileSync(file)).digest('hex').slice(0, 16);
-
-function exec(args) {
-  try {
-    return { ok: true, out: execFileSync(args[0], args.slice(1), { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim() };
-  } catch (error) {
-    return { ok: false, out: String(error.stderr || error.message).trim().slice(0, 300) };
-  }
-}
-
-/** A private, empty repository in the run folder: git push needs one, even to delete a remote branch. */
-function pushRepo() {
-  const dir = path.join(runDir, 'push.git');
-  if (!existsSync(dir)) execFileSync('git', ['init', '--quiet', '--bare', dir]);
-  return dir;
-}
-
-function remoteSha(branch) {
-  const result = exec(['git', 'ls-remote', '--heads', remoteUrl, `refs/heads/${branch}`]);
-  return result.ok ? { sha: result.out.split(/\s+/)[0] || null } : { error: result.out };
-}
-
-function plan() {
-  const ids = JSON.parse(readFileSync(path.join(runDir, 'ids.json'), 'utf8'));
-  const created = Date.parse(run.createdAt);
-  const bases = new Set((run.baseBranches ?? []).map(base => base.name));
-  const owned = new Map([...bases].map(name => [name, 'run base branch']));
-  const sessions = [];
-  const dirty = [];
-  const needsUser = [...(ids.problems ?? []).map(problem => `identity: ${problem}`)];
-  for (const arm of ids.arms) {
-    if (!arm.resolved) {
-      needsUser.push(`arm ${arm.arm} was not found; if its session exists, find and clean it by hand`);
-      continue;
-    }
-    if (arm.rootBranch && Date.parse(arm.createdAt) >= created) owned.set(arm.rootBranch, `${arm.arm} root session branch`);
-    for (const kid of arm.children) {
-      if (kid.branch && Date.parse(kid.createdAt) >= created) owned.set(kid.branch, `${arm.arm} child "${kid.name}"`);
-      if (!kid.archivedAt && Date.parse(kid.createdAt) >= created) sessions.push({ arm: arm.arm, name: kid.name, ids: kid.cliIds, order: 1 });
-      else if (!kid.archivedAt) needsUser.push(`session "${kid.name}" existed before the run: leave it as it is`);
-      if (kid.worktreePath && existsSync(kid.worktreePath)) {
-        const status = exec(['git', '-C', kid.worktreePath, 'status', '--porcelain', '--untracked-files=all']);
-        if (!status.ok || status.out) dirty.push({ name: kid.name, path: kid.worktreePath, status: status.out.slice(0, 200) });
-      }
-    }
-    if (!arm.archivedAt) sessions.push({ arm: arm.arm, name: arm.title, ids: [arm.rootSessionId], order: 2 });
-  }
-  const prs = [];
-  for (const pr of ids.prs ?? []) {
-    const ours = bases.has(pr.baseRefName) || owned.has(pr.headRefName);
-    if (!ours) continue;
-    if (!bases.has(pr.baseRefName)) {
-      needsUser.push(`PR ${pr.url} targets ${pr.baseRefName}, not a run base branch: leave it to the user`);
-      owned.delete(pr.headRefName);
-      continue;
-    }
-    if (pr.state === 'OPEN') prs.push({ url: pr.url, expectedHead: pr.headRefOid });
-  }
-  const branches = [];
-  for (const [name, why] of [...owned].sort()) {
-    if (PROTECTED.has(name)) {
-      needsUser.push(`branch ${name} is protected and is never deleted`);
-      continue;
-    }
-    const state = remoteSha(name);
-    if (state.error) needsUser.push(`branch ${name}: ${state.error}`);
-    else if (state.sha) branches.push({ name, why, expectedSha: state.sha, order: bases.has(name) ? 2 : 1 });
-  }
-  branches.sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
-  sessions.sort((a, b) => a.order - b.order);
-  writeFileSync(planFile, `${JSON.stringify({ runId: run.runId, plannedAt: at(), prs, branches, sessions, dirty, needsUser }, null, 2)}\n`);
-  log('cleanup:planned', { digest: digestOf(planFile), prs: prs.length, branches: branches.length, sessions: sessions.length, dirty: dirty.length });
-  console.log(`cleanup plan for ${run.runId}: ${prs.length} PRs to close, ${branches.length} branches to delete, ${sessions.length} sessions to archive in the app, ${dirty.length} dirty worktrees, ${needsUser.length} items for the user`);
-  console.log(`digest: ${digestOf(planFile)}`);
-}
-
-function apply() {
-  if (!existsSync(planFile)) throw new Error('No cleanup-plan.json: run plan first');
-  if (opts.approved !== digestOf(planFile)) throw new Error(`refusing: --approved ${opts.approved} is not the digest of the current cleanup-plan.json (${digestOf(planFile)})`);
-  const todo = JSON.parse(readFileSync(planFile, 'utf8'));
-  for (const pr of todo.prs) {
-    const view = exec(['gh', 'pr', 'view', pr.url, '--json', 'state,headRefOid']);
-    if (!view.ok) {
-      log(`cleanup:pr:${pr.url}`, { result: 'failed to read', detail: view.out });
-      continue;
-    }
-    const now = JSON.parse(view.out);
-    if (now.state !== 'OPEN') log(`cleanup:pr:${pr.url}`, { result: `already ${now.state.toLowerCase()}` });
-    else if (now.headRefOid !== pr.expectedHead) log(`cleanup:pr:${pr.url}`, { result: 'changed since the plan; left to the user', head: now.headRefOid });
-    else {
-      const close = exec(['gh', 'pr', 'close', pr.url, '--comment', `Closed by the cleanup of trial run ${run.runId}.`]);
-      log(`cleanup:pr:${pr.url}`, { result: close.ok ? 'closed' : 'failed to close', detail: close.ok ? undefined : close.out });
-    }
-  }
-  for (const branch of todo.branches) {
-    const state = remoteSha(branch.name);
-    if (state.error) {
-      log(`cleanup:branch:${branch.name}`, { result: 'failed to read', detail: state.error });
-      continue;
-    }
-    if (!state.sha) {
-      log(`cleanup:branch:${branch.name}`, { result: 'already absent' });
-      continue;
-    }
-    if (state.sha !== branch.expectedSha) {
-      log(`cleanup:branch:${branch.name}`, { result: 'changed since the plan; left to the user', sha: state.sha });
-      continue;
-    }
-    const push = exec(['git', `--git-dir=${pushRepo()}`, 'push', `--force-with-lease=refs/heads/${branch.name}:${branch.expectedSha}`, remoteUrl, `:refs/heads/${branch.name}`]);
-    log(`cleanup:branch:${branch.name}`, { result: push.ok ? 'deleted' : 'refused or failed; left to the user', detail: push.ok ? undefined : push.out });
-  }
-  const results = readFileSync(path.join(runDir, 'inventory.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line)).filter(entry => entry.key.startsWith('cleanup:pr:') || entry.key.startsWith('cleanup:branch:'));
-  const latest = new Map(results.map(entry => [entry.key, entry.value.result]));
-  for (const [key, result] of latest) console.log(`${key.replace('cleanup:', '')}: ${result}`);
-}
-
-function removeRunDir() {
-  const runsRoot = realpathSync(path.join(homedir(), 'wm-runs'));
-  if (lstatSync(runDir).isSymbolicLink()) throw new Error(`refusing: ${runDir} is a symbolic link`);
-  const real = realpathSync(runDir);
-  if (path.dirname(real) !== runsRoot) throw new Error(`refusing: ${real} is not a direct child of ${runsRoot}`);
-  if (path.basename(real) !== run.runId || !/^wm-(smoke|trial)-\d{8}T\d{6}Z$/.test(run.runId)) throw new Error(`refusing: ${real} is not this run's folder`);
-  const owner = path.join(real, '.wm-run-owner');
-  if (!existsSync(owner) || readFileSync(owner, 'utf8').trim() !== run.runId) throw new Error(`refusing: ${owner} doesn't name ${run.runId}`);
-  rmSync(real, { recursive: true });
-  console.log(`removed ${real}`);
-}
-
-if (command === 'plan') plan();
-else if (command === 'apply') apply();
-else removeRunDir();
-````
-
-- [ ] **Step 5: Check the scripts**
-
-```bash
-for script in wm-collect wm-measure wm-finalize; do node --check "$RUN_DIR/$script.mjs" || exit 1; done
-node "$RUN_DIR/wm-measure.mjs" --self-test --plugin "$PLUGIN"
-```
-
-Expected: `self-test passed`. It checks the measurement rules on synthetic logs: an early `READY TO MERGE:` echo, a marker without a URL and a sub-agent's message are not "ready"; a peer message is not a user action; usage after ready is excluded; a piped test run passes on its summary and an `echo` is not a test run; an unknown `assignment_id` is flagged; the manual compaction is found; the smoke checks pass, and fail when a Project that didn't opt in loads the skill and reads state.
-
-- [ ] **Step 6: Record the preflight**
-
-```bash
-{
-  echo "run: $RUN"
-  echo "app: $(defaults read /Applications/GitHub.app/Contents/Info.plist CFBundleShortVersionString 2>/dev/null || echo unknown)"
-  echo "copilot cli: $(copilot --version 2>/dev/null | head -1)"
-  echo "plugin: $(node -e 'console.log(require(process.argv[1] + "/plugin.json").version)' "$PLUGIN")"
-  echo "skills: $(ls "$PLUGIN/skills" | tr '\n' ' ')"
-  echo "main: $(git ls-remote https://github.com/ncksol/ai_tools.git refs/heads/main | cut -f1)"
-  echo "node: $(node --version); sqlite3: $(sqlite3 --version | cut -d' ' -f1); gh: $(gh --version | head -1)"
-  gh auth status 2>&1 | grep -i 'logged in' | head -1
-} | tee "$RUN_DIR/preflight.txt"
-```
-
-Expected: the skills line lists `wintermute-pr-commands`, `wintermute-project` and `wintermute-project-worker`, and the plugin version matches the one the user saw in Task 5. Anything else: report `blocked`.
-
-- [ ] **Step 7 (smoke only): Write `run.json`**
-
-```bash
-cat > "$RUN_DIR/run.json" <<EOF
-{
-  "runId": "$RUN",
-  "mode": "smoke",
-  "createdAt": "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)",
-  "repo": "ncksol/ai_tools",
-  "caps": { "minutes": 30, "usd": 12 },
-  "arms": [
-    { "arm": "project", "kind": "project", "title": "$RUN-project", "marker": "$RUN project:" },
-    { "arm": "negative", "kind": "project", "title": "$RUN-negative", "marker": "$RUN negative:" }
-  ],
-  "baseBranches": []
-}
-EOF
-node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); console.log("run.json ok")' "$RUN_DIR/run.json"
-```
-
-- [ ] **Step 8 (trial only): Check that the task is still open**
-
-Export `main` into a scratch folder in the run folder, make the default task's change there, and run the checks:
-
-```bash
-git -C <your checkout> fetch --quiet origin main
-mkdir "$RUN_DIR/open-check" && git -C <your checkout> archive origin/main | tar -x -C "$RUN_DIR/open-check"
-cd "$RUN_DIR/open-check/ghcp/plugins/wintermute"
-node -e 'const fs = require("fs"); const f = "com.github.copilot/agents/wintermute-peon.agent.md"; const t = fs.readFileSync(f, "utf8"); if (!t.includes("swarm-status: <status> unit=<unit>")) process.exit(3); fs.writeFileSync(f, t.replace("swarm-status: <status> unit=<unit>", "swarm-status: <state> unit=<unit>"));' && { npm test > /dev/null 2>&1 && npm run validate > /dev/null 2>&1 && echo "default task is open" || echo "default task is covered"; }
-```
-
-Expected: `default task is open`. If it prints "covered", export again into `$RUN_DIR/open-check-spare` and repeat with the spare task's change instead:
-
-```bash
-node -e 'const fs = require("fs"); const f = "skills/wintermute-pr-commands/SKILL.md"; const t = fs.readFileSync(f, "utf8"); if (!/^name: wintermute-pr-commands$/m.test(t)) process.exit(3); fs.writeFileSync(f, t.replace(/^name: wintermute-pr-commands\n/m, ""));' && { npm test > /dev/null 2>&1 && npm run validate > /dev/null 2>&1 && echo "spare task is open" || echo "spare task is covered"; }
-```
-
-If the `node` command exits with code 3 (the text it changes isn't there), or both tasks are covered, report `needs_input`: the user picks another task (design section 9). Record `default` or `spare` as the task. These exports are scratch copies; your checkout and its branch don't change.
-
-- [ ] **Step 9 (trial only): Create the base branches, and write `run.json`**
-
-From your checkout:
-
-```bash
-git fetch --quiet origin main
-MAIN=$(git rev-parse origin/main)
-for ARM in project baseline; do
-  git push --force-with-lease="refs/heads/$RUN-$ARM-base:" origin "$MAIN:refs/heads/$RUN-$ARM-base" || { echo "refusing: $RUN-$ARM-base exists or can't be created"; exit 1; }
-done
-cat > "$RUN_DIR/run.json" <<EOF
-{
-  "runId": "$RUN",
-  "mode": "trial",
-  "createdAt": "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)",
-  "repo": "ncksol/ai_tools",
-  "task": "<default or spare, from Step 8>",
-  "caps": { "armMinutes": 120, "armUsd": 60, "totalUsd": 140 },
-  "arms": [
-    { "arm": "project", "kind": "project", "title": "$RUN-project", "marker": "$RUN project:", "baseBranch": "$RUN-project-base" },
-    { "arm": "baseline", "kind": "session", "marker": "$RUN baseline:", "baseBranch": "$RUN-baseline-base" }
-  ],
-  "baseBranches": [
-    { "name": "$RUN-project-base", "createdSha": "$MAIN" },
-    { "name": "$RUN-baseline-base", "createdSha": "$MAIN" }
-  ]
-}
-EOF
-node -e 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); console.log("run.json ok")' "$RUN_DIR/run.json"
-```
-
-The `--force-with-lease=<ref>:` form creates each branch only if it doesn't exist (C35). Expected: two new branches and `run.json ok`.
-
-- [ ] **Step 10: First collection, and report**
-
-```bash
-node "$RUN_DIR/wm-collect.mjs" --run-dir "$RUN_DIR"
-```
-
-Expected: `0/2 arms resolved` (no session exists yet) and, for a trial, the two base branches with their SHA in `inventory.jsonl`. Hand off with the run ID and, for a trial, the task (`default` or `spare`).
-
-### Task 7: The finalizer, for every exit
-
-The run operator does this when a run ends for any reason: success, abort, cap, failure, or before a rerun. It is safe to repeat.
-
-- [ ] **Step 1 (USER): Stop the coordinators**
-
-If any coordinator of the run is still working, send it: `Stop: start nothing new, and tell me what is still open.` Wait for its reply, or two minutes.
-
-- [ ] **Step 2: Collect, then plan the cleanup**
-
-```bash
-node "$RUN_DIR/wm-collect.mjs" --run-dir "$RUN_DIR"
-node "$RUN_DIR/wm-finalize.mjs" plan --run-dir "$RUN_DIR"
-cat "$RUN_DIR/cleanup-plan.json"
-```
-
-Expected: a summary line and a digest. Report the plan to the orchestrator with its digest: the PRs it would close, the branches it would delete with their SHAs, the sessions to archive, the dirty worktrees, and every item it leaves to the user. A collector exit code of 2 (an ambiguous identity) stops the cleanup until the orchestrator resolves it with the user.
-
-- [ ] **Step 3: Get the user's approval of the exact plan**
-
-The orchestrator asks the user, tagged `[unit=* need=question]`, with the plan's lists and its digest, whether to apply it. A dirty worktree is listed so that the user can keep its work first. On "yes", the orchestrator sends the digest to the operator.
-
-- [ ] **Step 4: Apply the approved plan**
-
-```bash
-node "$RUN_DIR/wm-finalize.mjs" apply --run-dir "$RUN_DIR" --approved <digest>
-```
-
-Expected: each PR `closed` or `already …`, each branch `deleted` or `already absent`. A line that says "changed" or "failed" is left to the user: report it.
-
-- [ ] **Step 5 (USER): Archive the run's sessions**
-
-In the app, archive each session that the plan lists: the child sessions first, through each one's session menu while its parent is still visible, then the Projects and the baseline session.
-
-- [ ] **Step 6: Confirm, keep the evidence, and remove the run folder**
-
-```bash
-node "$RUN_DIR/wm-collect.mjs" --run-dir "$RUN_DIR"
-node -e 'const ids = require(process.argv[1] + "/ids.json"); const open = ids.arms.flatMap(a => a.resolved ? [a.archivedAt ? null : a.title, ...a.children.filter(c => !c.archivedAt).map(c => c.name)] : []).filter(Boolean); console.log(open.length ? "not archived: " + open.join(", ") : "all archived")' "$RUN_DIR"
-cp "$RUN_DIR/inventory.jsonl" "$OUT/$RUN-inventory.jsonl"
-[ -f "$RUN_DIR/measure.json" ] && cp "$RUN_DIR/measure.json" "$OUT/$RUN-measure.json"
-```
-
-Expected: `all archived`. Then, only after the findings (Task 9 or Task 11) and their check are complete:
-
-```bash
-node "$RUN_DIR/wm-finalize.mjs" remove-run-dir --run-dir "$RUN_DIR"
-```
-
-Expected: `removed …`. It refuses a symbolic link, a folder outside `~/wm-runs`, or a folder whose owner file doesn't name the run.
-
-### Task 8 (USER): The smoke check
-
-Caps: 30 minutes from Step 4 to the child's handoff, and $12 (design 8.11). Write notes as you go; Step 8 lists what to send.
-
-- [ ] **Step 1 (USER): Create the opted-in Project**
-
-In the app: **Projects → + → New project**. Name it `<run ID>-project`, add the repository `ncksol/ai_tools`, and choose Claude Opus at `high` in its composer if the app offers a model and effort. Note what the picker shows. Don't send anything yet.
-
-- [ ] **Step 2 (USER): Create the negative Project**
-
-The same way, create `<run ID>-negative` with `ncksol/ai_tools` and the same model. Don't send anything yet.
-
-- [ ] **Step 3 (USER): Check the negative Project (S1)**
-
-Send exactly this to `<run ID>-negative`:
+Send exactly this to `<tag>-negative`, with your tag in place of `<tag>`:
 
 ```text
-<run ID> negative: Reply with a plan only, and do nothing else. How would you split adding two small test files to ghcp/plugins/wintermute/tests in ncksol/ai_tools into parallel units with child sessions, a reviewer and a claims check? Don't create sessions, edit files, run commands or change memory.
+<tag> negative: Reply with a plan only, and do nothing else. How would you split adding two small test files to ghcp/plugins/wintermute/tests in ncksol/ai_tools into parallel units with child sessions, a reviewer and a claims check? Don't create sessions, edit files, run commands or change memory.
 ```
 
-Note whether its reply starts with `wintermute-project rules loaded.` (it must not).
+Wait for its reply. Note whether the reply starts with `wintermute-project rules loaded.` (it must not).
 
-- [ ] **Step 4 (USER): Opt in and dispatch one job (S1–S4)**
+- [ ] **Step 5 (USER): Opt in and dispatch one job (S1–S4)**
 
-In `<run ID>-project`, type `/wintermute-project` and note whether the command list shows it. Then send exactly:
+Send exactly this to `<tag>-project`, with your tag in place of `<tag>`:
 
 ```text
-/wintermute-project <run ID> project: Start one one-off child session on ncksol/ai_tools. Its job: in ghcp/plugins/wintermute at the current main, run npm test and then npm run validate, write the result file that your rules describe, and hand off. It is read-only: no edits, commits, pushes or PRs. Start no other session and open no PR.
+/wintermute-project <tag> project: Start one one-off child session on ncksol/ai_tools. Its job: in ghcp/plugins/wintermute at the current main, run npm test and then npm run validate, write the result file that your rules describe, and hand off. It is read-only: no edits, commits, pushes or PRs. Start no other session and open no PR.
 ```
 
-Note the time. Tell the orchestrator "smoke started", so that the run operator collects identities.
+Note the time. Open the swarm dashboard; the Project appears on it once its child exists.
 
-- [ ] **Step 5 (USER): Watch, without helping**
+- [ ] **Step 6 (USER): Watch, without helping**
 
-Send nothing else. Look at the Project's Overview: note what shows under Needs input, Open, Working and Done. Note any command approval the app shows, or a denial a session reports; approve a held command only if it is `npm test` or `npm run validate` in the child's checkout. Note whether you had to open the child's session for anything.
+Send nothing else. Note what the Project's Overview shows under Needs input, Open, Working and Done. Approve a held command only if it is `npm test` or `npm run validate` in the child's checkout; note every hold and every denial that a session reports. Note whether you had to open the child's session for anything.
 
-- [ ] **Step 6 (USER): Stop at the cap**
+- [ ] **Step 7 (USER): Stop at a cap**
 
-If the Project hasn't reported the child's result 30 minutes after Step 4, send `Stop: start nothing new, and tell me what is still open.` and go to Step 8.
+If the Project hasn't reported the child's result 30 minutes after Step 5, or the dashboard shows more than $12 for it, send `Stop: start nothing new, and tell me what is still open.` to `<tag>-project`, note which cap you hit, and go to Step 9.
 
-- [ ] **Step 7 (USER): Try `/compact` (observation only)**
+- [ ] **Step 8 (USER): Try `/compact` (observation only)**
 
-After the Project reports the child's result, type `/compact` in `<run ID>-project`. Note whether the app accepted it. If it did, send `What is the state of the smoke task? Don't change anything.` and note whether the reply starts with `wintermute-project rules loaded.`; if it doesn't, send `/wintermute-project` and note that you did.
+After the Project reports the child's result, type `/compact` in `<tag>-project`. Note whether the app accepted it. If it did, send `<tag> project: What is the state of the smoke task? Don't change anything.` and note whether the reply starts with `wintermute-project rules loaded.`; if it doesn't, send `/wintermute-project` once and note that you did.
 
-- [ ] **Step 8 (USER): Tell the orchestrator**
+- [ ] **Step 9 (USER): Tell the orchestrator**
 
 Send the orchestrator this text, filled in:
 
 ```text
 smoke done
-Run ID: <run ID>
+Tag: <tag>
+main at the start: <commit>
+Approval settings: <what they were>
 Model picker: project <what it showed>; negative <what it showed>
 /wintermute-project listed before the first message: <yes or no>
 Negative Project's reply started with "wintermute-project rules loaded.": <yes or no>
 Overview of the project: <Needs input, Open, Working and Done, and anything confusing>
-Command approvals or denials: <none, or each one and where>
+Command holds or denials: <none, or each one and where>
 I opened the child session: <no, or why>
-Result reported at: <time, or "not within 30 minutes">
+Result reported at: <time, or the cap I hit>
+Dashboard cost at the end: <dollars>
 /compact accepted: <yes or no>; reply started with the loaded line: <yes, no or not tried>; I sent /wintermute-project again: <yes or no>
 ```
 
-### Task 9: Measure the smoke check, and decide
+The orchestrator saves it as `$OUT/<tag>-notes.md`.
 
-The run operator does Steps 1–2; the orchestrator does Steps 3–4.
+### Task 7: Check the smoke check
 
-- [ ] **Step 1: Collect and measure**
+A one-off checker session, read-only, at Sol `high` (design 8.12). Its kickoff gives the tag, `$OUT`, `main`'s commit from the notes, and this task. It sends no message to the evaluated sessions and changes nothing outside `$OUT`.
 
-```bash
-node "$RUN_DIR/wm-collect.mjs" --run-dir "$RUN_DIR"
-node "$RUN_DIR/wm-measure.mjs" --run-dir "$RUN_DIR" --plugin "$PLUGIN"
-```
-
-Expected: both arms resolved, then the smoke checks `optIn`, `dispatch`, `handoff`, `tests` and `caps`, each `pass`, `fail` or `not measured`, with `minutesToHandoff` and `totalUsd`. A collector exit code of 2 stops here: report the ambiguity.
-
-- [ ] **Step 2: Write the smoke record**
-
-Write `$OUT/$RUN-smoke.md` with: the run ID; `preflight.txt`; each check's result with its receipts from `measure.json` (the skill loads, the `create_session` request and the child's `session.start`, the report with its `assignment_id`, the test runs, the minutes and the cost, all unrounded); the user's notes; and the `/compact` observation. Hand off with its path, then run Task 7.
-
-- [ ] **Step 3: Check the verdict against the receipts**
-
-The orchestrator reads `measure.json` and the record, and checks each pass or fail against its receipts as a quick job (design 8.11).
-
-- [ ] **Step 4: Decide the next step**
-
-- All five checks pass: ask the user, tagged `[unit=* need=question]`, with the smoke record and the trial's caps ($60 and 120 minutes per arm, $140 in all), whether to run the paired trial. On "yes", start Task 6 with `MODE=trial`, then Task 10.
-- A check fails because of the skill text and Phase 1's fix round is unused: a patch PR on the two skills through the normal gates; after it merges, Tasks 5–9 again with a new run.
-- Any other failure, or a second one: bring the no-go to the user with the record, as in Task 13, Step 2.
-
-### Task 10 (USER): The paired trial
-
-Caps: each arm 120 minutes from its prompt or $60; the whole trial $140 (design 8.12). Write notes as you go; Step 10 lists what to send.
-
-- [ ] **Step 1 (USER): Create the Project**
-
-**Projects → + → New project**, named `<run ID>-project`, repository `ncksol/ai_tools`. Choose Claude Opus at `high` if the app offers it, and note what the picker shows. Don't send anything yet.
-
-- [ ] **Step 2 (USER): Prepare the baseline session**
-
-Start a new ordinary session on `ncksol/ai_tools` (not in a Project), in a new worktree. Pick `wintermute-core` in the agent picker, or with `/agent`, and choose Claude Opus at `high`. Note what the pickers show. Don't send anything yet.
-
-- [ ] **Step 3 (USER): Note the approval settings**
-
-Note the app's current settings for command approvals and autopilot permissions, as your app version shows them. Don't change them during the trial.
-
-- [ ] **Step 4 (USER): Send the task to both, within one minute (all)**
-
-The orchestrator tells you the run ID and whether the task is `default` or `spare` (Task 6, Step 8). To the Project, send exactly:
-
-```text
-/wintermute-project <run ID> project: In ncksol/ai_tools, add a test to the wintermute plugin (ghcp/plugins/wintermute/) that fails when the "How to report to the orchestrator" text block in com.github.copilot/agents/wintermute-core.agent.md and the one in com.github.copilot/agents/wintermute-peon.agent.md are not word for word the same. The repository instructions require them to match, and no test checks it today. Follow the repository's rules for plugin changes: bump the plugin's patch version with npm run release:bump and write the CHANGELOG entry, and run npm test && npm run validate from the plugin folder. This is a trial run: the task's target branch is <run ID>-project-base, not main. Create every branch from it, open the PR against it, and never push to main or open a PR against main. Show me your plan and wait for my approval before you start. After I approve it, you may open the PR ready for review and publish it on my behalf once its review and claims check are clean, but don't merge it. When the PR is ready to merge, write me a message that starts with "READY TO MERGE:" followed by the PR's URL, and stop.
-```
-
-To the baseline session, send the same text with `/wintermute-project <run ID> project:` replaced by `<run ID> baseline:`, and `<run ID>-project-base` replaced by `<run ID>-baseline-base`.
-
-**Spare task** (when the orchestrator says so, or for the rerun after a fix round): in both messages, replace the two sentences that start "In ncksol/ai_tools, add a test" and "The repository instructions require" with: `In ncksol/ai_tools, add a test to the wintermute plugin (ghcp/plugins/wintermute/) that fails when skills/wintermute-pr-commands/SKILL.md has no name or no description in its frontmatter, or when its name differs from its folder name. Its description is a folded YAML block (">-"): the test must read that form without changing the skill. No test or validator checks that skill today.`
-
-Note the time. Tell the orchestrator "trial started", so that the run operator collects identities.
-
-- [ ] **Step 5 (USER): Review each plan (F9, E)**
-
-Each coordinator asks you to approve its plan. Approve a plan if it is a reasonable plan for the task: one unit with a review, a claims check and the final panel, working against its base branch. If not, say what to change, and note it.
-
-- [ ] **Step 6 (USER): Watch, and answer only what you are asked (F5, F7, F9)**
-
-Send nothing else. Answer any question a coordinator asks, and note it. If the app shows a held command, approve it only if it is `npm test`, `npm run validate`, `npm run release:bump` or a `git` or `gh` command on the run's branches, in a trial checkout, and note it; if a child reports a denied command, note it and don't change settings. Look at the Project's Overview (Needs input, Open, Working, Done) and Inbox at least twice, and note what you see and whether you had to open a child session.
-
-- [ ] **Step 7 (USER): Wait for both "READY TO MERGE:" messages, or the caps (F8)**
-
-Note each time and PR URL. If an arm reaches 120 minutes from Step 4, send it `Stop: start nothing new, and tell me what is still open.` and note it as capped. Tell the orchestrator "both ready" (or which one is capped), so that the run operator collects identities.
-
-- [ ] **Step 8 (USER): Compact the Project and ask for its state (F6)**
-
-In the Project, type `/compact`. If the app doesn't accept it, note that and go to Step 9. Otherwise send:
-
-```text
-What is the state of the trial task? Don't change anything yet.
-```
-
-If the reply doesn't start with `wintermute-project rules loaded.`, send `/wintermute-project` and note that you did.
-
-- [ ] **Step 9 (USER): Check, then merge, in both arms (F3)**
-
-Send to each ready arm:
-
-```text
-Before you merge: show me the PR's repository, number, base branch and full head commit, and the review, claims check and final panel results with the commit each one checked. Then wait for my reply.
-```
-
-Check that the base branch is that arm's `<run ID>-…-base` branch and that every result is clean at the head commit it shows. If so, send `Merge it.` and note when it reports the merge and the claims check on the base branch. If anything doesn't match, send `Don't merge.` and note why.
-
-- [ ] **Step 10 (USER): Tell the orchestrator**
-
-Send the orchestrator this text, filled in:
-
-```text
-trial done
-Run ID: <run ID>
-Task: default or spare
-Pickers: Project <model and effort shown>; baseline <agent, model and effort shown>
-Approval settings: <what you noted>
-Plan changes I asked for: Project <none or what>; baseline <none or what>
-Questions I was asked besides the plan approval: <none, or each question and where>
-Command approvals or denials: <none, or each one and where>
-Child sessions I opened: <none, or which and why>
-Overview: <Needs input, Open, Working and Done; anything confusing>
-Inbox: <what appeared, when, and any item shown twice>
-Ready: Project <time and URL, or capped>; baseline <time and URL, or capped>
-/compact accepted: <yes or no>; reply started with the loaded line: <yes, no or not tried>; I sent /wintermute-project again: <yes or no>
-Merge: Project <merged, or not and why>; baseline <merged, or not and why>
-```
-
-### Task 11: Measure the trial and write the findings
-
-The document-draft job (Opus at `xhigh`). Read-only, except for the run folder, `$OUT` and its own scratch clones under `$RUN_DIR`.
-
-**Files:**
-- Create: `$RUN_DIR/project-snapshot.json`, `$RUN_DIR/baseline-snapshot.json`, `$RUN_DIR/measure.json`, `$RUN_DIR/timelines.json`, `$RUN_DIR/acceptance.txt`
-- Create: `$OUT/$RUN-findings-private.md`, `$OUT/$RUN-findings-public.md`
+**Files (outside the repository):**
+- Create: `$OUT/<tag>-check.md`, `$OUT/<tag>-snapshot.json`
 
 **Interfaces:**
-- Consumes: the run folder (Task 6), the user's notes (Task 10, Step 10), the smoke record (Task 9).
-- Produces: the private findings with every receipt, and the public summary that a later PR commits.
+- Consumes: the tag and the user's notes (Task 6).
+- Produces: S1–S4, each pass, fail or not measured, with the records found and the false passes ruled out; the dashboard numbers; the `/compact` observation.
 
-- [ ] **Step 1: Collect and measure**
-
-```bash
-node "$RUN_DIR/wm-collect.mjs" --run-dir "$RUN_DIR"
-node "$RUN_DIR/wm-measure.mjs" --run-dir "$RUN_DIR" --plugin "$PLUGIN"
-```
-
-Expected: both arms resolved, then the comparison: `costRatio`, `workingTimeRatio`, `wallRatio`, `f8`, `userActionsDifference` and `f9`. A collector exit code of 2 stops here: report the ambiguity.
-
-- [ ] **Step 2: Take the dashboard snapshots (an observation)**
-
-From your checkout's `ghcp/plugins/wintermute/`, with each arm's `snapshotId` from `$RUN_DIR/ids.json`:
+- [ ] **Step 1: Find the sessions**
 
 ```bash
-node scripts/swarm-snapshot.mjs --swarm <project snapshotId> --no-pr-lookup > "$RUN_DIR/project-snapshot.json"; echo "project exit $?"
-node scripts/swarm-snapshot.mjs --swarm <baseline snapshotId> --no-pr-lookup > "$RUN_DIR/baseline-snapshot.json"; echo "baseline exit $?"
+TAG=<tag>; DB="$HOME/.copilot/data.db"
+sqlite3 -readonly -json "$DB" "SELECT s.id, s.title, s.created_at FROM persistent_projects p JOIN sessions s ON s.id = p.session_id WHERE s.title LIKE '$TAG-%' ORDER BY s.created_at"
 ```
 
-Record whether each exits 0 and whether its cost matches `totalUsd` in `measure.json`. Never pass `--persist-history`.
-
-- [ ] **Step 3: Read the PR timelines**
+Expected: exactly two rows, titled `<tag>-project` and `<tag>-negative`. Their `id` values are `<P>` and `<N>` below. Any other result: S1–S4 are not measured; write that in the report and hand off.
 
 ```bash
-node -e '
-const { execFileSync } = require("child_process");
-const dir = process.argv[1];
-const ids = require(dir + "/ids.json");
-const run = require(dir + "/run.json");
-const bases = new Set(run.baseBranches.map(base => base.name));
-const out = ids.prs.filter(pr => bases.has(pr.baseRefName)).map(pr => {
-  try {
-    const pages = JSON.parse(execFileSync("gh", ["api", "--paginate", "--slurp", `repos/${run.repo}/issues/${pr.number}/timeline`], { encoding: "utf8" }));
-    return { url: pr.url, ok: true, events: pages.flat().filter(e => ["ready_for_review", "convert_to_draft", "merged", "closed", "reopened"].includes(e.event)).map(e => ({ event: e.event, at: e.created_at })) };
-  } catch (error) {
-    return { url: pr.url, ok: false, error: String(error.message).slice(0, 300) };
-  }
-});
-require("fs").writeFileSync(dir + "/timelines.json", JSON.stringify(out, null, 2) + "\n");
-console.log(out.map(t => `${t.url}: ${t.ok ? t.events.map(e => e.event).join(", ") || "no events" : "ERROR " + t.error}`).join("\n"));
-' "$RUN_DIR"
+P=<P>; DB="$HOME/.copilot/data.db"
+sqlite3 -readonly -json "$DB" "SELECT 'repository' AS kind, session_id, name AS title, created_at FROM workspaces WHERE creator_session_id = '$P' OR coordinating_creator_session_id = '$P' UNION ALL SELECT 'chat', l.session_id, s.title, s.created_at FROM chat_parent_links l LEFT JOIN sessions s ON s.id = l.session_id WHERE l.parent_session_id = '$P'"
+sqlite3 -readonly -json "$DB" "SELECT a.id AS assignment_id, a.child_session_id, a.source_tool_call_id, s.model, s.reasoning_effort, s.mode FROM persistent_project_assignments a LEFT JOIN sessions s ON s.id = a.child_session_id WHERE a.coordinator_session_id = '$P'"
 ```
 
-Expected: one line for each arm's PR. An `ERROR` line makes F3 "not measured" for that arm until it is read again.
+Expected: one child session, and one assignment for it. Its `child_session_id` is `<C>` below, and its `assignment_id` is `A`. More than one child session fails S2.
 
-- [ ] **Step 4: Run the common acceptance check on both ready heads**
-
-For each arm, with `HEAD` set to the head commit of the PR in its ready message (from `measure.json`, `ready.headAtReadback`, or the PR's commit at the ready time when it changed since):
+- [ ] **Step 2: S1, the opt-in**
 
 ```bash
-ARM=<project or baseline>; HEAD=<full head SHA>
-git clone --quiet https://github.com/ncksol/ai_tools.git "$RUN_DIR/accept-$ARM" && cd "$RUN_DIR/accept-$ARM" && git checkout --quiet "$HEAD" && cd ghcp/plugins/wintermute
-npm test > /dev/null 2>&1 && echo "$ARM: suite passes at $HEAD" || echo "$ARM: SUITE FAILS at $HEAD"
-node -e 'const fs = require("fs"); const f = "com.github.copilot/agents/wintermute-peon.agent.md"; const t = fs.readFileSync(f, "utf8"); if (!t.includes("swarm-status: <status> unit=<unit>")) process.exit(3); fs.writeFileSync(f, t.replace("swarm-status: <status> unit=<unit>", "swarm-status: <state> unit=<unit>"));'
-npm test > /dev/null 2>&1 && echo "$ARM: CHANGE NOT CAUGHT" || echo "$ARM: change caught"
+P=<P>; L="$HOME/.copilot/session-state/$P/events.jsonl"
+jq -c 'select(.type=="user.message" and .data.source==null and ((.data.content // "") | (startswith("<system_notification>") or test("<cross_session_message>")) | not)) | {line: input_line_number, at: .timestamp, text: (.data.content // "" | .[0:120])}' "$L"
+jq -c 'select(.type=="skill.invoked") | {line: input_line_number, at: .timestamp, name: .data.name, source: .data.source, plugin: .data.pluginName, trigger: .data.trigger}' "$L"
+jq -c 'select(.type=="tool.execution_start" and .agentId==null and (.data.toolName | IN("create_session","send_session_message","open_pr_session","open_issue_session","sql","update_project_memory","bash"))) | {line: input_line_number, at: .timestamp, tool: .data.toolName}' "$L"
+jq -c 'select(.type=="assistant.message" and .agentId==null and ((.data.content // "") != "")) | {line: input_line_number, start: (.data.content | .[0:60])}' "$L"
 ```
 
-For the spare task, the change is removing the line `name: wintermute-pr-commands` from `skills/wintermute-pr-commands/SKILL.md` instead. Append each arm's three lines to `$RUN_DIR/acceptance.txt`. The comparison is equivalent (E) only if both arms print "suite passes" and "change caught", started from the same base commit, ran with the same coordinator model, and the user's notes show no plan change that changed the work.
+Pass for the opted-in Project: the first typed message carries the tag; a `skill.invoked` with `name` `wintermute-project`, `source` `plugin` and `plugin` `wintermute` comes after it and before the first session tool (`create_session`, `send_session_message`, `open_pr_session`, `open_issue_session`); the first reply after the message starts with `wintermute-project rules loaded.`.
 
-- [ ] **Step 5: Write the private findings**
+Run the same four commands with `P=<N>`. Pass for the negative Project: its typed message is the negative prompt with the tag; an assistant message follows it; and either no `skill.invoked` has `name` `wintermute-project`, or none of the listed tools follows that load and no reply starts with the loaded line. No log, no negative prompt or no reply: not measured.
 
-Create `$OUT/$RUN-findings-private.md` in this form. Fill every result from `measure.json`, `ids.json`, `timelines.json`, `acceptance.txt`, `preflight.txt`, the smoke record and the user's notes. Quote numbers unrounded, with the rounded value beside them. Mark anything without its evidence "not measured", never a pass.
+Rule out: a load of `wintermute-project-worker`, a load whose `source` isn't `plugin` or whose `plugin` isn't `wintermute`, and a load after the first session tool.
 
-```markdown
-# Wintermute in Projects: trial findings (private)
-
-Run: <run ID>, <date>. App: <from preflight>. CLI: <from preflight>. Plugin: <version>. Runtime: <runtimeVersion of each arm>. Task: <default or spare>. Base commit: <createdSha>.
-Smoke check: <run ID of the smoke run and its five results>.
-
-## Results
-
-| # | Arm | Result | Receipts |
-|---|---|---|---|
-| F1 | Project | pass / fail / not measured | <skill loads against each session's first work action; missing logs> |
-| F2 | Project | … | <each request, its effective model and effort, its role and tier row; vendors of reviewers and judges> |
-| F3 | Project | … | <reports' commits and times, timeline events, merge command and exit code, merge readback, post-merge check> |
-| F3 | Baseline | … | <the same> |
-| F4 | Project | … | <each report: delivered, assignment known, purpose, lines; each needs_input text> |
-| F5 | Project | … | <the user's Overview and Inbox notes; publishes and results> |
-| F6 | Project | … | <the recovery block; the user's /compact notes> |
-| F7 | Project | … | <test and validate runs of the owner and the claims checker; denials; approvals> |
-| F8 | both | Go / User decides / No-go / not measured | <costToReadyUsd, workingMinutes, wallMinutes and userWaitMinutes for each arm; costRatio and workingTimeRatio unrounded> |
-| F9 | both | … | <userActionsToReady for each arm and the difference; interventions from the notes> |
-| E | both | holds / not comparable | <acceptance.txt; base commit; coordinator models; plan changes> |
-
-## Decision table
-
-<Apply design 8.14: name the state and the criteria that decide it. F10 is asked at the gate.>
-
-## Observations
-
-- U11: <Overview and Inbox items, duplicates>
-- U13: <baselineLoadedProjectSkill, and the negative Project in the smoke check>
-- U14: <any assignment without a final result after its first, and what the coordinator did>
-- U15: <the merge command and its result>
-- U16: <the pickers and the effective models>
-- Dashboard: <whether each snapshot read the swarm and matched the cost>
-
-## Identities
-
-<the arms' root and child IDs and branches from ids.json, and the PR URLs>
-```
-
-- [ ] **Step 6: Write the public summary**
-
-Create `$OUT/$RUN-findings-public.md` from the private findings, with role names (the Project arm, the baseline, the owner, the reviewer, the claims checker, the judges) instead of IDs, and no absolute paths, session or workspace IDs, branch names, prompts, user answers or usernames. Keep each result, its rounded numbers, the decision table's state and the reasons. Check it:
+- [ ] **Step 3: S2, the dispatch**
 
 ```bash
-grep -nE '/Users/|[0-9a-f]{8}-[0-9a-f]{4}-|wm-trial-[0-9]{8}|assignment:' "$OUT/$RUN-findings-public.md" && echo "REMOVE THE LINES ABOVE" || echo "public summary clean"
+P=<P>; L="$HOME/.copilot/session-state/$P/events.jsonl"
+jq -c 'select(.type=="tool.execution_start" and .agentId==null and (.data.toolName | IN("create_session","open_pr_session","open_issue_session"))) | {line: input_line_number, id: .data.toolCallId, tool: .data.toolName, kickoff: (.data.arguments.kickoff // {} | {model, reasoning_effort, agent, mode})}' "$L"
+jq -c 'select(.type=="tool.execution_complete" and .agentId==null and (.data.result.content // "" | test("Assignment ID"))) | {line: input_line_number, id: .data.toolCallId, success: .data.success, result: .data.result.content}' "$L"
+C=<C>; LC="$HOME/.copilot/session-state/$C/events.jsonl"
+jq -c 'select((.type=="session.start" or .type=="session.resume" or .type=="session.model_change") and .agentId==null) | {line: input_line_number, type, model: (.data.selectedModel // .data.newModel), effort: .data.reasoningEffort}' "$LC"
+jq -c 'select(.type=="tool.execution_start" and .agentId==null) | {line: input_line_number, tool: .data.toolName, model: .data.model}' "$LC" | head -3
 ```
 
-Expected: `public summary clean`. Hand off with both paths, then run Task 7.
+Pass: one session tool call, a `create_session` with `model` and `reasoning_effort` set and `agent` null; its completion succeeded, names `C` and gives the assignment ID `A`; the child's last own model event before its first own tool call, and that call's `model`, match the request; the `model` and `reasoning_effort` from Step 1's assignment query match too. Rule out: a `session.model_change` with a top-level `agentId`, which belongs to a sub-agent. No child log: not measured.
 
-### Task 12: Check the findings
+- [ ] **Step 4: S3, the handoff**
 
-One-off job at the fact-check row (Sol at `xhigh`), read-only. Its vendor differs from Task 11's.
+```bash
+C=<C>; LC="$HOME/.copilot/session-state/$C/events.jsonl"
+jq -c 'select(.type=="tool.execution_start" and .agentId==null and .data.toolName=="send_session_message") | {line: input_line_number, id: .data.toolCallId, to: .data.arguments.session_id, purpose: .data.arguments.purpose, assignment: .data.arguments.assignment_id, message: .data.arguments.message}' "$LC"
+jq -c 'select(.type=="tool.execution_complete" and .agentId==null and .data.toolCallId=="<id from the line above>") | {success: .data.success, result: .data.result.content}' "$LC"
+P=<P>; DB="$HOME/.copilot/data.db"
+sqlite3 -readonly -json "$DB" "SELECT assignment_id, child_session_id, purpose, created_at, delivered_at_ms FROM persistent_project_results WHERE coordinator_session_id = '$P'"
+```
 
-- [ ] **Step 1: Check each result against its evidence**
+Pass: a call to `P` with `purpose` `handoff`, `assignment` equal to `A` (non-empty), and a message whose first line is `swarm-status: complete unit=<label>` and whose `Summary:` doesn't start with "Partial:"; its completion succeeded; a `persistent_project_results` row with `assignment_id` `A`, `child_session_id` `C`, `purpose` `handoff` and a `delivered_at_ms`. Rule out: an empty or null `assignment` (two missing IDs are not a match), another assignment's ID, and a "Partial:" handoff. A successful send with no delivered row: not measured.
 
-For every row and number in the private findings, check the claim against `measure.json`, `ids.json`, `timelines.json`, `acceptance.txt`, `preflight.txt`, the smoke record and, where a claim needs it, the session logs in `~/.copilot/session-state/<id>/events.jsonl`. Check F2 against the tier table in `com.github.copilot/agents/wintermute-core.agent.md`, and the decision table against design 8.14. Check that the public summary matches the private findings and holds no identifier.
+- [ ] **Step 5: S4, the tests**
 
-- [ ] **Step 2: Report**
+```bash
+C=<C>; LC="$HOME/.copilot/session-state/$C/events.jsonl"
+jq -c 'select(.type=="tool.execution_start" and .agentId==null and (.data.toolName | IN("bash","read_bash"))) | {line: input_line_number, id: .data.toolCallId, tool: .data.toolName, mode: .data.arguments.mode, shell: .data.arguments.shellId, command: .data.arguments.command}' "$LC"
+jq -c 'select(.type=="tool.execution_complete" and .agentId==null and .data.toolCallId=="<id of a test, validate or read_bash call>") | {success: .data.success, exit: .data.shellExecution.exitCode, error: .data.error.code, tail: (.data.result.content // "" | .[-600:])}' "$LC"
+jq -c 'select(.type=="tool.execution_complete" and .data.error.code=="denied") | {line: input_line_number, id: .data.toolCallId}' "$LC"
+DB="$HOME/.copilot/data.db"; sqlite3 -readonly -json "$DB" "SELECT s.mode, w.branch, w.created_pr_html_url FROM sessions s LEFT JOIN workspaces w ON w.session_id = s.id WHERE s.id = '$C'"
+```
 
-Write each claim's verdict (confirmed, wrong with the right value, or not checkable) to `$OUT/$RUN-findings-check.md`, and hand off with its path. The orchestrator sends any correction to Task 11's session as a new assignment, and runs this check again on the corrected files.
+Run the second command for the last call that ran `npm test`, the last that ran `npm run validate`, and, for a command started in async mode, the last `read_bash` with its shell ID. Then, with the `branch` from the last command:
 
-### Task 13: The gate
+```bash
+gh pr list -R ncksol/ai_tools --state all --head <branch> --json number,url
+```
 
-The orchestrator does this with the user.
+Pass: for each test and validate run, `success` true and `exit` 0 (or, for async, the `read_bash` output says `completed with exit code 0`), and the same output shows `ℹ pass` above 0 and `ℹ fail 0` for `npm test`, and `Plugin validation passed` for `npm run validate`; the commands ran in `ghcp/plugins/wintermute` at `main`'s commit from the notes (the result file's commit); no denied call; `mode` is `autopilot`; `created_pr_html_url` is null and the PR list prints `[]`; no command ran `git commit`, `git push` or `gh pr create`; and the handoff says the worktree is clean. Rule out: an exit code or output from another call; a pipe that hides the exit code; a command that only prints the words; a denial, which fails S4 even if a later call passed.
 
-- [ ] **Step 1: Ask F10 after showing the measurements**
+- [ ] **Step 6: Dashboard numbers and time**
 
-Ask the user, tagged `[unit=* need=question]`, with the public summary's results and the decision table's state: "For your next repository task that ends in a PR, would you run it in a Project with this skill rather than with `wintermute-core` in an ordinary session? What did you have to click or watch, and did the Project improve on the ordinary session?"
+```bash
+P=<P>; N=<N>; TAG=<tag>; OUT=<OUT>; DB="$HOME/.copilot/data.db"
+cd "$HOME/.copilot/installed-plugins/ai-tools/wintermute"
+node scripts/swarm-snapshot.mjs --swarm "$P" --no-pr-lookup > "$OUT/$TAG-snapshot.json"
+jq -c '{usd: .cost.usd, byModel: .cost.byModel, coordinator: {model: .orchestrator.model, effort: .orchestrator.effort, credits: .orchestrator.cost.credits, subagents: (.orchestrator.subagents | length)}, units: [.units[] | {label: .label, model: .model, effort: .effort, credits: .cost.credits, subagents: (.subagents | length)}]}' "$OUT/$TAG-snapshot.json"
+sqlite3 -readonly "$DB" "SELECT id, total_nano_aiu / 1e11 AS usd FROM sessions WHERE id = '$N'"
+```
 
-- [ ] **Step 2: Bring the decision to the user**
+Write the opted-in Project's dollars, the negative Project's dollars, and the minutes from the opt-in message's timestamp (Step 2) to the handoff's `delivered_at_ms` (Step 4). These are for the record; the caps were the user's to act on.
 
-Ask, tagged `[unit=* need=question]`, with the decision table's outcome and its reasons, and these choices: go (Task 15), no-go (Task 14), or the fix round (only when an F1–F6 failure came from the skill text and Phase 1's fix round is unused). If the user overrides a measured outcome, record it in the private findings as the user's override, with their reason.
+- [ ] **Step 7: The `/compact` observation**
 
-- [ ] **Step 3: Act on the answer**
+```bash
+P=<P>; L="$HOME/.copilot/session-state/$P/events.jsonl"
+jq -c 'select((.type | startswith("session.compaction")) and .agentId==null) | {line: input_line_number, at: .timestamp, type, trigger: .data.trigger, success: .data.success}' "$L"
+```
 
-- Go: start Task 15.
-- No-go: start Task 14.
-- Fix round: a patch PR on the two skills through the normal gates; after it merges, Tasks 5, 6 (`MODE=trial`, a new run) and 10–13 again with the spare task.
+Write whether an own compaction follows the user's `/compact` in time, with its trigger as recorded, and whether the next reply starts with the loaded line. This decides nothing.
+
+- [ ] **Step 8: Write the report, and hand off**
+
+Write `$OUT/<tag>-check.md`: for S1–S4, the verdict, the records (session IDs and log line numbers, or the query rows) and the false passes ruled out; the numbers from Step 6; the observation from Step 7. Hand off with its path, and say that your worktree is clean.
+
+### Task 8: Gate 1
+
+The orchestrator does this.
+
+- [ ] **Step 1: Read the report**
+
+Read `$OUT/<tag>-check.md` and check, as a quick job, that each verdict names its records.
+
+- [ ] **Step 2: Decide the next step (design 8.10)**
+
+- S1–S4 all pass: ask the user, tagged `[unit=* need=question]`, with the report's verdicts, the dashboard numbers and the user's notes, whether to start the real task (Task 9).
+- A fail caused by the skill text, with the fix round unused: a patch PR on the two skills through the normal gates; after it merges, Tasks 5–8 again with a new tag.
+- Not measured: start the checker again on the same logs; if it is still not measured, Tasks 6–8 once more with a new tag; after that, the user decides, and the record says what was not measured.
+- Any other fail, or a second one: bring the no-go to the user with the report, as in Task 11.
+
+- [ ] **Step 3 (USER): Clean up the smoke check**
+
+Task 12, for `<tag>-project` and `<tag>-negative`.
+
+### Task 9 (USER): The real task
+
+Design 8.11. Only after a passing smoke check, and only if you agreed in Task 8.
+
+- [ ] **Step 1 (USER): Choose the task, the tag and the budget**
+
+Choose one real task, of the kind you would normally give to `wintermute-core`. In a terminal, `date -u +wm-eval-%Y%m%d` prints the tag; use it as `<tag>` below. Write down the most you will spend on the task. Note the app's approval settings, and don't change them during the task.
+
+- [ ] **Step 2 (USER): Choose the target branch**
+
+If the task will open PRs, choose its target:
+
+- the default, a disposable base branch: in a checkout of the task's repository, with `<target>` the branch the work would normally merge into, run
+
+  ```bash
+  git fetch origin <target>
+  git ls-remote --exit-code origin refs/heads/<tag>-base; echo "exit $?"
+  ```
+
+  Expected: `exit 2`, so the branch doesn't exist yet. Then run
+
+  ```bash
+  git push origin "refs/remotes/origin/<target>:refs/heads/<tag>-base"
+  ```
+
+  Expected: `* [new branch]`, and note the commit it printed. Any other output: stop, and don't use that branch;
+- or the real branch, for work that should land; then every merge into it needs your go-ahead for that PR, as usual.
+
+A task that opens no PR needs neither.
+
+- [ ] **Step 3 (USER): Create the Project**
+
+In the app, create a Project whose name starts with `<tag>`, for example `<tag> orders API`, with the task's repository, and choose the model and effort you would use for a coordinator. Open the swarm dashboard.
+
+- [ ] **Step 4 (USER): Opt in and give the task**
+
+Send, with your tag, task and target branch:
+
+```text
+/wintermute-project <tag>: <the task, as you would write it>. Target branch: <tag>-base, or the real branch you chose. Show me the plan and wait for my approval before you start.
+```
+
+- [ ] **Step 5 (USER): Work as usual, and take notes**
+
+Review the plan, answer questions and give go-aheads as you normally would. Before you give a merge go-ahead, check that the question names the repository, the PR, its base branch and its head commit. Note as you go: what you had to click, watch or wait for; anything confusing; any time you opened a child's session to unblock it; every hold and denial; what the Overview and the Inbox showed, and when.
+
+- [ ] **Step 6 (USER): Try `/compact` once**
+
+While children are working, or after the last merge, type `/compact` in the Project. Note whether the app accepted it. If it did, send `<tag>: What is the state of the task? Don't change anything.` and note whether the reply starts with `wintermute-project rules loaded.`; if it doesn't, send `/wintermute-project` once and note that you did.
+
+- [ ] **Step 7 (USER): Stop at the budget**
+
+If the dashboard shows the Project at your budget, send `Stop: start nothing new, and tell me what is still open.`, and note it.
+
+- [ ] **Step 8 (USER): Tell the orchestrator**
+
+When the work is merged, or you stopped it, send the orchestrator this text, filled in:
+
+```text
+real task done
+Tag: <tag>
+Project name: <name>
+Task, in one line: <what it was>
+Target branch: <tag>-base at <commit>, or <the real branch>
+Budget: <dollars>; dashboard cost at the end: <dollars>
+Approval settings: <what they were>
+Clicks, waits and confusion: <notes>
+Opened a child's session to unblock it: <no, or when and why>
+Holds and denials: <none, or each one and where>
+Overview and Inbox: <what showed, and when>
+/compact accepted: <yes or no>; reply started with the loaded line: <yes, no or not tried>; I sent /wintermute-project again: <yes or no>
+```
+
+The orchestrator saves it as `$OUT/<tag>-notes.md`.
+
+### Task 10: Check the real task
+
+A one-off checker session, read-only, at Sol `high`, or Opus at `high` when the Project's coordinator runs on an OpenAI model (design 8.12). Its kickoff gives the tag, the Project's name, `$OUT`, the user's notes and this task.
+
+**Files (outside the repository):**
+- Create: `$OUT/<tag>-check.md`, `$OUT/<tag>-snapshot.json`
+
+**Interfaces:**
+- Consumes: the tag, the Project's name and the user's notes (Task 9).
+- Produces: one short note for each of F1–F7, "ok", "problem" or "not seen", with its records; the dashboard numbers.
+
+- [ ] **Step 1: Find the Project and its children**
+
+```bash
+TAG=<tag>; DB="$HOME/.copilot/data.db"
+sqlite3 -readonly -json "$DB" "SELECT s.id, s.title, s.created_at, s.model, s.reasoning_effort FROM persistent_projects p JOIN sessions s ON s.id = p.session_id WHERE s.title LIKE '$TAG%' ORDER BY s.created_at"
+```
+
+Expected: one row, whose title is the Project's name from the notes. Its `id` is `P`. Any other result: every note is "not seen"; write that and hand off.
+
+```bash
+P=<P>; DB="$HOME/.copilot/data.db"
+sqlite3 -readonly -json "$DB" "SELECT 'repository' AS kind, session_id, name AS title, created_at FROM workspaces WHERE creator_session_id = '$P' OR coordinating_creator_session_id = '$P' UNION ALL SELECT 'chat', l.session_id, s.title, s.created_at FROM chat_parent_links l LEFT JOIN sessions s ON s.id = l.session_id WHERE l.parent_session_id = '$P'"
+sqlite3 -readonly -json "$DB" "SELECT a.id AS assignment_id, a.child_session_id, s.model, s.reasoning_effort, s.mode FROM persistent_project_assignments a LEFT JOIN sessions s ON s.id = a.child_session_id WHERE a.coordinator_session_id = '$P'"
+sqlite3 -readonly -json "$DB" "SELECT assignment_id, child_session_id, purpose, substr(content, 1, 160) AS content, delivered_at_ms FROM persistent_project_results WHERE coordinator_session_id = '$P'"
+```
+
+The child sessions' IDs are `KIDS` below, separated by spaces.
+
+- [ ] **Step 2: F1, skill loads**
+
+```bash
+P=<P>; KIDS="<child IDs>"
+for S in "$P" $KIDS; do
+  L="$HOME/.copilot/session-state/$S/events.jsonl"; echo "== $S"
+  jq -c 'select(.type=="skill.invoked") | {line: input_line_number, name: .data.name, source: .data.source, plugin: .data.pluginName}' "$L"
+  jq -c 'select(.type=="tool.execution_start" and .agentId==null and .data.toolName!="skill") | {line: input_line_number, first_tool: .data.toolName}' "$L" | head -1
+done
+```
+
+Ok: `P` loads `wintermute-project` from source `plugin`, plugin `wintermute`, after the opt-in message and before its first session tool; each child loads `wintermute-project-worker` the same way before its first own tool other than `skill`; no child loads `wintermute-project`.
+
+- [ ] **Step 3: F2, models**
+
+```bash
+P=<P>; KIDS="<child IDs>"; L="$HOME/.copilot/session-state/$P/events.jsonl"
+jq -c 'select(.type=="tool.execution_start" and .agentId==null and (.data.toolName | IN("create_session","open_pr_session","open_issue_session"))) | {line: input_line_number, tool: .data.toolName, name: .data.arguments.name, kickoff: (.data.arguments.kickoff // {} | {model, reasoning_effort, agent, mode})}' "$L"
+jq -c 'select(.type=="tool.execution_start" and .agentId==null and .data.toolName=="task") | {line: input_line_number, id: .data.toolCallId, agent_type: .data.arguments.agent_type, model: .data.arguments.model, effort: .data.arguments.reasoning_effort}' "$L"
+jq -c 'select(.type=="subagent.started") | {line: input_line_number, call: .data.toolCallId, model: .data.model}' "$L"
+for S in $KIDS; do
+  echo "== $S"
+  jq -c 'select((.type=="session.start" or .type=="session.resume" or .type=="session.model_change") and .agentId==null) | {line: input_line_number, model: (.data.selectedModel // .data.newModel), effort: .data.reasoningEffort}' "$HOME/.copilot/session-state/$S/events.jsonl"
+done
+```
+
+Ok: each session request sets `model` and `reasoning_effort` and no `agent`, and the child's own model events match it; each `task` call sets `model` and `reasoning_effort`, and its `subagent.started` has that model; each pair fits its role's row in the tier table of `skills/wintermute-project/SKILL.md` and isn't on its "Never use these" list; each reviewer comes from another vendor than the author it reviewed; judges follow the final-panel rule. Name any override the user asked for.
+
+- [ ] **Step 4: F3, PR gates (only if the task opened PRs)**
+
+```bash
+P=<P>; KIDS="<child IDs>"
+for S in "$P" $KIDS; do
+  L="$HOME/.copilot/session-state/$S/events.jsonl"; echo "== $S"
+  jq -c 'select(.type=="tool.execution_start" and .agentId==null and .data.toolName=="bash" and (.data.arguments.command | test("gh pr (create|ready|merge)|az repos pr (create|update)"))) | {line: input_line_number, id: .data.toolCallId, command: .data.arguments.command}' "$L"
+  jq -c 'select(.type=="tool.execution_start" and .agentId==null and .data.toolName=="publish_chat_update") | {line: input_line_number, attachments: [.data.arguments.attachments[]? | {kind, url}]}' "$L"
+done
+jq -c 'select(.type=="user.message" and .data.source==null and ((.data.content // "") | startswith("<system_notification>") | not)) | {line: input_line_number, at: .timestamp, text: (.data.content // "" | .[0:200])}' "$HOME/.copilot/session-state/$P/events.jsonl"
+```
+
+For each PR URL, read it once:
+
+```bash
+gh pr view <PR URL> --json url,number,baseRefName,headRefOid,state,mergedAt,mergeCommit
+```
+
+Ok: each PR, identified by its full URL, was published only after its review and claims check reported clean at the published head (their handoffs' `commit=`); it merged only after the user's typed go-ahead for that PR, which followed a question that named its repository, base branch and head, and only at a head where its review, its claims check and, for the task's last unit, the final panel were clean; `gh pr view` shows it merged into that base, with a merge commit; the claims checker was a separate session from the owner and the reviewers; a claims check ran on the target branch at the last merge commit. A PR in another repository with the same number, a URL in a message without this readback, or a go-ahead taken from memory or a summary, is a problem.
+
+- [ ] **Step 5: F4, reports**
+
+```bash
+KIDS="<child IDs>"
+for S in $KIDS; do
+  echo "== $S"
+  jq -c 'select(.type=="tool.execution_start" and .agentId==null and .data.toolName=="send_session_message") | {line: input_line_number, to: .data.arguments.session_id, purpose: .data.arguments.purpose, assignment: .data.arguments.assignment_id, lines: (.data.arguments.message | split("\n") | map(select(length > 0)) | length), first: (.data.arguments.message | split("\n")[0])}' "$HOME/.copilot/session-state/$S/events.jsonl"
+done
+```
+
+Ok: every handoff, `needs_input` and `error` report carries a non-empty `assignment` from Step 1's assignments for that child; `purpose` matches the status in `first` (`blocked` goes with `error`); handoffs have `lines` at most 2; no `needs_input` asks for a go-ahead; every assignment with work to report has a final result in Step 1's results, or the coordinator explained why not. `progress` reports stay in the child's thread by design.
+
+- [ ] **Step 6: F5, the Project's UI**
+
+From the user's notes and Step 4's `publish_chat_update` calls: every child appears in the Overview; each PR appears in the Inbox after it is published, and nothing appears there before its review and claims check are clean; the user didn't open a child's session to unblock the work; questions arrived where the user could read them.
+
+- [ ] **Step 7: F6, recovery after `/compact`**
+
+```bash
+P=<P>; L="$HOME/.copilot/session-state/$P/events.jsonl"
+jq -c 'select((.type | startswith("session.compaction")) and .agentId==null) | {line: input_line_number, at: .timestamp, type, trigger: .data.trigger, success: .data.success}' "$L"
+jq -c 'select((.type=="tool.execution_start" and .agentId==null) or .type=="skill.invoked" or (.type=="user.message" and .data.source==null)) | {line: input_line_number, at: .timestamp, type, tool: .data.toolName, skill: .data.name, query: (.data.arguments.query // "" | .[0:80])}' "$L"
+```
+
+Ok: an own compaction follows the user's `/compact` from the notes (write its trigger as recorded; a missing or unknown trigger is written as such); after it and before the next state change (an SQL write, `update_project_memory`, a session tool, a publish, a merge, or a shell command that changes anything), the skill loads again or the user typed `/wintermute-project` once, `children` and `child_notes` are read, `get_session` covers every child that existed and wasn't archived at the compaction, and no second owner, reviewer or claims checker starts for work that has one. No compaction bound to the user's command: "not seen".
+
+- [ ] **Step 8: F7, commands in autopilot**
+
+```bash
+KIDS="<child IDs>"
+for S in $KIDS; do
+  L="$HOME/.copilot/session-state/$S/events.jsonl"; echo "== $S"
+  jq -c 'select(.type=="tool.execution_start" and .agentId==null and .data.toolName=="bash" and (.data.arguments.command | test("npm (test|run)|node --test|pytest|dotnet test|go test|cargo test"))) | {line: input_line_number, id: .data.toolCallId, mode: .data.arguments.mode, command: .data.arguments.command}' "$L"
+  jq -c 'select(.type=="tool.execution_complete" and .agentId==null and .data.shellExecution != null) | {line: input_line_number, id: .data.toolCallId, exit: .data.shellExecution.exitCode}' "$L"
+  jq -c 'select(.type=="tool.execution_complete" and .data.error.code=="denied") | {line: input_line_number, id: .data.toolCallId}' "$L"
+done
+```
+
+Ok: owners and claims checkers ran the task's tests and checks, each judged by its own exit code and output as in Task 7, Step 5. List every denial and hold with its command and session.
+
+- [ ] **Step 9: Dashboard numbers**
+
+```bash
+P=<P>; TAG=<tag>; OUT=<OUT>
+cd "$HOME/.copilot/installed-plugins/ai-tools/wintermute"
+node scripts/swarm-snapshot.mjs --swarm "$P" --no-pr-lookup > "$OUT/$TAG-snapshot.json"
+jq -c '{usd: .cost.usd, byModel: .cost.byModel, coordinator: {model: .orchestrator.model, effort: .orchestrator.effort, credits: .orchestrator.cost.credits, subagents: (.orchestrator.subagents | length)}, units: [.units[] | {label: .label, model: .model, effort: .effort, credits: .cost.credits, subagents: (.subagents | length)}]}' "$OUT/$TAG-snapshot.json"
+```
+
+- [ ] **Step 10: Write the notes, and hand off**
+
+Write `$OUT/<tag>-check.md`: one short note for each of F1–F7 ("ok", "problem" with what happened, or "not seen"), each with its records (session IDs and log line numbers, or query rows); any hard failure from design 8.13, named as one; the dashboard numbers. Hand off with its path, and say that your worktree is clean.
+
+### Task 11: The gate
+
+- [ ] **Step 1: Bring the evidence to the user**
+
+The orchestrator sends the user, tagged `[unit=* need=question]`: the dashboard numbers (total cost, cost by model, sub-agents, each child's model and effort), the checker's F1–F7 notes, any hard failure named as one with a recommendation of no-go (design 8.13), and the user's own notes. Then it asks: "For your next task of this kind, would you run it in a Project with this skill rather than with `wintermute-core` in an ordinary session? Go or no-go?"
+
+- [ ] **Step 2 (USER): Decide**
+
+- **Go:** the orchestrator records the decision, with the user's reason if they give one, and any hard failure the user accepted, in its notes. Then Task 12 and Task 14.
+- **No-go:** the orchestrator records it. Then Task 12 and Task 13.
+- **Fix round**, if a problem came from the skill text and the round is unused: a patch PR on the two skills through the normal gates, then Tasks 5–8 again with a new tag, and the real task again only if the user wants.
+
+### Task 12 (USER): Clean up
+
+Design 8.14. After the smoke check, after the real task, and after any stop. Do each item yourself, or tell the orchestrator to do one named item. Delete nothing on a guess.
+
+- [ ] **Step 1 (USER): Stop the work**
+
+Send `Stop: start nothing new, and tell me what is still open.` to the Project if anything is still working. Wait until its Overview shows nothing under Working.
+
+- [ ] **Step 2 (USER): Decide about each open PR**
+
+In a terminal, with the task's repository as `<owner>/<repo>`:
+
+```bash
+gh pr list -R <owner>/<repo> --state open --search "created:>=<the date from the tag, as YYYY-MM-DD>" --json number,url,headRefName,baseRefName
+```
+
+For each PR that the evaluation opened, decide: merge it under the normal go-ahead, leave it open, or close it.
+
+- [ ] **Step 3 (USER): Archive the sessions**
+
+In the app, archive the Project's child sessions first, each only when it is idle and its worktree is clean or its changes are pushed. Then archive the Project, unless you keep it for more work; in a Project you keep, ask it to turn wintermute off, which removes the opt-in line with your consent.
+
+- [ ] **Step 4 (USER): Delete branches, only after checking them**
+
+For each branch that the evaluation created (`<tag>-base`, and the branches of the evaluation's children), in a checkout of its repository:
+
+```bash
+gh pr list -R <owner>/<repo> --state open --base <branch> --json number,url
+gh pr list -R <owner>/<repo> --state open --head <branch> --json number,url
+git ls-remote origin refs/heads/<branch>
+```
+
+Delete it only if both lists print `[]`, its commit is the one you expect, and any merged work on it that should land elsewhere has landed, or you chose to drop it:
+
+```bash
+git push origin --delete <branch>
+```
 
 ---
 
 ## Phase 2b, unit `projects-remove` (only after a no-go)
 
-### Task 14: Remove the Projects skills
+### Task 13: Remove the Projects skills
 
 **Files:**
 - Delete: `skills/wintermute-project/`, `skills/wintermute-project-worker/`, `scripts/lib/validate-skills.mjs`, `tests/validate-skills.test.mjs`, `tests/validate-skills-plugin.test.mjs`
 - Modify: `scripts/validate-plugin.mjs`, `README.md`, `CHANGELOG.md`, `plugin.json`, `package.json`, `.github/plugin/marketplace.json`, `.github/copilot-instructions.md`
-- Create: `docs/superpowers/specs/<trial date>-wintermute-projects-trial-findings.md`
 
 **Interfaces:**
-- Consumes: the checked public summary (Task 12, or the smoke record from Task 9 when the smoke check ended Phase 1) and the gate's no-go.
+- Consumes: the no-go from Task 8 or Task 11.
 - Produces: a plugin and repository instructions with no Projects skills and no exception, at the next minor version.
 
 Every command in this task runs from the repository root unless it says otherwise.
@@ -2625,14 +1738,10 @@ In `ghcp/plugins/wintermute/CHANGELOG.md`, under the new heading, replace `- TOD
 ```markdown
 ### Removed
 
-- The experimental Copilot app Projects skills, `wintermute-project` and `wintermute-project-worker`, and their check in `npm run validate`. Projects that used them keep working as ordinary Projects. Update the plugin and restart the app so that the skills disappear, and remove the wintermute line from the memory of any Project that has it. The agents and the dashboard are unchanged.
+- The experimental Copilot app Projects skills, `wintermute-project` and `wintermute-project-worker`, and their check in `npm run validate`, after their evaluation ended in a no-go. Projects that used them keep working as ordinary Projects. Update the plugin and restart the app so that the skills disappear, and remove the wintermute line from the memory of any Project that has it. The agents and the dashboard are unchanged.
 ```
 
-- [ ] **Step 7: Add the public findings**
-
-Copy the checked public summary from `$OUT` to `docs/superpowers/specs/<trial date>-wintermute-projects-trial-findings.md`, unchanged.
-
-- [ ] **Step 8: Run every check**
+- [ ] **Step 7: Run every check**
 
 ```bash
 (cd ghcp/plugins/wintermute && npm test && npm run validate)
@@ -2640,13 +1749,12 @@ Copy the checked public summary from `$OUT` to `docs/superpowers/specs/<trial da
 
 Expected: PASS, with 10 tests fewer than before this task, ending with "Plugin validation passed: manifests, root marketplace entry, packaged agents, CHANGELOG and required files."
 
-- [ ] **Step 9: Stage exactly the expected paths, and compare**
+- [ ] **Step 8: Stage exactly the expected paths, and compare**
 
 ```bash
-git add ghcp/plugins/wintermute/scripts/validate-plugin.mjs ghcp/plugins/wintermute/README.md ghcp/plugins/wintermute/CHANGELOG.md ghcp/plugins/wintermute/plugin.json ghcp/plugins/wintermute/package.json .github/plugin/marketplace.json .github/copilot-instructions.md docs/superpowers/specs/<trial date>-wintermute-projects-trial-findings.md
+git add ghcp/plugins/wintermute/scripts/validate-plugin.mjs ghcp/plugins/wintermute/README.md ghcp/plugins/wintermute/CHANGELOG.md ghcp/plugins/wintermute/plugin.json ghcp/plugins/wintermute/package.json .github/plugin/marketplace.json .github/copilot-instructions.md
 git diff --cached --name-status | sort > /tmp/projects-remove-staged.txt
 printf '%s\t%s\n' \
-  A "docs/superpowers/specs/<trial date>-wintermute-projects-trial-findings.md" \
   D ghcp/plugins/wintermute/scripts/lib/validate-skills.mjs \
   D ghcp/plugins/wintermute/skills/wintermute-project-worker/SKILL.md \
   D ghcp/plugins/wintermute/skills/wintermute-project/SKILL.md \
@@ -2665,49 +1773,44 @@ diff /tmp/projects-remove-expected.txt /tmp/projects-remove-staged.txt && echo "
 
 Expected: `staged exactly the expected paths`. Anything else: unstage the extra paths, or report `blocked`.
 
-- [ ] **Step 10: Commit, push and hand off**
+- [ ] **Step 9: Commit, push and hand off**
 
 ```bash
 git commit -m "feat(wintermute): remove the experimental Projects skills"
 git push
 ```
 
-Hand off with the pushed commit for the critical review, the claims check and the final panel. After the merge, the user updates the plugin (`copilot plugin update wintermute@ai-tools`), restarts the app, checks in **Customize → Installed** that neither skill is listed, and removes the wintermute line from the memory of any Project that still has it.
+Hand off with the pushed commit for the critical review, the claims check and the final panel. The PR's description gives the outcome in one or two sentences: the gate's decision and, if the user agrees to publish it, their reason, with no session IDs, paths or details of the real task (design 8.13). After the merge, the user updates the plugin (`copilot plugin update wintermute@ai-tools`), restarts the app, checks in **Customize → Installed** that neither skill is listed, and removes the wintermute line from the memory of any Project that still has it.
 
 ---
 
 ## Phase 2a (only after a go)
 
-### Task 15: Write the Phase 2 plan
+### Task 14: Write the Phase 2 plan
 
 Unit `projects-phase2-plan`: a document unit, drafted at the document draft row, fact-checked by another vendor, and reviewed and checked as a PR.
 
 **Files:**
-- Create: `docs/superpowers/specs/<trial date>-wintermute-projects-trial-findings.md`
 - Create: `docs/superpowers/plans/<date>-wintermute-projects-phase-2.md`
 
 **Interfaces:**
-- Consumes: design 8.15 and section 10 (U7, U8, U12, U14), the checked findings, and the trial's session logs.
+- Consumes: design 8.15 and section 10 (U7, U8, U12, U14), the checkers' reports and the user's notes in `$OUT`, the gate's decision with any hard failure the user accepted, and the real task's session logs.
 - Produces: the plan for units `engine-project-roots`, `engine-project-results`, `engine-schedules`, `projects-skill-fixes` and `projects-docs`, with the scope, dependencies, critical flags and tiers in this plan's Units table.
 
-- [ ] **Step 1: Commit the public findings**
+- [ ] **Step 1: Build fixtures from an allowlist**
 
-Copy the checked public summary from `$OUT` to `docs/superpowers/specs/<trial date>-wintermute-projects-trial-findings.md`, unchanged.
+From the real task's logs, take only these event types and fields, and give every ID, path, name and text a synthetic value: `skill.invoked` (`type`, `name`, `pluginName`, `trigger`, `timestamp`); `user.message` with `source: "agent-coordinator-results"` (the record's field names and an invented handoff text); the no-handoff notice, if one arrived; `relay_session_input` start and completion (`request_id`, `context` with an invented tag, the result's `outcome`); and `session_automations` columns, if a schedule ran. Copy no prompt, answer, username, path or detail of the real task.
 
-- [ ] **Step 2: Build fixtures from an allowlist**
+- [ ] **Step 2: Write the plan**
 
-From the trial's logs, take only these event types and fields, and give every ID, path, name and text a synthetic value: `skill.invoked` (`type`, `name`, `pluginName`, `trigger`, `timestamp`); `user.message` with `source: "agent-coordinator-results"` (the record's field names and an invented handoff text); the no-handoff notice, if one arrived; `relay_session_input` start and completion (`request_id`, `context` with an invented tag, the result's `outcome`); and `session_automations` columns, if a schedule ran. Copy no prompt, answer, username or path.
+Follow the writing-plans skill: the header with **Spec:** pointing to `docs/superpowers/specs/2026-11-19-wintermute-projects-design.md`; the Global Constraints of this plan that still apply (not "Nothing in the engine before the gate", and not the evaluation rules); a first task that fixes any hard failure the user accepted at the gate (design 8.13); file structure; one section per unit with TDD tasks, exact paths, test code and the commands `npm test && npm run validate` from `ghcp/plugins/wintermute/`; a version bump per PR; `projects-docs` after the engine units and `projects-skill-fixes`; and no placeholders. Check every code block in a scratch copy of the plugin outside the repository.
 
-- [ ] **Step 3: Write the plan**
-
-Follow the writing-plans skill: the header with **Spec:** pointing to `docs/superpowers/specs/2026-11-19-wintermute-projects-design.md`; the Global Constraints of this plan that still apply (not "Nothing in the engine before the gate", and not the run rules); file structure; one section per unit with TDD tasks, exact paths, test code and the commands `npm test && npm run validate` from `ghcp/plugins/wintermute/`; a version bump per PR; `projects-docs` after the engine units and `projects-skill-fixes`; and no placeholders. Check every code block in a scratch copy of the plugin outside the repository.
-
-- [ ] **Step 4: Commit, push and hand off**
+- [ ] **Step 3: Commit, push and hand off**
 
 ```bash
-git add docs/superpowers/specs docs/superpowers/plans
-git commit -m "docs: plan wintermute Projects phase 2 and record the trial findings"
+git add docs/superpowers/plans
+git commit -m "docs: plan wintermute Projects phase 2"
 git push
 ```
 
-Hand off with the pushed commit for the fact-check, the review and the claims check. The user approves the plan before any Phase 2 unit starts.
+Hand off with the pushed commit for the fact-check, the critical review, the claims check and the final panel. The PR's description gives the gate's outcome in one or two sentences, with no session IDs, paths or details of the real task (design 8.13). The user approves the plan before any Phase 2 unit starts.
