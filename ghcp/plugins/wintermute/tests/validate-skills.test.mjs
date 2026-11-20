@@ -23,10 +23,10 @@ function skillText(name, { front = {}, body } = {}) {
 }
 
 /** A coordinator body with the real policy copy and the sections and labels it refers to. */
-function coordinatorBody({ table, neverUse, labels = ['Follow-up jobs', 'Security review'] } = {}) {
+function coordinatorBody({ pins, table, neverUse, labels = ['Follow-up jobs', 'Security review'] } = {}) {
   const blocks = policyBlocks(coreText);
   const labelLines = labels.map(label => `- **${label}**: fixture.`).join('\n');
-  return `## Models and effort\n\n${table ?? blocks.table}\n\n- Fixture rule.\n\n${neverUse ?? blocks.neverUse}\n\n## Evidence and review\n\n${labelLines}\n`;
+  return `## Models and effort\n\n${pins ?? blocks.pins}\n\n${table ?? blocks.table}\n\n- Fixture rule.\n\n${neverUse ?? blocks.neverUse}\n\n## Evidence and review\n\n${labelLines}\n`;
 }
 
 /** A scratch repository with the plugin's policy agent and fixture skills; `skills` maps a skill name to its text, or null to leave it out. */
@@ -95,9 +95,10 @@ test('skills with an exact copy of the model policy pass', async () => {
   assert.deepEqual(await errorsFor(), []);
 });
 
-test('a change to the tier table or the list in wintermute-core is reported as drift, at the first line that differs', async () => {
+test('a change to the pinned models, the tier table or the list in wintermute-core is reported as drift, at the first line that differs', async () => {
   const differs = (label, line) => `the ${label} differs from ${POLICY_AGENT} at its line ${line}`;
   const edits = [
+    [editCore(policy.pins, policy.pins.replace('`gpt-6.1-sol`', '`gpt-6.2-sol`')), differs('"Pinned models:" list', policy.pins.split('\n').findIndex(line => line.includes('gpt-6.1-sol')) + 1)],
     [editCore(policy.table, changedTable()), differs('tier table', tableRows.length)],
     [editCore(policy.neverUse, [listLines[0], '- Haiku at `max`.', ...listLines.slice(1)].join('\n')), differs('"Never use these:" list', 2)],
     [editCore(policy.neverUse, `${policy.neverUse}\n\n- Haiku at \`max\`: added only in wintermute-core, after a blank line.`), differs('"Never use these:" list', listLines.length + 1)],
@@ -110,7 +111,9 @@ test('text after the list in wintermute-core is reported instead of being left o
   assertReported(errors, `${POLICY_AGENT}: "## Models and effort" has text after "Never use these:"`);
 });
 
-test('a skill without its copy of the table or the list is reported', async () => {
+test('a skill without its copy of the pinned models, the table or the list is reported', async () => {
+  const noPins = skillText(COORDINATOR_SKILL, { body: coordinatorBody({ pins: 'The pins are in wintermute-core.' }) });
+  assertReported(await errorsFor({ [COORDINATOR_SKILL]: noPins }), `${SKILLS_DIR}/${COORDINATOR_SKILL}/SKILL.md: "## Models and effort" has no "Pinned models:" line`);
   const noTable = skillText(COORDINATOR_SKILL, { body: coordinatorBody({ table: 'The tiers are in wintermute-core.' }) });
   assertReported(await errorsFor({ [COORDINATOR_SKILL]: noTable }), `${SKILLS_DIR}/${COORDINATOR_SKILL}/SKILL.md: "## Models and effort" has no table`);
   const noList = skillText(COORDINATOR_SKILL, { body: coordinatorBody({ neverUse: 'Avoid weak models.' }) });

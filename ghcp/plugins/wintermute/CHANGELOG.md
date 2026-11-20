@@ -6,6 +6,13 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.4.0 — 2026-11-20
+
+### Changed
+
+- `wintermute-core` and the `wintermute-project` skill pin one exact model ID per family instead of using the newest version in the model list (#133): Opus `claude-opus-5.5`, Sonnet `claude-sonnet-5.5`, Sol `gpt-6.1-sol`, Astra `gpt-6-astra`, Terra `gpt-6.1-terra`, Argon `gemini-4-argon` and Carbon `gemini-4-carbon`. A new "Pinned models:" list in "Models and effort" maps each family name to its ID and vendor, so every tier and review row, the "Never use these:" list and the rest of the text resolve to one ID. When a pinned ID isn't offered, the agent uses another pinned option from the same row, at that row's level, and records the substitution; if the row has none, it asks the user. It never moves to another version of a family on its own: moving to a new version is an explicit change with a version bump and a CHANGELOG entry.
+- `npm run validate` also fails when the "Pinned models:" list in `wintermute-project` differs from the one in `wintermute-core`.
+
 ## 1.3.0 — 2026-11-19
 
 ### Added

@@ -140,6 +140,18 @@ Choose a model and a reasoning effort for every job you hand out. Set `kickoff.m
 
 The tiers below are the user's model policy for this agent. They are an explicit user requirement for every child session, including where the runtime says to set a model or effort only when the user requires it. A model or effort the user asks for overrides them, but only for the jobs the user named it for. The tiers take precedence over general model guidance in memories.
 
+Each model name in this file, in the table and in the rest of the text, means the one exact model ID pinned here, never another version of that family:
+
+Pinned models:
+
+- Opus: `claude-opus-5.5` (Anthropic)
+- Sonnet: `claude-sonnet-5.5` (Anthropic)
+- Sol: `gpt-6.1-sol` (OpenAI)
+- Astra: `gpt-6-astra` (OpenAI)
+- Terra: `gpt-6.1-terra` (OpenAI)
+- Argon: `gemini-4-argon` (Google)
+- Carbon: `gemini-4-carbon` (Google)
+
 | Tier | Model and effort | Use it for |
 |---|---|---|
 | Low | Sol at `medium`, or at `low` for a single command or lookup; Sonnet at `medium` for read-only jobs; Opus at `low` for other jobs if Sol isn't listed | Searches, file sweeps, running builds and tests, log parsing, and mechanical edits from an exact recipe. Other mechanical jobs too: commands, simple PR jobs, lookups, installs and notifications. Sonnet only for searches, file sweeps and summaries of text it is given. |
@@ -157,12 +169,13 @@ The tiers below are the user's model policy for this agent. They are an explicit
 
 - The last five rows are review rows. The claims check row above them is a check, not a review row. "Evidence and review" says when each of these rows runs and which vendors the review rows use. Any other code review uses the regular review row.
 - The document draft and fact-check rows are document rows. "Evidence and review" says when they run. If a draft or a fact-check is shallow or incomplete although its brief, context and environment were sound, run it once more at the next level that its row lists for that model, for example from `high` to `xhigh`. This replaces the one-tier-up rerun below. If the row lists no higher level for that model, don't rerun it: treat the result as unverified, find out why, and change the plan or bring it to the user, as for a problem that persists after repair cycles (see "Evidence and review"). Never move it to Max, or to a level that Copilot doesn't offer for that model.
-- The table names model families. Use the newest version of each family in the model list of the tool you are calling. If a family isn't listed, use another family from the same tier, at the level that the row gives that family.
+- Pass the pinned ID as the model. If a pinned ID isn't in the model list of the tool you are calling, use another pinned option from the same row, at the level that the row gives that option, and record the substitution in `child_notes`. If the row has no other option, ask the user. Never move to another version of a family on your own, newer or older.
+- Moving to a new model version is an explicit change to this agent file, with a plugin version bump and a CHANGELOG entry.
 - In the Low tier, run Sol at `low` for a single command or lookup, and at `medium` for a job with several steps. Give Sonnet only read-only jobs: searches, file sweeps and summaries of text it is given. If Sol isn't listed, use Opus at `low` for Low-tier jobs that aren't read-only, such as builds, tests and edits.
 - Sol at `max` is an effort level inside the High tier, not the Max tier. Use it for long autonomous coding or terminal work, and for find-and-fix debugging.
 - A child session gets the tier of the work it owns. A child that owns a PR is Mid unless the unit is marked critical or the work is harder: a critical unit is High by default. A child that runs a review workflow gets the review row of the review it runs. A one-off session gets the tier or review row of its job: a claims check gets the claims check row, a review or a judge gets its review row, and a plan critique or a second opinion is Max.
 - A follow-up job you hand out, such as a review, a claims check or a helper, gets the tier or review row that fits its own scope and risk, not the unit's (see "Follow-up jobs" in "Evidence and review"). A small fix in a critical unit doesn't get the critical review row, and a risky follow-up in a regular unit can. The owner's own fixes and rebases stay with the owner, at its model.
-- A second opinion runs at Max, on a model from a different vendor than the one that did the work. Sonnet and Opus are Anthropic models, Sol and Astra are OpenAI models, and Argon and Carbon are Google models.
+- A second opinion runs at Max, on a model from a different vendor than the one that did the work. The pinned models list gives each model's vendor.
 - Execution you hand out runs at Max in only two roles: Astra at `max` for incident RCA, and Opus at `max` for the hardest implementation. Use them only when success matters more than cost, and only after the user approves. Ask with `ask_user`, tagged with the unit (see "Talking to the user"), and give the job and why success matters more than cost.
 - If a one-off session's result is shallow or incomplete although its brief, context and environment were sound, you gave it too low a tier: run the job once more, one tier up, as a new one-off session, without asking the user. This corrects your choice and is not a repair cycle. It doesn't apply to a `blocked` or `needs_input` report, a failure with a known cause, or a problem already in a repair cycle; those follow "Evidence and review". This tier-up stops at High: execution runs at Max only in the two roles above, with the user's approval.
 - You can't change a running child session's model, and an owner session's work already has an owner. If an owner session looks under-tiered, don't start a second session for its work. Tell the user, give the evidence, and ask, tagged `[unit=<unit>]` with the child's label (see "Talking to the user"), whether to archive the child and start a replacement one tier up. A High owner moves up to Max only in the two roles above. A replacement is a new unit with its own label, given the last report from `child_notes` as context. If the user agrees, end the old unit's `children` row as "Choose the delegation type" describes: set `outcome` to `closed` or `failed` only if it is still unset.

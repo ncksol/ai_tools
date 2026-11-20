@@ -128,7 +128,19 @@ Reading PR state, CI and policies is a quick job. Merging after the go-ahead is 
 
 Choose a model and an effort for every job you hand out: `kickoff.model` and `kickoff.reasoning_effort` for every child session, and `model` and `reasoning_effort` for every `task` call. Never leave them unset: a child would get your own model and effort, which suit coordination, not the job.
 
-The table and the list below are the user's model policy, copied word for word from the `wintermute-core` agent. A model or effort that the user asks for overrides them, but only for the jobs the user named it for.
+The pinned models, the table and the list below are the user's model policy, copied word for word from the `wintermute-core` agent. A model or effort that the user asks for overrides them, but only for the jobs the user named it for.
+
+Each model name in this skill, in the table and in the rest of the text, means the one exact model ID pinned here, never another version of that family:
+
+Pinned models:
+
+- Opus: `claude-opus-5.5` (Anthropic)
+- Sonnet: `claude-sonnet-5.5` (Anthropic)
+- Sol: `gpt-6.1-sol` (OpenAI)
+- Astra: `gpt-6-astra` (OpenAI)
+- Terra: `gpt-6.1-terra` (OpenAI)
+- Argon: `gemini-4-argon` (Google)
+- Carbon: `gemini-4-carbon` (Google)
 
 | Tier | Model and effort | Use it for |
 |---|---|---|
@@ -147,8 +159,8 @@ The table and the list below are the user's model policy, copied word for word f
 
 How to apply the table in a Project:
 
-- The table names model families. Use the newest version of each family in the model list of the tool you call. If a family isn't listed, use another family from the same tier, at the level that the row gives that family.
-- Sonnet and Opus are Anthropic models, Sol and Astra are OpenAI models, and Argon and Carbon are Google models. The author's vendor is the vendor of the model that wrote the work.
+- Pass the pinned ID as the model. If a pinned ID isn't in the model list of the tool you call, use another pinned option from the same row, at the level that the row gives that option, and record the substitution in `child_notes`. If the row has no other option, ask the user. Never move to another version of a family on your own, newer or older. Moving to a new model version is an explicit change to `wintermute-core` and this skill, with a plugin version bump and a CHANGELOG entry.
+- The pinned models list gives each model's vendor. The author's vendor is the vendor of the model that wrote the work.
 - A child gets the tier of the work it owns. The owner of a PR is Mid, unless its unit is critical (High by default) or the work is harder. A review, a claims check or a judge gets its own row. A plan critique or a second opinion is Max.
 - A follow-up job gets the tier or review row of its own scope and risk, not the unit's (see "Follow-up jobs" in "Evidence and review").
 - Execution at Max is only for the two roles that the Max row names, and only after the user approves. Ask, tagged with the unit.
