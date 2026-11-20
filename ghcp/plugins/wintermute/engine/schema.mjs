@@ -17,9 +17,10 @@ export const NANO_AIU_PER_CREDIT = 1e9;
 export const COST_SOURCE = 'events';
 /**
  * The rules a run summary was built with. 2 (0.9.4): unit outcome `done`, and reviewers don't own the PR they review
- * (issue #112). A summary without it, or with a lower one, is rebuilt from complete logs (see isStale).
+ * (issue #112). 3 counts a Project's relayed questions as waits. A summary without a rules version, or with a lower one,
+ * is rebuilt from complete logs (see isStale).
  */
-export const SUMMARY_RULES = 2;
+export const SUMMARY_RULES = 3;
 
 export const DISPLAY_STATES = Object.freeze(['busy', 'idle', 'plan', 'question', 'stuck', 'blocked', 'merged', 'archived', 'done']);
 export const STATUS_DETAILS = Object.freeze([
@@ -98,7 +99,7 @@ export const DIAGNOSTIC_LEVELS = Object.freeze(['info', 'warn']);
  * @property {EpochMs|null} endedAt      When the session's work ended. A unit with an outcome: the outcome time (registry ended_at, else the PR's mergedAt or closedAt). Otherwise, or with no outcome time: the archive time, else the last event once the process is gone (alive === false), else null. Timeline segments end here.
  * @property {EpochMs|null} lastEventAt
  * @property {number} busyMs             Sum of main-agent turns, including waits on the user
- * @property {number} waitingOnUserMs    Time inside open ask_user and exit_plan_mode calls
+ * @property {number} waitingOnUserMs    Time inside open ask_user, relay_session_input and exit_plan_mode calls
  * @property {boolean|null} alive        Process liveness; null when unknown
  * @property {{ credits: number, calls: number }} cost   Sub-agent costs are included
  * @property {{ label: string, tool: ToolCallView|null, lastEventAt: EpochMs|null }} activity

@@ -1,13 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { DEFAULT_THRESHOLDS } from '../engine/config.mjs';
+import { createSwarmEngine } from '../engine/engine.mjs';
 import { buildForest } from '../engine/model/forest.mjs';
 import { buildSnapshot } from '../engine/model/swarm.mjs';
 import { createLedger } from '../engine/readers/ledger.mjs';
-import { validateSnapshot } from '../engine/schema.mjs';
+import { SUMMARY_RULES, validateSnapshot } from '../engine/schema.mjs';
 import { MINUTE } from '../engine/time.mjs';
+import { CopilotHome } from './helpers/copilot-home.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { fold } from './helpers/fold.mjs';
+import { DAY, alwaysAlive } from './helpers/scenario.mjs';
+import { tempDir } from './helpers/temp.mjs';
 
 // All record values are synthetic. Session IDs and workspace IDs are distinct, as in the app.
 const T0 = Date.UTC(2026, 10, 20, 10, 0, 0);
@@ -248,4 +254,43 @@ test('a relay that ends without an answer leaves the child question open', () =>
     'a relayed question ended without an answer',
     'got an answer',
   ]);
+});
+
+test('a saved run summary from before relay waits is rebuilt from the complete logs', async () => {
+  const home = new CopilotHome();
+  const old = T0 - 30 * DAY;
+  home.session({ id: 'old-project', title: 'Sample Project', createdAt: old });
+  home.workspace({ id: 'ws-sample', name: 'Sample work', createdAt: old + 1000, creatorSessionId: 'old-project' });
+  const root = new EventLog(old + 2000);
+  root.start();
+  root.turnStart();
+  const relay = root.tool('relay_session_input', { project_session_id: 'ws-sample', request_id: 'sample-request' });
+  root.wait(2 * MINUTE);
+  root.done(relay, { result: JSON.stringify({ outcome: 'answered_here' }) });
+  root.turnEnd();
+  home.writeEvents('old-project', root.events);
+  home.usage([
+    { sessionId: 'old-project', nanoAiu: 1e9, createdAt: old + 3 * MINUTE },
+    { sessionId: 'ws-sample', nanoAiu: 1e9, createdAt: old + 3 * MINUTE },
+  ]);
+  const historyDir = path.join(tempDir('project-results-'), 'history');
+  const stored = path.join(historyDir, 'runs', 'old-project.json');
+  const open = () => createSwarmEngine({ copilotHome: home.root, historyDir, now: () => T0, processProbe: alwaysAlive, prLookup: 'off' });
+  const first = open();
+  try {
+    assert.equal((await first.getRunSummary('old-project')).waitingOnUserMs, 2 * MINUTE);
+  } finally {
+    first.stop();
+  }
+  const summary = JSON.parse(readFileSync(stored, 'utf8'));
+  writeFileSync(stored, `${JSON.stringify({ ...summary, waitingOnUserMs: 0, rules: 2 }, null, 2)}\n`);
+  const restarted = open();
+  try {
+    await restarted.refresh();
+    const rebuilt = await restarted.getRunSummary('old-project');
+    assert.deepEqual([rebuilt.waitingOnUserMs, rebuilt.rules], [2 * MINUTE, SUMMARY_RULES]);
+    assert.equal(JSON.parse(readFileSync(stored, 'utf8')).waitingOnUserMs, 2 * MINUTE);
+  } finally {
+    restarted.stop();
+  }
 });
