@@ -84,7 +84,7 @@ A Project can't run `wintermute-core` as its agent, because the app doesn't allo
 - **If it stops following the rules**, for example after a long conversation was compacted, start a message with `/wintermute-project` again.
 - **Turn it off** by asking the Project to turn wintermute off. It asks what to do with open work, and removes the line from the Project's memory with your consent.
 
-The tier table and the "Never use these" list in `wintermute-project` are copies of the ones in `wintermute-core`, and `npm run validate` fails if they differ. The swarm dashboard shows a Project's work once the Project has child sessions.
+The pinned models list, the tier table and the "Never use these" list in `wintermute-project` are copies of the ones in `wintermute-core`, and `npm run validate` fails if they differ. The swarm dashboard shows a Project's work once the Project has child sessions.
 
 ## The swarm dashboard
 

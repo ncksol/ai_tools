@@ -128,7 +128,19 @@ Reading PR state, CI and policies is a quick job. Merging after the go-ahead is 
 
 Choose a model and an effort for every job you hand out: `kickoff.model` and `kickoff.reasoning_effort` for every child session, and `model` and `reasoning_effort` for every `task` call. Never leave them unset: a child would get your own model and effort, which suit coordination, not the job.
 
-The table and the list below are the user's model policy, copied word for word from the `wintermute-core` agent. A model or effort that the user asks for overrides them, but only for the jobs the user named it for.
+The pinned models, the table and the list below are the user's model policy, copied word for word from the `wintermute-core` agent. A model or effort that the user asks for overrides them, but only for the jobs the user named it for.
+
+Each model name in this skill, in the table and in the rest of the text, means the one exact model ID pinned here, never another version of that family:
+
+Pinned models:
+
+- Opus: `claude-opus-5.5` (Anthropic)
+- Sonnet: `claude-sonnet-5.5` (Anthropic)
+- Sol: `gpt-6.1-sol` (OpenAI)
+- Astra: `gpt-6-astra` (OpenAI)
+- Terra: `gpt-6.1-terra` (OpenAI)
+- Argon: `gemini-4-argon` (Google)
+- Carbon: `gemini-4-carbon` (Google)
 
 | Tier | Model and effort | Use it for |
 |---|---|---|
@@ -147,8 +159,8 @@ The table and the list below are the user's model policy, copied word for word f
 
 How to apply the table in a Project:
 
-- The table names model families. Use the newest version of each family in the model list of the tool you call. If a family isn't listed, use another family from the same tier, at the level that the row gives that family.
-- Sonnet and Opus are Anthropic models, Sol and Astra are OpenAI models, and Argon and Carbon are Google models. The author's vendor is the vendor of the model that wrote the work.
+- Pass the pinned ID as the model. If a pinned ID isn't in the model list of the tool you call, use another pinned option from the same row that qualifies for the job under that row's limits and under the vendor and security-routing rules (see "Evidence and review"), at the level that the row gives that option, and record the substitution in `child_notes`. If no option qualifies, or the job's pinned model isn't listed and the job has no table row (for example an incident investigation), ask the user. Never move to another version of a family on your own, newer or older. Moving to a new model version is an explicit change to `wintermute-core` and this skill, with a plugin version bump and a CHANGELOG entry.
+- The pinned models list gives each model's vendor. The author's vendor is the vendor of the model that wrote the work.
 - A child gets the tier of the work it owns. The owner of a PR is Mid, unless its unit is critical (High by default) or the work is harder. A review, a claims check or a judge gets its own row. A plan critique or a second opinion is Max.
 - A follow-up job gets the tier or review row of its own scope and risk, not the unit's (see "Follow-up jobs" in "Evidence and review").
 - Execution at Max is only for the two roles that the Max row names, and only after the user approves. Ask, tagged with the unit.
@@ -295,7 +307,7 @@ Keep your state in your session SQL database with the `sql` tool, not in files.
 - **Work with no commit**, such as research, a document or a plan, has its evidence in the file itself: the file at an absolute path, its sources with links, and, for a load-bearing document, a fact-check from another vendor. That fact-check is the check before you publish it or call it finished.
 - **Regular review**: every unit gets one review before it merges, from one reviewer at the regular review row, never from the author's vendor. Opus- or Sonnet-written code goes to Astra, Astra- or Sol-written code goes to Opus, and Argon- or Carbon-written code can go to either. Scope the brief to the unit's request and its risky code paths, and tell the reviewer to report every finding. Run it as a one-off child session with `base_branch` set to the unit's branch.
 - **Critical review**: a critical unit gets a critical review instead, at the critical review row, run the same way.
-- **Security review**: a review of security, authentication or secrets uses Astra at `xhigh`, or, for code that an OpenAI model wrote, Opus at `xhigh` (Argon at `high` if Opus refuses, fails or times out).
+- **Security review**: a review of security, authentication or secrets uses Astra at `xhigh`, or, for code that an OpenAI model wrote, Opus at `xhigh` (Argon at `high` if Opus isn't in the model list or refuses, fails or times out).
 - **Final panel**: when one unit of a task is left unmerged in a repository, its owner rebases its branch onto the task's target branch, and two judges check its head: how the task's units work together, and whether the request is covered as a whole. If the unit's PR targets another branch, ask the user to retarget it. The judges come from the two vendors that wrote the fewest of this task's units in this repository (Argon and Carbon count together as Google), at the final panel row, at its critical levels if any of those units was critical. They run alongside the unit's own review, as two one-off child sessions with `base_branch` set to the unit's branch. If the task has only one unit in the repository, the panel checks that unit. Units of other tasks don't wait for this panel. A panel finding blocks only if both judges raise it, or if one raises it and the owner or a verifier reproduces it.
 - **Disagreement panel**: when a child disputes a finding with evidence, or two agents disagree, two fresh judges decide, at the disagreement panel row. Neither took part in the dispute. One comes from the vendor outside the dispute; the second shares a vendor with one side. If both uphold the finding, it gets fixed; if both reject it, it is dismissed; if they split, the user decides.
 - **One vendor**: if the user has limited the work to one vendor, reviewers, judges, fact-checkers and second opinions use that vendor, each as a new session or sub-agent, and you say so. This comes before the other-vendor rules in this section. If a row has no model from that vendor, as the fact-check row has none from Anthropic, ask the user to allow another vendor for that job or to name a model; until then, that check isn't done.

@@ -6,10 +6,11 @@ export const SKILLS_DIR = 'skills';
 export const COORDINATOR_SKILL = 'wintermute-project';
 export const WORKER_SKILL = 'wintermute-project-worker';
 export const PROJECT_SKILLS = Object.freeze([COORDINATOR_SKILL, WORKER_SKILL]);
-/** The agent whose tier table and "Never use these:" list the coordinator skill copies word for word. */
+/** The agent whose pinned models list, tier table and "Never use these:" list the coordinator skill copies word for word. */
 export const POLICY_AGENT = `${AGENTS_DIR}/wintermute-core.agent.md`;
 export const POLICY_SECTION = 'Models and effort';
 const NEVER_USE = 'Never use these:';
+const PINNED = 'Pinned models:';
 const FENCE = /^\s*(`{3,}|~{3,})(.*)$/;
 /** A level-two ATX heading: up to three spaces of indent, and an optional closing run of hashes, which isn't part of the name. */
 const HEADING = /^ {0,3}##[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/;
@@ -113,18 +114,42 @@ export function neverUseList(section) {
   return { list: lines.slice(start, end).join('\n'), error: null };
 }
 
-/** The tier table and the "Never use these:" list of a file's "## Models and effort" section, with any reason they can't be read. */
+/** The "Pinned models:" line and its list, up to the tier table or the end of the section, which must be list items: { pins, error }. */
+export function pinList(section) {
+  const lines = section.split(/\r?\n/);
+  const start = lines.indexOf(PINNED);
+  if (start < 0) return { pins: null, error: `has no "${PINNED}" line` };
+  if (lines.indexOf(PINNED, start + 1) >= 0) return { pins: null, error: `has more than one "${PINNED}" line` };
+  let end = start + 1;
+  while (end < lines.length && !lines[end].startsWith('|')) end += 1;
+  while (end > start + 1 && lines[end - 1].trim() === '') end -= 1;
+  let items = 0;
+  for (const line of lines.slice(start + 1, end)) {
+    if (line.trim() === '') continue;
+    if (line.startsWith('- ')) {
+      items += 1;
+    } else if (!(items > 0 && /^\s+\S/.test(line))) {
+      return { pins: null, error: `has text after "${PINNED}" that is not a list item, so the list's end is unclear: ${JSON.stringify(line.slice(0, 60))}` };
+    }
+  }
+  if (items === 0) return { pins: null, error: `has no list items under "${PINNED}"` };
+  return { pins: lines.slice(start, end).join('\n'), error: null };
+}
+
+/** The pinned models list, the tier table and the "Never use these:" list of a file's "## Models and effort" section, with any reason they can't be read. */
 export function policyBlocks(text) {
   const count = headingsOf(text).filter(heading => heading === POLICY_SECTION).length;
-  if (count > 1) return { table: null, neverUse: null, errors: [`has ${count} "## ${POLICY_SECTION}" sections; the copy rule needs exactly one`] };
+  if (count > 1) return { pins: null, table: null, neverUse: null, errors: [`has ${count} "## ${POLICY_SECTION}" sections; the copy rule needs exactly one`] };
   const section = sectionOf(text, POLICY_SECTION);
-  if (section === null) return { table: null, neverUse: null, errors: [`has no "## ${POLICY_SECTION}" section`] };
+  if (section === null) return { pins: null, table: null, neverUse: null, errors: [`has no "## ${POLICY_SECTION}" section`] };
+  const pins = pinList(section);
   const table = tierTable(section);
   const list = neverUseList(section);
   return {
+    pins: pins.pins,
     table: table.table,
     neverUse: list.list,
-    errors: [table.error, list.error].filter(Boolean).map(error => `"## ${POLICY_SECTION}" ${error}`),
+    errors: [pins.error, table.error, list.error].filter(Boolean).map(error => `"## ${POLICY_SECTION}" ${error}`),
   };
 }
 
@@ -184,13 +209,13 @@ async function validatePolicyCopy(root, skillText) {
   const source = policyBlocks(agentText);
   const copy = policyBlocks(skillText);
   const errors = [...source.errors.map(error => `${POLICY_AGENT}: ${error}`), ...copy.errors.map(error => `${skillFile}: ${error}`)];
-  for (const [key, label] of [['table', 'tier table'], ['neverUse', '"Never use these:" list']]) {
+  for (const [key, label] of [['pins', '"Pinned models:" list'], ['table', 'tier table'], ['neverUse', '"Never use these:" list']]) {
     if (source[key] !== null && copy[key] !== null && copy[key] !== source[key]) {
       errors.push(`${skillFile}: the ${label} differs from ${POLICY_AGENT} at its line ${firstDifferentLine(source[key], copy[key])}; copy it again word for word`);
     }
   }
   const known = new Set([...headingsOf(skillText), ...boldLabels(skillText)]);
-  for (const block of [copy.table, copy.neverUse]) {
+  for (const block of [copy.pins, copy.table, copy.neverUse]) {
     if (block === null) continue;
     for (const name of quotedNames(block)) {
       if (!known.has(name)) errors.push(`${skillFile}: the copied model policy refers to "${name}", which is not a "## " heading or a bold label in the skill`);
