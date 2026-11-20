@@ -25,7 +25,10 @@ const round1 = value => Math.round(value * 10) / 10;
 const shortId = id => String(id).slice(0, 8);
 
 function emptyApp() {
-  return { projects: new Map(), worktrees: new Map(), workspaces: new Map(), parentLinks: [], aliases: [], chatLinks: [], sessions: new Map(), automations: [], diagnostics: [] };
+  return {
+    projects: new Map(), worktrees: new Map(), workspaces: new Map(), parentLinks: [], aliases: [], chatLinks: [], sessions: new Map(), automations: [],
+    persistentProjects: new Set(), diagnostics: [],
+  };
 }
 
 function sqliteProblem(source, error) {

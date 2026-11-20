@@ -1,6 +1,8 @@
 import { parseTime } from '../time.mjs';
 
-const table = (name, columns, required) => Object.freeze({ table: name, columns: Object.freeze(columns), required: Object.freeze(required) });
+const table = (name, columns, required, { optional = false } = {}) => Object.freeze({
+  table: name, columns: Object.freeze(columns), required: Object.freeze(required), optional,
+});
 
 /**
  * Named columns only: data.db also holds a GitHub token column, which the engine never reads. data.db is the app's
@@ -8,6 +10,9 @@ const table = (name, columns, required) => Object.freeze({ table: name, columns:
  */
 export const APP_TABLES = Object.freeze({
   projects: table('projects', ['id', 'name', 'github_owner', 'github_repo'], ['id']),
+  // Copilot app Projects. An app without Projects has no such table, so a missing or reshaped table is not a problem to report;
+  // a read that fails is.
+  persistentProjects: table('persistent_projects', ['session_id'], ['session_id'], { optional: true }),
   worktrees: table('worktrees', ['id', 'branch', 'base_branch'], ['id']),
   workspaces: table('workspaces', [
     'id', 'project_id', 'worktree_id', 'name', 'branch', 'created_at', 'archived_at', 'session_id',
@@ -41,19 +46,19 @@ export async function readAppDb(db) {
     present = null;
     diagnostics.push({ level: 'warn', source: 'data.db', message: `schema: ${error.message}` });
   }
-  for (const [key, { table: name, columns, required }] of Object.entries(APP_TABLES)) {
+  for (const [key, { table: name, columns, required, optional }] of Object.entries(APP_TABLES)) {
     rows[key] = [];
     let selected = columns;
     if (present) {
       const have = present.get(name);
       if (!have) {
-        diagnostics.push({ level: 'warn', source: 'data.db', message: `${key}: table ${name} not found` });
+        if (!optional) diagnostics.push({ level: 'warn', source: 'data.db', message: `${key}: table ${name} not found` });
         continue;
       }
       const missingRequired = required.filter(column => !have.has(column));
       if (missingRequired.length) {
         const names = columns.filter(column => missingRequired.includes(column));
-        diagnostics.push({ level: 'warn', source: 'data.db', message: `${key}: missing column(s) ${names.join(', ')}` });
+        if (!optional) diagnostics.push({ level: 'warn', source: 'data.db', message: `${key}: missing column(s) ${names.join(', ')}` });
         continue;
       }
       selected = columns.filter(column => have.has(column));
@@ -68,6 +73,7 @@ export async function readAppDb(db) {
   }
   return {
     projects: new Map(rows.projects.map(row => [row.id, { id: row.id, name: row.name ?? '', githubOwner: text(row.github_owner), githubRepo: text(row.github_repo) }])),
+    persistentProjects: new Set(rows.persistentProjects.map(row => text(row.session_id)).filter(Boolean)),
     worktrees: new Map(rows.worktrees.map(row => [row.id, { id: row.id, branch: text(row.branch), baseBranch: text(row.base_branch) }])),
     workspaces: new Map(rows.workspaces.map(row => [row.id, {
       id: row.id, projectId: text(row.project_id), worktreeId: text(row.worktree_id), name: row.name ?? '', branch: text(row.branch),
