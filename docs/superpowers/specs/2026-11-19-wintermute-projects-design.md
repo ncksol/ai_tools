@@ -565,7 +565,7 @@ Reason: every exit from gate 1 needs a clear next step, and nothing paid runs ag
 
 If the user chooses go despite a hard failure, the record says so, with their reason, and Phase 2a's first unit fixes the failure before anything else. Reason: the decision is the user's, but a safety failure must never be recorded as a clean go.
 
-**The outcome** goes into the orchestrator's private notes and, in one or two sentences, into the next PR: the removal PR's description and CHANGELOG entry, or the Phase 2 plan PR's description. Nothing else from the evaluation goes into the repository (designer's call). Reason: the logs, reports and notes hold session IDs, paths and, for a real task, the user's own work; `ncksol/ai_tools` is public.
+**The outcome** goes into the orchestrator's private notes and, in one or two sentences, into the next PR: the removal PR's description and CHANGELOG entry, or the Phase 2 plan PR's description. Nothing else from the evaluation goes into the repository: its logs, notes and checker reports stay private, and the outcome sentences, plans and design carry no session ID, path or task detail from them (designer's call). A real task that the eval kit scores is the one exception: its row goes into the kit's `results.csv` in the kit's normal schema, which records the run's session IDs like every other row (8.17). Reason: the logs, reports and notes hold paths and, for a real task, the user's own work, and `ncksol/ai_tools` is public; a local session ID is no secret, and the kit's rows already carry them.
 
 ### 8.14 Cleanup
 
@@ -613,7 +613,7 @@ The repository then keeps only these differences from before Phase 1: the two CH
 
 ### 8.17 Evals
 
-The eval kit in `evals/orchestrator/expense-claims/`, its variants, the `eval-runner` agent and `results.csv` don't change. The smoke check and the real task are not eval runs, and their results don't go into `results.csv`.
+The kit's variants and the `eval-runner` agent don't change. The smoke check is not an eval run. The user chose the kit's expense-claims v2 task as the real task and ran it in a Project, so the kit scored it: its row is in `results.csv` with the variant `wintermute-project`, and the kit gained a dated rate card, `pricing/2026-11-20.json`, with the GPT-6.2 rates that the row's cost needs. Phase 2's `eval-kit-pricing` unit makes that card the scorer's default.
 
 ### 8.18 Index of designer's calls
 
