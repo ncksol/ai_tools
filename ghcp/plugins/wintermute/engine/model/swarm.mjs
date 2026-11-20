@@ -357,8 +357,17 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
     extraFeed.push({ id: `${node.id}:report:${item.source}`, at: item.at, unitId: node.id, label, kind: 'report', text: oneLine(`reported ${STATUS_WORDS[view.status]}: ${view.title}`, 200) });
   }
   let report = sent.length ? sent[sent.length - 1].view : null;
-  // Design section 10 accepts either copy of a report: the child's sent message or the orchestrator's received one.
-  const received = parent.all.inbound.filter(item => c.ids.has(item.fromSessionId) || c.ids.has(item.fromProjectSessionId));
+  // The parent can carry a copy of the child's report, but the app's no-handoff notice is not a report.
+  const received = [];
+  const notices = new Map();
+  for (const item of parent.all.inbound) {
+    if (!c.ids.has(item.fromSessionId) && !c.ids.has(item.fromProjectSessionId)) continue;
+    if (item.notice === true) notices.set(item.assignmentId ?? `at:${item.at}`, item.at);
+    else received.push(item);
+  }
+  for (const [key, at] of notices) {
+    extraFeed.push({ id: `${node.id}:notice:${key}`, at, unitId: node.id, label, kind: 'report', text: 'ended without a report' });
+  }
   if (!statusLines.length) {
     for (let index = received.length - 1; index >= 0; index -= 1) {
       const line = parseStatusLine(received[index].content);
@@ -369,7 +378,7 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
   }
   if (!report) {
     const last = received[received.length - 1];
-    if (last) report = reportFromMessage(last.content, null, last.at);
+    if (last) report = reportFromMessage(last.content, last.purpose ?? null, last.at);
   }
   const lastTask = c.all.taskCompletes[c.all.taskCompletes.length - 1];
   if (lastTask && (!report || lastTask.at > report.at + TASK_OVERRIDE_MS)) report = reportFromTask(lastTask);
@@ -416,6 +425,7 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
   });
 
   const marks = sent.map(({ item, view }) => ({ at: item.at, kind: view.status === 'needs_input' ? 'question' : 'report', text: view.title || 'Report', status: view.status }));
+  for (const at of notices.values()) marks.push({ at, kind: 'report', text: 'Ended without a report', status: null });
   if (pr?.openedAt) marks.push({ at: pr.openedAt, kind: 'pr-open', text: 'PR opened', status: null });
   if (pr?.mergedAt) marks.push({ at: pr.mergedAt, kind: 'pr-merged', text: 'PR merged', status: null });
   if (node.archivedAt) marks.push({ at: node.archivedAt, kind: 'archived', text: 'Archived', status: null });
@@ -737,22 +747,57 @@ function buildSubagentUnits(input, rootContext, root, takenLabels, extraFeed, me
   };
 }
 
+function matchingQuestion(waits, relay, tag) {
+  const questions = [...waits.values()].filter(wait => wait.kind === 'question' && !wait.relay && wait.startedAt <= relay.startedAt);
+  const byId = questions.filter(wait => relay.requestId && wait.requestId === relay.requestId);
+  if (byId.length) return byId.length === 1 ? byId[0] : null;
+  // The child log can omit the request ID, and the relay can frame the question in different words. Match a sole earlier
+  // question unless the IDs disagree. With several questions, require one exact text match.
+  const compatible = questions.filter(wait => !relay.requestId || !wait.requestId);
+  if (questions.length <= 1) return compatible[0] ?? null;
+  const text = (tag?.text ?? relay.text).trim();
+  if (!text) return null;
+  const byText = compatible.filter(wait => (parseQuestionTag(wait.text)?.text ?? wait.text).trim() === text);
+  return byText.length === 1 ? byText[0] : null;
+}
+
 function buildNeeds(contexts, rootId, labels, flags) {
   const labelIndex = new Map([...labels].filter(([id]) => id !== rootId).map(([id, label]) => [label.toLowerCase(), id]));
-  const needs = [];
+  const active = new Map([...contexts].filter(([, c]) => c.current && c.alive !== false && c.node.archivedAt == null));
+  const unitOfId = new Map();
   for (const [id, c] of contexts) {
-    if (c.alive === false || (c.node.archivedAt !== null && c.node.archivedAt !== undefined)) continue;
-    for (const wait of c.current ? c.current.waits.values() : []) {
-      const tag = wait.kind === 'question' ? parseQuestionTag(wait.text) : null;
+    if (id !== rootId) for (const sessionId of c.ids) unitOfId.set(sessionId, id);
+  }
+  const matchedRelays = new Set();
+  const relayTags = new Map();
+  for (const relay of active.get(rootId)?.current.waits.values() ?? []) {
+    if (!relay.relay || !relay.target) continue;
+    const waits = active.get(unitOfId.get(relay.target))?.current.waits;
+    if (!waits) continue;
+    const tag = parseQuestionTag(relay.text);
+    const match = matchingQuestion(waits, relay, tag);
+    if (!match) continue;
+    matchedRelays.add(relay);
+    if (tag) relayTags.set(match, tag);
+  }
+
+  const needs = [];
+  for (const [id, c] of active) {
+    for (const wait of c.current.waits.values()) {
+      if (matchedRelays.has(wait)) continue;
+      const ownTag = wait.kind === 'question' ? parseQuestionTag(wait.text) : null;
+      const tag = relayTags.get(wait) ?? ownTag;
       if (tag) flags.questionTags = true;
       let unitIds = id === rootId ? [] : [id];
-      if (tag && id === rootId && !tag.units.includes('*')) {
+      const targetUnit = id === rootId && wait.relay ? unitOfId.get(wait.target) : undefined;
+      if (targetUnit) unitIds = [targetUnit];
+      else if (tag && id === rootId && !tag.units.includes('*')) {
         unitIds = [...new Set(tag.units.map(label => labelIndex.get(label.toLowerCase())).filter(Boolean))];
       }
       const kind = wait.kind === 'plan' ? 'plan' : tag?.need ?? 'question';
       needs.push({
         id: `${id}:${kind}:${c.current.id}/${wait.id}`, kind, unitIds, labels: unitIds.map(unitId => labels.get(unitId)),
-        fromId: id, text: oneLine(tag ? tag.text : wait.text, 300), since: wait.startedAt, tagged: Boolean(tag),
+        fromId: id, text: oneLine(ownTag?.text ?? (wait.text || (wait.relay ? 'Relayed question' : '')), 300), since: wait.startedAt, tagged: Boolean(tag),
       });
     }
   }

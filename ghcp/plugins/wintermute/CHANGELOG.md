@@ -6,6 +6,13 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.5.0 — 2026-11-20
+
+### Added
+
+- In a Copilot app Project, the dashboard uses the app's copy of a handoff when the unit's own report is unavailable. An assignment that ends without a report gets an "ended without a report" entry in the feed and timeline without marking the unit complete.
+- Relayed questions appear under the child in "Needs you." A matching relay supplies the tag and keeps the child's question and time. Without comparable request IDs, a relay matches the child's sole earlier open question even when its context differs. With several open questions, it needs a unique text match. A relay that ends without an answer does not count as answered. Older run summaries count relay waits when the engine can rebuild them from complete logs.
+
 ## 1.4.1 — 2026-11-20
 
 ### Fixed
