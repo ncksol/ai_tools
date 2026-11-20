@@ -751,11 +751,13 @@ function matchingQuestion(waits, relay, tag) {
   const questions = [...waits.values()].filter(wait => wait.kind === 'question' && !wait.relay && wait.startedAt <= relay.startedAt);
   const byId = questions.filter(wait => relay.requestId && wait.requestId === relay.requestId);
   if (byId.length) return byId.length === 1 ? byId[0] : null;
-  // The app may omit the request ID from the child's log. Only fold a relay into a unique earlier question with exactly
-  // the same text (ignoring the tag and outer whitespace), and never when two known IDs disagree. Otherwise show both.
+  // The child log can omit the request ID, and the relay can frame the question in different words. Match a sole earlier
+  // question unless the IDs disagree. With several questions, require one exact text match.
+  const compatible = questions.filter(wait => !relay.requestId || !wait.requestId);
+  if (questions.length <= 1) return compatible[0] ?? null;
   const text = (tag?.text ?? relay.text).trim();
   if (!text) return null;
-  const byText = questions.filter(wait => (!relay.requestId || !wait.requestId) && (parseQuestionTag(wait.text)?.text ?? wait.text).trim() === text);
+  const byText = compatible.filter(wait => (parseQuestionTag(wait.text)?.text ?? wait.text).trim() === text);
   return byText.length === 1 ? byText[0] : null;
 }
 

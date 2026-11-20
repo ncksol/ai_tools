@@ -201,29 +201,52 @@ test('a distinct request is not hidden by another question belonging to the same
   ]);
 });
 
-test('without comparable request IDs, only a unique earlier question with the same text absorbs a relay', () => {
+test('a framed relay without a comparable request ID folds into the only earlier child question', () => {
+  const root = startedLog(0);
+  const api = startedLog(1);
+  api.at(at(35));
+  api.ask('Open the sample pull request?', ['Yes', 'No']);
+  root.at(at(40));
+  root.tool('relay_session_input', {
+    project_session_id: 'ws-api', request_id: 'request-pr', context: '[unit=api need=pr] The sample change passed review.',
+  });
+  api.at(at(41));
+  api.ask('Which port should the server use?');
+  assert.deepEqual(needsOf(snapshotOf(root, { 'cli-api': api })), [
+    ['pr', ['ws-api'], 'ws-api', 'Open the sample pull request?', true, at(35)],
+    ['question', ['ws-api'], 'ws-api', 'Which port should the server use?', false, at(41)],
+  ]);
+});
+
+test('with multiple earlier questions and no comparable IDs, only a unique text match absorbs a relay', () => {
   const root = startedLog(0);
   const api = startedLog(1);
   api.at(at(35));
   api.ask('Open the sample pull request?');
+  api.at(at(36));
+  api.ask('Which port should the server use?');
   root.at(at(40));
   root.tool('relay_session_input', {
     project_session_id: 'ws-api', request_id: 'request-pr', context: '[unit=api need=pr] Open the sample pull request?',
   });
   root.at(at(41));
-  root.tool('relay_session_input', { project_session_id: 'ws-api', request_id: 'request-other' });
+  root.tool('relay_session_input', {
+    project_session_id: 'ws-api', request_id: 'request-other', context: '[unit=api] The sample config is ready.',
+  });
   assert.deepEqual(needsOf(snapshotOf(root, { 'cli-api': api })), [
     ['pr', ['ws-api'], 'ws-api', 'Open the sample pull request?', true, at(35)],
-    ['question', ['ws-api'], 'project', 'Relayed question', false, at(41)],
+    ['question', ['ws-api'], 'ws-api', 'Which port should the server use?', false, at(36)],
+    ['question', ['ws-api'], 'project', 'The sample config is ready.', true, at(41)],
   ]);
 
-  api.at(at(36));
+  api.at(at(37));
   api.ask('Open the sample pull request?');
   assert.deepEqual(needsOf(snapshotOf(root, { 'cli-api': api })), [
     ['question', ['ws-api'], 'ws-api', 'Open the sample pull request?', false, at(35)],
-    ['question', ['ws-api'], 'ws-api', 'Open the sample pull request?', false, at(36)],
+    ['question', ['ws-api'], 'ws-api', 'Which port should the server use?', false, at(36)],
+    ['question', ['ws-api'], 'ws-api', 'Open the sample pull request?', false, at(37)],
     ['pr', ['ws-api'], 'project', 'Open the sample pull request?', true, at(40)],
-    ['question', ['ws-api'], 'project', 'Relayed question', false, at(41)],
+    ['question', ['ws-api'], 'project', 'The sample config is ready.', true, at(41)],
   ]);
 });
 
@@ -234,13 +257,13 @@ test('a relay that ends without an answer leaves the child question open', () =>
   api.ask('Which port?');
   root.at(at(40));
   const failed = root.tool('relay_session_input', { project_session_id: 'ws-api', context: '[unit=api need=pr] Which port?' });
-  const withdrawn = root.tool('relay_session_input', { project_session_id: 'ws-api' });
+  const withdrawn = root.tool('relay_session_input', { project_session_id: 'ws-ui' });
   const answered = root.tool('relay_session_input', {
     project_session_id: 'unknown-workspace', context: '[unit=D] Use this example?',
   });
   assert.deepEqual(needsOf(snapshotOf(root, { 'cli-api': api })), [
     ['pr', ['ws-api'], 'ws-api', 'Which port?', true, at(35)],
-    ['question', ['ws-api'], 'project', 'Relayed question', false, at(40)],
+    ['question', ['ws-ui'], 'project', 'Relayed question', false, at(40)],
     ['question', ['ws-docs'], 'project', 'Use this example?', true, at(40)],
   ]);
   root.at(at(45));
