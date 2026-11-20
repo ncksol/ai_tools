@@ -82,15 +82,16 @@ test('a simulated step keeps a quiet run quiet since its new last activity, and 
   assert.deepEqual([next.run.lastActivityAt, next.run.quietSince], [T + 5000, T + 5000]);
 });
 
-test('a due PR monitor check lands in the feed and the unit\'s recent items', () => {
+test('a due schedule run lands in the demo feed and the unit\'s recent items', () => {
   const base = example();
   const due = base.units.find(unit => unit.label === 'D5').monitor.nextCheckAt + 1000;
   const next = simulateStep(base, due, () => 0.99);
   const d5 = next.units.find(unit => unit.label === 'D5');
   assert.equal(d5.monitor.lastCheckAt, due);
   assert.equal(d5.monitor.nextCheckAt, due + 10 * 60000);
-  assert.equal(next.feed[0].kind, 'monitor-check');
+  assert.deepEqual([next.feed[0].kind, next.feed[0].text], ['monitor-check', 'ran a schedule']);
   assert.equal(d5.recent[0].id, next.feed[0].id);
+  assert.equal(d5.timeline.marks.at(-1).text, 'Schedule ran');
 });
 
 test('activity is simulated only between start() and stop()', async () => {

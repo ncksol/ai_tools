@@ -92,8 +92,8 @@ export function recordUserMessage(state, data, at) {
   const transformed = typeof data.transformedContent === 'string' ? data.transformedContent : '';
   if (data.source === 'system' && transformed.includes('<session_automation')) {
     pushBounded(state.automation.wakes, at, LIMITS.wakes);
-    addMark(state, at, 'monitor', 'PR monitor check');
-    addFeed(state, at, 'monitor-check', 'PR monitor check');
+    addMark(state, at, 'monitor', 'Schedule ran');
+    addFeed(state, at, 'monitor-check', 'ran a schedule');
     return;
   }
   if (data.source === RESULTS_SOURCE) {
@@ -132,7 +132,8 @@ function noteReply(state, envelope, at) {
   }
 }
 
-export function recordToolStart(state, name, args, callId, at) {
+export function recordToolStart(state, tool, args) {
+  const { name, id: callId, startedAt: at } = tool;
   if (name === 'send_session_message') {
     state.outboundSeq += 1;
     const message = clip(typeof args.message === 'string' ? args.message : '', 8000) ?? '';
@@ -150,21 +151,29 @@ export function recordToolStart(state, name, args, callId, at) {
     }, LIMITS.created);
   } else if (name === 'save_session_automation') {
     const clear = args.clear === true || args.clear === 'true';
-    const minutes = Number(args.every_minutes);
-    const everyMinutes = Number.isFinite(minutes) && minutes > 0 ? Math.round(minutes) : null;
-    pushBounded(state.automation.saves, { at, clear, everyMinutes, target: typeof args.session_id === 'string' ? args.session_id : null }, LIMITS.saves);
-    addFeed(state, at, clear ? 'monitor-cleared' : 'monitor-set', clear ? 'stopped its PR monitor' : `started a PR monitor${everyMinutes ? ` (every ${everyMinutes} min)` : ''}`);
+    const raw = args.every_minutes;
+    const minutes = typeof raw === 'string' || typeof raw === 'number' ? Math.round(Number(raw)) : NaN;
+    const everyMinutes = Number.isSafeInteger(minutes) && minutes > 0 ? minutes : null;
+    const target = typeof args.session_id === 'string' && args.session_id ? ownString(args.session_id) : null;
+    // Keep pending metadata with the open tool so an abort or shutdown drops it.
+    tool.automationSave = { clear, everyMinutes, target };
   }
 }
 
 // The app's create_session result: "Created session '<name>' (id: <id>) ...".
 const CREATED_ID_RE = /\(id:\s*([^\s)]+)\)/;
 
-export function recordToolComplete(state, callId, data) {
+export function recordToolComplete(state, callId, data, at, tool) {
   const created = state.created.find(item => item.toolCallId === callId);
   if (data.success !== false) {
     const content = typeof data.result?.content === 'string' ? data.result.content : '';
     if (created) created.sessionId = CREATED_ID_RE.exec(content)?.[1] ?? null;
+    const save = tool?.automationSave;
+    if (save && data.success === true) {
+      pushBounded(state.automation.saves, { at, ...save }, LIMITS.saves);
+      const text = save.clear ? 'cleared a schedule' : `set a schedule${save.everyMinutes ? ` (every ${save.everyMinutes} min)` : ''}`;
+      addFeed(state, at, save.clear ? 'monitor-cleared' : 'monitor-set', text, save.target ? { target: save.target } : null);
+    }
     return;
   }
   const entry = state.sent.find(item => item.toolCallId === callId) ?? created;
