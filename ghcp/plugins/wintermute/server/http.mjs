@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { assetsFingerprint, loadAssets, withFingerprint } from './assets.mjs';
 import { createHub } from './hub.mjs';
+import { createPoolCheck } from './pool-check.mjs';
 
 export const APP_ID = 'swarm-dashboard';
 // No frame-ancestors or X-Frame-Options: the app's canvas panel embeds this page, and a wrong value would break the canvas. The page only reads (GET and HEAD), so there is nothing to clickjack.
@@ -26,8 +27,12 @@ function fromOtherSite(req, origins) {
  * The dashboard's HTTP server: the page, its assets, a JSON API and the live event stream. Loopback only, GET and HEAD
  * only, and only for requests addressed to its own host and port; the API and event stream also refuse requests that
  * another website starts. Writes nothing to stdout or disk.
+ *
+ * While it listens, it checks that file system calls in its process still finish (see pool-check.mjs). When they stop,
+ * no refresh can finish again, so it calls onBroken and closes its listener and pages, which lets another process serve
+ * the port. poolCheck: false turns the check off; an object sets its probe, intervalMs and timeoutMs.
  */
-export function createDashboardServer({ createEngine, host = '127.0.0.1', port = 0, version = '0.0.0', uiFingerprint = null, now = Date.now, log = () => {}, hub: hubOptions = {}, onIdle = () => {}, demo = null }) {
+export function createDashboardServer({ createEngine, host = '127.0.0.1', port = 0, version = '0.0.0', uiFingerprint = null, now = Date.now, log = () => {}, hub: hubOptions = {}, onIdle = () => {}, onBroken = () => {}, poolCheck = {}, demo = null }) {
   const assets = loadAssets();
   // The page carries the fingerprint of the files it came with; hello sends the current one, so an open page can tell it is out of date.
   const fingerprint = uiFingerprint ?? assetsFingerprint(assets);
@@ -35,7 +40,8 @@ export function createDashboardServer({ createEngine, host = '127.0.0.1', port =
     const shell = assets.get(name);
     assets.set(name, { ...shell, body: Buffer.from(withFingerprint(shell.body.toString('utf8'), fingerprint)) });
   }
-  const hub = createHub({ createEngine, now, log, onIdle, ...hubOptions, ui: fingerprint, version });
+  let pool = null;
+  const hub = createHub({ createEngine, now, log, onIdle, poolPassedSince: time => !pool || pool.passedSince(time), ...hubOptions, ui: fingerprint, version });
   const startedAt = now();
   let boundPort = null;
 
@@ -55,7 +61,10 @@ export function createDashboardServer({ createEngine, host = '127.0.0.1', port =
     // website starts in the browser could otherwise start an engine. Tools such as curl send neither header.
     if (path.startsWith('/api/') && fromOtherSite(req, [`http://127.0.0.1:${boundPort}`, `http://localhost:${boundPort}`])) return reply(res, 403, TEXT, 'Forbidden');
     const param = name => url.searchParams.get(name) || null;
-    if (path === '/api/health') return json(res, { app: APP_ID, version, pid: process.pid, startedAt, demo });
+    if (path === '/api/health') {
+      const { lastRefreshAt, refreshStartedAt } = hub.status();
+      return json(res, { app: APP_ID, version, pid: process.pid, startedAt, demo, pool: pool?.state() ?? null, lastRefreshAt, refreshStartedAt });
+    }
     if (path === '/api/events') {
       // A HEAD request gets the headers only; it opens no live connection and creates no engine.
       if (req.method === 'HEAD') return reply(res, 200, 'text/event-stream; charset=utf-8', '', { 'Cache-Control': 'no-store' });
@@ -87,6 +96,24 @@ export function createDashboardServer({ createEngine, host = '127.0.0.1', port =
     });
   });
 
+  async function close() {
+    pool?.stop();
+    hub.close();
+    server.closeAllConnections?.();
+    await new Promise(resolve => server.close(() => resolve()));
+    boundPort = null;
+  }
+
+  function broken() {
+    log({ level: 'error', source: 'server', message: 'File system calls in this process have stopped finishing, so the dashboard can no longer refresh; closing the dashboard server so another process can serve it.' });
+    try {
+      onBroken();
+    } catch (error) {
+      log({ level: 'warn', source: 'server', message: error.message });
+    }
+    close().catch(error => log({ level: 'warn', source: 'server', message: error.message }));
+  }
+
   return {
     async listen() {
       await new Promise((resolve, reject) => {
@@ -103,6 +130,10 @@ export function createDashboardServer({ createEngine, host = '127.0.0.1', port =
         server.listen(port, host);
       });
       boundPort = server.address().port;
+      if (poolCheck && !pool) {
+        pool = createPoolCheck({ ...poolCheck, onBroken: broken });
+        pool.start();
+      }
       return `http://127.0.0.1:${boundPort}/`;
     },
     get url() {
@@ -113,11 +144,6 @@ export function createDashboardServer({ createEngine, host = '127.0.0.1', port =
     },
     clientCount: () => hub.clientCount(),
     queuedBytes: () => hub.queuedBytes(),
-    async close() {
-      hub.close();
-      server.closeAllConnections?.();
-      await new Promise(resolve => server.close(() => resolve()));
-      boundPort = null;
-    },
+    close,
   };
 }

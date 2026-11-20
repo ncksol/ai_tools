@@ -85,6 +85,72 @@ test('the data and live-update endpoints refuse requests that another website st
   }
 });
 
+async function until(check, timeoutMs = 3000) {
+  const start = Date.now();
+  while (!(await check())) {
+    if (Date.now() - start > timeoutMs) throw new Error('timed out waiting');
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+}
+
+test('health reports the pool check and when the engine last finished a refresh', async () => {
+  const fake = createFakeEngine({ snapshots: [exampleSnapshot()] });
+  const engine = { ...fake, status: () => ({ stage: null, refreshStartedAt: null, lastRefreshAt: 1234 }) };
+  const server = await started(() => engine);
+  try {
+    const before = JSON.parse((await get(server.port, '/api/health')).body);
+    assert.equal(before.pool, 'ok');
+    assert.equal(before.lastRefreshAt, null, 'no engine yet');
+    assert.equal(before.refreshStartedAt, null);
+    assert.equal((await get(server.port, '/api/swarms')).status, 200);
+    const after = JSON.parse((await get(server.port, '/api/health')).body);
+    assert.equal(after.lastRefreshAt, 1234);
+  } finally {
+    await server.close();
+  }
+});
+
+test('a server whose pool check never finishes marks itself broken, closes its listener and its pages, and says why', async () => {
+  const logged = [];
+  let broken = 0;
+  const server = await started(spyEngine().createEngine, {
+    poolCheck: { probe: () => new Promise(() => {}), intervalMs: 10, timeoutMs: 40 },
+    onBroken: () => { broken += 1; },
+    log: entry => logged.push(entry),
+  });
+  const port = server.port;
+  const page = openEvents(port, '/api/events');
+  try {
+    await page.waitFor(entry => entry.event === 'hello');
+    assert.equal(server.clientCount(), 1);
+    await until(() => broken === 1);
+    await until(() => server.clientCount() === 0);
+    await assert.rejects(get(port, '/api/health'));
+    assert.ok(logged.some(entry => entry.level === 'error' && /stopped finishing/.test(entry.message)), JSON.stringify(logged));
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(broken, 1, 'the server reports the break once');
+  } finally {
+    page.close();
+    await server.close();
+  }
+});
+
+test('a pool check that fails rather than hangs keeps the server serving', async () => {
+  let broken = 0;
+  let probes = 0;
+  const server = await started(spyEngine().createEngine, {
+    poolCheck: { probe: async () => { probes += 1; throw new Error('ENOENT'); }, intervalMs: 5, timeoutMs: 20 },
+    onBroken: () => { broken += 1; },
+  });
+  try {
+    await until(() => probes >= 3);
+    assert.equal(broken, 0);
+    assert.equal(JSON.parse((await get(server.port, '/api/health')).body).pool, 'ok');
+  } finally {
+    await server.close();
+  }
+});
+
 test('health says which sample data the server shows, if any', async () => {
   const { createEngine } = spyEngine();
   const plain = await started(createEngine);

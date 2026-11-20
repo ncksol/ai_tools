@@ -1,40 +1,114 @@
+/** How long one engine refresh may run, while file system calls still finish, before the engine is replaced. */
+export const REFRESH_LIMIT_MS = 60000;
+/** How often the hub checks how long the running refresh has taken. */
+export const REFRESH_CHECK_MS = 5000;
+
+const NO_REFRESH = { stage: null, refreshStartedAt: null, lastRefreshAt: null };
+
 /**
  * Live page connections (Server-Sent Events) and the engine's lifetime. The engine is created when the first page
  * connects or an API call needs it, polls only while a page is connected, and is dropped engineIdleMs after the last
  * page leaves, so an idle server holds no engine memory. At most maxClients pages connect at once, and a page whose
  * socket stays backed up for stallMs is dropped, so a page that stops reading never holds more than one frame here.
+ * Each page gets a heartbeat with the time of the engine's last finished refresh, so it can tell when its data stops
+ * changing. A refresh that runs longer than refreshLimitMs, while poolPassedSince(its start) says file system calls
+ * still finish, is stuck on something a new engine does not share: the hub logs where and replaces the engine.
  * Never writes to stdout.
  */
-export function createHub({ createEngine, now = Date.now, intervalMs = 3000, engineIdleMs = 300000, heartbeatMs = 15000, maxClients = 32, stallMs = 30000, log = () => {}, onIdle = () => {}, ui = null, version = null }) {
+export function createHub({
+  createEngine, now = Date.now, intervalMs = 3000, engineIdleMs = 300000, heartbeatMs = 1000, maxClients = 32, stallMs = 30000,
+  refreshLimitMs = REFRESH_LIMIT_MS, refreshCheckMs = REFRESH_CHECK_MS, poolPassedSince = () => true,
+  log = () => {}, onIdle = () => {}, ui = null, version = null,
+}) {
   const clients = new Set();
   let engine = null;
   let ready = null;
+  // Settles `ready` early when its engine is replaced, so callers waiting on a stuck refresh move to the new engine.
+  let abandon = null;
   let unsubscribe = null;
   let idleTimer = null;
   let heartbeat = null;
+  let watchdog = null;
   let polling = false;
   let swarmsKey = '';
   let refusedAt = -Infinity;
   const warn = error => log({ level: 'warn', source: 'server', message: error?.message ?? String(error) });
 
-  function acquire() {
+  function createCurrent() {
+    const created = createEngine();
+    engine = created;
+    unsubscribe = created.subscribe(change => { changed(change).catch(warn); });
+    const abandoned = new Promise(resolve => { abandon = resolve; });
+    ready = Promise.race([Promise.resolve(created.refresh()).catch(warn), abandoned]);
+    if (!watchdog) {
+      watchdog = setInterval(checkRefresh, refreshCheckMs);
+      watchdog.unref?.();
+    }
+  }
+
+  async function acquire() {
     clearTimeout(idleTimer);
     idleTimer = null;
-    if (!engine) {
-      engine = createEngine();
-      unsubscribe = engine.subscribe(change => { changed(change).catch(warn); });
-      ready = Promise.resolve(engine.refresh()).catch(warn);
+    for (;;) {
+      if (!engine) createCurrent();
+      const current = engine;
+      await ready;
+      // Wait again only for an engine that replaced this one; a dropped engine is the caller's to stop.
+      if (current === engine || !engine) return current;
     }
+  }
+
+  function stopWatchdog() {
+    clearInterval(watchdog);
+    watchdog = null;
+  }
+
+  /** Engine refreshes read Date.now(), not `now`, so this check does too. */
+  function checkRefresh() {
+    const status = engine?.status?.();
+    const startedAt = status?.refreshStartedAt;
+    if (typeof startedAt !== 'number' || Date.now() - startedAt <= refreshLimitMs || !poolPassedSince(startedAt)) return;
+    log({ level: 'warn', source: 'server', message: `A refresh has run for ${Math.round((Date.now() - startedAt) / 1000)} s, stuck in ${status.stage ?? 'an unknown step'}; replacing the engine` });
+    replaceEngine();
+  }
+
+  function replaceEngine() {
+    const old = engine;
+    const wake = abandon;
+    old.stop();
+    unsubscribe?.();
+    createCurrent();
+    wake?.();
     const current = engine;
-    return ready.then(() => current);
+    if (polling) current.start({ intervalMs });
+    swarmsKey = '';
+    for (const client of clients) client.lastKey = null;
+    ready.then(() => {
+      if (current !== engine) return;
+      sendSwarms(true);
+      for (const client of clients) if (client.greeted) push(client);
+    });
   }
 
   function startPolling() {
     if (polling || !engine) return;
     polling = true;
     engine.start({ intervalMs });
-    heartbeat = setInterval(() => { for (const client of clients) if (!client.blocked) write(client, ': ping\n\n'); }, heartbeatMs);
+    heartbeat = setInterval(() => {
+      const refreshedAt = status().lastRefreshAt;
+      for (const client of clients) {
+        if (client.blocked) continue;
+        if (client.greeted) send(client, 'heartbeat', () => ({ serverNow: now(), refreshedAt }));
+        else write(client, ': ping\n\n');
+      }
+    }, heartbeatMs);
     heartbeat.unref?.();
+  }
+
+  /** Where the engine's running refresh is, and when the last one finished (see the engine's status()). */
+  function status() {
+    const current = engine?.status?.();
+    return current ? { stage: current.stage ?? null, refreshStartedAt: current.refreshStartedAt ?? null, lastRefreshAt: current.lastRefreshAt ?? null } : { ...NO_REFRESH };
   }
 
   function scheduleRelease() {
@@ -55,8 +129,11 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
     if (clients.size || !engine) return;
     engine.stop();
     unsubscribe?.();
+    stopWatchdog();
+    abandon?.();
     engine = null;
     ready = null;
+    abandon = null;
     unsubscribe = null;
     swarmsKey = '';
     onIdle();
@@ -123,17 +200,20 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
   }
 
   async function push(client) {
-    if (client.busy) {
+    const mine = engine;
+    if (!mine || client.closed) return;
+    // A push still waiting on a replaced engine does not hold up one for the current engine.
+    if (client.busy === mine) {
       client.again = true;
       return;
     }
-    client.busy = true;
+    client.busy = mine;
     try {
       do {
         client.again = false;
         const pinned = client.pinned;
         const current = engine;
-        if (!current || client.closed) return;
+        if (current !== mine || client.closed) return;
         const fromSession = !client.swarm && !pinned && client.session ? await current.findSwarm(client.session) : null;
         const asked = client.swarm ?? pinned ?? fromSession;
         // A page opened for a session that is in no swarm gets no snapshot, never the default swarm, so it can say so.
@@ -157,7 +237,7 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
     } catch (error) {
       warn(error);
     } finally {
-      client.busy = false;
+      if (client.busy === mine) client.busy = false;
     }
   }
 
@@ -194,7 +274,7 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
     write(client, 'retry: 2000\n\n');
     const current = await acquire();
     if (client.closed) return;
-    send(client, 'hello', () => ({ serverNow: now(), demo: Boolean(current.isDemo), ui, version }));
+    send(client, 'hello', () => ({ serverNow: now(), demo: Boolean(current.isDemo), ui, version, pollMs: intervalMs, refreshedAt: status().lastRefreshAt }));
     client.greeted = true;
     startPolling();
     sendSwarms(true, client);
@@ -222,6 +302,7 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
     clients.clear();
     clearTimeout(idleTimer);
     clearInterval(heartbeat);
+    stopWatchdog();
     idleTimer = null;
     heartbeat = null;
     polling = false;
@@ -229,12 +310,14 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
       engine.stop();
       unsubscribe?.();
     }
+    abandon?.();
     engine = null;
     ready = null;
+    abandon = null;
   }
 
   /** Bytes written to live pages that their sockets have not taken yet (a diagnostic for tests). */
   const queuedBytes = () => [...clients].reduce((sum, client) => sum + (client.res.writableLength ?? 0), 0);
 
-  return { add, withEngine, close, clientCount: () => clients.size, hasEngine: () => engine !== null, queuedBytes };
+  return { add, withEngine, close, status, clientCount: () => clients.size, hasEngine: () => engine !== null, queuedBytes };
 }

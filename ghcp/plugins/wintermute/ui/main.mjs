@@ -1,4 +1,4 @@
-import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, historyReloadWanted, isNarrow, isStale, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, retryBudget, staleChoice, staleShown, startShown, startSwarm } from './app.mjs';
+import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, dataStaleSince, historyReloadWanted, isNarrow, isStale, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, retryBudget, staleChoice, staleShown, startShown, startSwarm } from './app.mjs';
 import { copyAddress, openCockpit, showRequest } from './cockpit-link.mjs';
 import { fitFooter } from './footer.mjs';
 import { tickText } from './format.mjs';
@@ -68,6 +68,9 @@ const view = {
   connection: 'connecting',
   /** When the page lost its connection; its clocks stop there until it reconnects. */
   staleSince: null,
+  /** The server's poll interval, and when its last refresh finished (server time), from hello and each heartbeat. */
+  pollMs: null,
+  refreshedAt: null,
   /** The Cards tab's Finished section is open; kept across updates, closed on each visit. */
   finishedOpen: false,
   /** The Board's Archived row stays open across updates, closed on each visit. */
@@ -191,6 +194,8 @@ function connect() {
     offset = data.serverNow - Date.now();
     view.demo = Boolean(data.demo);
     if (typeof data.version === 'string') view.serverVersion = data.version;
+    view.pollMs = typeof data.pollMs === 'number' ? data.pollMs : null;
+    view.refreshedAt = typeof data.refreshedAt === 'number' ? data.refreshedAt : null;
     servedUi = data.ui ?? null;
     considerReload();
     scheduleRender();
@@ -220,6 +225,21 @@ function connect() {
     offset = data.serverNow - Date.now();
     applySnapshot(data.snapshot);
   });
+  source.addEventListener('heartbeat', event => {
+    const data = JSON.parse(event.data);
+    offset = data.serverNow - Date.now();
+    view.refreshedAt = typeof data.refreshedAt === 'number' ? data.refreshedAt : null;
+    checkDataStale();
+  });
+}
+
+/** Render when the top bar's "Data stale" note should appear or go: on each heartbeat, and each second without one. */
+let dataStale = null;
+function checkDataStale() {
+  const since = dataStaleSince({ connection: view.connection, refreshedAt: view.refreshedAt, pollMs: view.pollMs, now: now() });
+  if (since === dataStale) return;
+  dataStale = since;
+  scheduleRender();
 }
 
 /** Reload once into the new dashboard files, keeping what is on screen; see reloadDecision. */
@@ -551,6 +571,7 @@ new ResizeObserver(() => {
 setInterval(() => {
   // Disconnected, the clocks stay where they stopped.
   if (isStale(view)) return;
+  checkDataStale();
   const t = now();
   const refit = new Set();
   for (const el of dash.querySelectorAll('[data-t]')) {

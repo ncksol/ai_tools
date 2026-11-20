@@ -56,7 +56,14 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
     ? () => createDemoEngine({ scenario: options.demo, simulate: !options.still })
     : () => createDefaultEngine({ log });
   const port = options.port;
-  const result = await listenShared({ port, makeServer: () => createDashboardServer({ createEngine, port, version, log, demo: options.demo }) });
+  let broken = false;
+  let stop = () => {};
+  const onBroken = () => {
+    broken = true;
+    stderr.write('The dashboard stopped: file system calls in this process stopped finishing. Start it again.\n');
+    stop();
+  };
+  const result = await listenShared({ port, makeServer: () => createDashboardServer({ createEngine, port, version, log, demo: options.demo, onBroken }) });
   const url = `http://127.0.0.1:${port}/`;
   if (result.status === 'running') {
     const running = result.health.demo ?? null;
@@ -68,12 +75,16 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
     return 1;
   }
   if (result.status !== 'started') {
-    stderr.write(`Port ${port} ${result.status === 'taken' ? 'is used by another program' : 'is in use and not answering'}. Start with --port <n> or set SWARM_DASHBOARD_PORT.\n`);
+    const holder = result.status === 'taken' ? 'is used by another program'
+      : result.reason === 'broken' ? 'is held by a dashboard that has stopped working'
+        : result.reason === 'stale' ? 'is held by a dashboard whose refresh is stuck'
+          : 'is in use and not answering';
+    stderr.write(`Port ${port} ${holder}. Start with --port <n> or set SWARM_DASHBOARD_PORT.\n`);
     return 1;
   }
   stdout.write(`Swarm dashboard${options.demo ? ` (sample data: ${options.demo})` : ''}: ${url}\nPress Ctrl+C to stop.\n`);
   await new Promise(resolve => {
-    const stop = () => {
+    stop = () => {
       process.off('SIGINT', stop);
       process.off('SIGTERM', stop);
       resolve();
@@ -81,9 +92,11 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
     process.on('SIGINT', stop);
     process.on('SIGTERM', stop);
     signal?.addEventListener('abort', stop, { once: true });
+    // The server may have broken between listen() and here.
+    if (broken) stop();
   });
   await result.server.close();
-  return 0;
+  return broken ? 1 : 0;
 }
 
 if (process.argv[1] && await realpath(fileURLToPath(import.meta.url)) === await realpath(process.argv[1])) {

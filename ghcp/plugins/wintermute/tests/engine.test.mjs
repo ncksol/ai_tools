@@ -258,6 +258,30 @@ test('one failing swarm does not stop the refresh', async () => {
   assert.equal(problem.message, 'ws-bad: a lookup failure');
 });
 
+test('status names the stage a running refresh is in, and records when the last refresh finished', async () => {
+  const home = scenario();
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const engine = createSwarmEngine({
+    copilotHome: home.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => at(60), processProbe: async locks => { await gate; return alwaysAlive(locks); }, prLookup: 'off',
+  });
+  assert.deepEqual(engine.status(), { stage: null, refreshStartedAt: null, lastRefreshAt: null });
+  const before = Date.now();
+  const running = engine.refresh();
+  const deadline = Date.now() + 5000;
+  while (engine.status().stage !== 'roots' && Date.now() < deadline) await sleep(5);
+  const stuck = engine.status();
+  assert.equal(stuck.stage, 'roots', 'the process check of each swarm root is waiting');
+  assert.ok(stuck.refreshStartedAt >= before && stuck.refreshStartedAt <= Date.now(), 'the start is wall-clock time');
+  assert.equal(stuck.lastRefreshAt, null);
+  release();
+  await running;
+  const done = engine.status();
+  assert.equal(done.stage, null);
+  assert.equal(done.refreshStartedAt, null);
+  assert.ok(done.lastRefreshAt >= stuck.refreshStartedAt);
+});
+
 test('stop then start runs a single polling chain', async () => {
   const home = scenario();
   let refreshes = 0;

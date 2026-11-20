@@ -6,6 +6,20 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.5.4 — 2026-11-20
+
+### Added
+
+- The dashboard's top bar says "Data stale since HH:MM" when the server stays connected but has not finished a refresh for three poll intervals. Heartbeats now carry the time of the last finished refresh.
+- `/api/health` reports the state of the server's file system check (`pool`), when the last refresh finished (`lastRefreshAt`) and when the current one started (`refreshStartedAt`).
+
+### Fixed
+
+- A dashboard server whose host process stops finishing file system calls no longer serves frozen data. Every 10 seconds it checks that a file system call finishes. When one has not finished after 20 seconds, it marks itself broken, closes its listener and connections, and never binds the port again, so another host's server takes over.
+- Other hosts no longer reuse a server on the port whose health reports a broken check, or a refresh that has run more than 70 seconds; they wait for it to close and take the port over.
+- A refresh that runs longer than 60 seconds while file system calls still finish is logged with the stage it is stuck in, and the server replaces its engine, so later refreshes run.
+- When the broken process is the only host, opening the dashboard fails with a `reload_extensions` error that asks you to reload extensions. The runtime does not restart an extension process that exits, so the process stays up and reports the error rather than exiting.
+
 ## 1.5.3 — 2026-11-20
 
 ### Fixed

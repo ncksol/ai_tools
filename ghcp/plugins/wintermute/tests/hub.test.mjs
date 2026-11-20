@@ -23,6 +23,7 @@ function exchange() {
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const isSnapshot = frame => frame.startsWith('event: snapshot');
+const isHeartbeat = frame => frame.startsWith('event: heartbeat');
 const dataOf = frame => JSON.parse(/^data: (.+)$/m.exec(frame)[1]);
 
 async function until(predicate, timeoutMs = 1000) {
@@ -51,7 +52,7 @@ test('a page that stops reading gets nothing more until it drains, then only the
     const blockedAt = page.res.frames.length;
     await pushRevisions(engine, 1, 80);
     await wait(40);
-    assert.deepEqual(page.res.frames.slice(blockedAt), [], 'nothing, not even a ping, is written to a page that is behind');
+    assert.deepEqual(page.res.frames.slice(blockedAt), [], 'nothing, not even a heartbeat, is written to a page that is behind');
 
     clock = 2000;
     page.drain();
@@ -64,7 +65,7 @@ test('a page that stops reading gets nothing more until it drains, then only the
     assert.equal(data.serverNow, 2000, 'serverNow is the time of writing');
 
     const drainedAt = page.res.frames.length;
-    await until(() => page.res.frames.slice(drainedAt).includes(': ping\n\n'), 40);
+    await until(() => page.res.frames.slice(drainedAt).some(isHeartbeat), 40);
   } finally {
     hub.close();
   }
@@ -130,7 +131,7 @@ test('pages beyond maxClients are refused with 503 and create no client', async 
   }
 });
 
-test('a page that keeps reading gets every snapshot and every ping', async () => {
+test('a page that keeps reading gets every snapshot and every heartbeat', async () => {
   const engine = createFakeEngine({ snapshots: [exampleSnapshot()] });
   const hub = createHub({ createEngine: () => engine, heartbeatMs: 5, engineIdleMs: 10 });
   const page = exchange();
@@ -142,8 +143,87 @@ test('a page that keeps reading gets every snapshot and every ping', async () =>
     await until(() => page.res.frames.slice(before).filter(isSnapshot).length >= 5);
     const revisions = page.res.frames.slice(before).filter(isSnapshot).map(frame => dataOf(frame).snapshot.revision);
     assert.deepEqual(revisions, [1, 2, 3, 4, 5]);
-    const pingsAt = page.res.frames.length;
-    await until(() => page.res.frames.slice(pingsAt).includes(': ping\n\n'), 40);
+    const heartbeatsAt = page.res.frames.length;
+    await until(() => page.res.frames.slice(heartbeatsAt).some(isHeartbeat), 40);
+  } finally {
+    hub.close();
+  }
+});
+
+/** An engine whose refresh never finishes, and whose status says it has been in stage since startedAt (wall-clock ms). */
+function stuckEngine(stage, startedAt, counts) {
+  const engine = createFakeEngine({ snapshots: [exampleSnapshot()] });
+  return {
+    ...engine,
+    refresh: () => new Promise(() => {}),
+    getSnapshot: () => new Promise(() => {}),
+    stop() { counts.stops += 1; },
+    status: () => ({ stage, refreshStartedAt: startedAt, lastRefreshAt: null }),
+  };
+}
+
+test('a refresh that runs past the limit while the pool answers is logged with its stage, and the engine is replaced', async () => {
+  const logged = [];
+  const counts = { stops: 0, starts: 0 };
+  const fresh = createFakeEngine({ snapshots: [exampleSnapshot()] });
+  const engines = [stuckEngine('costs', Date.now() - 10000, counts), { ...fresh, start() { counts.starts += 1; } }];
+  let created = 0;
+  const sinceAsked = [];
+  const hub = createHub({
+    createEngine: () => engines[created++],
+    refreshLimitMs: 50, refreshCheckMs: 5, poolPassedSince: since => { sinceAsked.push(since); return true; },
+    heartbeatMs: 1000, engineIdleMs: 10, log: entry => logged.push(entry),
+  });
+  const page = exchange();
+  try {
+    hub.add(page.req, page.res);
+    await until(() => page.res.frames.some(isSnapshot));
+    assert.equal(created, 2, 'a second engine was created');
+    assert.ok(counts.stops >= 1, 'the stuck engine was stopped');
+    assert.ok(counts.starts >= 1, 'the new engine polls, so later refreshes run');
+    assert.ok(sinceAsked.length >= 1, 'the pool was asked about the time since the refresh started');
+    const warning = logged.find(entry => entry.level === 'warn' && /stuck/.test(entry.message));
+    assert.ok(warning, `a warning names the stuck refresh: ${JSON.stringify(logged)}`);
+    assert.match(warning.message, /costs/);
+    assert.ok(page.res.frames.some(frame => frame.startsWith('event: hello')));
+  } finally {
+    hub.close();
+  }
+});
+
+test('a long refresh is not replaced while the pool check has not passed since it started', async () => {
+  const counts = { stops: 0 };
+  let created = 0;
+  const hub = createHub({
+    createEngine: () => { created += 1; return stuckEngine('data.db', Date.now() - 10000, counts); },
+    refreshLimitMs: 50, refreshCheckMs: 5, poolPassedSince: () => false, heartbeatMs: 1000, engineIdleMs: 10,
+  });
+  const page = exchange();
+  try {
+    hub.add(page.req, page.res);
+    await wait(80);
+    assert.equal(created, 1);
+    assert.equal(counts.stops, 0);
+    assert.equal(page.res.frames.some(isSnapshot), false);
+  } finally {
+    hub.close();
+  }
+});
+
+test('hello carries the poll interval and last refresh, and heartbeats carry the last refresh time', async () => {
+  const engine = { ...createFakeEngine({ snapshots: [exampleSnapshot()] }), status: () => ({ stage: null, refreshStartedAt: null, lastRefreshAt: 4242 }) };
+  const hub = createHub({ createEngine: () => engine, now: () => 5000, intervalMs: 3000, heartbeatMs: 5, engineIdleMs: 10 });
+  const page = exchange();
+  try {
+    assert.deepEqual(hub.status(), { stage: null, refreshStartedAt: null, lastRefreshAt: null }, 'no engine, no refresh');
+    hub.add(page.req, page.res);
+    await until(() => page.res.frames.some(isSnapshot));
+    const hello = dataOf(page.res.frames.find(frame => frame.startsWith('event: hello')));
+    assert.equal(hello.pollMs, 3000);
+    assert.equal(hello.refreshedAt, 4242);
+    await until(() => page.res.frames.some(isHeartbeat), 200);
+    assert.deepEqual(dataOf(page.res.frames.find(isHeartbeat)), { serverNow: 5000, refreshedAt: 4242 });
+    assert.deepEqual(hub.status(), { stage: null, refreshStartedAt: null, lastRefreshAt: 4242 });
   } finally {
     hub.close();
   }

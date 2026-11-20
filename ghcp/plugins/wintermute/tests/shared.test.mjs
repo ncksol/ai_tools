@@ -111,3 +111,68 @@ test('a listener that redirects its health check is another program, and the red
     await close(target);
   }
 });
+
+/** A listener that answers the health check as our dashboard with these fields. */
+async function holder(port, fields) {
+  const server = createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ app: 'swarm-dashboard', version: 'test', pool: 'ok', refreshStartedAt: null, ...fields }));
+  });
+  await listen(server, port);
+  return server;
+}
+
+test('health from a real dashboard reports the pool and its refresh times', async () => {
+  const port = await freePort();
+  const ours = dashboard(port);
+  await ours.listen();
+  try {
+    const found = await probePort(port);
+    assert.equal(found.state, 'ours');
+    assert.equal(found.health.pool, 'ok');
+    assert.ok('lastRefreshAt' in found.health && 'refreshStartedAt' in found.health);
+  } finally {
+    await ours.close();
+  }
+});
+
+test('a dashboard whose pool check failed, or whose refresh has run too long, is not reused', async () => {
+  const port = await freePort();
+  const cases = [
+    [{ pool: 'broken' }, 'broken'],
+    [{ refreshStartedAt: Date.now() - 10 * 60000 }, 'stale'],
+  ];
+  for (const [fields, reason] of cases) {
+    const stuck = await holder(port, fields);
+    try {
+      const found = await probePort(port);
+      assert.equal(found.state, 'unresponsive', reason);
+      assert.equal(found.reason, reason);
+      assert.equal(found.health.app, 'swarm-dashboard');
+      const result = await listenShared({ port, makeServer: () => dashboard(port), pauseMs: 10 });
+      assert.equal(result.status, 'unresponsive', reason);
+      assert.equal(result.reason, reason);
+    } finally {
+      await close(stuck);
+    }
+  }
+  const busy = await holder(port, { refreshStartedAt: Date.now() - 1000 });
+  try {
+    assert.equal((await probePort(port)).state, 'ours', 'a refresh that started a moment ago is normal');
+  } finally {
+    await close(busy);
+  }
+});
+
+test('listenShared takes the port once a broken dashboard lets it go', async () => {
+  const port = await freePort();
+  const broken = await holder(port, { pool: 'broken' });
+  setTimeout(() => { close(broken); }, 50);
+  const result = await listenShared({ port, makeServer: () => dashboard(port), pauseMs: 100, attempts: 10 });
+  try {
+    assert.equal(result.status, 'started');
+  } finally {
+    await result.server?.close();
+    await close(broken);
+  }
+});

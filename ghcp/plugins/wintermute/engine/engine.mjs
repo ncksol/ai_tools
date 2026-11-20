@@ -149,6 +149,11 @@ export function createSwarmEngine(options = {}) {
   // so a caller can tell a snapshot that its own refresh built from one kept after that refresh failed to rebuild it. Its
   // `complete` says whether that refresh read every source the snapshot uses (see buildTracked).
   let refreshes = 0;
+  // The step the running refresh has reached and when it started, and when the last refresh finished, all in wall-clock
+  // time (not `now`), so the server can tell a stuck refresh from a slow one (see status()).
+  let stage = null;
+  let refreshStartedAt = null;
+  let lastRefreshAt = null;
   // The CLI sessions whose cost the latest refresh could not read in full (see readCosts).
   let costsIncomplete = new Set();
   // CLI sessions whose log was missing or unreadable this refresh, rather than only having invalid usage lines.
@@ -576,9 +581,11 @@ export function createSwarmEngine(options = {}) {
     const diag = [];
     // False once data.db fails to read; a database that is not found is not a failure.
     let globalsRead = true;
+    stage = 'sqlite';
     if (sqlite.backend === 'auto') {
       diag.push({ level: 'info', source: 'sqlite', message: (await loadNodeSqlite()) ? 'Reading SQLite through node:sqlite.' : 'Reading SQLite through the sqlite3 command-line tool.' });
     }
+    stage = 'data.db';
     try {
       const data = await reader.read(paths.dataDb, readAppDb);
       if (data) {
@@ -601,6 +608,7 @@ export function createSwarmEngine(options = {}) {
       // A CLI session started a sub-agent when its log has a sub-agent start (see scanTaskStarts), or the ledger has a
       // sub-agent's model call from an earlier refresh (the ledger reads only the sessions of swarms, after the forest is built).
       const hasSubagents = cliId => taskStarted.has(cliId) || ledger.hasSubagentWork(cliId);
+      stage = 'forest';
       forest = buildForest(app, { hasSubagents });
       const found = await scanTaskStarts(forest.taskCandidates, diag);
       const waiting = await waitingOrchestrators(at, candidateCliIds);
@@ -613,7 +621,9 @@ export function createSwarmEngine(options = {}) {
 
     const costIds = new Set(forest.roots.flatMap(root => treeNodes(forest, root.id).flatMap(node => node.cliSessionIds)));
     const costDiagnostics = new Map();
+    stage = 'costs';
     costsIncomplete = await readCosts(costIds, costDiagnostics, at);
+    stage = 'roots';
     swarms = await listRoots(at, diag);
     const rootIds = new Set(forest.roots.map(root => root.id));
     const tracked = new Set([
@@ -628,6 +638,7 @@ export function createSwarmEngine(options = {}) {
     const shared = [...diag];
     for (const notes of costDiagnostics.values()) diag.push(...notes);
     for (const rootId of tracked) {
+      stage = 'snapshots';
       try {
         const cliIds = new Set(treeNodes(forest, rootId).flatMap(node => node.cliSessionIds));
         const ownCosts = [...cliIds].flatMap(cliId => costDiagnostics.get(cliId) ?? []);
@@ -648,6 +659,7 @@ export function createSwarmEngine(options = {}) {
         }
         if (snapshot.run.lifecycle === 'finished') {
           knownFinished.set(rootId, cheapLast.get(rootId));
+          stage = 'history';
           await persistFinished(snapshot, diag, complete);
         } else {
           knownFinished.delete(rootId);
@@ -693,7 +705,14 @@ export function createSwarmEngine(options = {}) {
   }
 
   function refresh() {
-    if (!running) running = doRefresh().finally(() => { running = null; });
+    if (!running) {
+      refreshStartedAt = Date.now();
+      running = doRefresh().then(() => { lastRefreshAt = Date.now(); }).finally(() => {
+        running = null;
+        stage = null;
+        refreshStartedAt = null;
+      });
+    }
     return running;
   }
 
@@ -842,6 +861,8 @@ export function createSwarmEngine(options = {}) {
       }
     },
     listSwarms: () => swarms.map(item => ({ ...item })),
+    /** The step a running refresh has reached (null when none runs), when it started, and when the last one finished. */
+    status: () => ({ stage, refreshStartedAt, lastRefreshAt }),
     getSnapshot,
     findSwarm,
     subscribe(listener) {

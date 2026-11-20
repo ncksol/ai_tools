@@ -1,4 +1,11 @@
 import { APP_ID } from './http.mjs';
+import { REFRESH_CHECK_MS, REFRESH_LIMIT_MS } from './hub.mjs';
+
+/**
+ * A dashboard whose refresh has run this long has not recovered by itself: its hub replaces an engine stuck for
+ * REFRESH_LIMIT_MS once file system calls are known to work, and checks every REFRESH_CHECK_MS.
+ */
+export const STALE_REFRESH_MS = REFRESH_LIMIT_MS + 2 * REFRESH_CHECK_MS;
 
 /** The dashboard's fixed loopback port (IANA-unassigned, below macOS's ephemeral range). */
 export const DEFAULT_PORT = 7927;
@@ -13,10 +20,12 @@ export function resolvePort(env = process.env) {
 
 /**
  * Who holds the port: our dashboard ('ours', with its health answer), nobody ('free'), another program ('other'), or
- * something that accepts connections but does not answer in time ('unresponsive'). Only a direct 200 answer from the
- * port counts; a redirect means another program.
+ * something that accepts connections but does not answer in time ('unresponsive'). A dashboard that answers but can no
+ * longer refresh is 'unresponsive' too, with its health and a reason: 'broken' when its file system calls stopped
+ * finishing, 'stale' when its refresh has run longer than staleAfterMs. Only a direct 200 answer from the port counts;
+ * a redirect means another program.
  */
-export async function probePort(port, { timeoutMs = 2500 } = {}) {
+export async function probePort(port, { timeoutMs = 2500, staleAfterMs = STALE_REFRESH_MS } = {}) {
   try {
     // Only a direct answer from this loopback port counts: a redirect could name another listener, or leave the machine.
     const response = await fetch(`http://127.0.0.1:${port}/api/health`, { redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
@@ -25,7 +34,10 @@ export async function probePort(port, { timeoutMs = 2500 } = {}) {
       return { state: 'other' };
     }
     const body = await response.json().catch(() => null);
-    return body && body.app === APP_ID ? { state: 'ours', health: body } : { state: 'other' };
+    if (!body || body.app !== APP_ID) return { state: 'other' };
+    if (body.pool === 'broken') return { state: 'unresponsive', reason: 'broken', health: body };
+    if (typeof body.refreshStartedAt === 'number' && Date.now() - body.refreshStartedAt > staleAfterMs) return { state: 'unresponsive', reason: 'stale', health: body };
+    return { state: 'ours', health: body };
   } catch (error) {
     if ((error?.cause?.code ?? error?.code) === 'ECONNREFUSED') return { state: 'free' };
     if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return { state: 'unresponsive' };
@@ -35,15 +47,17 @@ export async function probePort(port, { timeoutMs = 2500 } = {}) {
 
 /**
  * Bind the shared port with a new server, or identify whoever holds it. The OS settles races: a loser gets EADDRINUSE,
- * probes the winner and reuses it if it is a dashboard.
+ * probes the winner and reuses it if it is a dashboard. A dashboard that can no longer refresh is not reused: this
+ * tries to bind in case it lets the port go meanwhile, and otherwise returns 'unresponsive' with its reason and health.
  */
 export async function listenShared({ port, makeServer, probe = probePort, attempts = 3, pauseMs = 300 }) {
+  const unresponsive = found => (found.reason ? { status: 'unresponsive', reason: found.reason, health: found.health } : { status: 'unresponsive' });
   // Look before binding: macOS lets a loopback bind succeed beside a program that holds the port on every address.
   const holder = await probe(port);
   if (holder.state === 'ours') return { status: 'running', health: holder.health };
   if (holder.state === 'other') return { status: 'taken' };
-  if (holder.state === 'unresponsive') return { status: 'unresponsive' };
-  let status = 'taken';
+  if (holder.state === 'unresponsive' && !holder.health) return unresponsive(holder);
+  let last = holder.state === 'unresponsive' ? holder : null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const server = makeServer();
     try {
@@ -55,8 +69,8 @@ export async function listenShared({ port, makeServer, probe = probePort, attemp
     const found = await probe(port);
     if (found.state === 'ours') return { status: 'running', health: found.health };
     if (found.state === 'other') return { status: 'taken' };
-    status = found.state === 'unresponsive' ? 'unresponsive' : 'taken';
+    last = found.state === 'unresponsive' ? found : null;
     if (attempt < attempts - 1) await new Promise(resolve => setTimeout(resolve, pauseMs));
   }
-  return { status };
+  return last ? unresponsive(last) : { status: 'taken' };
 }

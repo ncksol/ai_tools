@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, compareVersions, historyReloadWanted, isNarrow, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, retryBudget, staleChoice, staleShown, startShown, startSwarm, versionNotice, waitingHtml } from '../ui/app.mjs';
+import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, STALE_AFTER_POLLS, baseSearch, coalesced, compareVersions, dataStaleSince, historyReloadWanted, isNarrow, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, retryBudget, staleChoice, staleShown, startShown, startSwarm, versionNotice, waitingHtml } from '../ui/app.mjs';
 import { NOW, deepFreeze, exampleSnapshot, fixture } from './helpers/ui.mjs';
 
 const view = (overrides = {}) => ({
@@ -342,6 +342,22 @@ test('only the standalone page shows the swarm picker; a canvas does not', () =>
   for (const host of ['browser', undefined]) {
     assert.match(renderApp(view({ swarms, host })), /<label class="pick"><span class="small muted">Swarm<\/span><select data-swarm aria-label="Swarm"><option value="ws-0000-root" selected>Sample story B<\/option><option value="ws-1000-root">Sample story A<\/option><\/select><\/label>/);
   }
+});
+
+test('the top bar says the data is stale once the server has not finished a refresh for three poll intervals', () => {
+  assert.equal(STALE_AFTER_POLLS, 3);
+  const refreshedAt = new Date(2026, 10, 9, 14, 0).getTime();
+  const stale = view({ now: refreshedAt + 3 * 3000 + 1, refreshedAt, pollMs: 3000 });
+  assert.equal(dataStaleSince(stale), refreshedAt);
+  assert.match(renderApp(stale), /<span class="small warn" data-stale-data>Data stale since 14:00<\/span>/);
+  const fresh = view({ now: refreshedAt + 3 * 3000, refreshedAt, pollMs: 3000 });
+  assert.equal(dataStaleSince(fresh), null);
+  assert.doesNotMatch(renderApp(fresh), /data-stale-data/);
+  assert.equal(dataStaleSince(view({ now: refreshedAt + 3 * 5000, refreshedAt, pollMs: 5000 })), null, 'the limit follows the poll interval');
+  assert.equal(dataStaleSince(view({ now: refreshedAt + 3 * 3000 + 1, refreshedAt })), refreshedAt, 'without a poll interval, the default 3 s applies');
+  assert.equal(dataStaleSince(view({ refreshedAt: null })), null, 'no refresh time yet');
+  const disconnected = renderApp(view({ connection: 'retrying', now: refreshedAt + 60000, refreshedAt, pollMs: 3000 }));
+  assert.doesNotMatch(disconnected, /data-stale-data/, 'a disconnected page says so instead');
 });
 
 test('the top bar shows a swarm picker, connection trouble, data warnings and sample data', () => {
