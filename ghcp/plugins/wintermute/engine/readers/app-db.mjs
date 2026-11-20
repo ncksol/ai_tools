@@ -29,12 +29,29 @@ export const APP_TABLES = Object.freeze({
 /** Lists the existing columns of exactly the tables in APP_TABLES. */
 export const SCHEMA_SQL = `SELECT m.name AS table_name, p.name AS column_name FROM sqlite_master AS m JOIN pragma_table_info(m.name) AS p WHERE m.type = 'table' AND m.name IN (${Object.values(APP_TABLES).map(item => `'${item.table}'`).join(', ')})`;
 
+/** Lists one table's columns: none when the table is missing. The table names are constants, never data. */
+const columnsSql = name => `SELECT name FROM pragma_table_info('${name}')`;
+
+/**
+ * One table's columns, for when the schema query failed: a Set, null when the table is missing, or undefined when this query
+ * failed too, and the table's state is not known.
+ */
+async function columnsOf(db, name) {
+  try {
+    const found = await db.all(columnsSql(name));
+    return found?.length ? new Set(found.map(row => row.name)) : null;
+  } catch {
+    return undefined;
+  }
+}
+
 const text = value => (typeof value === 'string' && value.length ? value : null);
 const count = value => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value));
 
 /**
  * Reads the tables in APP_TABLES. `failed` names the keys of the tables whose read failed, such as a busy database: their values
- * are empty, so what this read gives is partial. A table that is missing, or lacks a required column, is not a failed read.
+ * are empty, so what this read gives is partial. A table that is missing, or lacks a required column, is not a failed read, even
+ * when the schema query failed.
  */
 export async function readAppDb(db) {
   const diagnostics = [];
@@ -54,8 +71,10 @@ export async function readAppDb(db) {
   for (const [key, { table: name, columns, required, optional }] of Object.entries(APP_TABLES)) {
     rows[key] = [];
     let selected = columns;
-    if (present) {
-      const have = present.get(name);
+    // When the schema query failed, each table is looked up on its own, so that a table found missing is not taken for a failed
+    // read. A table whose lookup fails too is read with every column it should have.
+    const have = present ? present.get(name) ?? null : await columnsOf(db, name);
+    if (have !== undefined) {
       if (!have) {
         if (!optional) diagnostics.push({ level: 'warn', source: 'data.db', message: `${key}: table ${name} not found` });
         continue;

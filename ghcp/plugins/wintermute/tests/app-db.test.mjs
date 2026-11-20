@@ -159,6 +159,36 @@ test('Copilot app Projects are read from persistent_projects: a missing or resha
   assert.deepEqual([...failing.failed], ['persistentProjects']);
 });
 
+/** A db whose schema query fails; every other query is answered from `tables` ({table: [columns]}), as SQLite would. */
+function schemaLockedDb(tables, { locked = [] } = {}) {
+  return {
+    all: async sql => {
+      if (sql === SCHEMA_SQL) throw new Error('database is locked');
+      const probed = /pragma_table_info\('(\w+)'\)/.exec(sql)?.[1];
+      const [, list, table] = probed ? [null, null, probed] : /^SELECT (.+) FROM (\w+)$/.exec(sql);
+      if (locked.includes(table)) throw new Error('database is locked');
+      if (probed) return (tables[probed] ?? []).map(name => ({ name }));
+      if (!tables[table]) throw new Error(`no such table: ${table}`);
+      const missing = list.split(', ').find(column => !tables[table].includes(column));
+      if (missing) throw new Error(`no such column: ${missing}`);
+      return [];
+    },
+  };
+}
+
+test('when the schema query fails, each table is looked up on its own, so a missing or reshaped Projects table is still quiet', async () => {
+  const all = Object.fromEntries(Object.values(APP_TABLES).map(({ table, columns }) => [table, columns]));
+  const { persistent_projects: _, ...withoutProjects } = all;
+  const schemaWarning = { level: 'warn', source: 'data.db', message: 'schema: database is locked' };
+  for (const tables of [withoutProjects, { ...withoutProjects, persistent_projects: ['agent_id'] }]) {
+    const app = await readAppDb(schemaLockedDb(tables));
+    assert.deepEqual([app.diagnostics, [...app.failed]], [[schemaWarning], []]);
+  }
+  const locked = await readAppDb(schemaLockedDb(all, { locked: ['persistent_projects'] }));
+  assert.deepEqual([...locked.failed], ['persistentProjects']);
+  assert.deepEqual(locked.diagnostics, [schemaWarning, { level: 'warn', source: 'data.db', message: 'persistentProjects: database is locked' }]);
+});
+
 for (const backend of TEST_BACKENDS) {
   test(`${backend}: a minimal database degrades instead of failing`, async () => {
     const file = path.join(tempDir('swarm-minimal-'), 'data.db');
