@@ -1,15 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, renameSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createSwarmEngine } from '../engine/engine.mjs';
+import { createHistoryStore } from '../engine/model/history.mjs';
 import { SUMMARY_RULES } from '../engine/schema.mjs';
 import { createSqliteReader } from '../engine/sqlite.mjs';
 import { buildForest, rootProjectId } from '../engine/model/forest.mjs';
 import { readProjectOptIn, sessionFile } from '../engine/readers/session-files.mjs';
 import { CopilotHome } from './helpers/copilot-home.mjs';
 import { EventLog } from './helpers/event-log.mjs';
-import { DAY, T0, alwaysAlive } from './helpers/scenario.mjs';
+import { DAY, NO_SUCH_PID, T0, alwaysAlive } from './helpers/scenario.mjs';
 import { TEST_BACKENDS, canWriteWithNode, execSql, holdExclusiveLock } from './helpers/sqlite-writer.mjs';
 import { tempDir } from './helpers/temp.mjs';
 
@@ -316,34 +317,138 @@ test('a data.db that is gone after a partial read leaves that read incomplete, s
   engine.stop();
 });
 
-test('a run that finishes during a partial data.db read is stored by the next full read, without anyone asking for it', async () => {
+/**
+ * A Project run with one child (CLI session ws-a, whose log has the run's last work), live at T0 + 10 s and finished from T0 + DAY,
+ * with its summary stored in a fresh history folder. Its engine's data.db reads of the tables in `locked` fail, and `wrapHistory`
+ * can change its history store. `poll(time)` refreshes at that time; `archived()` is the stored summary's project and whether
+ * History lists it as summarized.
+ */
+function finishingRun({ wrapHistory = store => store, processProbe = alwaysAlive } = {}) {
   const home = new CopilotHome();
   home.persistentProject({ id: 'p-run', title: 'Run', createdAt: T0 });
   home.project({ id: 'repo-1', name: 'sample-repo' });
   home.workspace({ id: 'ws-a', projectId: 'repo-1', name: 'a: API', createdAt: T0 + 1000, creatorSessionId: 'p-run' });
   home.usage([{ sessionId: 'p-run', nanoAiu: 1e9, createdAt: T0 + 2000 }, { sessionId: 'ws-a', nanoAiu: 1e9, createdAt: T0 + 3000 }]);
-  const stored = path.join(tempDir('project-roots-'), 'history', 'runs', 'p-run.json');
-  let clock = T0 + 10_000;
+  // As a real log does, the child's ends with a message after its last model call, so the run's last work is in that log alone.
+  const last = new EventLog(T0 + 5000);
+  last.message('The API is done.');
+  home.writeEvents('ws-a', last.events, { append: true });
+  const historyDir = path.join(tempDir('project-roots-'), 'history');
+  const stored = path.join(historyDir, 'runs', 'p-run.json');
   const locked = new Set();
+  let clock = T0;
   const engine = createSwarmEngine({
-    copilotHome: home.root, historyDir: path.dirname(path.dirname(stored)), now: () => clock, processProbe: alwaysAlive, prLookup: 'off',
-    sqliteReader: lockingReader(home.dataDb, locked),
+    copilotHome: home.root, historyDir, historyStore: wrapHistory(createHistoryStore(historyDir)), now: () => clock, processProbe,
+    prLookup: 'off', sqliteReader: lockingReader(home.dataDb, locked),
   });
-  const lifecycle = () => engine.listSwarms().find(swarm => swarm.id === 'p-run').lifecycle;
-  await engine.refresh();
-  assert.equal(lifecycle(), 'live');
-  clock = T0 + DAY;
-  locked.add('projects');
-  await engine.refresh();
-  assert.deepEqual([lifecycle(), existsSync(stored)], ['finished', false]);
-  locked.clear();
-  for (let poll = 1; poll <= 3; poll += 1) {
-    clock = T0 + DAY + poll * 60_000;
-    await engine.refresh();
-  }
-  assert.equal(JSON.parse(readFileSync(stored, 'utf8')).project?.id, 'repo-1');
-  assert.equal((await engine.listHistory()).find(item => item.id === 'p-run').summarized, true);
-  engine.stop();
+  return {
+    home, engine, locked,
+    poll: async time => {
+      clock = time;
+      await engine.refresh();
+    },
+    listed: () => engine.listSwarms().find(swarm => swarm.id === 'p-run')?.lifecycle ?? null,
+    archived: async () => [
+      existsSync(stored) ? JSON.parse(readFileSync(stored, 'utf8')).project?.id ?? null : null,
+      (await engine.listHistory()).find(item => item.id === 'p-run')?.summarized ?? null,
+    ],
+    /** Three healthy polls a minute apart, after the finish. */
+    recover: async () => {
+      for (let minute = 1; minute <= 3; minute += 1) {
+        clock = T0 + DAY + minute * 60_000;
+        await engine.refresh();
+      }
+    },
+  };
+}
+
+test('a run that finishes during a partial data.db read is stored by the next full read, without anyone asking for it', async () => {
+  const run = finishingRun();
+  await run.poll(T0 + 10_000);
+  assert.equal(run.listed(), 'live');
+  run.locked.add('projects');
+  await run.poll(T0 + DAY);
+  assert.deepEqual([run.listed(), await run.archived()], ['finished', [null, false]]);
+  run.locked.clear();
+  await run.recover();
+  assert.deepEqual(await run.archived(), ['repo-1', true]);
+  run.engine.stop();
+});
+
+test("a run that finishes while a child's log is missing for a moment is stored once the log is back", async () => {
+  const run = finishingRun();
+  await run.poll(T0 + 10_000);
+  const log = path.join(run.home.stateDir, 'ws-a', 'events.jsonl');
+  renameSync(log, `${log}.aside`);
+  await run.poll(T0 + DAY);
+  assert.deepEqual([run.listed(), await run.archived()], ['finished', [null, false]]);
+  renameSync(`${log}.aside`, log);
+  await run.recover();
+  assert.deepEqual(await run.archived(), ['repo-1', true]);
+  run.engine.stop();
+});
+
+test('a run whose summary could not be written as it finished is written by a later poll', async () => {
+  let failing = false;
+  const run = finishingRun({
+    wrapHistory: store => ({
+      ...store,
+      put: async summary => {
+        if (failing) throw new Error('no space left on device');
+        return store.put(summary);
+      },
+    }),
+  });
+  await run.poll(T0 + 10_000);
+  failing = true;
+  await run.poll(T0 + DAY);
+  assert.deepEqual([run.listed(), (await run.archived())[0]], ['finished', null]);
+  failing = false;
+  await run.recover();
+  assert.deepEqual(await run.archived(), ['repo-1', true]);
+  run.engine.stop();
+});
+
+for (const [when, steps] of [['as it finishes', [['workspaces']]], ['after it finished', [['projects'], ['workspaces']]]]) {
+  test(`a run that a partial read of its workspaces hides ${when} is stored once it is back`, async () => {
+    const run = finishingRun();
+    await run.poll(T0 + 10_000);
+    for (const [index, tables] of steps.entries()) {
+      for (const table of tables) run.locked.add(table);
+      await run.poll(T0 + DAY + index * 1000);
+      run.locked.clear();
+    }
+    assert.deepEqual([run.listed(), await run.archived()], [null, [null, null]]);
+    await run.recover();
+    assert.deepEqual([run.listed(), await run.archived()], ['finished', ['repo-1', true]]);
+    run.engine.stop();
+  });
+}
+
+test('a run whose child log is gone for good is not rebuilt on every poll while its save is owed', async () => {
+  // A dead process's lock on the Project: each rebuild of the run checks it, so the probe counts rebuilds once the run is finished.
+  let probes = 0;
+  const run = finishingRun({ processProbe: async locks => { probes += 1; return new Map(locks.map(lock => [lock.pid, false])); } });
+  run.home.lock('p-run', NO_SUCH_PID, T0 + 2000);
+  await run.poll(T0 + 10_000);
+  rmSync(path.join(run.home.stateDir, 'ws-a', 'events.jsonl'));
+  await run.poll(T0 + DAY);
+  assert.equal(run.listed(), 'finished');
+  probes = 0;
+  for (let poll = 1; poll <= 30; poll += 1) await run.poll(T0 + DAY + poll * 20_000);
+  assert.deepEqual([probes, (await run.archived())[0]], [0, null]);
+  run.engine.stop();
+});
+
+test('a save that keeps failing is tried again less and less often', async () => {
+  let puts = 0;
+  const run = finishingRun({ wrapHistory: store => ({ ...store, put: async () => { puts += 1; throw new Error('read-only file system'); } }) });
+  await run.poll(T0 + 10_000);
+  for (let poll = 0; poll < 100; poll += 1) await run.poll(T0 + DAY + poll * 20_000);
+  // 33 minutes of polls every 20 seconds: a try at the finish and at the next poll, then 1, 2, 4, 8 and 16 minutes after each
+  // failed try.
+  assert.equal(puts, 7);
+  run.engine.stop();
 });
 
 const UNSAFE_IDS = ['../outside', 'nested/p', 'back\\slash', '..', '.'];

@@ -15,8 +15,13 @@ import { createHistoryStore, listItemOf, summarizeRun } from './model/history.mj
 import { createPrLookup } from './model/pr-lookup.mjs';
 import { applyLine, applyRecovered, createSessionState, isWorkEvent } from './model/session-state.mjs';
 import { buildSnapshot } from './model/swarm.mjs';
+import { HOUR, MINUTE } from './time.mjs';
 
 const LIVENESS_TTL_MS = 15_000;
+// After an owed summary's second failed try (see owedSaves), the next waits this long, doubling after each later failure, up to
+// OWED_RETRY_MAX_MS. The first failed try is tried again at the next poll.
+const OWED_RETRY_MS = MINUTE;
+const OWED_RETRY_MAX_MS = HOUR;
 const EXTRA_TRACKED = 3;
 // The listing's activity time comes from file modification times, which on real files run a few milliseconds after the last
 // event's timestamp. Without this slack every stored summary would look stale against the listing.
@@ -141,10 +146,14 @@ export function createSwarmEngine(options = {}) {
   // when the root leaves the forest.
   const verified = new Map();
   const pendingRoots = new Set();
-  // Finished runs whose summary a refresh did not store because data.db was not read in full (see persistFinished). Each stays
-  // tracked, so a later refresh that reads data.db in full stores it, even when nothing asks for the run; dropped then, when the
-  // run is live again, or when the root leaves the forest.
-  const deferredSaves = new Set();
+  // Per root id: { failures, retryAt } for a finished run that owes its stored summary. A tracked run that is built finished owes
+  // it until persistFinished stores or confirms it, for example when data.db or a log was not read in full, or the write failed;
+  // so does a live run that a partial read of data.db hides (see doRefresh). A later refresh rebuilds it, whether or not anything
+  // asks for the run, until its summary is stored or confirmed, it is built live, or a full read of data.db no longer lists it.
+  // The retries are bounded. An owed run is rebuilt only while data.db and every one of its sessions' logs read in full
+  // (costsComplete), so a run whose log is gone for good is never rebuilt for it. A try with those inputs that still fails, such
+  // as a write to a read-only history folder, is tried again at the next poll, then 1, 2, 4 ... minutes later, at most hourly.
+  const owedSaves = new Map();
   const requested = [];
   const listeners = new Set();
   let app = null;
@@ -615,18 +624,36 @@ export function createSwarmEngine(options = {}) {
    * Stores the summary of a finished run's snapshot and marks it checked for the listing. Only a `complete` snapshot (see
    * buildTracked) does either: one built while a source could not be read holds older or missing inputs, so the stored
    * summary, the last good one, stays as it is, unchecked, and the stale check rebuilds the run once its sources can be read.
+   * Resolves true when the stored summary is now this snapshot's: written, or found the same.
    */
   async function persistFinished(snapshot, diag, complete) {
-    if (!persist || !complete || retired) return;
+    if (!persist || !complete || retired) return false;
     try {
       const stamp = listedStamp(snapshot.run.id);
       const key = await writeSummary(snapshot);
-      if (retired) return;
+      if (retired) return false;
       // The snapshot was built after this refresh listed the run, so the stored summary is current for that listing.
       if (stamp) verified.set(snapshot.run.id, { ...stamp, digest: key });
+      return true;
     } catch (error) {
       diag.push({ level: 'warn', source: 'history', message: error.message });
+      return false;
     }
+  }
+
+  /**
+   * Records that a finished run owes its stored summary (see owedSaves). `tried` is true when the build that failed to store it
+   * had full inputs (data.db and every log of the run); only such a try counts as a failure and moves the next try later.
+   */
+  function owe(rootId, at, tried) {
+    const entry = owedSaves.get(rootId);
+    if (!tried) {
+      if (!entry) owedSaves.set(rootId, { failures: 0, retryAt: at });
+      return;
+    }
+    const failures = (entry?.failures ?? 0) + 1;
+    const wait = failures === 1 ? 0 : Math.min(OWED_RETRY_MAX_MS, OWED_RETRY_MS * 2 ** (failures - 2));
+    owedSaves.set(rootId, { failures, retryAt: at + wait });
   }
 
   async function doRefresh() {
@@ -689,11 +716,20 @@ export function createSwarmEngine(options = {}) {
     enter('roots');
     swarms = await listRoots(at, diag);
     const rootIds = new Set(forest.roots.map(root => root.id));
+    const fullInputs = rootId => globalsRead && costsComplete.get(rootId) === true;
+    // A live run that a partial read of data.db leaves out of the forest may be hidden only for now: it owes its summary, so it is
+    // rebuilt once it is back. Only a full read that no longer lists a run ends what it owes.
+    if (persist && !globalsRead) {
+      for (const rootId of before) if (!rootIds.has(rootId) && snapshots.get(rootId)?.snapshot.run.lifecycle === 'live') owe(rootId, at, false);
+    }
+    if (globalsRead) for (const rootId of [...owedSaves.keys()]) if (!rootIds.has(rootId)) owedSaves.delete(rootId);
     const tracked = new Set([
       ...swarms.filter(swarm => swarm.lifecycle === 'live').map(swarm => swarm.id),
       ...requested.filter(id => rootIds.has(id)),
       ...[...pendingRoots].filter(id => rootIds.has(id)),
-      ...[...deferredSaves].filter(id => rootIds.has(id)),
+      // A run whose last snapshot was live is built once more, so its finish is never only listed: it is stored, or owed.
+      ...[...snapshots].filter(([id, entry]) => rootIds.has(id) && entry.snapshot.run.lifecycle === 'live').map(([id]) => id),
+      ...[...owedSaves].filter(([id, entry]) => rootIds.has(id) && fullInputs(id) && at >= entry.retryAt).map(([id]) => id),
     ]);
     const changed = [];
     const failed = new Set();
@@ -724,12 +760,11 @@ export function createSwarmEngine(options = {}) {
         if (snapshot.run.lifecycle === 'finished') {
           knownFinished.set(rootId, cheapLast.get(rootId));
           enter('history');
-          await persistFinished(snapshot, diag, complete);
-          if (persist && !globalsRead) deferredSaves.add(rootId);
-          else deferredSaves.delete(rootId);
+          if (await persistFinished(snapshot, diag, complete)) owedSaves.delete(rootId);
+          else if (persist) owe(rootId, at, fullInputs(rootId));
         } else {
           knownFinished.delete(rootId);
-          deferredSaves.delete(rootId);
+          owedSaves.delete(rootId);
         }
       } catch (error) {
         failed.add(rootId);
@@ -753,7 +788,6 @@ export function createSwarmEngine(options = {}) {
     for (const rootId of [...summaryDigests.keys()]) if (!current.has(rootId)) summaryDigests.delete(rootId);
     for (const rootId of [...verified.keys()]) if (!current.has(rootId)) verified.delete(rootId);
     for (const rootId of [...pendingRoots]) if (!current.has(rootId)) pendingRoots.delete(rootId);
-    for (const rootId of [...deferredSaves]) if (!current.has(rootId)) deferredSaves.delete(rootId);
     for (const [cliId, entry] of [...liveness]) if (at - entry.checkedAt > 4 * LIVENESS_TTL_MS) liveness.delete(cliId);
     for (const [cliId, entry] of [...workTimes]) if (at - entry.checkedAt > 4 * LIVENESS_TTL_MS) workTimes.delete(cliId);
     readDb.retain(dbFiles);
