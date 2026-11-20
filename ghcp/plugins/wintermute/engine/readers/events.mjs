@@ -44,9 +44,10 @@ export function createTail(file) {
  * inside a per-line try/catch, so a line that throws is counted as failed, once, and the lines after it in the chunk are
  * still delivered. The result reports failed (a count) and lastError (the first error of the last failed line, at most 200
  * characters), both present only when a line failed. A scanner that throws makes its oversized line unrecoverable:
- * onOversized(null, bytes), counted as failed.
+ * onOversized(null, bytes), counted as failed. onProgress, when given, is called after each chunk counts as read, so a
+ * caller can tell a long read of a large log from one that is stuck.
  */
-export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onReset = null, onOversized = null, maxLineBytes = MAX_LINE_BYTES } = {}) {
+export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onReset = null, onOversized = null, onProgress = null, maxLineBytes = MAX_LINE_BYTES } = {}) {
   let info;
   try {
     info = await stat(tail.file);
@@ -165,6 +166,7 @@ export async function readNewLines(tail, onLine, { chunkSize = 256 * 1024, onRes
       // Only now are all of the chunk's lines applied or counted, so only now does the offset move past it.
       tail.offset += bytesRead;
       bytes += bytesRead;
+      onProgress?.();
     }
   } finally {
     await handle.close();

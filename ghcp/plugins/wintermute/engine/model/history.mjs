@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { COST_SOURCE, SCHEMA_VERSION, SUMMARY_RULES, validateRunSummary } from '../schema.mjs';
 import { getRunStats } from './run-stats.mjs';
@@ -139,14 +139,23 @@ export function createHistoryStore(dir) {
       }
       return summaries.sort((a, b) => b.finishedAt - a.finishedAt);
     },
-    async put(summary) {
+    /**
+     * Stores the summary and resolves true. When `shouldCommit` returns false just before the summary would replace the
+     * stored one, the write is dropped and this resolves false.
+     */
+    async put(summary, { shouldCommit = null } = {}) {
       const target = fileOf(summary?.id);
       const errors = validateRunSummary(summary);
       if (errors.length) throw new Error(`Invalid run summary: ${errors[0]}`);
       await mkdir(runsDir, { recursive: true });
       const temp = `${target}.tmp-${process.pid}-${Date.now()}`;
       await writeFile(temp, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
+      if (shouldCommit && !shouldCommit()) {
+        await unlink(temp);
+        return false;
+      }
       await rename(temp, target);
+      return true;
     },
   };
 }

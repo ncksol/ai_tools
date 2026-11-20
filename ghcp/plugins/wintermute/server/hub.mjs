@@ -1,40 +1,180 @@
+/** How long an engine refresh may go without progress, while file system calls still finish, before the engine is replaced. */
+export const REFRESH_LIMIT_MS = 60000;
+/** How often the hub checks the running refresh's progress. */
+export const REFRESH_CHECK_MS = 5000;
+/**
+ * How many engines in a row the hub replaces before one finishes a refresh. A replacement that gets stuck on the same
+ * file holds another file system thread, so the hub stops replacing and says so, until a refresh finishes again.
+ */
+export const REFRESH_MAX_RESTARTS = 3;
+
+const NO_REFRESH = { stage: null, refreshStartedAt: null, progressAt: null, lastRefreshAt: null };
+
 /**
  * Live page connections (Server-Sent Events) and the engine's lifetime. The engine is created when the first page
  * connects or an API call needs it, polls only while a page is connected, and is dropped engineIdleMs after the last
  * page leaves, so an idle server holds no engine memory. At most maxClients pages connect at once, and a page whose
  * socket stays backed up for stallMs is dropped, so a page that stops reading never holds more than one frame here.
- * Never writes to stdout.
+ * Each page gets a heartbeat with the time of the last finished refresh, so it can tell when its data stops changing.
+ * A refresh that makes no progress (see the engine's status()) for refreshLimitMs, while poolPassedSince(its last
+ * progress) says file system calls still finish, is stuck on something a new engine does not share: the hub logs where,
+ * retires the engine and starts another, at most maxRestarts times in a row. Reads waiting on a replaced engine move to
+ * its replacement. An engine the hub drops for good, replaced, idle or closed, is retired, so a refresh still in flight
+ * in it stores nothing over what a later engine stores. Never writes to stdout.
  */
-export function createHub({ createEngine, now = Date.now, intervalMs = 3000, engineIdleMs = 300000, heartbeatMs = 15000, maxClients = 32, stallMs = 30000, log = () => {}, onIdle = () => {}, ui = null, version = null }) {
+export function createHub({
+  createEngine, now = Date.now, intervalMs = 3000, engineIdleMs = 300000, heartbeatMs = 1000, maxClients = 32, stallMs = 30000,
+  refreshLimitMs = REFRESH_LIMIT_MS, refreshCheckMs = REFRESH_CHECK_MS, maxRestarts = REFRESH_MAX_RESTARTS, poolPassedSince = () => true,
+  log = () => {}, onIdle = () => {}, ui = null, version = null,
+}) {
   const clients = new Set();
   let engine = null;
   let ready = null;
+  // Settles `ready` early when its engine is replaced, so callers waiting on a stuck refresh move to the new engine.
+  let abandon = null;
   let unsubscribe = null;
   let idleTimer = null;
   let heartbeat = null;
+  let watchdog = null;
   let polling = false;
   let swarmsKey = '';
   let refusedAt = -Infinity;
+  // Kept across engines (wall-clock ms): the last refresh any engine finished; while engines are replaced before one
+  // finishes, when the first of their refreshes started and how many were replaced; and whether the hub gave up.
+  let lastRefreshAt = null;
+  let chainStartedAt = null;
+  let restarts = 0;
+  let gaveUp = false;
+  let closed = false;
+  // Reads in progress: the engine each one runs on, and wake(reason), which ends its wait when that engine is dropped.
+  // A read leaves the set when it ends, so nothing here keeps a finished read's result alive.
+  const reads = new Set();
   const warn = error => log({ level: 'warn', source: 'server', message: error?.message ?? String(error) });
 
-  function acquire() {
+  function createCurrent() {
+    const created = createEngine();
+    engine = created;
+    unsubscribe = created.subscribe(change => { changed(change).catch(warn); });
+    const abandoned = new Promise(resolve => { abandon = resolve; });
+    ready = Promise.race([Promise.resolve(created.refresh()).catch(warn), abandoned]);
+    if (!watchdog) {
+      watchdog = setInterval(checkRefresh, refreshCheckMs);
+      watchdog.unref?.();
+    }
+  }
+
+  async function acquire() {
     clearTimeout(idleTimer);
     idleTimer = null;
-    if (!engine) {
-      engine = createEngine();
-      unsubscribe = engine.subscribe(change => { changed(change).catch(warn); });
-      ready = Promise.resolve(engine.refresh()).catch(warn);
+    for (;;) {
+      if (!engine) createCurrent();
+      const current = engine;
+      await ready;
+      // Wait again only for an engine that replaced this one; a dropped engine is the caller's to stop.
+      if (current === engine || !engine) return current;
     }
+  }
+
+  function stopWatchdog() {
+    clearInterval(watchdog);
+    watchdog = null;
+  }
+
+  function endChain() {
+    chainStartedAt = null;
+    restarts = 0;
+    gaveUp = false;
+  }
+
+  /** Takes in the current engine's finished refresh: one that finishes ends a streak of replacements. */
+  function settle(current) {
+    const finished = current?.lastRefreshAt;
+    if (typeof finished !== 'number') return;
+    if (lastRefreshAt === null || finished > lastRefreshAt) lastRefreshAt = finished;
+    endChain();
+  }
+
+  /** Engine refreshes read Date.now(), not `now`, so this check does too. */
+  function checkRefresh() {
+    const current = engine?.status?.();
+    if (!current) return;
+    settle(current);
+    const startedAt = current.refreshStartedAt;
+    if (typeof startedAt !== 'number') return;
+    const quietSince = Math.max(startedAt, typeof current.progressAt === 'number' ? current.progressAt : startedAt);
+    if (Date.now() - quietSince <= refreshLimitMs || !poolPassedSince(quietSince)) return;
+    const where = `${Math.round((Date.now() - quietSince) / 1000)} s, stuck in ${current.stage ?? 'an unknown step'}`;
+    if (restarts >= maxRestarts) {
+      if (!gaveUp) {
+        gaveUp = true;
+        log({ level: 'error', source: 'server', message: `A refresh made no progress for ${where}, after ${restarts} new engines in a row got stuck too; the dashboard stops replacing the engine until a refresh finishes` });
+      }
+      return;
+    }
+    log({ level: 'warn', source: 'server', message: `A refresh made no progress for ${where}; replacing the engine` });
+    chainStartedAt ??= startedAt;
+    restarts += 1;
+    replaceEngine();
+  }
+
+  /**
+   * Drops an engine for good: retire() stops it and keeps a refresh still in flight from storing anything over what a
+   * later engine stores. Reads running on it wake with `reason`: 'replaced' runs them again, 'closed' fails them.
+   */
+  function discard(old, reason) {
+    if (old.retire) old.retire();
+    else old.stop();
+    for (const read of reads) if (read.engine === old) read.wake(reason);
+  }
+
+  function replaceEngine() {
+    const old = engine;
+    const wake = abandon;
+    unsubscribe?.();
+    discard(old, 'replaced');
+    createCurrent();
+    wake?.();
     const current = engine;
-    return ready.then(() => current);
+    if (polling) current.start({ intervalMs });
+    swarmsKey = '';
+    for (const client of clients) client.lastKey = null;
+    ready.then(() => {
+      if (current !== engine) return;
+      sendSwarms(true);
+      for (const client of clients) if (client.greeted) push(client);
+    });
   }
 
   function startPolling() {
     if (polling || !engine) return;
     polling = true;
     engine.start({ intervalMs });
-    heartbeat = setInterval(() => { for (const client of clients) if (!client.blocked) write(client, ': ping\n\n'); }, heartbeatMs);
+    heartbeat = setInterval(() => {
+      const refreshedAt = status().lastRefreshAt;
+      for (const client of clients) {
+        if (client.blocked) continue;
+        if (client.greeted) send(client, 'heartbeat', () => ({ serverNow: now(), refreshedAt }));
+        else write(client, ': ping\n\n');
+      }
+    }, heartbeatMs);
     heartbeat.unref?.();
+  }
+
+  /**
+   * Where the engine's running refresh is and when it last made progress (see the engine's status()), when the wait for
+   * fresh data began (the first refresh of a streak of replaced engines, or the running one), when any engine last
+   * finished a refresh, and how many engines in a row were replaced.
+   */
+  function status() {
+    const current = engine?.status?.() ?? NO_REFRESH;
+    settle(current);
+    return {
+      stage: current.stage ?? null,
+      refreshStartedAt: chainStartedAt ?? current.refreshStartedAt ?? null,
+      progressAt: current.progressAt ?? null,
+      lastRefreshAt,
+      restarts,
+    };
   }
 
   function scheduleRelease() {
@@ -52,11 +192,17 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
 
   function release() {
     idleTimer = null;
-    if (clients.size || !engine) return;
-    engine.stop();
+    // An engine that a read still uses is not idle; the read schedules the release again when it ends.
+    if (clients.size || reads.size || !engine) return;
+    settle(engine.status?.());
     unsubscribe?.();
+    discard(engine, 'closed');
+    stopWatchdog();
+    endChain();
+    abandon?.();
     engine = null;
     ready = null;
+    abandon = null;
     unsubscribe = null;
     swarmsKey = '';
     onIdle();
@@ -123,17 +269,20 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
   }
 
   async function push(client) {
-    if (client.busy) {
+    const mine = engine;
+    if (!mine || client.closed) return;
+    // A push still waiting on a replaced engine does not hold up one for the current engine.
+    if (client.busy === mine) {
       client.again = true;
       return;
     }
-    client.busy = true;
+    client.busy = mine;
     try {
       do {
         client.again = false;
         const pinned = client.pinned;
         const current = engine;
-        if (!current || client.closed) return;
+        if (current !== mine || client.closed) return;
         const fromSession = !client.swarm && !pinned && client.session ? await current.findSwarm(client.session) : null;
         const asked = client.swarm ?? pinned ?? fromSession;
         // A page opened for a session that is in no swarm gets no snapshot, never the default swarm, so it can say so.
@@ -157,7 +306,7 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
     } catch (error) {
       warn(error);
     } finally {
-      client.busy = false;
+      if (client.busy === mine) client.busy = false;
     }
   }
 
@@ -194,26 +343,49 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
     write(client, 'retry: 2000\n\n');
     const current = await acquire();
     if (client.closed) return;
-    send(client, 'hello', () => ({ serverNow: now(), demo: Boolean(current.isDemo), ui, version }));
+    send(client, 'hello', () => ({ serverNow: now(), demo: Boolean(current.isDemo), ui, version, pollMs: intervalMs, refreshedAt: status().lastRefreshAt }));
     client.greeted = true;
     startPolling();
     sendSwarms(true, client);
     await push(client);
   }
 
-  /** Run fn with the engine, creating it if needed; an engine with no connected page is dropped later. */
+  const closing = () => Object.assign(new Error('The dashboard server is closing'), { retriable: true });
+
+  /**
+   * Run fn with the engine, creating it if needed; the engine is kept while fn runs, and one with no connected page is
+   * dropped later. When the engine is replaced while fn waits on it, fn runs again on the new engine; when the hub closes,
+   * this fails with an error whose `retriable` is true.
+   */
   async function withEngine(fn) {
-    const current = await acquire();
+    const read = { engine: null, wake: null };
+    reads.add(read);
     try {
-      return await fn(current);
+      for (;;) {
+        if (closed) throw closing();
+        const current = await acquire();
+        if (closed) throw closing();
+        const woken = new Promise(resolve => { read.wake = resolve; });
+        read.engine = current;
+        const work = Promise.resolve().then(() => fn(current));
+        // An engine dropped, replaced or closed while fn ran may have reopened its read-only connections, so stop it
+        // again once fn ends, even when this no longer waits for it.
+        const ended = () => {
+          if (current !== engine) current.stop();
+        };
+        work.then(ended, ended);
+        const outcome = await Promise.race([work.then(value => ({ value })), woken]);
+        if (outcome === 'closed') throw closing();
+        if (outcome !== 'replaced') return outcome.value;
+      }
     } finally {
-      // An engine dropped or closed while fn ran may have reopened its read-only connections, so stop it again.
-      if (current !== engine) current.stop();
+      reads.delete(read);
       scheduleRelease();
     }
   }
 
   function close() {
+    closed = true;
     for (const client of clients) {
       client.closed = true;
       clearTimeout(client.stallTimer);
@@ -222,19 +394,27 @@ export function createHub({ createEngine, now = Date.now, intervalMs = 3000, eng
     clients.clear();
     clearTimeout(idleTimer);
     clearInterval(heartbeat);
+    stopWatchdog();
     idleTimer = null;
     heartbeat = null;
     polling = false;
     if (engine) {
-      engine.stop();
       unsubscribe?.();
+      discard(engine, 'closed');
     }
+    endChain();
+    abandon?.();
     engine = null;
     ready = null;
+    abandon = null;
   }
 
   /** Bytes written to live pages that their sockets have not taken yet (a diagnostic for tests). */
   const queuedBytes = () => [...clients].reduce((sum, client) => sum + (client.res.writableLength ?? 0), 0);
 
-  return { add, withEngine, close, clientCount: () => clients.size, hasEngine: () => engine !== null, queuedBytes };
+  return {
+    add, withEngine, close, status, clientCount: () => clients.size, hasEngine: () => engine !== null, queuedBytes,
+    // Reads in progress (a diagnostic for tests).
+    pendingReads: () => reads.size,
+  };
 }

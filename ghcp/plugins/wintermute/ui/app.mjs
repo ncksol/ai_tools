@@ -188,6 +188,48 @@ export function coalesced(load) {
 }
 
 /**
+ * Loads the run that the run page shows. fetchRun(id) resolves the run, or false for an answer that is not OK, and may
+ * reject; show(id, run) gets each load's result, false for a failure; current() is the run the page shows now, or null.
+ * A load is never started for a run whose load is still running, even when the page showed other runs meanwhile. A
+ * failed load runs again when the live connection next opens (opened()), or at once, a single time, when the
+ * connection opened while it ran: that open came too early to retry it, and no other may follow.
+ */
+export function runLoader({ fetchRun, show, current }) {
+  // The connection opens counted when each running load started, by run.
+  const running = new Map();
+  let failed = null;
+  let opens = 0;
+  async function load(id) {
+    if (running.has(id)) return;
+    const startedAfter = opens;
+    running.set(id, startedAfter);
+    let run;
+    try {
+      run = await fetchRun(id);
+    } catch {
+      run = false;
+    }
+    running.delete(id);
+    show(id, run);
+    if (run !== false) {
+      if (failed === id) failed = null;
+    } else if (current() === id) {
+      // Only the run the page shows is worth loading again.
+      failed = id;
+      if (opens !== startedAfter) load(id);
+    }
+  }
+  return {
+    load,
+    opened() {
+      opens += 1;
+      const id = current();
+      if (id !== null && failed === id && !running.has(id)) load(id);
+    },
+  };
+}
+
+/**
  * Bounded retries for a load that can fail. attempt() runs at the start of every load and cancels a pending retry, so a
  * retry never overlaps or follows another attempt; failed() schedules one retry while fewer than `limit` have run since
  * the last success or reset(); succeeded() and reset() restart the budget; stop() cancels. A retry counts when it runs,
@@ -263,6 +305,17 @@ function pickerHtml(view) {
 /** Whether the page shows data it can no longer refresh: it is disconnected, so its clocks stop (see main.mjs). */
 export const isStale = view => view.connection === 'retrying';
 
+/** How many of the server's poll intervals may pass without a finished refresh before the page says its data is stale. */
+export const STALE_AFTER_POLLS = 3;
+
+/**
+ * When the server last finished a refresh, if a connected page has waited more than STALE_AFTER_POLLS poll intervals
+ * for the next one; otherwise null. The server can stay connected while its refreshes no longer finish.
+ */
+export const dataStaleSince = view => (view.connection === 'open' && typeof view.refreshedAt === 'number' && view.now - view.refreshedAt > STALE_AFTER_POLLS * (view.pollMs ?? 3000)
+  ? view.refreshedAt
+  : null);
+
 function statusHtml(view) {
   if (isStale(view)) {
     const from = view.snapshot && view.staleSince ? ` · showing data from ${timeOfDay(view.staleSince)}, clocks stopped` : '';
@@ -272,8 +325,10 @@ function statusHtml(view) {
   const note = warnings.length
     ? `<span class="small muted" title="${esc(warnings.map(entry => `${entry.source}: ${entry.message}`).join('\n'))}">${warnings.length} data warning${warnings.length === 1 ? '' : 's'}</span>`
     : '';
+  const staleSince = dataStaleSince(view);
+  const stale = staleSince === null ? '' : `<span class="small warn" data-stale-data>Data stale since ${timeOfDay(staleSince)}</span>`;
   // Sample data must never pass for real data, so demo mode says so; the dashboard is otherwise unlabelled.
-  return `${note}${view.demo ? '<span class="small muted">Sample data</span>' : ''}`;
+  return `${stale}${note}${view.demo ? '<span class="small muted">Sample data</span>' : ''}`;
 }
 
 function liveHtml(view) {

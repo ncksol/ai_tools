@@ -25,9 +25,17 @@ const host = (port, options = {}) => createCanvasHost({
   port,
   version: 'test',
   createEngine: demo,
-  makeServer: ({ onIdle }) => createDashboardServer({ createEngine: demo, port, version: 'test', hub: { engineIdleMs: 60 }, onIdle }),
+  makeServer: ({ onIdle, onBroken }) => createDashboardServer({ createEngine: demo, port, version: 'test', hub: { engineIdleMs: 60 }, onIdle, onBroken }),
   watchdogMs: 40,
   jitterMs: 0,
+  ...options,
+});
+/** A host whose server's pool check never finishes, so it breaks about 200 ms after it starts serving. */
+const brokenHost = (port, options = {}) => host(port, {
+  makeServer: ({ onIdle, onBroken }) => createDashboardServer({
+    createEngine: demo, port, version: 'test', hub: { engineIdleMs: 60 }, onIdle, onBroken,
+    poolCheck: { probe: () => new Promise(() => {}), intervalMs: 20, timeoutMs: 180 },
+  }),
   ...options,
 });
 
@@ -129,6 +137,70 @@ test('an open canvas takes the port over when the host goes away', async () => {
   } finally {
     await second.dispose();
     await first.dispose();
+  }
+});
+
+test('a host whose pool check stops finishing closes its server, never takes the port back, and another canvas takes over', async () => {
+  const port = await freePort();
+  const logged = [];
+  const first = brokenHost(port, { log: entry => logged.push(entry) });
+  const second = host(port);
+  try {
+    await first.open({ sessionId: 'cli-1', instanceId: 'a' });
+    await second.open({ sessionId: 'cli-2', instanceId: 'b' });
+    assert.equal(first.hosting(), true);
+    assert.equal(second.hosting(), false);
+    await until(() => first.broken());
+    assert.equal(first.hosting(), false);
+    assert.ok(logged.some(entry => entry.level === 'error'), JSON.stringify(logged));
+    await until(() => second.hosting());
+    // With the port taken over, the broken process still answers open() with the address, but hosts nothing.
+    assert.deepEqual(await first.open({ sessionId: 'cli-1', instanceId: 'c' }), { url: `http://127.0.0.1:${port}/?host=canvas&session=cli-1&plugin=test`, title: 'Wintermute' });
+    assert.equal(first.hosting(), false);
+    await second.dispose();
+    // The broken process still has open canvases, but it never binds the port again.
+    await pause(300);
+    assert.equal(first.hosting(), false);
+    assert.deepEqual(await probePort(port), { state: 'free' });
+  } finally {
+    await second.dispose();
+    await first.dispose();
+  }
+});
+
+test('a broken host with no other dashboard on the port fails open() with reload_extensions', async () => {
+  const port = await freePort();
+  const only = brokenHost(port);
+  try {
+    await only.open({ instanceId: 'a' });
+    await until(() => only.broken());
+    await assert.rejects(only.open({ instanceId: 'b' }), error => error.code === 'reload_extensions' && /reload extensions/i.test(error.message));
+    assert.deepEqual(await probePort(port), { state: 'free' }, 'the broken host never binds the port again');
+  } finally {
+    await only.dispose();
+  }
+});
+
+test('a canvas opened while the dashboard on the port is stuck gets the address and a warning, then takes over once it closes', async () => {
+  const port = await freePort();
+  const stuck = createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ app: 'swarm-dashboard', version: 'test', pool: 'broken', refreshStartedAt: null }));
+  });
+  await new Promise(resolve => stuck.listen(port, '127.0.0.1', resolve));
+  const logged = [];
+  const canvasHost = host(port, { log: entry => logged.push(entry) });
+  try {
+    assert.equal((await canvasHost.open({ sessionId: 'cli-1', instanceId: 'a' })).url, `http://127.0.0.1:${port}/?host=canvas&session=cli-1&plugin=test`);
+    assert.equal(canvasHost.hosting(), false);
+    assert.ok(logged.some(entry => entry.level === 'warn' && /stopped working/.test(entry.message)), JSON.stringify(logged));
+    stuck.closeAllConnections?.();
+    await new Promise(resolve => stuck.close(() => resolve()));
+    await until(() => canvasHost.hosting());
+  } finally {
+    await canvasHost.dispose();
+    stuck.closeAllConnections?.();
+    await new Promise(resolve => stuck.close(() => resolve()));
   }
 });
 

@@ -19,6 +19,11 @@ If a dashboard with the same data already runs on the port, prints its address a
 `;
 const SCENARIOS = ['example', 'stress'];
 
+/** How long a failed launcher waits to exit by itself before it ends its own process. */
+export const EXIT_GRACE_MS = 2000;
+/** How long the launcher gives its last note to reach stderr before it ends its own process. */
+export const NOTE_FLUSH_MS = 100;
+
 export function parseArguments(argv, env = process.env) {
   const options = { port: null, demo: null, still: false, help: false };
   for (let index = 0; index < argv.length; index += 1) {
@@ -56,7 +61,14 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
     ? () => createDemoEngine({ scenario: options.demo, simulate: !options.still })
     : () => createDefaultEngine({ log });
   const port = options.port;
-  const result = await listenShared({ port, makeServer: () => createDashboardServer({ createEngine, port, version, log, demo: options.demo }) });
+  let broken = false;
+  let stop = () => {};
+  const onBroken = () => {
+    broken = true;
+    stderr.write('The dashboard stopped: file system calls in this process stopped finishing. Start it again.\n');
+    stop();
+  };
+  const result = await listenShared({ port, makeServer: () => createDashboardServer({ createEngine, port, version, log, demo: options.demo, onBroken }) });
   const url = `http://127.0.0.1:${port}/`;
   if (result.status === 'running') {
     const running = result.health.demo ?? null;
@@ -68,12 +80,16 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
     return 1;
   }
   if (result.status !== 'started') {
-    stderr.write(`Port ${port} ${result.status === 'taken' ? 'is used by another program' : 'is in use and not answering'}. Start with --port <n> or set SWARM_DASHBOARD_PORT.\n`);
+    const holder = result.status === 'taken' ? 'is used by another program'
+      : result.reason === 'broken' ? 'is held by a dashboard that has stopped working'
+        : result.reason === 'stale' ? 'is held by a dashboard whose refresh is stuck'
+          : 'is in use and not answering';
+    stderr.write(`Port ${port} ${holder}. Start with --port <n> or set SWARM_DASHBOARD_PORT.\n`);
     return 1;
   }
   stdout.write(`Swarm dashboard${options.demo ? ` (sample data: ${options.demo})` : ''}: ${url}\nPress Ctrl+C to stop.\n`);
   await new Promise(resolve => {
-    const stop = () => {
+    stop = () => {
       process.off('SIGINT', stop);
       process.off('SIGTERM', stop);
       resolve();
@@ -81,11 +97,36 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
     process.on('SIGINT', stop);
     process.on('SIGTERM', stop);
     signal?.addEventListener('abort', stop, { once: true });
+    // The server may have broken between listen() and here.
+    if (broken) stop();
   });
   await result.server.close();
-  return 0;
+  return broken ? 1 : 0;
+}
+
+/**
+ * End the launcher's process with main()'s code. A failed run that has not exited within graceMs is held open by a
+ * native call that will not finish, such as a stuck file system call after the dashboard broke. process.exit() then
+ * hangs as well, because exit waits for the stuck libuv worker thread, so the process ends itself with SIGTERM. The note
+ * it writes first is best-effort: the signal follows NOTE_FLUSH_MS later whether or not stderr took the note.
+ */
+export function finish(code, { graceMs = EXIT_GRACE_MS, stderr = process.stderr } = {}) {
+  process.exitCode = code;
+  if (code === 0) return;
+  setTimeout(() => {
+    try {
+      // A stderr that is already backed up gets nothing more.
+      if (!stderr.writableNeedDrain) stderr.write('The process could not exit because a file system call is stuck; ending it.\n');
+    } catch {
+      // Ending the process matters more than the note.
+    }
+    setTimeout(() => {
+      process.removeAllListeners('SIGTERM');
+      process.kill(process.pid, 'SIGTERM');
+    }, NOTE_FLUSH_MS).unref();
+  }, graceMs).unref();
 }
 
 if (process.argv[1] && await realpath(fileURLToPath(import.meta.url)) === await realpath(process.argv[1])) {
-  process.exitCode = await main(process.argv.slice(2));
+  finish(await main(process.argv.slice(2)));
 }

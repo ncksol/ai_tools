@@ -1,4 +1,4 @@
-import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, historyReloadWanted, isNarrow, isStale, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, retryBudget, staleChoice, staleShown, startShown, startSwarm } from './app.mjs';
+import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, dataStaleSince, historyReloadWanted, isNarrow, isStale, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, retryBudget, runLoader, staleChoice, staleShown, startShown, startSwarm } from './app.mjs';
 import { copyAddress, openCockpit, showRequest } from './cockpit-link.mjs';
 import { fitFooter } from './footer.mjs';
 import { tickText } from './format.mjs';
@@ -68,6 +68,9 @@ const view = {
   connection: 'connecting',
   /** When the page lost its connection; its clocks stop there until it reconnects. */
   staleSince: null,
+  /** The server's poll interval, and when its last refresh finished (server time), from hello and each heartbeat. */
+  pollMs: null,
+  refreshedAt: null,
   /** The Cards tab's Finished section is open; kept across updates, closed on each visit. */
   finishedOpen: false,
   /** The Board's Archived row stays open across updates, closed on each visit. */
@@ -166,8 +169,10 @@ function connect() {
     justConnected = true;
     view.connection = 'open';
     view.staleSince = null;
-    // After a reconnect the server may know runs that finished meanwhile.
+    // After a reconnect the server may know runs that finished meanwhile. A run that failed to load, before this
+    // connection or while it opened, may load now.
     if (wasOpen && historyAsked) reloadHistory();
+    runLoads.opened();
     wasOpen = true;
     checkServerVersion();
     scheduleRender();
@@ -191,6 +196,8 @@ function connect() {
     offset = data.serverNow - Date.now();
     view.demo = Boolean(data.demo);
     if (typeof data.version === 'string') view.serverVersion = data.version;
+    view.pollMs = typeof data.pollMs === 'number' ? data.pollMs : null;
+    view.refreshedAt = typeof data.refreshedAt === 'number' ? data.refreshedAt : null;
     servedUi = data.ui ?? null;
     considerReload();
     scheduleRender();
@@ -220,6 +227,24 @@ function connect() {
     offset = data.serverNow - Date.now();
     applySnapshot(data.snapshot);
   });
+  source.addEventListener('heartbeat', event => {
+    const data = JSON.parse(event.data);
+    offset = data.serverNow - Date.now();
+    view.refreshedAt = typeof data.refreshedAt === 'number' ? data.refreshedAt : null;
+    checkDataStale();
+  });
+}
+
+/**
+ * Render when the top bar's "Data stale" note should appear or go: on each heartbeat, and each second without one.
+ * dataStale is what the last render showed, so a render for any other reason keeps it in step.
+ */
+let dataStale = null;
+function checkDataStale() {
+  const since = dataStaleSince({ connection: view.connection, refreshedAt: view.refreshedAt, pollMs: view.pollMs, now: now() });
+  if (since === dataStale) return;
+  dataStale = since;
+  scheduleRender();
 }
 
 /** Reload once into the new dashboard files, keeping what is on screen; see reloadDecision. */
@@ -312,7 +337,9 @@ function render() {
   const focused = document.activeElement && dash.contains(document.activeElement) ? focusSelector(document.activeElement) : null;
   const { scrollX, scrollY } = window;
   const cards = cardRects();
-  morph(dash, renderApp({ ...view, now: shownNow(), phaseMs: performance.now() }));
+  const shownAt = shownNow();
+  morph(dash, renderApp({ ...view, now: shownAt, phaseMs: performance.now() }));
+  dataStale = dataStaleSince({ connection: view.connection, refreshedAt: view.refreshedAt, pollMs: view.pollMs, now: shownAt });
   lastWidth = width;
   afterRender();
   if (focused && !dash.contains(document.activeElement)) dash.querySelector(focused)?.focus({ preventScroll: true });
@@ -443,17 +470,18 @@ function reloadHistory() {
   loadHistory();
 }
 
-async function loadRun(id) {
-  try {
+const runLoads = runLoader({
+  async fetchRun(id) {
     const response = await fetch(`/api/runs/${encodeURIComponent(id)}`);
-    const run = response.ok ? await response.json() : false;
+    return response.ok ? response.json() : false;
+  },
+  show(id, run) {
     // A slow answer for a run the user has left must not replace the one shown.
     if (view.runId === id) view.run = run;
-  } catch {
-    if (view.runId === id) view.run = false;
-  }
-  scheduleRender();
-}
+    scheduleRender();
+  },
+  current: () => (view.page === 'run' ? view.runId : null),
+});
 
 function act(target) {
   const el = target.closest('[data-page],[data-tab],[data-span],[data-close],[data-open],[data-run],[data-finished],[data-archived],[data-showall],[data-cockpit],[data-cockpit-copy],[data-theme-toggle]');
@@ -496,7 +524,7 @@ function act(target) {
     view.page = 'run';
     view.runId = el.dataset.run;
     view.run = null;
-    loadRun(view.runId);
+    runLoads.load(view.runId);
   } else if (el.dataset.cockpit !== undefined) {
     view.cockpitNote = view.snapshot ? openCockpit(window, { swarm: view.snapshot.run.id, host: view.host, plugin: view.installedVersion }) : null;
   } else if (el.dataset.themeToggle !== undefined) {
@@ -551,6 +579,7 @@ new ResizeObserver(() => {
 setInterval(() => {
   // Disconnected, the clocks stay where they stopped.
   if (isStale(view)) return;
+  checkDataStale();
   const t = now();
   const refit = new Set();
   for (const el of dash.querySelectorAll('[data-t]')) {
@@ -599,6 +628,6 @@ window.addEventListener('pageshow', event => {
 });
 
 if (view.page === 'history') reloadHistory();
-if (view.page === 'run') loadRun(view.runId);
+if (view.page === 'run') runLoads.load(view.runId);
 connect();
 render();

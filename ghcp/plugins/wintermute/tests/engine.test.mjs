@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createSwarmEngine } from '../engine/engine.mjs';
 import { createHistoryStore } from '../engine/model/history.mjs';
 import { createPrLookup } from '../engine/model/pr-lookup.mjs';
+import { createHub } from '../server/hub.mjs';
 import { LIMITS } from '../engine/model/state-utils.mjs';
 import { SUMMARY_RULES, validateRunListItem, validateRunSummary, validateSnapshot, validateSwarmListItem } from '../engine/schema.mjs';
 import { HOUR, MINUTE } from '../engine/time.mjs';
@@ -256,6 +257,32 @@ test('one failing swarm does not stop the refresh', async () => {
   const problem = engine.diagnostics().find(item => item.source === 'snapshot');
   assert.equal(problem.level, 'warn');
   assert.equal(problem.message, 'ws-bad: a lookup failure');
+});
+
+test('status names the stage a running refresh is in and when it last made progress, and records when the last refresh finished', async () => {
+  const home = scenario();
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const engine = createSwarmEngine({
+    copilotHome: home.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => at(60), processProbe: async locks => { await gate; return alwaysAlive(locks); }, prLookup: 'off',
+  });
+  assert.deepEqual(engine.status(), { stage: null, refreshStartedAt: null, progressAt: null, lastRefreshAt: null });
+  const before = Date.now();
+  const running = engine.refresh();
+  const deadline = Date.now() + 5000;
+  while (engine.status().stage !== 'roots' && Date.now() < deadline) await sleep(5);
+  const stuck = engine.status();
+  assert.equal(stuck.stage, 'roots', 'the process check of each swarm root is waiting');
+  assert.ok(stuck.refreshStartedAt >= before && stuck.refreshStartedAt <= Date.now(), 'the start is wall-clock time');
+  assert.ok(stuck.progressAt >= stuck.refreshStartedAt && stuck.progressAt <= Date.now(), 'reaching a stage is progress');
+  assert.equal(stuck.lastRefreshAt, null);
+  release();
+  await running;
+  const done = engine.status();
+  assert.equal(done.stage, null);
+  assert.equal(done.refreshStartedAt, null);
+  assert.equal(done.progressAt, null);
+  assert.ok(done.lastRefreshAt >= stuck.refreshStartedAt);
 });
 
 test('stop then start runs a single polling chain', async () => {
@@ -972,6 +999,94 @@ test('a summary request that overlaps a refresh never overwrites the newer summa
   assert.deepEqual(overlapItem, [OLD_LAST, 3, false], 'History does not show the older cached snapshot as summarised once the listing shows 3');
   assert.deepEqual(await oldItem(engine), [OLD_LAST, 3, true]);
   engine.stop();
+});
+
+/**
+ * storedOldRun() with 1 more credit and a history store whose writes wait until finishWrite(). `writing` resolves the
+ * credits of the first summary that waits. newerWritesThree() stores, through an engine with no wait, a summary with
+ * 1 more credit again.
+ */
+async function heldSummaryWrite() {
+  const { home, stored } = await storedOldRun();
+  const historyDir = path.dirname(path.dirname(stored));
+  const store = createHistoryStore(historyDir);
+  let entered;
+  const writing = new Promise(resolve => { entered = resolve; });
+  let finishWrite;
+  const held = new Promise(resolve => { finishWrite = resolve; });
+  const slowStore = {
+    ...store,
+    async put(summary, options) {
+      entered(summary.credits);
+      await held;
+      return store.put(summary, options);
+    },
+  };
+  const open = historyStore => createSwarmEngine({
+    copilotHome: home.root, historyDir, historyStore, now: () => at(0), processProbe: alwaysAlive, prLookup: 'off',
+  });
+  home.usage([{ sessionId: 'cli-old', nanoAiu: 1e9, createdAt: OLD_LAST - 20_000 }]);
+  const newerWritesThree = async () => {
+    home.usage([{ sessionId: 'cli-old', nanoAiu: 1e9, createdAt: OLD_LAST - 10_000 }]);
+    const newer = open(undefined);
+    assert.equal((await newer.getRunSummary('ws-old')).credits, 3);
+    assert.equal(readSummary(stored).credits, 3);
+    newer.stop();
+  };
+  const assertNewerStays = () => {
+    assert.equal(readSummary(stored).credits, 3, 'the newer summary stays');
+    assert.deepEqual(readdirSync(path.dirname(stored)), ['ws-old.json'], 'the dropped write leaves no temporary file');
+  };
+  return { slowOpen: () => open(slowStore), writing, finishWrite, newerWritesThree, assertNewerStays };
+}
+
+test('a retired engine whose summary write was still in flight does not store it over a newer engine\'s summary', async () => {
+  const { slowOpen, writing, finishWrite, newerWritesThree, assertNewerStays } = await heldSummaryWrite();
+  const older = slowOpen();
+  const olderRequest = older.getRunSummary('ws-old');
+  assert.equal(await writing, 2, 'the older engine is writing a summary with 2 credits');
+  older.retire();
+  await newerWritesThree();
+  finishWrite();
+  await olderRequest;
+  assertNewerStays();
+});
+
+test('an engine the dashboard server drops when it closes does not store a summary still in flight over a newer one', async () => {
+  const { slowOpen, writing, finishWrite, newerWritesThree, assertNewerStays } = await heldSummaryWrite();
+  const hub = createHub({ createEngine: slowOpen, heartbeatMs: 1000, engineIdleMs: 60_000 });
+  let olderRequest;
+  const read = hub.withEngine(engine => (olderRequest = engine.getRunSummary('ws-old')));
+  assert.equal(await writing, 2, 'the server\'s engine is writing a summary with 2 credits');
+  hub.close();
+  await assert.rejects(read, error => error.retriable === true);
+  await newerWritesThree();
+  finishWrite();
+  await olderRequest;
+  assertNewerStays();
+});
+
+test('an engine the dashboard server drops as idle does not store a summary still in flight over a newer one', async () => {
+  const { slowOpen, writing, finishWrite, newerWritesThree, assertNewerStays } = await heldSummaryWrite();
+  const hub = createHub({ createEngine: slowOpen, heartbeatMs: 1000, engineIdleMs: 10 });
+  try {
+    let olderRequest;
+    // The read keeps the engine until the write it started is held, then ends, so only that write is left when the
+    // engine is dropped as idle.
+    const credits = await hub.withEngine(engine => {
+      olderRequest = engine.getRunSummary('ws-old');
+      return writing;
+    });
+    assert.equal(credits, 2, 'the server\'s engine is writing a summary with 2 credits');
+    for (let waited = 0; hub.hasEngine() && waited < 2000; waited += 10) await sleep(10);
+    assert.equal(hub.hasEngine(), false, 'the engine was dropped as idle');
+    await newerWritesThree();
+    finishWrite();
+    await olderRequest;
+    assertNewerStays();
+  } finally {
+    hub.close();
+  }
 });
 
 /**

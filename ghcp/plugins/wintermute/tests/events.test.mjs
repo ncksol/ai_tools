@@ -35,6 +35,16 @@ test('multi-byte characters split across chunks survive', async () => {
   assert.deepEqual(read.received.map(line => JSON.parse(line).text), ['café – 日本']);
 });
 
+test('onProgress is called after each chunk read, so a long read of a large log shows progress', async () => {
+  const file = path.join(dir, 'progress.jsonl');
+  writeFileSync(file, '{"n":1}\n{"n":2}\n{"n":3}\n');
+  const tail = createTail(file);
+  const seen = [];
+  const read = await collect(tail, { chunkSize: 8, onProgress: () => seen.push(tail.offset) });
+  assert.equal(read.received.length, 3);
+  assert.deepEqual(seen, [8, 16, 24], 'once per chunk, after its bytes count as read');
+});
+
 test('a shrunk file restarts from the beginning, calling onReset before any line', async () => {
   const file = path.join(dir, 'c.jsonl');
   writeFileSync(file, '{"n":1}\n{"n":2}\n');

@@ -142,15 +142,17 @@ export function createLedger() {
  * could not be applied: a line that names a usage type but is not valid JSON, or a line over the size limit (see MAX_LINE_BYTES)
  * that is a usage record or compaction, whose cost is not among the fields recovered from it. A recovered oversized
  * subagent.started is applied: its agent id and task id are recovered. An oversized line whose type cannot be recovered is
- * taken as not a usage line: usage records and compactions are a few kilobytes, far below the limit.
+ * taken as not a usage line: usage records and compactions are a few kilobytes, far below the limit. onProgress is passed
+ * to readNewLines.
  */
-export function readUsage(tail, ledger, sessionId) {
+export function readUsage(tail, ledger, sessionId, { onProgress = null } = {}) {
   return readNewLines(tail, line => {
     if (!line.includes('session.usage_record') && !line.includes('session.compaction_complete') && !line.includes('subagent.started')) return;
     const event = JSON.parse(line);
     if (event && USAGE_TYPES.has(event.type)) ledger.apply(sessionId, event);
   }, {
     onReset: () => ledger.reset(sessionId),
+    onProgress,
     onOversized: event => {
       if (event?.type === 'subagent.started') ledger.apply(sessionId, event);
       else if (event && USAGE_TYPES.has(event.type)) throw new Error(`a ${event.type} line over the size limit could not be read for its cost`);
