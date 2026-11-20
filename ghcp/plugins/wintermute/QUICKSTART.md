@@ -41,7 +41,7 @@ Always run `wintermute:wintermute-core` as a top-level session. Never start it a
 
 ## In a Copilot app Project
 
-A [Copilot app Project](https://docs.github.com/en/copilot/how-tos/github-copilot-app/working-with-projects) can't run `wintermute-core` as its agent, but it can follow the same rules through the plugin's `wintermute-project` skill. In the Project, start a message with `/wintermute-project`, followed by your request. The Project then plans the work, starts child sessions with a model and effort for each, and has every PR reviewed and checked; it asks for your go-ahead before it opens, publishes or merges one. Its Overview and Inbox work as usual. To turn wintermute off, ask the Project to. The [README](README.md#projects) has the details.
+A [Copilot app Project](https://docs.github.com/en/copilot/how-tos/github-copilot-app/working-with-projects) can't run `wintermute-core` as its agent, but it can follow the same rules through the plugin's `wintermute-project` skill. In the Project, start a message with `/wintermute-project`, followed by your request. The Project then plans the work, gives substantial work to child sessions or sub-agents with a model and effort for each, and has every PR reviewed and checked. Opening, publishing or merging a PR needs your go-ahead: the Project asks unless you already gave it standing permission for that action. Its Overview and Inbox work as usual. To turn wintermute off, ask the Project to. The [README](README.md#projects) has the details.
 
 ## Open the dashboard
 
