@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Fix the rules in the two Projects skills that the real-task evaluation found wrong, and make the swarm dashboard read a Project's swarm: the Project as its root, the results the app delivers to it, the questions it relays, and its schedules.
+**Goal:** Fix the rules in the two Projects skills that the real-task evaluation found wrong, and make the swarm dashboard read a Project's swarm: the Project as its root, the results the app delivers to it, the questions it relays, and its schedules. Make the eval kit's GPT-6.2 rate card the scorer's default without changing how a running batch is scored.
 
-**Architecture:** Five PRs. `projects-skill-fixes` rewrites the go-ahead, carry-forward, PR-change and pre-publish rules in `skills/wintermute-project/SKILL.md` and `skills/wintermute-project-worker/SKILL.md`, pins them with static prompt tests, and brings the design's and the Phase 1 plan's checker rules in line with what the real logs showed. Three engine units change the read-only engine: `engine-project-roots` reads `persistent_projects` from `data.db` and the `wintermute_project` opt-in row from a Project's own `session.db`; `engine-project-results` reads the app's results messages and `relay_session_input` waits from the Project's log; `engine-schedules` stops calling every automation a PR monitor, names the child that a Project sets a schedule on, and keeps a dedicated schedule child out of the units while it counts the child's cost. `projects-docs` then documents Projects without the evaluation wording. No unit changes an agent, the snapshot schema or the UI.
+**Architecture:** Six PRs. `projects-skill-fixes` rewrites the go-ahead, carry-forward, PR-change and pre-publish rules in `skills/wintermute-project/SKILL.md` and `skills/wintermute-project-worker/SKILL.md`, pins them with static prompt tests, and brings the design's and the Phase 1 plan's checker rules in line with what the real logs showed. Three engine units change the read-only engine: `engine-project-roots` reads `persistent_projects` from `data.db` and the `wintermute_project` opt-in row from a Project's own `session.db`; `engine-project-results` reads the app's results messages and `relay_session_input` waits from the Project's log; `engine-schedules` stops calling every automation a PR monitor, names the child that a Project sets a schedule on, and keeps a dedicated schedule child out of the units while it counts the child's cost. `projects-docs` then documents Projects without the evaluation wording. `eval-kit-pricing` makes the eval kit's dated GPT-6.2 rate card the scorer's default, with every batch scored on the card it pinned. No unit changes an agent, the snapshot schema or the UI.
 
 **Tech Stack:** Node.js 18+ built-ins only (`node:test`, `node:assert/strict`, `node:fs`, `node:path`); SQLite read through the engine's existing readers (`node:sqlite` or the `sqlite3` CLI); Markdown skills and docs.
 
@@ -23,9 +23,9 @@ In a wintermute swarm, the orchestrator gives each unit below to one child sessi
 
 This plan's PR also carries three things that need no unit:
 
-- The real task's row in `evals/orchestrator/expense-claims/results.csv`, as the kit's scorer wrote it (variant `wintermute-project`), in the kit's normal schema: like every earlier row, it records the run's session IDs in `session` and `note`. Its `cost_status` is `incomplete`, because the rate card that the scorer used, `pricing/2026-11-10.json`, has no rates for GPT-6.2 Astra or GPT-6.2 Sol.
-- `evals/orchestrator/expense-claims/pricing/2026-11-20.json`, the same card plus GitHub's published rates for `gpt-6.2-astra` and `gpt-6.2-sol` ([Models and pricing](https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing)), now the default for new scores and new batches. A batch records its card when it starts and scores every run with it, so a batch that started before this change keeps 2026-11-10, and a card that changes after a run starts stops that run's scoring (the kit's README, "Whole-swarm cost"). The row stays as scored: `score --replace` takes a new cost snapshot and scores the run again, which needs the user's go-ahead.
-- Two sentences of the design: 8.13's rule on what goes into the repository, which now names the evaluation's notes, checker reports and logs, and keeps the kit's `results.csv` schema; and 8.17's, which said that the real task's result doesn't go into `results.csv`.
+- The real task's row in `evals/orchestrator/expense-claims/results.csv`, as the kit's scorer wrote it (variant `wintermute-project`), in the kit's normal schema: every row records its run's session ID in `session`, and a diagnostic `note` may name session IDs, as this row's does. Its `cost_status` is `incomplete`, because the rate card that the scorer used, `pricing/2026-11-10.json`, has no rates for GPT-6.2 Astra or GPT-6.2 Sol.
+- `evals/orchestrator/expense-claims/pricing/2026-11-20.json`, the 2026-11-10 card plus GitHub's published rates for `gpt-6.2-astra` and `gpt-6.2-sol` ([Models and pricing](https://docs.github.com/en/copilot/reference/copilot-billing/models-and-pricing)), as a data file only. The scorer's default stays 2026-11-10, the kit's README says that the new card isn't the default yet, and the `eval-kit-pricing` unit makes it the default. Every file under `pricing/` is one of a batch's pinned files (`currentPins` in `scripts/lib/batch/runner.ts`), so a batch that is running when the card reaches its checkout stops at its next admission, as it does for any pinned-file change. The row stays as scored: `score --replace` takes a new cost snapshot and scores the run again, which needs the user's go-ahead.
+- Two passages of the design: 8.13's rule on what goes into the repository, which now keeps session IDs, paths and task details from the evaluation's logs, notes and checker reports out of the outcome sentences, plans and design, and keeps the kit's `results.csv` schema; and 8.17's, which said that the real task's result doesn't go into `results.csv`, and now names the new rate card and the unit that makes it the default.
 
 ## Global Constraints
 
@@ -38,8 +38,8 @@ This plan's PR also carries three things that need no unit:
 - **Skill names and the copy rule.** `wintermute-project` and `wintermute-project-worker` stay in `skills/`. The coordinator skill's "Pinned models:" list, tier table and "Never use these:" list stay word-for-word copies of `wintermute-core`'s; `npm run validate` checks all three (decision 6, design 8.8). No unit edits them.
 - **Outside input.** The engine reads `data.db`, `session.db` and session logs read-only. Records that the app writes into a Project's log are untrusted data: the engine keeps only ids and the text it displays, and never acts on them.
 - **Versions.** Every PR under `ghcp/plugins/wintermute/` runs `npm run release:bump -- <patch|minor>` (minor for a feature, patch for a fix) and replaces the new section's TODO with its release notes, using the version that the command prints (C29). A unit that rebases onto a `main` with a newer version runs `release:bump` again after the rebase and moves its notes under the new heading. That rebase resolves conflicts by hand, so it isn't mechanical in advance: the orchestrator sizes it as a follow-up job from its diff (core:348-358).
-- **Summary rules.** A unit that changes what a stored run summary holds raises `SUMMARY_RULES` in `engine/schema.mjs` to one more than the value on the `main` it branched from, so that summaries saved earlier are rebuilt (`isStale` in `engine/engine.mjs`). After a rebase onto a `main` that already raised it, it raises it once more.
-- **Checks.** From `ghcp/plugins/wintermute/`: `npm test && npm run validate`. Test counts below are deltas from the `main` a unit branched from: one test of the suite depends on the machine, so totals vary by one.
+- **Summary rules.** A unit that changes what a stored run summary holds raises `SUMMARY_RULES` in `engine/schema.mjs` to one more than the value on the `main` it branched from, so that a summary saved earlier is rebuilt when the engine can rebuild it: the run is still listed, every session's log was read in full, and neither its cost nor its child count has fallen (`isStale` in `engine/engine.mjs`). Other older summaries keep what they stored. After a rebase onto a `main` that already raised it, it raises it once more.
+- **Checks.** From `ghcp/plugins/wintermute/`: `npm test && npm run validate`. Test counts below are deltas from the `main` a unit branched from, on the same machine: the suite's total depends on the machine, for example on which SQLite backends it finds.
 - **Node 18.** Shipped code uses no API newer than Node 18; tests use `node:test` without `t.after` or `t.before` (`tests/guards.test.mjs`). No `dependencies` or `devDependencies`.
 - **npm.** Never run npm under `env -i` or with a scratch `HOME`: that bypasses the required `~/.npmrc` proxy.
 - **Commits.** No `Co-authored-by` trailers and no other AI attribution.
@@ -59,7 +59,7 @@ These are the shapes that the real Project logs and `data.db` showed, with inven
 
 - **No handoff.** When an assignment ends with no report at all, its record's `handoff` is the app's notice: `The session finished without sending a handoff. Use get_session if you need its result.` The real task had four, one of them for an assignment that reported later, so a notice isn't always final (C16).
 - **A question or blocker.** A child's `needs_input` or `error` report reaches the Project as an own `user.message` with `data.source: "agent-<child session ID>"` and a `<cross_session_message>` envelope in `transformedContent` with `from_session_id`, `purpose`, `source_tool_call_id` (the child's send call) and `assignment_id` lines. `persistent_project_results` has no row for it: its `purpose` column is `CHECK (purpose = 'handoff')`.
-- **A relay.** Seen only in another Project, "Expense reports", not in the real task. `relay_session_input` started with `arguments` `{ "project_session_id": "<child workspace ID>", "request_id": "<request ID>", "context": "<framing>" }`, and its completion's `result.content` was JSON text with `session`, `question`, `answer`, `outcome` and `next_step`; `outcome: "answered_here"` is the one outcome seen. A call without `context`, or with `session_id` instead of `project_session_id`, wasn't seen: the engine treats them as fallbacks. The relay's `request_id` doesn't appear in the child's own log, so a relay can't be matched to the child's question by ID.
+- **A relay.** Seen only in another Project, "Expense reports", not in the real task. `relay_session_input` started with `arguments` `{ "project_session_id": "<child workspace ID>", "request_id": "<request ID>", "context": "<framing>" }`, and its completion's `result.content` was JSON text with `session`, `question`, `answer`, `outcome` and `next_step`; `outcome: "answered_here"` is the one outcome seen. A call without `context`, or with `session_id` instead of `project_session_id`, wasn't seen: the engine treats them as fallbacks. In both relays seen, the `request_id` didn't appear in the child's own log, so the engine doesn't match a relay to the child's question by ID.
 - **Projects.** `persistent_projects` has one column, `session_id`, which references `sessions(id)`.
 - **Schedules.** No schedule ran in the evaluation. In "Wintermute System One", the Project set two inline schedules and cleared each before it ran, so no wake has been seen in a Project. `session_automations` has `session_id`, `owner_session_id` and `execution` (`session`, `coordinator_subagent` or `child_subagent`), with `CHECK (execution = 'session' OR owner_session_id IS NOT NULL)` and `CHECK (execution != 'coordinator_subagent' OR owner_session_id = session_id)`.
 
@@ -74,8 +74,11 @@ Each unit is one child session with its own branch and PR, and the gates that `w
 | `engine-project-results` | Tasks 9–11: received handoffs as reports, with their purpose; one "ended without a report" per assignment; a relayed question as one need of its child; a failed relay never an answer; rebuilt summaries. One PR. | this plan merged; merges after `projects-skill-fixes` | yes: it parses outside input | High: Sol at `max` | Critical review: Opus at `xhigh`. Claims check: Sol at `medium`. |
 | `engine-schedules` | Tasks 12–14: no schedule is called a PR monitor, and a save counts only once it succeeds; a schedule that a Project sets on a child names the child; a dedicated schedule child isn't a unit, but its cost counts. One PR. | this plan merged; merges after `projects-skill-fixes` | yes: it reads outside input | High: Sol at `max` | Critical review: Opus at `xhigh`. Claims check: Sol at `medium`. |
 | `projects-docs` | Task 15: README, QUICKSTART, DASHBOARD.md, the dashboard design's section 10, the repository instructions and one sentence of the coordinator skill, without the evaluation wording. One PR, the last. | all four units above merged | no | Mid: Opus at `medium` | Regular review: Astra at `high`. Claims check: Sol at `medium`. Final panel, as the last PR: two judges from the two vendors that wrote the fewest of these units, at the critical levels. |
+| `eval-kit-pricing` | Task 16: make `pricing/2026-11-20.json` the scorer's default for new scores and new batches; score each batch on the bytes of the card it pinned; never price a run that a batch driver from before the change scores with the new card unpinned; the GPT-6.2 rate tests; the kit's README. One PR, in `evals/orchestrator/expense-claims/` only. | this plan merged | no | Mid: Sol at `high` | Regular review: Opus at `xhigh`. Claims check: Sol at `medium`. |
 
-The three engine units can be built while `projects-skill-fixes` is in review, but merge after it, because the hard-failure fix comes before anything else (design 8.13). Their code merges without conflicts: in a scratch copy of `a985f90`, the four units' branches, each built alone from this plan, were merged in turn, `projects-skill-fixes` first, then the engine units in the order roots, results, schedules, and again in the reverse order. Both times only the version files and the CHANGELOG conflicted, which the Versions rule covers, and `npm test && npm run validate` passed after each merge. The second unit that raises `SUMMARY_RULES` merged without a conflict and left it at 3, which is why each engine unit checks it after a rebase.
+The three engine units can be built while `projects-skill-fixes` is in review, but merge after it, because the hard-failure fix comes before anything else (design 8.13). Their code merges without conflicts: in a scratch copy of `a985f90`, the four units' branches, each built alone from this plan, were merged in turn, `projects-skill-fixes` first, then the engine units in the order roots, results, schedules, and again in the reverse order. Both times `projects-skill-fixes` fast-forwarded, and only the version files and the CHANGELOG conflicted, which the Versions rule covers; after each engine merge the full test suite passed with no failures, and `npm run validate` passed. The second unit that raises `SUMMARY_RULES` merged without a conflict and left it at 3, which is why each engine unit checks it after a rebase.
+
+`eval-kit-pricing` changes only the eval kit, so it can be built and merged at any time. `wintermute-core` gives the final panel to the unit of a task that is left unmerged last, so if it merges after `projects-docs`, the panel moves to it.
 
 ```mermaid
 graph LR
@@ -90,13 +93,49 @@ graph LR
   roots --> docs
   results --> docs
   schedules --> docs
+  plan --> pricing[eval-kit-pricing]
 ```
+
+## Open review findings to fix first
+
+The code in Tasks 1–14 replayed as this plan says, but it is a starting point, not reviewed code. The plan's critical review and fact-check left the items below open. The unit named fixes each one, test-first, before it asks to open its PR, and its own review checks them. R and N items come from the critical review; FC items from the fact-check.
+
+**`projects-skill-fixes`**
+
+- **R2.** Two rules of the coordinator skill survive Tasks 1–3 and contradict a valid carry-forward: an assignment to publish or merge names "the head at which the unit's checks passed", and every new commit marks the earlier verdicts `superseded`. Give all three one definition: the same unit, repository, base branch and merge base, with the new head checked directly or covered by a carry-forward of the whole change recorded before the action; anything else is superseded and checked again. Test the assembled skill, those two sentences included.
+- **R5.** A successful `sql` call isn't a saved record: an `UPDATE child_notes … WHERE unit = …` that names a wrong unit succeeds and changes nothing. The skill and the F3 checker require the write to return or read back exactly one matching row (unit, both heads, repository, base branch, merge base and verdicts), completed before the first publish or merge it covers starts; no row, a failed write or a late one isn't evidence.
+- **R7.** F3's audit of the coordinator's own open or publish: `gh pr ready <number>` names no head, and `gh pr create --head <branch>` can't name a PR number. Match the go-ahead to the coordinator's successful read before the action (branch head, base, merge base and, for a draft, the PR), the action, and the read-back, with the PR that creation returned; keep the head requirement for a merge pinned with `--match-head-commit`. Add `gh pr list` to the checker's first-output filter.
+
+**`engine-project-roots`**
+
+- **R12.** A locked `persistent_projects` read gives an empty set and a warning. A Project with children then loses `persistentProject`, `rootProjectId` returns null, and the refresh can overwrite a good finished summary with `project: null`. Keep the last good set on a failed read, or mark the refresh's global read incomplete and save no summary until a good read; a missing or reshaped table stays quiet. Test a stored summary with a project, a locked refresh, and recovery.
+
+**`engine-project-results`**
+
+- **R14.** Task 11 drops a relay whenever its child has any open question, so a relay tagged `[unit=api need=pr]` for that question shows as a plain question. When the match is clear, keep the child's question and time and apply the relay's tag; don't drop a relay of a different request only because the child is the same. With no request ID to match on, write down the fallback. Test a tagged relay with the matching untagged child question, plus a separate open question.
+
+**`engine-schedules`**
+
+- **N21, FC-N6.** Task 14 removes a hidden schedule child's context but keeps that child's own child, whose `buildUnit` then reads the missing parent and throws, so the run's snapshot fails. Keep the contexts used for parent lookups apart from what is shown, and hide or reparent the hidden child's subtree while its sessions stay in the cost. Test Project → schedule child → ordinary child: the snapshot validates, and the cost covers all three.
+- **R17, FC-N5.** Task 14 calls a child dedicated when a schedule that the root owns runs in it and the root's retained `create_session` and save records don't name it. Those records are capped (40 and 50 per log) and empty when the root's log is missing, so an in-place unit can vanish, and a later edit or clear that names a dedicated child brings it back. Use lasting, positive evidence that the child was created for the schedule; if `data.db` has none, defer hiding under U12 and keep working units visible. Test a root whose history was evicted or lost, and an edit or clear after creation.
+- **N22.** Hiding applies only to the snapshot: `listSwarms()` and unsummarized history still count the hidden child as a unit, and stored summaries can keep it. Use the same membership in the list, the detail and history, sum the full cost separately, and rebuild affected summaries under the normal complete-logs guard. Assert that the three agree on one fixture.
+- **N23.** A save is `failed: false` from its start, so a pending or aborted save already counts in `buildUnit`: it can set an interval, or move a unit with an unknown PR from `pr_open` to `in_review`. Task 14 also takes a pending or failed save's target as naming a child. Track pending, succeeded and failed saves, and let only a confirmed save count. Test a start with no completion, an abort, and `success: false`.
+
+**`eval-kit-pricing`**
+
+- **R4, FC-N2.** The scorer must price the bytes that the batch pinned. Pass it the expected digest, and have it compare that digest with the bytes it parsed before it writes anything; a card that changed or can't be read stops scoring through the same failure path, not as a cost warning. A runner that hashes the file only before it starts the scorer leaves a window.
+- **R4.** A `batch next` loaded before the upgrade keeps running and calls the new `score.ts` with no `--pricing` (`scoreRun` in `main`'s `scripts/lib/batch/runner.ts`). It must never price a run with the new card unpinned: it uses `pricing/2026-11-10.json` or stops without writing. Test with `main`'s exact argument list, and with a card that changes after the runner's check.
+- **FC-N3.** Every file under `pricing/` and `scripts/lib/`, and `score.ts`, is pinned, so a batch started before the upgrade admits no more runs once its checkout updates. The README says both how an admitted run is scored and that the batch then stops. Test with a batch state as `main`'s code writes it, not a new state with its card removed.
+
+**`projects-docs`**
+
+- None of its own. Its README, DASHBOARD.md and dashboard-design text match how the engine units resolved theirs, for example the relay tag (R14) and schedule children (R17, N21, N22).
 
 ## Not in this plan
 
 - **The UI's monitor wording.** The detail panel's "Monitor" row and "PR and monitor" heading stay. Design 8.15 changes the feed. That row shows a unit's own schedule row together with its session's wake and save history.
-- **Unlinked schedule children and in-place ownership (U7, U12).** No Project schedule ran in the evaluation. Task 14 keeps a dedicated schedule child that the app links to the Project out of the units, and counts its cost. A schedule child that the app doesn't link isn't in the forest, so it stays out of the swarm and its cost isn't counted, as section 10's fallback says. An in-place schedule is told apart by the Project's own save that names the child, or by the Project having started that child. `coordinator_subagent` runs are the Project's own sub-agents, which the dashboard already shows; none ran to check further.
-- **A withdrawn relay (U8).** Not observed. A relay's need lasts while its call is open in a live Project. A completion without an answer, an abort or the end of the process ends it, and the child's own question, if the child's log shows one, stays.
+- **Unlinked schedule children and in-place ownership (U7, U12).** No Project schedule ran in the evaluation. Task 14 keeps a schedule child that the app links to the Project out of the units, and counts its cost, when the root's retained events mark it as dedicated: a heuristic, not something the app records (R17). A schedule child that the app doesn't link isn't in the forest, so it stays out of the swarm and its cost isn't counted, as section 10's fallback says. An in-place schedule is told apart by the Project's own save that names the child, or by the Project having started that child, while those events are retained. `coordinator_subagent` runs are the Project's own sub-agents, which the dashboard already shows; none ran to check further.
+- **A withdrawn relay (U8).** Not observed. A relay's need lasts while its call is open in a live Project, under the child when its target resolves to one. A completion without an answer, an abort or the end of the process ends it, and the child's own question, if the child's log shows one, stays.
 - **The repository-trust notice.** The app tells a Project "Session "<name>" is waiting for you to decide whether to trust its repository." It isn't a relay, and design 8.15 doesn't list it.
 - **A global-instruction recovery line (8.3).** Not needed: after `/compact` in the real task, the memory line reloaded the skill before any state change.
 - **Projects that never opted in.** A Project that works only through sub-agents and never ran `/wintermute-project`, such as the "Wintermute benchmarking" Project in wintermute-now section 2.1, stays hidden by design (8.15).
@@ -126,20 +165,24 @@ graph LR
 | `engine/model/forest.mjs` (modify) | `engine-project-roots` | Marks Project nodes, lists childless Projects, promotes an opted-in one, and finds a Project root's most common app project. |
 | `engine/readers/session-files.mjs` (modify) | `engine-project-roots` | Reads the latest `wintermute_project` row. |
 | `engine/engine.mjs` (modify) | `engine-project-roots` | Reads the opt-in rows before it builds the forest, and lists a Project root's project. |
-| `engine/schema.mjs` (modify) | `engine-project-roots`, `engine-project-results` | `SUMMARY_RULES`, so that older summaries are rebuilt. |
+| `engine/schema.mjs` (modify) | `engine-project-roots`, `engine-project-results` | `SUMMARY_RULES`, so that older summaries can be rebuilt. |
 | `engine/model/swarm.mjs` (modify) | `engine-project-roots`, `engine-project-results`, `engine-schedules` | The run's shown project; received reports, notices and relayed needs; schedule feed names and dedicated schedule children. |
 | `engine/model/messages.mjs`, `engine/model/session-state.mjs` (modify) | `engine-project-results`, `engine-schedules` | Results records and relay waits; schedule saves and their wording. |
 | `engine/model/state-utils.mjs` (modify) | `engine-schedules` | A feed entry can carry a schedule's target. |
 | `server/demo-engine.mjs`, `tests/fixtures/example-snapshot.json` (modify) | `engine-schedules` | The demo's schedule wording. |
 | `tests/project-roots.test.mjs`, `tests/project-results.test.mjs`, `tests/project-schedules.test.mjs` (create); `tests/app-db.test.mjs`, `tests/messages.test.mjs`, `tests/helpers/copilot-home.mjs` (modify) | engine units | Tests and two fixture helpers. |
 | `README.md`, `QUICKSTART.md`, `DASHBOARD.md`, `docs/superpowers/specs/2026-10-15-swarm-dashboard-design.md`, `.github/copilot-instructions.md` (modify) | `projects-docs` | Documentation. |
-| `CHANGELOG.md`, `plugin.json`, `package.json`, `.github/plugin/marketplace.json` (modify) | every unit | Version and notes. |
+| `CHANGELOG.md`, `plugin.json`, `package.json`, `.github/plugin/marketplace.json` (modify) | every plugin unit | Version and notes. |
+| `evals/orchestrator/expense-claims/scripts/score.ts`, `scripts/lib/usage.ts`, `scripts/lib/batch/state.ts`, `scripts/lib/batch/runner.ts` (modify) | `eval-kit-pricing` | The default card, and each batch's pinned card and digest. |
+| `evals/orchestrator/expense-claims/scripts/test/usage.test.ts`, `score.test.ts`, `batch-runner.test.ts`, `README.md` (modify) | `eval-kit-pricing` | Tests and the kit's README. |
 
 ---
 
 ## Unit `projects-skill-fixes`
 
 Branch from `main`. Commit after each task. After Task 4, push, and hand off with the pushed commit for the critical review and the claims check. The skills are prompts: their checks are the static tests in `tests/project-skills.test.mjs`, the validator, and the next real use.
+
+Fix these first: R2, R5, R7 (see "Open review findings to fix first").
 
 ### Task 1: A carry-forward counts only when it is recorded before the action
 
@@ -1031,6 +1074,8 @@ Hand off with the pushed commit for the critical review and the claims check.
 
 Branch from `main`. Commit after each task. After Task 8, push, and hand off with the pushed commit for the critical review and the claims check. Rebase onto `main` once `projects-skill-fixes` has merged, before the PR is published. After every rebase, compare `SUMMARY_RULES` in `engine/schema.mjs` with `main`'s: git merges the same change from another engine unit without a conflict, so if `main` already has 3 or more, set yours to one more than `main`'s (Global Constraints).
 
+Fix these first: R12 (see "Open review findings to fix first").
+
 Today a Project is a swarm only once it has a child session, because `sessions.agent` is empty for a Project and only orchestrator agents promote a childless root (C26). Its `run.project` is null, because a Project has no workspace of its own (wintermute-now section 2.2, item 1).
 
 ### Task 5: Read `persistent_projects`, quietly when it isn't there
@@ -1403,7 +1448,7 @@ git commit -m "feat(wintermute): promote an opted-in Project that has no child s
 
 ### Task 7: A Project's run shows its children's app project
 
-The project names the run and its entry in the list only. `buildUnit` still gets the root's own project, which is null for a Project, so a unit's PR is resolved from its own repository, never from the majority of its siblings'. The run summary keeps the project, so `SUMMARY_RULES` goes up and summaries saved earlier with a null project are rebuilt.
+The project names the run and its entry in the list only. `buildUnit` still gets the root's own project, which is null for a Project, so a unit's PR is resolved from its own repository, never from the majority of its siblings'. The run summary keeps the project, so `SUMMARY_RULES` goes up, and a summary saved earlier with a null project is rebuilt when the engine can rebuild it (Global Constraints, "Summary rules").
 
 **Files:**
 - Modify: `engine/model/forest.mjs` (new `rootProjectId`)
@@ -1948,7 +1993,7 @@ with:
 ```markdown
 ### Added
 
-- The dashboard reads Copilot app Projects. A Project that has turned wintermute on with the `wintermute-project` skill shows as a swarm before it has a child session, for example while it works only through sub-agents; a Project with child sessions shows as before. A Project's swarm names the repository that most of its child sessions work in; each child's PR still comes from its own repository. Run summaries saved by earlier versions are rebuilt once.
+- The dashboard reads Copilot app Projects. A Project that has turned wintermute on with the `wintermute-project` skill shows as a swarm before it has a child session, for example while it works only through sub-agents; a Project with child sessions shows as before. A Project's swarm names the repository that most of its child sessions work in; each child's PR still comes from its own repository. Run summaries saved by earlier versions are rebuilt once where the run's logs are still complete.
 ```
 
 - [ ] **Step 6: Run every check**
@@ -1984,6 +2029,8 @@ Hand off with the pushed commit for the critical review and the claims check.
 ## Unit `engine-project-results`
 
 Branch from `main`. Commit after each task. After Task 11, push, and hand off with the pushed commit for the critical review and the claims check. Rebase onto `main` once `projects-skill-fixes` has merged, before the PR is published. After every rebase, compare `SUMMARY_RULES` in `engine/schema.mjs` with `main`'s: git merges the same change from another engine unit without a conflict, so if `main` already has 3 or more, set yours to one more than `main`'s (Global Constraints).
+
+Fix these first: R14 (see "Open review findings to fix first").
 
 Today the engine reads a received report only from a `<cross_session_message>` envelope (`engine/model/messages.mjs:73`), so it never sees the app's results messages, and a child that ended without a report shows nothing (wintermute-now section 2.2, item 3). It doesn't know `relay_session_input` (`engine/model/session-state.mjs:34`), so a relayed question never reaches "Needs you".
 
@@ -2203,7 +2250,7 @@ git commit -m "feat(wintermute): read a Project's results messages"
 
 **Interfaces:**
 - Consumes: `item.notice`, `item.purpose` and `item.assignmentId` on the root's `inbound` items from Task 9.
-- Produces: a received copy is a report with its purpose, so a plain handoff without a status line is `complete`. For each assignment that a unit's notices name (or each delivery time, when a record names none), a feed item `{ id: '<unit id>:notice:<assignment id>', kind: 'report', text: 'ended without a report' }` and a timeline mark `{ kind: 'report', text: 'Ended without a report', status: null }`, among the notices that the Project's received list still holds (its last 80 messages). The report's order doesn't change: the unit's own sent report first, else its latest received copy, and a `task_complete` later than either replaces it.
+- Produces: a received copy is a report with its purpose, so a plain handoff without a status line is `complete`. For each assignment that a unit's notices name (or each delivery time, when a record names none), a feed item `{ id: '<unit id>:notice:<assignment id>', kind: 'report', text: 'ended without a report' }` and a timeline mark `{ kind: 'report', text: 'Ended without a report', status: null }`, among the records that the Project's received list still holds (its last 80 records, one per child handoff), within the swarm feed's 200 items. The report's order doesn't change: the unit's own sent report first, else its latest received copy, and a `task_complete` is the report when there is none, or replaces it when it is more than five minutes later.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2300,7 +2347,7 @@ git commit -m "feat(wintermute): use a Project's received handoffs as reports"
 
 ### Task 11: An open relay is one need of the relayed child
 
-A relay shows the user a question that a child already asked (C18). The relay's `request_id` isn't in the child's log, so the need is matched by the child: while the child's own log shows an open question, that question is the child's one need, and the relay adds none. A relay that completes without an answer is no answer, and the child's own question, if it is still open, stays. The run summary's time spent waiting on the user now counts relays, so `SUMMARY_RULES` goes up.
+A relay shows the user a question that a child already asked (C18). In both relays seen, the `request_id` wasn't in the child's log, so the need is matched by the child: while the child's own log shows an open question, that question is the child's one need, and the relay adds none. A relay that completes without an answer is no answer, and the child's own question, if it is still open, stays. The run summary's time spent waiting on the user now counts relays, so `SUMMARY_RULES` goes up, and older summaries are rebuilt where the engine can rebuild them.
 
 **Files:**
 - Modify: `engine/model/session-state.mjs` (`WAIT_TOOLS`, `onToolStart`, new `relayAnswered`, `onToolComplete`)
@@ -2309,7 +2356,7 @@ A relay shows the user a question that a child already asked (C18). The relay's 
 
 **Interfaces:**
 - Consumes: the wait records of `session-state.mjs`.
-- Produces: a `relay_session_input` call is a `question` wait with `relay: true`, whose text is its `context` (or "Relayed question" when it has none) and whose `target` is its `project_session_id`, else its `session_id`. In "Needs you", the unit with that ID owns it, and a tag at the start of `context` sets the need's kind, as for `ask_user`; when that unit's own log shows an open question, the unit's need is the only one. A relay's completion adds "got an answer" only when it didn't fail and its JSON result has `outcome: "answered_here"` or a non-empty `answer`; any other completion adds "a relayed question ended without an answer". A wait also ends when its call is aborted or its session ends, and a need shows only while its session is live and not archived. `SUMMARY_RULES` is 3.
+- Produces: a `relay_session_input` call is a `question` wait with `relay: true`, whose text is its `context` (or "Relayed question" when it has none) and whose `target` is its `project_session_id`, else its `session_id`. In "Needs you", the unit with that ID owns it when the ID resolves to a unit, and otherwise it is the root's need, given to units by its tag as for `ask_user`; a tag at the start of `context` sets the need's kind; when that unit's own log shows an open question, the unit's need is the only one. A relay's completion adds "got an answer" only when it didn't fail and its JSON result has `outcome: "answered_here"` or a non-empty `answer`; any other completion adds "a relayed question ended without an answer". A wait also ends when its call is aborted or its session ends, and a need shows only while its session is live and not archived. `SUMMARY_RULES` is 3.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2540,7 +2587,7 @@ with:
 ```markdown
 ### Added
 
-- In a Copilot app Project, the dashboard reads the results that the app delivers to the Project as copies of its children's handoffs. The app's notice that an assignment ended with no report shows once per assignment as "ended without a report", never as a report. A question that the Project shows you for a child is one entry in "Needs you" under that child, and a relay that fails isn't shown as an answer. Run summaries saved by earlier versions are rebuilt once.
+- In a Copilot app Project, the dashboard reads the results that the app delivers to the Project as copies of its children's handoffs. The app's notice that an assignment ended with no report shows once per assignment as "ended without a report", never as a report. A question that the Project shows you for a child is one entry in "Needs you" under that child, and a relay that fails isn't shown as an answer. Run summaries saved by earlier versions are rebuilt once where the run's logs are still complete.
 ```
 
 - [ ] **Step 6: Run every check**
@@ -2576,6 +2623,8 @@ Hand off with the pushed commit for the critical review and the claims check.
 ## Unit `engine-schedules`
 
 Branch from `main`. Commit after each task. After Task 14, push, and hand off with the pushed commit for the critical review and the claims check. Rebase onto `main` once `projects-skill-fixes` has merged, before the PR is published.
+
+Fix these first: N21, R17, N22, N23, with FC-N5 and FC-N6 (see "Open review findings to fix first").
 
 ### Task 12: No schedule is a PR monitor, and a save counts once it succeeds
 
@@ -2925,7 +2974,7 @@ git commit -m "feat(wintermute): name the child that a schedule was set on"
 
 ### Task 14: A dedicated schedule child isn't a unit, and its cost counts
 
-Design 8.15: a dedicated schedule child is not a unit, but its cost counts. The app links a child session to the Project that starts it, so without this task such a child would be an ordinary unit. `session_automations.owner_session_id` names the session that owns a schedule. A child is a dedicated schedule child when a schedule that the root owns runs in it, and the root neither started it with `create_session` nor named it in `save_session_automation`; a session's name never decides. Such a child leaves the units, needs and feed, and its sessions stay in the cost. A schedule child that the app doesn't link to the Project isn't in the forest, so it stays out of the swarm and its cost isn't counted: U12's fallback (design section 10). No Project schedule ran in the evaluation, so the tests use the columns that `data.db` has, with invented values. Stored run summaries aren't rebuilt for this: no dedicated schedule child has been seen, so no summary counts one.
+Design 8.15: a dedicated schedule child is not a unit, but its cost counts. The app links a child session to the Project that starts it, so without this task such a child would be an ordinary unit. `session_automations.owner_session_id` names the session that owns a schedule. A child is treated as a dedicated schedule child when a schedule that the root owns runs in it, and the root's retained events neither started it with `create_session` nor named it in `save_session_automation`; a session's name never decides. That is a heuristic over retained events, not something the app records, and the code below handles only a schedule child with no children of its own (R17 and N21). Such a child leaves the units, needs and feed, and its sessions stay in the cost. A schedule child that the app doesn't link to the Project isn't in the forest, so it stays out of the swarm and its cost isn't counted: U12's fallback (design section 10). No Project schedule ran in the evaluation, so the tests use the columns that `data.db` has, with invented values. This task doesn't rebuild summaries saved before it; N22 decides whether they need it.
 
 **Files:**
 - Modify: `engine/readers/app-db.mjs` (`APP_TABLES`, `readAppDb`), `tests/app-db.test.mjs`
@@ -2934,7 +2983,7 @@ Design 8.15: a dedicated schedule child is not a unit, but its cost counts. The 
 
 **Interfaces:**
 - Consumes: `app.automations` from `readAppDb`; the root's `created` and `automation.saves` records.
-- Produces: `app.automations[i].ownerSessionId` (`string|null`). Inside `swarm.mjs`, `scheduleChildren(forest, app, rootContext, nodes)` → `Set<string>` of node IDs; `buildSnapshot` builds contexts for the whole tree, leaves those nodes out of the units, needs and feed, and sums the cost over the whole tree.
+- Produces: `app.automations[i].ownerSessionId` (`string|null`). Inside `swarm.mjs`, `scheduleChildren(forest, app, rootContext, nodes)` → `Set<string>` of node IDs; `buildSnapshot` builds contexts for the whole tree, leaves those nodes out of the units, needs and feed, and sums the cost over the whole tree, for a schedule child with no children of its own (N21).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3142,6 +3191,8 @@ Hand off with the pushed commit for the critical review and the claims check.
 
 Branch from `main` after the four units above have merged: this unit describes their result. After Task 15, push, and hand off with the pushed commit for the regular review, the claims check and the final panel. After it merges, the orchestrator starts an independent claims checker on `main` at the merge commit and reads its evidence.
 
+Fix these first: none of its own; match the text to how the engine units resolved theirs (see "Open review findings to fix first").
+
 ### Task 15: Document Projects without the evaluation wording
 
 Design 8.15: the README's Projects section without the evaluation wording, a short QUICKSTART section, how Projects appear in DASHBOARD.md, and a note in section 10 of the dashboard design on the `purpose` mapping, short handoffs and relays. The repository instructions drop "experimental" too, and the coordinator skill no longer says that the dashboard doesn't read the relay tag.
@@ -3236,8 +3287,8 @@ A Copilot app Project that runs work under the plugin's `wintermute-project` ski
 
 - It shows once it has a child session. A Project that has turned wintermute on also shows before that, for example while it works only through sub-agents. One that has turned wintermute off, or never turned it on, shows only once it has a child session.
 - The swarm's project is the repository that most of the Project's child sessions work in. It names the swarm only: each child's PR comes from the child's own repository.
-- A child's report is the one it sent to the Project, else the copy that the app delivered to the Project; a later `task_complete` replaces either, as in any swarm. When the app tells the Project that one of a child's assignments ended with no report, the child's activity says "ended without a report", once per assignment; that is never its report.
-- A question that the Project shows you for a child is one item in "Needs you", under that child, while the Project waits for your answer. If the child's own question is still open, that question is the item. A relay that ends without your answer isn't shown as an answer.
+- A child's report is the one it sent to the Project, else the copy that the app delivered to the Project; as in any swarm, a `task_complete` is the report when there is none, and replaces either when it is more than five minutes later. When the app tells the Project that one of a child's assignments ended with no report, the child's activity says "ended without a report", once per assignment among the records that the dashboard still holds; that is never its report.
+- A question that the Project shows you for a child is one item in "Needs you", under that child when the dashboard can tell which child it is, while the Project waits for your answer. If the child's own question is still open, that question is the item. A relay that ends without your answer isn't shown as an answer.
 - A schedule's row belongs to the session it runs in: one that the Project runs on itself is the Project's, and one on a child is that child's. The activity list says that a session set, ran or cleared a schedule, and names the child when the Project set it on one. A child session that only runs one of the Project's schedules isn't listed as a unit, but its cost counts in the swarm's.
 
 ## Open it
@@ -3262,8 +3313,8 @@ A Project that follows the `wintermute` plugin's `wintermute-project` skill uses
 
 - `blocked` is sent with `purpose: "error"`, which the dashboard reads as `blocked`. `needs_input` keeps `purpose: "needs_input"`.
 - A handoff (`complete`) has two lines: the status line and `Summary:`. A longer result is in a file that the summary links. `needs_input` and `error` reports keep all three fields.
-- The app delivers handoffs to the Project as `user.message` events with source `agent-coordinator-results`, which hold numbered JSON records. The dashboard reads each record as a received copy of the child's report, with `purpose: "handoff"`. The app's notice that an assignment ended with no report shows as "ended without a report", once per assignment, never as a report.
-- A question that the Project shows the user for a child with `relay_session_input` is a "Needs you" item for that child while the call is open, unless the child's own log shows the open question, which is then the item. A tag at the start of the call's `context` sets the kind of need, as for `ask_user`. Only a completion that succeeded with an answer counts as the user's answer.
+- The app delivers handoffs to the Project as `user.message` events with source `agent-coordinator-results`, which hold numbered JSON records. The dashboard reads each record as a received copy of the child's report, with `purpose: "handoff"`. The app's notice that an assignment ended with no report shows as "ended without a report", once per assignment among the retained records, never as a report.
+- A question that the Project shows the user for a child with `relay_session_input` is a "Needs you" item for that child, when its target resolves to one, while the call is open, unless the child's own log shows the open question, which is then the item. A tag at the start of the call's `context` sets the kind of need, as for `ask_user`. Only a completion that succeeded with an answer counts as the user's answer.
 
 ### Opening the dashboard
 
@@ -3368,3 +3419,68 @@ git push
 ```
 
 Hand off with the pushed commit for the regular review, the claims check and the final panel. The PR's description says that the user chose go at gate 2, in one sentence, with no session IDs or paths.
+
+---
+
+## Unit `eval-kit-pricing`
+
+Branch from `main`. Work only in `evals/orchestrator/expense-claims/`: nothing under `ghcp/plugins/` changes, so there is no plugin version bump. After Task 16, push, and hand off with the pushed commit for the regular review and the claims check.
+
+Fix these first: R4, FC-N2, FC-N3 (see "Open review findings to fix first").
+
+### Task 16: Make the GPT-6.2 card the scorer's default, safely
+
+This plan's PR added `pricing/2026-11-20.json` as a data file. `scripts/score.ts` still defaults to `pricing/2026-11-10.json` (the `pricing` option of its `parseArgs`), and `main`'s batch runner calls `score.ts` with no `--pricing` (`scoreRun` in `scripts/lib/batch/runner.ts`). This task makes the new card the default without letting a batch price a run with a card it didn't pin. It gives the required behaviour and the tests, not code: write the code test-first against them. Don't score the recorded row again.
+
+**Files:**
+- Modify: `scripts/lib/usage.ts` (one exported name for the default card), `scripts/score.ts` (the default card, and an expected digest it checks)
+- Modify: `scripts/lib/batch/state.ts` and `scripts/lib/batch/runner.ts` (record the card and its digest at `batch init`; pass both to `score.ts`)
+- Modify: `README.md` (the `pricing/` row of the layout table, and "Whole-swarm cost")
+- Test: `scripts/test/usage.test.ts`, `scripts/test/score.test.ts`, `scripts/test/batch-runner.test.ts`
+
+**Interfaces:**
+- Consumes: `readPricing` and `priceUsage` in `scripts/lib/usage.ts`; `sha256` in `scripts/lib/batch/pins.ts`; the two dated cards.
+- Produces: standalone scoring that uses `pricing/2026-11-20.json` unless given `--pricing`; batch state that records its card's file name and digest; results rows whose `pricing_version` names the card that priced them.
+
+- [ ] **Step 1: Write the failing tests**
+
+1. `scripts/test/usage.test.ts`: price `gpt-6.2-astra` and `gpt-6.2-sol` on `pricing/2026-11-20.json` with 100,000 cache-read, 50,000 cache-write and 10,000 output tokens, at 272,000 and at 272,001 input tokens. Expected USD: Astra 1.916 and 3.632016; Sol 0.479 and 0.908004. The rates per million input / cached input / cache write / output are Astra 8 / 0.40 / 10 / 40 and, above 272,000 input tokens, 16 / 0.80 / 20 / 60; Sol 2 / 0.10 / 2.50 / 10 and 4 / 0.20 / 5 / 15.
+2. `scripts/test/score.test.ts`: standalone scoring as the README documents it, with no `--pricing`, records `pricing_version` `2026-11-20:<sha256 of the card>`. Scoring with a card and an expected digest that doesn't match the bytes the scorer reads writes no row and exits non-zero; so does scoring with a card that can't be read.
+3. `scripts/test/batch-runner.test.ts`:
+   - a batch started on this code scores a run with its recorded card and digest;
+   - a batch state as `main`'s code writes it, with no card recorded, scores with `pricing/2026-11-10.json` and its digest;
+   - when the card's bytes change after the runner's check and before the scorer reads them, no row is written and the run is flagged `score-failed`;
+   - `score.ts` called with `main`'s runner arguments (`--repo-dir`, `--session`, `--state-dir`, `--results` and `--note`, no `--pricing`) never writes a row priced with the new card: it uses `pricing/2026-11-10.json` or stops without writing, as Step 3 decides;
+   - after the upgrade, a batch started on `main`'s code admits no further run, because its pinned files changed.
+
+- [ ] **Step 2: Run them to see them fail**
+
+Run: `npm test` from `evals/orchestrator/expense-claims/`
+
+Expected: FAIL, in the new tests only.
+
+- [ ] **Step 3: Implement**
+
+Make the tests pass. Decide how `score.ts` tells a call by an older batch driver from standalone use, and write the rule in the README. One way: keep the implicit default inside `score.ts` at `pricing/2026-11-10.json`, have the `score` npm script pass the new card, and have the new runner always pass the batch's card with its digest.
+
+- [ ] **Step 4: Update the README**
+
+In "Whole-swarm cost", say which card is the default for standalone scoring and for new batches; that a batch records its card when it starts and every run in it is priced with exactly those bytes; what an older batch's runs use; that a batch started before the change admits no more runs once its checkout updates; and that a card that changes during a batch stops that run's scoring. Update the `pricing/` row of the layout table.
+
+- [ ] **Step 5: Run every check**
+
+```bash
+npm test && npm run check
+```
+
+Run from `evals/orchestrator/expense-claims/`. Never run npm under `env -i` or with a scratch `HOME`. Expected: PASS, with the new tests, and `npm run check` with 0 failed.
+
+- [ ] **Step 6: Commit, push and hand off**
+
+```bash
+git add scripts README.md
+git commit -m "eval: make the GPT-6.2 rate card the scorer's default, pinned per batch"
+git push
+```
+
+Run from `evals/orchestrator/expense-claims/`. Hand off with the pushed commit for the regular review and the claims check.

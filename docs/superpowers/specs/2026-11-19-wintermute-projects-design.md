@@ -613,7 +613,7 @@ The repository then keeps only these differences from before Phase 1: the two CH
 
 ### 8.17 Evals
 
-The kit's variants and the `eval-runner` agent don't change. The smoke check is not an eval run. The user chose the kit's expense-claims v2 task as the real task and ran it in a Project, so the kit scored it: its row is in `results.csv` with the variant `wintermute-project`, and the kit's rate card gained the GPT-6.2 rates that the row's cost needs.
+The kit's variants and the `eval-runner` agent don't change. The smoke check is not an eval run. The user chose the kit's expense-claims v2 task as the real task and ran it in a Project, so the kit scored it: its row is in `results.csv` with the variant `wintermute-project`, and the kit gained a dated rate card, `pricing/2026-11-20.json`, with the GPT-6.2 rates that the row's cost needs. Phase 2's `eval-kit-pricing` unit makes that card the scorer's default.
 
 ### 8.18 Index of designer's calls
 
