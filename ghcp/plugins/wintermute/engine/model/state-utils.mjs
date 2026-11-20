@@ -18,8 +18,8 @@ export function pushBounded(list, item, max) {
 }
 
 /** A feed entry. `source` is the stable id of the event being applied (see eventSource in session-state.mjs). */
-export function addFeed(state, at, kind, text) {
-  pushBounded(state.feed, { at, kind, text: oneLine(text, 200), source: state.source ?? `${state.id}#${state.lines}` }, LIMITS.feed);
+export function addFeed(state, at, kind, text, extra = null) {
+  pushBounded(state.feed, { at, kind, text: oneLine(text, 200), source: state.source ?? `${state.id}#${state.lines}`, ...extra }, LIMITS.feed);
 }
 
 export function addMark(state, at, kind, text, status = null) {

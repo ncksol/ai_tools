@@ -21,7 +21,7 @@ home.chat({ id: 'chat-1', parentSessionId: 'cli-root-2', title: 'Research chat',
 home.session({ id: 'chat-root', title: 'Chat orchestrator', createdAt: T0 + 5000 });
 home.workspace({ id: 'ws-d', name: 'Chat child', createdAt: T0 + 6000, creatorSessionId: 'chat-root' });
 home.workspace({ id: 'ws-solo', name: 'Solo', createdAt: T0 + 7000 });
-home.automation({ sessionId: 'ws-a', nextRunAt: T0 + 600_000 });
+home.automation({ sessionId: 'ws-a', ownerSessionId: 'cli-root-2', nextRunAt: T0 + 600_000 });
 
 /** A fake db that answers SCHEMA_SQL from `missing` ({table: [columns]}; true drops the table) and records every SQL string. */
 function fakeDb({ missing = {}, rows = {} } = {}) {
@@ -67,7 +67,10 @@ for (const backend of TEST_BACKENDS) {
     assert.deepEqual(app.diagnostics, []);
     assert.equal(app.projects.get('project-1').name, 'sample-project');
     assert.equal(app.workspaces.get('ws-b').archivedAt, T0 + 9000);
-    assert.deepEqual(app.automations, [{ sessionId: 'ws-a', interval: 'minutes', everyMinutes: 10, lastRunAt: null, nextRunAt: T0 + 600_000, pausedAt: null, name: 'PR monitor' }]);
+    assert.deepEqual(app.automations, [{
+      sessionId: 'ws-a', interval: 'minutes', everyMinutes: 10, lastRunAt: null, nextRunAt: T0 + 600_000,
+      pausedAt: null, name: 'PR monitor', ownerSessionId: 'cli-root-2',
+    }]);
 
     const forest = buildForest(app);
     assert.deepEqual(forest.roots.map(root => root.id), ['chat-root', 'ws-root']);
@@ -94,6 +97,20 @@ test('a missing table becomes a warning and an empty list', async () => {
   const app = await readAppDb(fakeDb({ missing: { session_automations: true } }));
   assert.deepEqual(app.automations, []);
   assert.deepEqual(app.diagnostics, [{ level: 'warn', source: 'data.db', message: 'automations: table session_automations not found' }]);
+});
+
+test('a schedule row can be read from an older app schema with no owner column', async () => {
+  const file = path.join(tempDir('schedule-schema-'), 'data.db');
+  execSql(file, `
+    CREATE TABLE session_automations (session_id TEXT PRIMARY KEY, interval TEXT, every_minutes INTEGER);
+    INSERT INTO session_automations VALUES ('sample-session', 'minutes', 10);
+  `);
+  const app = await withReadOnly(file, {}, readAppDb);
+  assert.deepEqual(app.automations, [{
+    sessionId: 'sample-session', interval: 'minutes', everyMinutes: 10, lastRunAt: null,
+    nextRunAt: null, pausedAt: null, name: null, ownerSessionId: null,
+  }]);
+  assert.ok(!app.diagnostics.some(item => item.level === 'warn' && item.message.startsWith('automations:')));
 });
 
 test('missing optional columns are read as empty', async () => {

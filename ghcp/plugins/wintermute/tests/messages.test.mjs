@@ -59,7 +59,7 @@ test('monitor schedules and completed tasks are recorded', () => {
   assert.deepEqual(state.automation.saves.map(save => [save.at, save.clear, save.everyMinutes]), [[T0, false, 10], [T0 + 60_000, true, null]]);
   assert.deepEqual(state.taskCompletes.map(task => [task.success, task.summary]), [[true, 'Merged PR !4321 after review.'], [false, 'Could not finish.']]);
   assert.equal(state.prMentions.get('ado::4321').count, 1);
-  assert.deepEqual(state.feed.map(item => item.text), ['started a PR monitor (every 10 min)', 'stopped its PR monitor', 'completed a task', 'reported a failed task']);
+  assert.deepEqual(state.feed.map(item => item.text), ['set a schedule (every 10 min)', 'cleared a schedule', 'completed a task', 'reported a failed task']);
 });
 
 test('mergeStates combines the CLI sessions of one project session', () => {

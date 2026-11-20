@@ -6,6 +6,20 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.5.1 — 2026-11-20
+
+### Added
+
+- When a Copilot app Project sets or clears a schedule, the feed names the child only if the save passes the child's `session_id`. The entry appears under the Project's activity, while the schedule row belongs to the child.
+
+### Fixed
+
+- The feed says a session set, ran or cleared a schedule. A pending, failed or aborted save no longer adds a feed entry, sets a displayed interval or moves a PR into review.
+
+### Known limitations
+
+- Linked schedule sessions still appear as units and count toward swarm cost. The app records who owns the schedule, but that does not establish why the session was created (Projects design U12).
+
 ## 1.5.0 — 2026-11-20
 
 ### Added

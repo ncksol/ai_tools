@@ -96,8 +96,8 @@ function checkMonitor(snapshot, unit, now) {
   if (monitor.state !== 'alive' || !monitor.nextCheckAt || monitor.nextCheckAt > now) return;
   monitor.lastCheckAt = now;
   monitor.nextCheckAt = now + (monitor.everyMinutes ?? 10) * MIN;
-  unit.timeline.marks.push({ at: now, kind: 'monitor', text: 'PR monitor check', status: null });
-  addFeed(snapshot, unit, 'monitor-check', 'PR monitor check', now);
+  unit.timeline.marks.push({ at: now, kind: 'monitor', text: 'Schedule ran', status: null });
+  addFeed(snapshot, unit, 'monitor-check', 'ran a schedule', now);
 }
 
 /** One simulated step: due monitor checks, cost on an active session, and sometimes a sub-agent change or a report. */

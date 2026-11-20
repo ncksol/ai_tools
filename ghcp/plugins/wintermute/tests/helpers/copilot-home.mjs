@@ -106,11 +106,11 @@ export class CopilotHome {
     }
   }
 
-  automation({ sessionId, everyMinutes = 10, lastRunAt = null, nextRunAt = null, pausedAt = null, name = 'PR monitor' }) {
+  automation({ sessionId, ownerSessionId = sessionId, everyMinutes = 10, lastRunAt = null, nextRunAt = null, pausedAt = null, name = 'PR monitor' }) {
     this.insert(this.dataDb, 'session_automations', {
       session_id: sessionId, prompt: 'synthetic monitor prompt', interval: 'minutes', every_minutes: everyMinutes, schedule_hour: null,
       schedule_day: null, last_run_at: iso(lastRunAt), next_run_at: iso(nextRunAt), updated_at: iso(lastRunAt ?? nextRunAt), name,
-      owner_session_id: sessionId, paused_at: iso(pausedAt),
+      owner_session_id: ownerSessionId, paused_at: iso(pausedAt),
     });
   }
 

@@ -767,7 +767,8 @@ function onToolStart(state, data, at) {
   // A repeated start for a sub-agent that was evicted from the details changes nothing: no details, counts, feed or open tool.
   if (name === 'task' && !state.subagents.has(id) && state.subagentIndex.has(id)) return;
   const args = argsOf(data.arguments);
-  state.openTools.set(id, { id, name, startedAt: at, args: toolArgs(name, args) });
+  const tool = { id, name, startedAt: at, args: toolArgs(name, args) };
+  state.openTools.set(id, tool);
   pushBounded(state.recent.calls, { at, name, key: callKey(name, data.arguments), prompt: state.prompts }, LIMITS.recent);
   const kind = WAIT_TOOLS.get(name);
   if (kind) {
@@ -799,7 +800,7 @@ function onToolStart(state, data, at) {
       else addFeed(state, at, 'subagent-start', text);
     }
   } else {
-    recordToolStart(state, name, args, id, at);
+    recordToolStart(state, tool, args);
   }
 }
 
@@ -856,7 +857,7 @@ function onToolComplete(state, data, at) {
       finishEvicted(state, record, at, null, data.success === false ? 'failed' : 'completed');
     }
   }
-  recordToolComplete(state, id, data);
+  recordToolComplete(state, id, data, at, tool);
 }
 
 /** The completion of the task call that started a nested sub-agent: it ends a failed or sync one that no lifecycle event covers. */

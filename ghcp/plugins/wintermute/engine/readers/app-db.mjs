@@ -18,7 +18,7 @@ export const APP_TABLES = Object.freeze({
   aliases: table('workspace_session_aliases', ['session_id', 'workspace_id', 'created_at'], ['session_id', 'workspace_id']),
   chatLinks: table('chat_parent_links', ['session_id', 'parent_session_id'], ['session_id', 'parent_session_id']),
   sessions: table('sessions', ['id', 'title', 'mode', 'model', 'reasoning_effort', 'is_running', 'was_interrupted', 'created_at', 'archived_at', 'agent'], ['id']),
-  automations: table('session_automations', ['session_id', 'interval', 'every_minutes', 'last_run_at', 'next_run_at', 'paused_at', 'name'], ['session_id']),
+  automations: table('session_automations', ['session_id', 'interval', 'every_minutes', 'last_run_at', 'next_run_at', 'paused_at', 'name', 'owner_session_id'], ['session_id']),
 });
 
 /** Lists the existing columns of exactly the tables in APP_TABLES. */
@@ -89,6 +89,8 @@ export async function readAppDb(db) {
     automations: rows.automations.map(row => ({
       sessionId: row.session_id, interval: text(row.interval), everyMinutes: count(row.every_minutes),
       lastRunAt: parseTime(row.last_run_at), nextRunAt: parseTime(row.next_run_at), pausedAt: parseTime(row.paused_at), name: text(row.name),
+      // Ownership does not prove that the target session was created for the schedule (Projects design U12).
+      ownerSessionId: text(row.owner_session_id),
     })),
     diagnostics,
   };
