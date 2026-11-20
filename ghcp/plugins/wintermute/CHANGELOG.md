@@ -6,6 +6,12 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.5.3 — 2026-11-20
+
+### Fixed
+
+- `wintermute-core` archives children it kept after their job was done. Reviewers, final panel judges, merged owners and one-offs with a planned follow-up each stayed until a later event, but no rule archived them when that event came, so they stayed until the user asked for a clean-up. Each kept child now has a keep reason in `child_notes` that names its release event. A cleanup sweep runs when a PR merges, a unit ends, the final panel passes, a planned follow-up finishes, the user says work is done or dropped, and after a resume or compaction. It archives every due child, including any claims checker whose verdict is recorded, after the usual safety checks and without asking. A merged owner whose final panel has already passed, or whose PR was the last one, is archived at once.
+
 ## 1.5.2 — 2026-11-20
 
 ### Fixed
