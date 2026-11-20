@@ -209,7 +209,8 @@ test('the orchestrator records a keep reason and archives kept children in a cle
   assert.ok(sweep.includes('every claims checker whose verdict you recorded (see "Claims check"), the reviewers, judges and helpers of a unit that ended'));
   assert.ok(!keep.includes('claims checker'), 'claims checkers have no keep reason');
   assert.ok(sweep.includes('Don\'t ask the user first.'));
-  assert.ok(sweep.includes('It has no open job when its latest report is `complete`, you have sent it no work since, and nothing it raised (a `needs_input` or `blocked` report, or a question for the user) is still waiting. Its unit\'s `outcome` doesn\'t decide this'));
+  assert.ok(sweep.includes('It has no open job when its latest report is `complete`, you have sent it no work since, and nothing it raised (a `needs_input` or `blocked` report, or a question for the user) is still waiting, or when its unit ended `closed` or `failed`. A `merged` outcome doesn\'t decide this'));
+  assert.ok(sweep.includes('every other child that is due.'));
   assert.doesNotMatch(sweep, /or its unit has ended\)/);
   assert.ok(text.includes('If the panel has already passed, or this was the last PR, nothing holds it: archive it in the cleanup sweep now.'));
   assert.ok(text.includes('reconcile what changed in the meantime. Then run the cleanup sweep (see "Lifecycle").'));
