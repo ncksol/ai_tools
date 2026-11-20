@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createSwarmEngine } from '../engine/engine.mjs';
 import { createHistoryStore } from '../engine/model/history.mjs';
 import { createPrLookup } from '../engine/model/pr-lookup.mjs';
+import { LIMITS } from '../engine/model/state-utils.mjs';
 import { SUMMARY_RULES, validateRunListItem, validateRunSummary, validateSnapshot, validateSwarmListItem } from '../engine/schema.mjs';
 import { HOUR, MINUTE } from '../engine/time.mjs';
 import { CopilotHome } from './helpers/copilot-home.mjs';
@@ -94,6 +95,74 @@ test('the engine follows a swarm from live to history without writing Copilot da
   const after = new Map(fingerprint(home.root));
   assert.deepEqual([...after.keys()], before.map(([file]) => file));
   for (const [file, hash] of before) if (!file.endsWith('events.jsonl')) assert.equal(after.get(file), hash, file);
+});
+
+test('a root-owned schedule does not change nested session membership or cost', async () => {
+  const home = new CopilotHome();
+  home.chat({ id: 'project', title: 'Sample Project', createdAt: T0 });
+  execSql(home.dataDb, "CREATE TABLE IF NOT EXISTS persistent_projects (session_id TEXT PRIMARY KEY); INSERT INTO persistent_projects VALUES ('project');");
+  home.chat({ id: 'scheduled', parentSessionId: 'project', title: 'Scheduled work', createdAt: at(1) });
+  home.workspace({ id: 'ws-task', sessionId: 'cli-task', creatorSessionId: 'scheduled', name: 'Ordinary child', createdAt: at(2) });
+  home.automation({ sessionId: 'scheduled', ownerSessionId: 'project', nextRunAt: at(11), name: 'Sample schedule' });
+
+  const root = new EventLog(T0);
+  root.start();
+  root.at(at(1));
+  const start = root.tool('create_session', { name: 'Scheduled work' });
+  root.done(start, { result: "Created session 'Scheduled work' (id: scheduled)." });
+  root.at(at(3));
+  for (let i = 0; i < LIMITS.created; i += 1) {
+    root.done(root.tool('create_session', { name: `Example ${i}` }), { result: `Created session 'Example ${i}' (id: example-${i}).` });
+  }
+  home.writeEvents('project', root.events);
+  home.usage([
+    { sessionId: 'project', nanoAiu: 1e9, createdAt: at(4) },
+    { sessionId: 'scheduled', nanoAiu: 2e9, createdAt: at(4) },
+    { sessionId: 'cli-task', nanoAiu: 4e9, createdAt: at(4) },
+  ]);
+
+  const engine = createSwarmEngine({
+    copilotHome: home.root, historyDir: path.join(tempDir(), 'history'), now: () => at(180), prLookup: 'off',
+  });
+  try {
+    await engine.refresh();
+    const [listing] = engine.listSwarms();
+    assert.deepEqual([listing.id, listing.units, listing.credits], ['project', 2, 7]);
+    const [unsummarized] = await engine.listHistory();
+    assert.deepEqual([unsummarized.summarized, unsummarized.children, unsummarized.credits], [false, 2, 7]);
+
+    const checkMembership = async everyMinutes => {
+      const snapshot = await engine.getSnapshot('project');
+      assert.ok(snapshot, 'the nested swarm has a snapshot even without retained creation evidence');
+      assert.deepEqual(validateSnapshot(snapshot), []);
+      assert.deepEqual(snapshot.units.map(unit => [unit.id, unit.parentId]), [['scheduled', 'project'], ['ws-task', 'scheduled']]);
+      assert.equal(snapshot.cost.credits, 7);
+      assert.equal(snapshot.units[0].monitor.everyMinutes, everyMinutes);
+    };
+    await checkMembership(10);
+    const [history] = await engine.listHistory();
+    assert.deepEqual([history.summarized, history.children, history.credits], [true, 2, 7]);
+    const summary = await engine.getRunSummary('project');
+    assert.deepEqual(summary.units.map(unit => unit.id), ['project', 'scheduled', 'ws-task']);
+
+    const appendSave = (time, args) => {
+      const offset = root.events.length;
+      root.at(time);
+      root.done(root.tool('save_session_automation', { session_id: 'scheduled', ...args }));
+      home.writeEvents('project', root.events.slice(offset), { append: true });
+    };
+    appendSave(at(10), { interval: 'minutes', every_minutes: 20, prompt: 'Check the sample work' });
+    execSql(home.dataDb, "UPDATE session_automations SET every_minutes = 20 WHERE session_id = 'scheduled'");
+    await engine.refresh();
+    await checkMembership(20);
+
+    appendSave(at(20), { clear: true });
+    execSql(home.dataDb, "DELETE FROM session_automations WHERE session_id = 'scheduled'");
+    await engine.refresh();
+    await checkMembership(null);
+  } finally {
+    engine.stop();
+  }
 });
 
 test('findSwarm maps any session of a swarm to its root', async () => {
