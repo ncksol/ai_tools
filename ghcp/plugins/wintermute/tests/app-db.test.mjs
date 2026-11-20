@@ -134,6 +134,30 @@ test('a missing required column skips the table', async () => {
   assert.deepEqual(app.diagnostics, [{ level: 'warn', source: 'data.db', message: 'parentLinks: missing column(s) parent_workspace_id' }]);
 });
 
+test('Copilot app Projects are read from persistent_projects: a missing or reshaped table is quiet, a failed read is not', async () => {
+  const rows = { persistent_projects: [{ session_id: 'project-a' }, { session_id: '' }, { session_id: 'project-b' }] };
+  assert.deepEqual([...(await readAppDb(fakeDb({ rows }))).persistentProjects], ['project-a', 'project-b']);
+
+  const gone = await readAppDb(fakeDb({ missing: { persistent_projects: true } }));
+  assert.deepEqual([...gone.persistentProjects], []);
+  assert.deepEqual(gone.diagnostics, []);
+
+  const schema = (await fakeDb().all(SCHEMA_SQL)).filter(row => row.table_name !== 'persistent_projects');
+  const reshaped = await readAppDb({ all: async sql => (sql === SCHEMA_SQL ? [...schema, { table_name: 'persistent_projects', column_name: 'agent_id' }] : []) });
+  assert.deepEqual([...reshaped.persistentProjects], []);
+  assert.deepEqual(reshaped.diagnostics, []);
+
+  const failing = await readAppDb({
+    all: async sql => {
+      if (sql === SCHEMA_SQL) return fakeDb().all(sql);
+      if (/FROM persistent_projects/.test(sql)) throw new Error('database is locked');
+      return [];
+    },
+  });
+  assert.deepEqual([...failing.persistentProjects], []);
+  assert.deepEqual(failing.diagnostics, [{ level: 'warn', source: 'data.db', message: 'persistentProjects: database is locked' }]);
+});
+
 for (const backend of TEST_BACKENDS) {
   test(`${backend}: a minimal database degrades instead of failing`, async () => {
     const file = path.join(tempDir('swarm-minimal-'), 'data.db');
