@@ -19,7 +19,7 @@ import {
   type ResultRow,
 } from "./lib/results.ts";
 import { KIT_DIR, ROBUSTNESS_TIMEOUT_MS, robustnessFiles, robustnessSha256, runSuite, suiteFiles } from "./lib/suite.ts";
-import { collectUsage, DEFAULT_PRICING, readPricing, type UsageSummary } from "./lib/usage.ts";
+import { collectUsage, readPricing, type UsageSummary } from "./lib/usage.ts";
 import { variantLabel } from "./lib/variants.ts";
 
 const USAGE = `Usage:
@@ -51,7 +51,7 @@ const { values } = parseArgs({
     session: { type: "string" },
     "state-dir": { type: "string", default: join(homedir(), ".copilot", "session-state") },
     "app-db": { type: "string", default: join(homedir(), ".copilot", "data.db") },
-    pricing: { type: "string", default: join(KIT_DIR, "pricing", DEFAULT_PRICING) },
+    pricing: { type: "string", default: join(KIT_DIR, "pricing", "2026-11-10.json") },
     "agent-revision": { type: "string" },
     "agent-sha256": { type: "string" },
     "agent-bundle-sha256": { type: "string" },

@@ -5,7 +5,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Feature } from "../features.ts";
 import { KIT_DIR } from "../suite.ts";
-import { DEFAULT_PRICING } from "../usage.ts";
 import { LIVE_VARIANTS, liveAgent, variantAgents, type VariantSet } from "../variants.ts";
 import type { PolicyCalibration } from "./plan.ts";
 
@@ -250,9 +249,6 @@ export interface BatchState {
   // The driver session that runs this batch. Another driver is refused while this one is alive.
   owner: { id: string; since: string; lastSeenAt: string } | null;
   pins: Pins;
-  // The rate card in pricing/ that scores every run of this batch, chosen when it started. Absent in a batch created before
-  // batches recorded it, which keeps the default of that time (see pricingCard in runner.ts).
-  pricing?: string;
   pending: PendingAction | null;
   actionSeq: number;
   recorded: string[];
@@ -434,7 +430,6 @@ export function initialState(pins: Pins, _selfTest: boolean, now: string): Batch
   return {
     phase: "provisioning",
     pins,
-    pricing: DEFAULT_PRICING,
     pending: null,
     actionSeq: 0,
     recorded: [],

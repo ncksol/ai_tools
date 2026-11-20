@@ -13,7 +13,6 @@ import { ALL_FEATURES, featureSetName, stripFeatures } from "../features.ts";
 import { runName } from "../new-run.ts";
 import type { ProcResult } from "../proc.ts";
 import { readResults } from "../results.ts";
-import { LEGACY_BATCH_PRICING } from "../usage.ts";
 import { liveAgent, variantAgents, variantBundle, variantFiles, verifyVariants } from "../variants.ts";
 import { readAnswerSheet, replyFor, rowForQuestion, settleRow, type AnswerRow } from "./answers.ts";
 import type { AppDb } from "./appdb.ts";
@@ -22,7 +21,7 @@ import { openCleanupApp } from "./cleanup-io.ts";
 import { scanSession, scanSwarm } from "./hygiene.ts";
 import { claimActive, releaseActive } from "./lock.ts";
 import { notices, type Notice } from "./notify.ts";
-import { agentBundleSha256, agentsToPin, computePins, diffPins, readAgentRevision, sha256 } from "./pins.ts";
+import { agentBundleSha256, agentsToPin, computePins, diffPins, readAgentRevision } from "./pins.ts";
 import { calibrationDecision, describePlan, nextRunNumber, planRound, provisionPlan, runRowFor, scoredCount } from "./plan.ts";
 import { buildReport } from "./report.ts";
 import {
@@ -1363,32 +1362,8 @@ function archiveRunLogs(ctx: Ctx, run: RunState): void {
   } else log(ctx, `${run.key} logs archived in ${join(ctx.config.dir, "sessions", run.name)}`);
 }
 
-/**
- * The rate card that scores this batch's runs: the one it recorded when it started, or, for a batch created before batches recorded
- * one, the default of that time. Its content must still be the one pinned when the batch started, so a card or a default that
- * changes while a run is in flight never prices that run.
- */
-export function pricingCard(config: BatchConfig, state: BatchState): { path: string } | { error: string } {
-  const name = state.pricing ?? LEGACY_BATCH_PRICING;
-  const label = join("pricing", name);
-  const path = join(config.kitDir, label);
-  const pinned = state.pins.files[label];
-  if (!pinned) return { error: `${label} was not pinned when the batch started` };
-  if ((existsSync(path) ? sha256(path) : "missing") !== pinned) return { error: `${label} changed since the batch started` };
-  return { path };
-}
-
 async function scoreRun(ctx: Ctx, state: BatchState, run: RunState): Promise<void> {
   const { config, deps } = ctx;
-  const card = pricingCard(config, state);
-  if ("error" in card) {
-    run.scoredAt = iso(deps.now());
-    state.scoreFailures++;
-    addFlag(run, "score-failed", `not scored: ${card.error}; score it by hand with --pricing and the batch's card once that is settled`, run.scoredAt);
-    run.status = "scored";
-    log(ctx, `${run.key} not scored: ${card.error}`);
-    return;
-  }
   findAnswerSource(ctx, run);
   {
     const variant = config.variantSet?.variants[run.variant];
@@ -1407,7 +1382,7 @@ async function scoreRun(ctx: Ctx, state: BatchState, run: RunState): Promise<voi
   scanHygiene(ctx, run);
   run.note = noteFor(config, run);
   const args = [config.scoreScript, "--repo-dir", run.repoDir, "--session", run.sessionId ?? "", "--state-dir", config.stateDir, "--results", config.resultsPath, "--note", run.note];
-  args.push("--app-db", config.appDb, "--calibration", run.calibration ? "yes" : "no", "--pricing", card.path);
+  args.push("--app-db", config.appDb, "--calibration", run.calibration ? "yes" : "no");
   if (run.agentSha256 && run.agentBundleSha256) {
     const revision = config.variantSet ? config.variantSet.variants[run.variant].revision : run.agentRevision;
     if (revision) args.push("--agent-revision", revision);
