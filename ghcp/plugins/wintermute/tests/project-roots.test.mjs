@@ -220,9 +220,11 @@ for (const backend of TEST_BACKENDS) {
     assert.equal(await readProjectOptIn(other, { backend }), null);
     execSql(other, 'CREATE TABLE wintermute_project (at TEXT, state TEXT)');
     assert.equal(await readProjectOptIn(other, { backend }), null);
-    for (const value of ['NULL', "''", '2']) {
+    // A table without the skill's CHECK can hold anything; only an integer 0 or 1 in the latest row counts, on every backend.
+    for (const value of ['NULL', "''", '2', "x'31'", '9223372036854775807']) {
       const loose = home.sessionDb(`loose-${value.length}`);
-      execSql(loose, `CREATE TABLE wintermute_project (at TEXT, enabled INTEGER); INSERT INTO wintermute_project VALUES ('2026-10-15T08:00:00Z', ${value})`);
+      execSql(loose, `CREATE TABLE wintermute_project (at TEXT, enabled INTEGER);
+        INSERT INTO wintermute_project VALUES ('2026-10-15T07:00:00Z', 1), ('2026-10-15T08:00:00Z', ${value})`);
       assert.equal(await readProjectOptIn(loose, { backend }), null, value);
     }
   });
