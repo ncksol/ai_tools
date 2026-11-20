@@ -342,7 +342,7 @@ test('the last finished refresh, and when the wait for the next one began, outli
   }
 });
 
-test('a read waiting on an engine that is replaced is answered by the new engine; one waiting when the hub closes fails as retriable', async () => {
+test('a read waiting on an engine that is replaced is answered by the new engine; one waiting when the hub closes fails as retriable', { timeout: 5000 }, async () => {
   const first = controlledEngine('A', { lastRefreshAt: 1111 }, { getRunSummary: () => new Promise(() => {}) });
   const second = controlledEngine('B', {}, { getRunSummary: async id => ({ id, from: 'B' }) });
   const engines = [first, second];
