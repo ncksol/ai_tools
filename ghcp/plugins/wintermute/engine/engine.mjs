@@ -90,7 +90,9 @@ const byLifecycleThenActivity = (a, b) => (a.lifecycle === b.lifecycle ? b.lastA
  * @param {import('./schema.mjs').EngineOptions & {
  *   processProbe?: (locks: {pid: number, mtimeMs: number}[]) => Promise<Map<number, boolean>>,
  *   historyStore?: ReturnType<typeof createHistoryStore>,
- * }} options `historyStore` is a test seam: the store to use instead of one on `historyDir`.
+ *   sqliteReader?: ReturnType<typeof createSqliteReader>,
+ * }} options `historyStore` and `sqliteReader` are test seams: the store to use instead of one on `historyDir`, and the
+ *   SQLite reader to use instead of one for the `sqlite` backend.
  * @returns {import('./schema.mjs').SwarmEngine}
  */
 export function createSwarmEngine(options = {}) {
@@ -99,7 +101,7 @@ export function createSwarmEngine(options = {}) {
   const now = options.now ?? Date.now;
   const thresholds = resolveThresholds(options.thresholds);
   const sqlite = { backend: options.sqlite ?? 'auto' };
-  const reader = createSqliteReader(sqlite);
+  const reader = options.sqliteReader ?? createSqliteReader(sqlite);
   const log = item => {
     try {
       if (typeof options.log === 'function') options.log(item);
@@ -459,8 +461,8 @@ export function createSwarmEngine(options = {}) {
    * Builds a tracked root's snapshot. Resolves `{ snapshot, complete }`: `complete` is true only when this refresh read every
    * source the snapshot uses, so a summary of it may be marked checked (see persistFinished). It is false when a session's log
    * or session.db could not be read (the last good value was used), when a PR's first lookup has not finished (its outcome is
-   * not known yet), or `globalsRead` is false (data.db failed). `costsIncomplete` holds the CLI sessions whose cost is not
-   * complete (see readCosts), so a summary built from them never replaces the last good one.
+   * not known yet), or `globalsRead` is false (data.db, or one of its tables, failed to read). `costsIncomplete` holds the CLI
+   * sessions whose cost is not complete (see readCosts), so a summary built from them never replaces the last good one.
    * `shared` holds engine-wide and this root's cost diagnostics. The snapshot adds the notes from reading this root's
    * sessions; those notes are also added to `diag`, the engine's list.
    */
@@ -578,7 +580,7 @@ export function createSwarmEngine(options = {}) {
     const sequence = ++refreshes;
     const at = now();
     const diag = [];
-    // False once data.db fails to read; a database that is not found is not a failure.
+    // False once data.db, or one of its tables, fails to read; a database or table that is not found is not a failure.
     let globalsRead = true;
     if (sqlite.backend === 'auto') {
       diag.push({ level: 'info', source: 'sqlite', message: (await loadNodeSqlite()) ? 'Reading SQLite through node:sqlite.' : 'Reading SQLite through the sqlite3 command-line tool.' });
@@ -586,6 +588,10 @@ export function createSwarmEngine(options = {}) {
     try {
       const data = await reader.read(paths.dataDb, readAppDb);
       if (data) {
+        // A partial read must not replace a stored summary: a Project read as empty would lose the run's project. The last good
+        // Projects are kept, so the run shows as before until the next good read.
+        if (data.failed.size) globalsRead = false;
+        if (data.failed.has('persistentProjects') && app) data.persistentProjects = app.persistentProjects;
         app = data;
         diag.push(...data.diagnostics);
       } else {

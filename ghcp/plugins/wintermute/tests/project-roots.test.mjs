@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createSwarmEngine } from '../engine/engine.mjs';
 import { SUMMARY_RULES } from '../engine/schema.mjs';
+import { createSqliteReader } from '../engine/sqlite.mjs';
 import { buildForest, rootProjectId } from '../engine/model/forest.mjs';
 import { CopilotHome } from './helpers/copilot-home.mjs';
 import { EventLog } from './helpers/event-log.mjs';
@@ -129,3 +130,75 @@ test("a Project run's summary saved under older rules is rebuilt with the projec
   assert.deepEqual([rebuilt.project, rebuilt.rules], [{ id: 'repo-1', name: 'sample-repo' }, SUMMARY_RULES]);
   engine.stop();
 });
+
+/** The engine's SQLite reader, except that a data.db read of a table in `locked` fails, as a read of a busy database can. */
+function lockingReader(dataDb, locked) {
+  const reader = createSqliteReader();
+  const guard = db => ({
+    all: async sql => {
+      if (locked.has(/\bFROM (\w+)$/.exec(sql)?.[1])) throw new Error('database is locked');
+      return db.all(sql);
+    },
+  });
+  return { read: (file, fn) => reader.read(file, file === dataDb ? db => fn(guard(db)) : fn), retain: files => reader.retain(files), close: () => reader.close() };
+}
+
+test('a failed read of the Project table keeps the last good Projects, with a warning, until the next good read', async () => {
+  const home = new CopilotHome();
+  home.persistentProject({ id: 'p-team', title: 'Team', createdAt: T0 });
+  home.project({ id: 'repo-1', name: 'sample-repo' });
+  home.workspace({ id: 'ws-a', projectId: 'repo-1', name: 'a: API', createdAt: T0 + 1000, creatorSessionId: 'p-team' });
+  const locked = new Set();
+  const engine = createSwarmEngine({
+    copilotHome: home.root, persistHistory: false, now: () => T0 + 10_000, processProbe: alwaysAlive, prLookup: 'off', sqliteReader: lockingReader(home.dataDb, locked),
+  });
+  const shown = async () => [engine.listSwarms().map(swarm => swarm.project?.id ?? null), (await engine.getSnapshot('p-team')).run.project?.id ?? null];
+  const warnings = () => engine.diagnostics().filter(item => item.source === 'data.db' && item.level === 'warn').map(item => item.message);
+  await engine.refresh();
+  assert.deepEqual(await shown(), [['repo-1'], 'repo-1']);
+  locked.add('persistent_projects');
+  await engine.refresh();
+  assert.deepEqual(await shown(), [['repo-1'], 'repo-1']);
+  assert.deepEqual(warnings(), ['persistentProjects: database is locked']);
+  locked.clear();
+  await engine.refresh();
+  assert.deepEqual(await shown(), [['repo-1'], 'repo-1']);
+  assert.deepEqual(warnings(), []);
+  engine.stop();
+});
+
+for (const table of ['persistent_projects', 'projects']) {
+  test(`a refresh that cannot read ${table} never replaces a run's stored summary, and the next good read rebuilds it`, async () => {
+    const home = new CopilotHome();
+    const old = T0 - 30 * DAY;
+    home.persistentProject({ id: 'p-old', title: 'Old', createdAt: old });
+    home.project({ id: 'repo-1', name: 'sample-repo' });
+    home.workspace({ id: 'ws-a', projectId: 'repo-1', name: 'a: API', createdAt: old + 1000, creatorSessionId: 'p-old' });
+    home.usage([{ sessionId: 'p-old', nanoAiu: 1e9, createdAt: old + 2000 }, { sessionId: 'ws-a', nanoAiu: 1e9, createdAt: old + 3000 }]);
+    const historyDir = path.join(tempDir('project-roots-'), 'history');
+    const stored = path.join(historyDir, 'runs', 'p-old.json');
+    const saved = () => {
+      const { project, rules } = JSON.parse(readFileSync(stored, 'utf8'));
+      return [project?.id ?? null, rules];
+    };
+    const locked = new Set();
+    const open = () => createSwarmEngine({
+      copilotHome: home.root, historyDir, now: () => T0, processProbe: alwaysAlive, prLookup: 'off', sqliteReader: lockingReader(home.dataDb, locked),
+    });
+    let engine = open();
+    await engine.getRunSummary('p-old');
+    engine.stop();
+    // A good summary that is due for a rebuild under newer rules.
+    writeFileSync(stored, `${JSON.stringify({ ...JSON.parse(readFileSync(stored, 'utf8')), rules: SUMMARY_RULES - 1 }, null, 2)}\n`);
+    assert.deepEqual(saved(), ['repo-1', SUMMARY_RULES - 1]);
+    // The engine starts while the table cannot be read, so it has no last good read of it.
+    locked.add(table);
+    engine = open();
+    assert.equal((await engine.getRunSummary('p-old')).project?.id, 'repo-1');
+    assert.deepEqual(saved(), ['repo-1', SUMMARY_RULES - 1]);
+    locked.clear();
+    assert.equal((await engine.getRunSummary('p-old')).project?.id, 'repo-1');
+    assert.deepEqual(saved(), ['repo-1', SUMMARY_RULES]);
+    engine.stop();
+  });
+}

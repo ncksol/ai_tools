@@ -140,12 +140,12 @@ test('Copilot app Projects are read from persistent_projects: a missing or resha
 
   const gone = await readAppDb(fakeDb({ missing: { persistent_projects: true } }));
   assert.deepEqual([...gone.persistentProjects], []);
-  assert.deepEqual(gone.diagnostics, []);
+  assert.deepEqual([gone.diagnostics, [...gone.failed]], [[], []]);
 
   const schema = (await fakeDb().all(SCHEMA_SQL)).filter(row => row.table_name !== 'persistent_projects');
   const reshaped = await readAppDb({ all: async sql => (sql === SCHEMA_SQL ? [...schema, { table_name: 'persistent_projects', column_name: 'agent_id' }] : []) });
   assert.deepEqual([...reshaped.persistentProjects], []);
-  assert.deepEqual(reshaped.diagnostics, []);
+  assert.deepEqual([reshaped.diagnostics, [...reshaped.failed]], [[], []]);
 
   const failing = await readAppDb({
     all: async sql => {
@@ -156,6 +156,7 @@ test('Copilot app Projects are read from persistent_projects: a missing or resha
   });
   assert.deepEqual([...failing.persistentProjects], []);
   assert.deepEqual(failing.diagnostics, [{ level: 'warn', source: 'data.db', message: 'persistentProjects: database is locked' }]);
+  assert.deepEqual([...failing.failed], ['persistentProjects']);
 });
 
 for (const backend of TEST_BACKENDS) {
