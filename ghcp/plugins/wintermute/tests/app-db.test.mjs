@@ -164,7 +164,7 @@ function schemaLockedDb(tables, { locked = [] } = {}) {
   return {
     all: async sql => {
       if (sql === SCHEMA_SQL) throw new Error('database is locked');
-      const probed = /pragma_table_info\('(\w+)'\)/.exec(sql)?.[1];
+      const probed = /pragma_table_info\(m\.name\) AS p WHERE m\.type = 'table' AND m\.name = '(\w+)'$/.exec(sql)?.[1];
       const [, list, table] = probed ? [null, null, probed] : /^SELECT (.+) FROM (\w+)$/.exec(sql);
       if (locked.includes(table)) throw new Error('database is locked');
       if (probed) return (tables[probed] ?? []).map(name => ({ name }));
@@ -188,6 +188,22 @@ test('when the schema query fails, each table is looked up on its own, so a miss
   assert.deepEqual([...locked.failed], ['persistentProjects']);
   assert.deepEqual(locked.diagnostics, [schemaWarning, { level: 'warn', source: 'data.db', message: 'persistentProjects: database is locked' }]);
 });
+
+for (const backend of TEST_BACKENDS) {
+  test(`${backend}: when the schema query fails, a view named like an app table is still not read as one`, async () => {
+    const file = path.join(tempDir('swarm-views-'), 'data.db');
+    execSql(file, `CREATE TABLE workspaces (id TEXT, name TEXT, created_at TEXT);
+      CREATE VIEW sessions AS SELECT 'chat-1' AS id, 'Chat' AS title;
+      CREATE VIEW persistent_projects AS SELECT 'p-1' AS session_id`);
+    const read = schemaFails => withReadOnly(file, { backend }, db => readAppDb(schemaFails
+      ? { all: sql => (sql === SCHEMA_SQL ? Promise.reject(new Error('database is locked')) : db.all(sql)) }
+      : db));
+    const normal = await read(false);
+    const fallback = await read(true);
+    assert.deepEqual([fallback.sessions.size, [...fallback.persistentProjects], [...fallback.failed]], [0, [], []]);
+    assert.deepEqual(fallback.diagnostics, [{ level: 'warn', source: 'data.db', message: 'schema: database is locked' }, ...normal.diagnostics]);
+  });
+}
 
 for (const backend of TEST_BACKENDS) {
   test(`${backend}: a minimal database degrades instead of failing`, async () => {
