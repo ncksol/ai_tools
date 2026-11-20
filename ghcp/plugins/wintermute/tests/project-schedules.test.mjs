@@ -91,3 +91,36 @@ test('an unsuccessful clear does not replace the last successful schedule save',
   assert.deepEqual([unit.pr.state, unit.stage, unit.monitor.everyMinutes], ['unknown', 'in_review', 10]);
   assert.ok(!snapshot.feed.some(item => item.kind === 'monitor-cleared'));
 });
+
+test('a Project names the child it schedules or clears without changing feed authorship', () => {
+  const project = new EventLog(T0);
+  project.start();
+  project.at(at(5));
+  project.done(project.tool('save_session_automation', { inline: true, interval: 'minutes', every_minutes: 30, prompt: 'Check the units' }));
+  project.at(at(6));
+  project.done(project.tool('save_session_automation', { session_id: 'cli-api', interval: 'minutes', every_minutes: 10, prompt: 'Check progress' }));
+  project.at(at(35));
+  project.automationWake('Check the units');
+  const schedule = (sessionId, everyMinutes, nextRunAt) => ({
+    sessionId, ownerSessionId: 'project', interval: 'minutes', everyMinutes, lastRunAt: null, nextRunAt, pausedAt: null, name: null,
+  });
+  const inline = schedule('project', 30, at(65));
+  const api = new EventLog(at(1));
+  api.start();
+  const logs = { project, 'cli-api': api };
+  const snapshot = snapshotOf(logs, { automations: [inline, schedule('cli-api', 10, at(62))] });
+  const [unit] = snapshot.units;
+  assert.deepEqual([unit.id, unit.monitor.state, unit.monitor.everyMinutes, unit.monitor.nextCheckAt], ['ws-api', 'alive', 10, at(62)]);
+  assert.deepEqual(snapshot.feed.map(item => [item.unitId, item.text]), [
+    ['project', 'ran a schedule'],
+    ['project', `set a schedule for ${unit.label} (every 10 min)`],
+    ['project', 'set a schedule (every 30 min)'],
+  ]);
+  assert.deepEqual(unit.recent, []);
+
+  project.at(at(40));
+  project.done(project.tool('save_session_automation', { session_id: 'ws-api', clear: true }));
+  const cleared = snapshotOf(logs, { automations: [inline] });
+  assert.deepEqual([cleared.feed[0].unitId, cleared.feed[0].text], ['project', `cleared the schedule of ${unit.label}`]);
+  assert.equal(cleared.units[0].monitor.state, 'none');
+});

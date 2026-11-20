@@ -804,11 +804,18 @@ function buildNeeds(contexts, rootId, labels, flags) {
   return needs.sort((a, b) => a.since - b.since);
 }
 
-function buildFeed(contexts, labels, extraFeed, flags) {
+function buildFeed(forest, contexts, labels, extraFeed, flags) {
   const items = [...extraFeed];
   for (const [id, c] of contexts) {
     for (const item of c.all.feed) {
       let text = item.text;
+      const target = resolveNodeId(forest, item.target);
+      const targetLabel = target !== id ? labels.get(target) : null;
+      if (targetLabel && item.kind === 'monitor-set') {
+        text = oneLine(text.replace('set a schedule', () => `set a schedule for ${targetLabel}`), 200);
+      } else if (targetLabel && item.kind === 'monitor-cleared') {
+        text = oneLine(`cleared the schedule of ${targetLabel}`, 200);
+      }
       if (item.kind === 'question' && text.startsWith('asked: ')) {
         const tag = parseQuestionTag(text.slice(7));
         if (tag) flags.questionTags = true;
@@ -906,7 +913,7 @@ export function buildSnapshot(input) {
   const stalled = lifecycle === 'live'
     ? swarmStalled({ orchestratorDetail: orchestrator.statusDetail, unitDetails, monitorDue, lastActivityAt })
     : null;
-  const { feed, recent } = buildFeed(contexts, labels, extraFeed, flags);
+  const { feed, recent } = buildFeed(forest, contexts, labels, extraFeed, flags);
   for (const view of [orchestrator, ...everyUnit]) view.recent = recent.get(view.id) ?? [];
 
   const snapshot = {
