@@ -97,6 +97,16 @@ A whole swarm counts as **stalled** when at least one open unit remains, the orc
 
 `wintermute-core` and its children report in a fixed format that the dashboard reads exactly. The [`wintermute-core` prompt](com.github.copilot/agents/wintermute-core.agent.md) defines it in its "Dashboard data contract", "The `children` table" and "Report format" sections.
 
+## Projects
+
+A Copilot app Project that runs work under the plugin's `wintermute-project` skill shows as a swarm, with the Project as its orchestrator:
+
+- It shows once it has a child session. A Project that has turned wintermute on also shows before that, for example while it works only through sub-agents. One that has turned wintermute off, or never turned it on, shows only once it has a child session.
+- The swarm's project is the repository that most of the Project's child sessions work in. It names the swarm only: each child's PR comes from the child's own repository.
+- A child's report is the one it sent to the Project, else the copy that the app delivered to the Project; as in any swarm, a `task_complete` is the report when there is none, and replaces either when it is more than five minutes later. When the app tells the Project that one of a child's assignments ended with no report, the child's activity says "ended without a report", once per assignment among the records that the dashboard still holds; that is never its report.
+- A question that the Project shows you for a child is one item in "Needs you", under that child when the dashboard can tell which child it is, while the Project waits for your answer. If the child's own question is still open, that question is the item, with the kind of need that the Project's tag sets. A relay that ends without your answer isn't shown as an answer.
+- A schedule's row belongs to the session it runs in: one that the Project runs on itself is the Project's, and one on a child is that child's. The activity list says that a session set, ran or cleared a schedule, and names the child when the Project's save names that child's session. A save that is still pending, failed or was cancelled doesn't count. A child session that only runs one of the Project's schedules is still listed as a unit, and its cost counts in the swarm's: the app doesn't record why a session was created, so the dashboard can't yet tell such a child from one that does assigned work.
+
 ## Open it
 
 - **In the Copilot app.** `wintermute-core` opens the dashboard in the side panel when it creates its first child session. To open it again, ask the agent to open the swarm dashboard canvas (canvas id `swarm-dashboard`). It shows the swarm of the session it was opened in. If that session is in no swarm, it says so and switches to the session's swarm as soon as there is one. To show a particular swarm, pass its root session id as the canvas input: `{ "swarm": "<root session id>" }`.

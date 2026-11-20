@@ -6,6 +6,16 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.5.2 — 2026-11-20
+
+### Changed
+
+- The Copilot app Projects skills, `wintermute-project` and `wintermute-project-worker`, are no longer an evaluation: the README's Projects section, a short section in the quick start and a Projects section in the dashboard guide describe them. The skills' rules don't change, except that `wintermute-project` no longer says the dashboard ignores a relayed question's tag.
+
+### Known limitations
+
+- A child session that only runs one of a Project's schedules still shows as a unit, and its cost counts. The app records who owns a schedule but not why a session was created, so the dashboard can't yet tell such a child apart (Projects design U12). The dashboard guide and the dashboard design say so.
+
 ## 1.5.1 — 2026-11-20
 
 ### Added

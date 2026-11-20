@@ -276,6 +276,16 @@ Every question the orchestrator asks the owner begins with a tag:
 - The dashboard turns each open tagged question (an `ask_user` call with no completion yet) into a "Needs you" item for that unit and kind. Its wait time counts from the call's `tool.execution_start` timestamp.
 - The owner sees the tag, so it stays short and in exactly this form.
 
+### In a Copilot app Project
+
+A Project that follows the `wintermute` plugin's `wintermute-project` skill uses this contract with these differences (`docs/superpowers/specs/2026-11-19-wintermute-projects-design.md`, 8.5.8 and 8.7):
+
+- `blocked` is sent with `purpose: "error"`, which the dashboard reads as `blocked`. `needs_input` keeps `purpose: "needs_input"`.
+- A handoff (`complete`) has two lines: the status line and `Summary:`. A longer result is in a file that the summary links. `needs_input` and `error` reports keep all three fields.
+- The app delivers handoffs to the Project as `user.message` events with source `agent-coordinator-results`, which hold numbered JSON records. The dashboard reads each record as a received copy of the child's report, with `purpose: "handoff"`. The app's notice that an assignment ended with no report shows as "ended without a report", once per assignment among the retained records, never as a report.
+- A question that the Project shows the user for a child with `relay_session_input` is a "Needs you" item for that child, when its target resolves to one, while the call is open, unless the child's own log shows the open question, which is then the item. A tag at the start of the call's `context` sets the kind of need, as for `ask_user`; when the child's question is the item, it takes the relay's tag. Only a completion that succeeded with an answer counts as the user's answer.
+- A child session that only runs one of the Project's schedules is still a unit, and its cost counts. `session_automations.owner_session_id` says who owns a schedule, not why its session was created, so the dashboard doesn't hide such a child (design U12).
+
 ### Opening the dashboard
 
 An orchestrator may open the dashboard canvas with `open_canvas` once, when it creates the first child of a swarm; the canvas id is fixed when the plugin is named. This is optional. It must not wait for the canvas, and if the canvas is not installed or fails to open, it carries on. An orchestrator with a tool allowlist needs `open_canvas`, and the tool for its session database, in that list.
