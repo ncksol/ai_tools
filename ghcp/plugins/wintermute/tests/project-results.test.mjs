@@ -102,6 +102,61 @@ test('only the results source and raw content supply Project records, within the
   assert.equal(inbound[79].content.length, 8000);
 });
 
+test('a received Project handoff is a fallback for a sent report and can still be superseded by a later task completion', () => {
+  const root = startedLog(0);
+  const ui = startedLog(2);
+  const docs = startedLog(3);
+  ui.at(at(10));
+  ui.report('project', 'The sample UI report.', 'handoff');
+  docs.at(at(30));
+  docs.taskComplete('The sample guide is published.');
+  root.at(at(20));
+  results(root, [
+    { id: 'cli-api', handoff: 'swarm-status: progress unit=api\nSummary: Sample API started.' },
+    { id: 'cli-ui', handoff: 'Different UI text, received later.' },
+    { id: 'cli-docs', handoff: 'The sample guide is ready.' },
+  ]);
+  root.at(at(22));
+  results(root, [{ id: 'cli-api', handoff: 'The sample API is ready.' }]);
+  const snapshot = snapshotOf(root, { 'cli-ui': ui, 'cli-docs': docs });
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  const unit = id => snapshot.units.find(item => item.id === id);
+  assert.deepEqual([unit('ws-api').report.status, unit('ws-api').report.source, unit('ws-api').report.title], [
+    'complete', 'purpose', 'The sample API is ready.',
+  ]);
+  assert.equal(unit('ws-ui').report.title, 'The sample UI report.');
+  assert.equal(unit('ws-docs').report.source, 'task_complete');
+  assert.equal(snapshot.run.contract.statusLines, true);
+});
+
+test('no-handoff notices are not reports and are shown once per assignment or unkeyed delivery time', () => {
+  const root = startedLog(0);
+  const ui = startedLog(2);
+  ui.report('project', 'swarm-status: complete unit=ui\nSummary: The sample page is ready.', 'handoff');
+  const docsNotice = call => ({ id: 'cli-docs', assignment_id: `assignment:project:${call}`, handoff: NOTICE });
+  const uiNotice = { id: 'cli-ui', handoff: NOTICE };
+  root.at(at(29));
+  results(root, [docsNotice('call-d1'), uiNotice]);
+  root.at(at(30));
+  results(root, [docsNotice('call-d1'), docsNotice('call-d2'), uiNotice, uiNotice]);
+  const snapshot = snapshotOf(root, { 'cli-ui': ui });
+  const docs = snapshot.units.find(unit => unit.id === 'ws-docs');
+  const page = snapshot.units.find(unit => unit.id === 'ws-ui');
+  assert.equal(docs.report, null);
+  assert.equal(page.report.title, 'The sample page is ready.');
+  const notices = snapshot.feed.filter(item => item.text === 'ended without a report');
+  assert.deepEqual(notices.map(item => [item.id, item.unitId, item.kind, item.at]).sort(), [
+    ['ws-docs:notice:assignment:project:call-d1', 'ws-docs', 'report', at(30)],
+    ['ws-docs:notice:assignment:project:call-d2', 'ws-docs', 'report', at(30)],
+    [`ws-ui:notice:at:${at(29)}`, 'ws-ui', 'report', at(29)],
+    [`ws-ui:notice:at:${at(30)}`, 'ws-ui', 'report', at(30)],
+  ]);
+  assert.deepEqual(docs.timeline.marks.filter(mark => mark.text === 'Ended without a report'), [
+    { at: at(30), kind: 'report', text: 'Ended without a report', status: null },
+    { at: at(30), kind: 'report', text: 'Ended without a report', status: null },
+  ]);
+});
+
 test('a relay for the same request supplies its tag without replacing the child question or its time', () => {
   const root = startedLog(0);
   const api = startedLog(1);

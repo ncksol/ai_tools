@@ -357,8 +357,17 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
     extraFeed.push({ id: `${node.id}:report:${item.source}`, at: item.at, unitId: node.id, label, kind: 'report', text: oneLine(`reported ${STATUS_WORDS[view.status]}: ${view.title}`, 200) });
   }
   let report = sent.length ? sent[sent.length - 1].view : null;
-  // Design section 10 accepts either copy of a report: the child's sent message or the orchestrator's received one.
-  const received = parent.all.inbound.filter(item => c.ids.has(item.fromSessionId) || c.ids.has(item.fromProjectSessionId));
+  // The parent can carry a copy of the child's report, but the app's no-handoff notice is not a report.
+  const received = [];
+  const notices = new Map();
+  for (const item of parent.all.inbound) {
+    if (!c.ids.has(item.fromSessionId) && !c.ids.has(item.fromProjectSessionId)) continue;
+    if (item.notice === true) notices.set(item.assignmentId ?? `at:${item.at}`, item.at);
+    else received.push(item);
+  }
+  for (const [key, at] of notices) {
+    extraFeed.push({ id: `${node.id}:notice:${key}`, at, unitId: node.id, label, kind: 'report', text: 'ended without a report' });
+  }
   if (!statusLines.length) {
     for (let index = received.length - 1; index >= 0; index -= 1) {
       const line = parseStatusLine(received[index].content);
@@ -369,7 +378,7 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
   }
   if (!report) {
     const last = received[received.length - 1];
-    if (last) report = reportFromMessage(last.content, null, last.at);
+    if (last) report = reportFromMessage(last.content, last.purpose ?? null, last.at);
   }
   const lastTask = c.all.taskCompletes[c.all.taskCompletes.length - 1];
   if (lastTask && (!report || lastTask.at > report.at + TASK_OVERRIDE_MS)) report = reportFromTask(lastTask);
@@ -416,6 +425,7 @@ function buildUnit(input, node, contexts, registry, labels, project, flags, extr
   });
 
   const marks = sent.map(({ item, view }) => ({ at: item.at, kind: view.status === 'needs_input' ? 'question' : 'report', text: view.title || 'Report', status: view.status }));
+  for (const at of notices.values()) marks.push({ at, kind: 'report', text: 'Ended without a report', status: null });
   if (pr?.openedAt) marks.push({ at: pr.openedAt, kind: 'pr-open', text: 'PR opened', status: null });
   if (pr?.mergedAt) marks.push({ at: pr.mergedAt, kind: 'pr-merged', text: 'PR merged', status: null });
   if (node.archivedAt) marks.push({ at: node.archivedAt, kind: 'archived', text: 'Archived', status: null });
