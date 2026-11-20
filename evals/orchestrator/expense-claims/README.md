@@ -24,7 +24,7 @@ The design, with the reasons behind each rule, is in [the design doc](../../../d
 | `reference/` | A full v2 implementation. It only proves that the suite is correct and can pass. |
 | `acceptance/` | The hidden black-box acceptance suite, one file for v1 and one per feature. |
 | `robustness/` | Hidden edge-case tests, run after scoring, never as the gate. |
-| `pricing/2026-11-10.json` | Dated USD-per-million token rates, with model tiers and promotion expiry. |
+| `pricing/` | Dated USD-per-million token rates, with model tiers and promotion expiry. The default card is `2026-11-20.json`. |
 | `variants/` | Eval-only A/B/C agent snapshots, their shared worker, the hashed `review-policy.json` manifest and the `single-session` baseline agent. Not ordinary agent installation files. |
 | `scripts/` | `new-run`, `score`, the acceptance and robustness runners, the kit check, the overnight batch runner (`batch.ts` and `lib/batch/`) and their tests. |
 | `package.json` | The npm scripts: `test`, `check`, `new-run`, `score`, `acceptance`, `robustness` and `batch`. |
@@ -217,7 +217,11 @@ USD = (uncached_input * input_rate
 
 Never use the session log or session store `cost` field: it is a legacy premium-request multiplier, not dollars. Token counters must be present, nonnegative integers, with cache tokens no greater than inclusive input. Missing prices, expired promotions, malformed records and missing logs produce warnings and a blank dollar total. Records with `isAuto: true` are also unpriced: Auto usage had a 10% discount, so this list-price card cannot establish their charge.
 
-The scorer's default rates are in one dated file, `pricing/2026-11-10.json`, with the official pricing source. `pricing/2026-11-20.json` adds GPT-6.2 Astra and Sol and isn't the default yet: pass it with `--pricing` to use it. Astra (and Sol) switch tiers only above 272,000 inclusive input tokens **per record**, not on the swarm's aggregate. Argon's and Carbon's promotional rates are invalid at or after `2026-12-01T00:00:00Z`; do not extend them by assumption. Their cache-write prices are unavailable, so a nonzero Argon or Carbon cache write is unpriceable. Carbon's $4 / $0.20 / $20 rates from December 1 need another dated file, including Argon's later Copilot rate once GitHub publishes it. To use a later verified rate card, add one dated JSON file and pass `--pricing <file>` when rescoring; update the batch scorer's default before creating a new batch. Existing batch pins stop mid-batch price changes.
+Standalone scoring (`npm run score`) and new batches default to `pricing/2026-11-20.json`, which adds GPT-6.2 Astra and Sol. To use another verified card for standalone scoring, pass `--pricing <file>`. A direct call to `score.ts` with no pricing arguments stops unless it passes `--standalone`, as the npm command does.
+
+`batch init` saves the card's filename and SHA-256. The scorer uses only those exact bytes. If it reads different bytes or cannot read the card, scoring fails and writes no row. After a checkout upgrade, the updated driver uses the pinned `pricing/2026-11-10.json` for runs already admitted by the old batch. A driver process still running the old code calls the scorer without a pin and gets no row. The upgraded checkout changes pinned inputs, so the old batch admits no more runs. Editing any pinned pricing file also stops new admissions.
+
+Astra and Sol switch tiers only above 272,000 input tokens **per record**, not on the swarm's aggregate. Argon's and Carbon's promotional rates are invalid at or after `2026-12-01T00:00:00Z`; do not extend them by assumption. Their cache-write prices are unavailable, so a nonzero Argon or Carbon cache write is unpriceable. Carbon's $4 / $0.20 / $20 rates from December 1 need another dated file, including Argon's later Copilot rate once GitHub publishes it.
 
 The cost cutoff is separate from `--end-at`, which limits timing only. Usage can be written after the final message, so cost captures through the start of scoring. Score promptly, before sending more messages to the run. Timeout and stalled rows include usage up to that snapshot, not later shutdown work. `--replace` takes a new snapshot; retain the recorded cutoff and rate digest when comparing costs.
 

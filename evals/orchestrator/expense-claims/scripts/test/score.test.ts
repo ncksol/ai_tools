@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,7 +36,7 @@ function scoreArgs(args: string[]): string[] {
 function score(args: string[], extraEnv: NodeJS.ProcessEnv = {}) {
   const env: NodeJS.ProcessEnv = { ...process.env, ...extraEnv };
   delete env.NODE_TEST_CONTEXT;
-  return run(process.execPath, ["scripts/score.ts", ...scoreArgs(args)], { cwd: KIT_DIR, env });
+  return run(process.execPath, ["scripts/score.ts", "--standalone", ...scoreArgs(args)], { cwd: KIT_DIR, env });
 }
 
 test("synthetic score runs never default to the real app DB or session folder", () => {
@@ -97,7 +98,9 @@ test("score times a synthetic session, runs the seed's suite on a fresh clone an
   const results = join(dir, "results.csv");
   const common = ["--repo-dir", repoDir, "--state-dir", stateDir, "--app-db", appDb, "--no-github", "--results", results];
 
-  const ok = await score(common);
+  const npmEnv = { ...process.env };
+  delete npmEnv.NODE_TEST_CONTEXT;
+  const ok = await run("npm", ["run", "score", "--", ...common], { cwd: KIT_DIR, env: npmEnv });
   assert.equal(ok.code, 0, ok.stdout + ok.stderr);
   assert.match(ok.stdout, /Session s1 \(the only session for local\/orch-eval-e2e-1 that you started\)/);
   const rows = readResults(results);
@@ -140,7 +143,8 @@ test("score times a synthetic session, runs the seed's suite on a fresh clone an
   assert.equal(rows[0].robustness_sha256, suiteHash);
   assert.ok(ok.stdout.includes(`Robustness suite sha256: ${suiteHash}\n`), ok.stdout);
   assert.match(rows[0].main_sha, /^[a-f0-9]{40}$/);
-  assert.match(rows[0].pricing_version, /^2026-11-10:[a-f0-9]{64}$/);
+  const card = readFileSync(join(KIT_DIR, "pricing", "2026-11-20.json"));
+  assert.equal(rows[0].pricing_version, `2026-11-20:${createHash("sha256").update(card).digest("hex")}`);
   assert.match(rows[0].note, /spec on main lists policy\+reports\+import; scored against the seed's policy\+reports\+import\+summary/);
   const firstFile = readFileSync(results, "utf8");
 
@@ -184,6 +188,22 @@ test("score times a synthetic session, runs the seed's suite on a fresh clone an
     assert.ok(Number(unfinished.wall_minutes) >= Math.floor(minimumWall), unfinished.wall_minutes);
   }
 });
+
+for (const [label, pricingPath, diagnostic] of [
+  ["changed", "pricing/2026-11-10.json", /pricing.*digest mismatch/i],
+  ["unreadable", "missing.json", /cannot read pricing/i],
+] as const) {
+  test(`a ${label} pinned card stops scoring without writing a row`, async () => {
+    const card = readFileSync(join(KIT_DIR, "pricing", "2026-11-20.json"));
+    const results = join(dir, `${label}.csv`);
+    const result = await score(["--repo-dir", join(dir, "orch-eval-e2e-1"), "--results", results,
+      "--pricing", label === "changed" ? join(KIT_DIR, pricingPath) : join(dir, pricingPath),
+      "--pricing-sha256", createHash("sha256").update(card).digest("hex")]);
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, diagnostic);
+    assert.equal(existsSync(results), false);
+  });
+}
 
 test("score attributes driver answers and caps a completed log at the observed report", { timeout: 180_000 }, async () => {
   const repoDir = join(dir, "orch-eval-driver-1");

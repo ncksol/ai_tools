@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Feature } from "../features.ts";
 import { KIT_DIR } from "../suite.ts";
+import { DEFAULT_PRICING_FILE } from "../usage.ts";
 import { LIVE_VARIANTS, liveAgent, variantAgents, type VariantSet } from "../variants.ts";
 import type { PolicyCalibration } from "./plan.ts";
 
@@ -237,6 +238,11 @@ export interface Pins {
   cliVersion: string | null;
 }
 
+export interface PricingPin {
+  file: string;
+  sha256: string;
+}
+
 export interface BatchState {
   // The revision this state was loaded at (0 before the first save). See saveState.
   revision?: number;
@@ -249,6 +255,8 @@ export interface BatchState {
   // The driver session that runs this batch. Another driver is refused while this one is alive.
   owner: { id: string; since: string; lastSeenAt: string } | null;
   pins: Pins;
+  // Absent in pre-upgrade state. Its historical card is still in pins.files.
+  pricing?: PricingPin;
   pending: PendingAction | null;
   actionSeq: number;
   recorded: string[];
@@ -430,6 +438,7 @@ export function initialState(pins: Pins, _selfTest: boolean, now: string): Batch
   return {
     phase: "provisioning",
     pins,
+    pricing: { file: DEFAULT_PRICING_FILE, sha256: pins.files[DEFAULT_PRICING_FILE] ?? "missing" },
     pending: null,
     actionSeq: 0,
     recorded: [],

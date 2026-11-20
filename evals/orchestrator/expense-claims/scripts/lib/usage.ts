@@ -3,6 +3,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readEventLog, type LogEvent } from "./events.ts";
 
+export const DEFAULT_PRICING_FILE = "pricing/2026-11-20.json";
+
 interface Rate {
   aboveInputTokens: number;
   input: number;
@@ -21,9 +23,18 @@ function object(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
-export function readPricing(path: string): Pricing {
-  const text = readFileSync(path, "utf8");
-  const data = object(JSON.parse(text));
+export function readPricing(path: string, expectedSha256?: string): Pricing {
+  let bytes: Buffer;
+  try {
+    bytes = readFileSync(path);
+  } catch (error) {
+    throw new Error(`Cannot read pricing file ${path}: ${(error as Error).message}`, { cause: error });
+  }
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  if (expectedSha256 !== undefined && expectedSha256 !== sha256) {
+    throw new Error(`Pricing digest mismatch for ${path}: expected ${expectedSha256}, read ${sha256}`);
+  }
+  const data = object(JSON.parse(bytes.toString("utf8")));
   const models = object(data?.models);
   if (!data || typeof data.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(data.date) ||
       data.currency !== "USD" || data.perTokens !== 1_000_000 || !models || Object.keys(models).length === 0) {
@@ -52,7 +63,7 @@ export function readPricing(path: string): Pricing {
       throw new Error(`Unordered price tiers for ${model}`);
     }
   }
-  return { version: `${data.date}:${createHash("sha256").update(text).digest("hex")}`, models: rates };
+  return { version: `${data.date}:${sha256}`, models: rates };
 }
 
 const COUNTERS = ["inputTokens", "cacheReadTokens", "cacheWriteTokens", "outputTokens"] as const;

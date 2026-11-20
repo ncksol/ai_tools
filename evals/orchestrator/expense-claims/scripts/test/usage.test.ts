@@ -31,6 +31,21 @@ test("Astra and Sol use the high tier only above 272000 inclusive input tokens",
   }
 });
 
+test("GPT-6.2 Astra and Sol apply the upper tier only above 272,000 input tokens", () => {
+  const card = readPricing(join(KIT_DIR, "pricing", "2026-11-20.json"));
+  const cases: [string, number, number][] = [
+    ["gpt-6.2-astra", 272_000, 1.916],
+    ["gpt-6.2-astra", 272_001, 3.632016],
+    ["gpt-6.2-sol", 272_000, 0.479],
+    ["gpt-6.2-sol", 272_001, 0.908004],
+  ];
+  for (const [model, inputTokens, expected] of cases) {
+    assert.equal(priceUsage(usage(model, {
+      inputTokens, cacheReadTokens: 100_000, cacheWriteTokens: 50_000, outputTokens: 10_000,
+    }), "2026-11-20T12:00:00Z", card), expected, `${model}: ${inputTokens}`);
+  }
+});
+
 test("Argon promotion expiry is exclusive and unsupported cache writes are not free tokens", () => {
   const u = usage("gemini-4-argon", { cacheWriteTokens: 0 });
   assert.equal(priceUsage(u, "2026-11-30T23:59:59Z", pricing()), 0.00186);
