@@ -1,7 +1,13 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { withReadOnly } from '../sqlite.mjs';
+import { isPathComponent } from '../text.mjs';
 import { parseTime } from '../time.mjs';
+
+/** The path of a file in a CLI session's folder under `stateDir`, or null when the session id is not one safe folder name. */
+export function sessionFile(stateDir, cliId, name) {
+  return isPathComponent(cliId) ? path.join(stateDir, cliId, name) : null;
+}
 
 export function readWorkspaceYaml(dir) {
   let text;
