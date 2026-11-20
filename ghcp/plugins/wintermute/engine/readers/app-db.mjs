@@ -32,8 +32,13 @@ export const SCHEMA_SQL = `SELECT m.name AS table_name, p.name AS column_name FR
 const text = value => (typeof value === 'string' && value.length ? value : null);
 const count = value => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value));
 
+/**
+ * Reads the tables in APP_TABLES. `failed` names the keys of the tables whose read failed, such as a busy database: their values
+ * are empty, so what this read gives is partial. A table that is missing, or lacks a required column, is not a failed read.
+ */
 export async function readAppDb(db) {
   const diagnostics = [];
+  const failed = new Set();
   const rows = {};
   let present = null;
   try {
@@ -68,6 +73,7 @@ export async function readAppDb(db) {
     try {
       rows[key] = await db.all(`SELECT ${selected.join(', ')} FROM ${name}`);
     } catch (error) {
+      failed.add(key);
       diagnostics.push({ level: 'warn', source: 'data.db', message: `${key}: ${error.message}` });
     }
   }
@@ -98,6 +104,7 @@ export async function readAppDb(db) {
       // Ownership does not prove that the target session was created for the schedule (Projects design U12).
       ownerSessionId: text(row.owner_session_id),
     })),
+    failed,
     diagnostics,
   };
 }
