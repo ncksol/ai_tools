@@ -9,7 +9,7 @@ import { createTail, fileStamp, lastWorkTime, readNewLines } from './readers/eve
 import { createLedger, readUsage } from './readers/ledger.mjs';
 import { createProcessProbe } from './readers/process-probe.mjs';
 import { createSessionDbCache, listLocks, readWorkspaceYaml } from './readers/session-files.mjs';
-import { buildForest, resolveNodeId, treeNodes } from './model/forest.mjs';
+import { buildForest, resolveNodeId, rootProjectId, treeNodes } from './model/forest.mjs';
 import { parseQuestionTag } from './model/contract.mjs';
 import { createHistoryStore, listItemOf, summarizeRun } from './model/history.mjs';
 import { createPrLookup } from './model/pr-lookup.mjs';
@@ -176,7 +176,8 @@ export function createSwarmEngine(options = {}) {
   const logFailureSince = new Map();
 
   const projectOf = node => {
-    const project = node.projectId ? app.projects.get(node.projectId) : null;
+    const projectId = rootProjectId(forest, node.id);
+    const project = projectId ? app.projects.get(projectId) : null;
     return project ? { id: project.id, name: project.name } : null;
   };
 

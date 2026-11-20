@@ -17,10 +17,10 @@ export const NANO_AIU_PER_CREDIT = 1e9;
 export const COST_SOURCE = 'events';
 /**
  * The rules a run summary was built with. 2 (0.9.4): unit outcome `done`, and reviewers don't own the PR they review
- * (issue #112). 3 counts a Project's relayed questions as waits. A summary without a rules version, or with a lower one,
- * is rebuilt from complete logs (see isStale).
+ * (issue #112). 3 counts a Project's relayed questions as waits. 4: a Copilot app Project's run names the app project that most
+ * of its child sessions use. A summary without a rules version, or with a lower one, is rebuilt from complete logs (see isStale).
  */
-export const SUMMARY_RULES = 3;
+export const SUMMARY_RULES = 4;
 
 export const DISPLAY_STATES = Object.freeze(['busy', 'idle', 'plan', 'question', 'stuck', 'blocked', 'merged', 'archived', 'done']);
 export const STATUS_DETAILS = Object.freeze([
