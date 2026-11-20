@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, STALE_AFTER_POLLS, baseSearch, coalesced, compareVersions, dataStaleSince, historyReloadWanted, isNarrow, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, retryBudget, staleChoice, staleShown, startShown, startSwarm, versionNotice, waitingHtml } from '../ui/app.mjs';
+import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, STALE_AFTER_POLLS, baseSearch, coalesced, compareVersions, dataStaleSince, historyReloadWanted, isNarrow, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, retryBudget, runLoader, staleChoice, staleShown, startShown, startSwarm, versionNotice, waitingHtml } from '../ui/app.mjs';
 import { NOW, deepFreeze, exampleSnapshot, fixture } from './helpers/ui.mjs';
 
 const view = (overrides = {}) => ({
@@ -580,4 +580,82 @@ test('the out-of-date notice shows only when a newer installed plugin is served 
   }
   assert.doesNotMatch(renderApp(view({ serverVersion: '0.2.0', installedVersion: '0.2.0' })), /data-version-notice/);
   assert.doesNotMatch(renderApp(view({ serverVersion: '0.1.7', installedVersion: null })), /data-version-notice/);
+});
+
+/** A runLoader whose fetches the test settles one by one: fetches[i].ok(run) or fetches[i].fail(). */
+function runPage(currentId = 'run-1') {
+  const fetches = [];
+  const shown = [];
+  const page = { current: currentId };
+  const loader = runLoader({
+    fetchRun: id => new Promise((resolve, reject) => {
+      fetches.push({ id, ok: resolve, fail: () => reject(new TypeError('Failed to fetch')) });
+    }),
+    show: (id, run) => shown.push([id, run]),
+    current: () => page.current,
+  });
+  return { loader, fetches, shown, page };
+}
+
+const settled = () => new Promise(resolve => setImmediate(resolve));
+
+test('a run that fails to load before the live connection first opens is loaded again when it opens', async () => {
+  const { loader, fetches, shown } = runPage();
+  loader.load('run-1');
+  fetches[0].fail();
+  await settled();
+  assert.deepEqual(shown, [['run-1', false]]);
+  assert.equal(fetches.length, 1, 'nothing tries again before a connection opens');
+  loader.opened();
+  assert.equal(fetches.length, 2);
+  fetches[1].ok({ id: 'run-1' });
+  await settled();
+  assert.deepEqual(shown, [['run-1', false], ['run-1', { id: 'run-1' }]]);
+  loader.opened();
+  assert.equal(fetches.length, 2, 'a run that loaded is not loaded again');
+});
+
+test('a run whose load fails just after the connection opened is loaded again at once, a single time', async () => {
+  const { loader, fetches, shown } = runPage();
+  loader.load('run-1');
+  loader.opened();
+  assert.equal(fetches.length, 1, 'an open while the load runs starts no second load');
+  fetches[0].fail();
+  await settled();
+  assert.equal(fetches.length, 2, 'the failed load runs again, as the open came too early to retry it');
+  fetches[1].fail();
+  await settled();
+  assert.equal(fetches.length, 2, 'with no open since it started, the retry is not retried');
+  assert.deepEqual(shown, [['run-1', false], ['run-1', false]]);
+  loader.opened();
+  assert.equal(fetches.length, 3);
+});
+
+test('a load still running is never started twice, and a run the page has left is not loaded again', async () => {
+  const { loader, fetches, shown, page } = runPage();
+  loader.load('run-1');
+  loader.load('run-1');
+  assert.equal(fetches.length, 1);
+  fetches[0].ok({ id: 'run-1' });
+  await settled();
+  assert.deepEqual(shown, [['run-1', { id: 'run-1' }]]);
+
+  loader.load('run-1');
+  loader.opened();
+  page.current = null;
+  fetches[1].fail();
+  await settled();
+  loader.opened();
+  assert.equal(fetches.length, 2, 'the page left the run, so neither the failure nor a later open loads it');
+
+  page.current = 'run-2';
+  loader.load('run-2');
+  page.current = 'run-3';
+  loader.load('run-3');
+  fetches[3].fail();
+  await settled();
+  fetches[2].fail();
+  await settled();
+  loader.opened();
+  assert.deepEqual(fetches.map(fetch => fetch.id), ['run-1', 'run-1', 'run-2', 'run-3', 'run-3'], 'a late failure of a run the page left does not hide the failure of the one it shows');
 });

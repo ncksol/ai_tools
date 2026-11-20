@@ -367,3 +367,51 @@ test('a read waiting on an engine that is replaced is answered by the new engine
     hub.close();
   }
 });
+
+test('a read keeps the engine while it runs: the engine is dropped as idle, and retired, only once the read ends', async () => {
+  let finishRead;
+  const engine = controlledEngine('A', {}, {
+    getRunSummary: id => new Promise(resolve => { finishRead = () => resolve({ id }); }),
+  });
+  const hub = createHub({ createEngine: () => engine, heartbeatMs: 1000, engineIdleMs: 10 });
+  try {
+    const held = hub.withEngine(current => current.getRunSummary('run-1'));
+    assert.equal(await hub.withEngine(current => current.listSwarms().length), 1, 'a short read ends while the long one waits');
+    await wait(60);
+    assert.deepEqual([hub.hasEngine(), engine.retired], [true, false], 'the engine is not idle while a read uses it');
+    finishRead();
+    assert.deepEqual(await held, { id: 'run-1' });
+    await until(() => !hub.hasEngine());
+    assert.equal(engine.retired, true, 'an engine dropped as idle is retired');
+  } finally {
+    hub.close();
+  }
+});
+
+test('a read leaves nothing behind once it ends, while one still running when its engine is replaced runs again on the new one', { timeout: 5000 }, async () => {
+  const first = controlledEngine('A', {}, {
+    getRunSummary: id => (id === 'bad' ? Promise.reject(new Error('unreadable')) : new Promise(() => {})),
+  });
+  const second = controlledEngine('B', {}, { getRunSummary: async id => ({ id, from: 'B' }) });
+  const engines = [first, second];
+  let created = 0;
+  const hub = createHub({
+    createEngine: () => engines[created++], refreshLimitMs: 50, refreshCheckMs: 5, poolPassedSince: () => true, engineIdleMs: 10000,
+  });
+  try {
+    for (let i = 0; i < 20; i += 1) {
+      assert.equal(await hub.withEngine(engine => engine.listSwarms().length), 1);
+      await assert.rejects(hub.withEngine(engine => engine.getRunSummary('bad')), /unreadable/);
+    }
+    assert.equal(hub.pendingReads(), 0, 'reads that ended, answered or failed, are not kept');
+    const read = hub.withEngine(engine => engine.getRunSummary('run-1'));
+    await wait(10);
+    assert.equal(hub.pendingReads(), 1);
+    first.state = { stage: 'history', refreshStartedAt: Date.now() - 10000, progressAt: null, lastRefreshAt: null };
+    assert.deepEqual(await read, { id: 'run-1', from: 'B' });
+    assert.equal(hub.pendingReads(), 0);
+    assert.equal(created, 2);
+  } finally {
+    hub.close();
+  }
+});

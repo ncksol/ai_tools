@@ -29,12 +29,13 @@ export function resolvePort(env = process.env) {
  * longer refresh is 'unresponsive' too, with its health and a reason: 'broken' when its file system calls stopped
  * finishing, 'stale' when its refresh has made no progress (since it started, or since its progressAt) for longer than
  * staleAfterMs. A dashboard with no refresh running is never stale. Only a direct 200 answer from the port counts; a
- * redirect means another program.
+ * redirect means another program. Each probe uses a new connection: a holder that closes drops its open connections,
+ * and a reused one that it already dropped would fail as if another program answered.
  */
 export async function probePort(port, { timeoutMs = 2500, staleAfterMs = STALE_REFRESH_MS } = {}) {
   try {
     // Only a direct answer from this loopback port counts: a redirect could name another listener, or leave the machine.
-    const response = await fetch(`http://127.0.0.1:${port}/api/health`, { redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
+    const response = await fetch(`http://127.0.0.1:${port}/api/health`, { headers: { connection: 'close' }, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
     if (response.status !== 200) {
       await response.body?.cancel().catch(() => {});
       return { state: 'other' };

@@ -188,6 +188,47 @@ export function coalesced(load) {
 }
 
 /**
+ * Loads the run that the run page shows. fetchRun(id) resolves the run, or false for an answer that is not OK, and may
+ * reject; show(id, run) gets each load's result, false for a failure; current() is the run the page shows now, or null.
+ * A load is never started for a run whose load is still running. A failed load runs again when the live connection
+ * next opens (opened()), or at once, a single time, when the connection opened while it ran: that open came too early
+ * to retry it, and no other may follow.
+ */
+export function runLoader({ fetchRun, show, current }) {
+  let running = null;
+  let failed = null;
+  let opens = 0;
+  async function load(id) {
+    if (running?.id === id) return;
+    const mine = { id, opens };
+    running = mine;
+    let run;
+    try {
+      run = await fetchRun(id);
+    } catch {
+      run = false;
+    }
+    if (running === mine) running = null;
+    show(id, run);
+    if (run !== false) {
+      if (failed === id) failed = null;
+    } else if (current() === id) {
+      // Only the run the page shows is worth loading again.
+      failed = id;
+      if (opens !== mine.opens && running?.id !== id) load(id);
+    }
+  }
+  return {
+    load,
+    opened() {
+      opens += 1;
+      const id = current();
+      if (id !== null && failed === id && running?.id !== id) load(id);
+    },
+  };
+}
+
+/**
  * Bounded retries for a load that can fail. attempt() runs at the start of every load and cancels a pending retry, so a
  * retry never overlaps or follows another attempt; failed() schedules one retry while fewer than `limit` have run since
  * the last success or reset(); succeeded() and reset() restart the budget; stop() cancels. A retry counts when it runs,

@@ -171,6 +171,27 @@ test('a dashboard whose pool check failed, or whose refresh has run too long, is
   }
 });
 
+test('a probe opens a new connection each time, so a connection the holder already dropped cannot fail it', async () => {
+  const port = await freePort();
+  const answered = new WeakSet();
+  // A second request on one connection stands for a reused connection that the holder closed before the probe noticed.
+  const dropsReused = createServer((req, res) => {
+    if (answered.has(req.socket)) {
+      req.socket.destroy();
+      return;
+    }
+    answered.add(req.socket);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ app: 'swarm-dashboard', version: 'test', pool: 'ok', refreshStartedAt: null }));
+  });
+  await listen(dropsReused, port);
+  try {
+    for (let probe = 0; probe < 3; probe += 1) assert.equal((await probePort(port)).state, 'ours', `probe ${probe + 1}`);
+  } finally {
+    await close(dropsReused);
+  }
+});
+
 test('listenShared takes the port once a broken dashboard lets it go', async () => {
   const port = await freePort();
   const broken = await holder(port, { pool: 'broken' });

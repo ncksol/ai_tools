@@ -141,13 +141,16 @@ test('a transport swarm gives way as on the server, and picking a swarm clears i
   assert.match(change, /swarmFromUrl = false;\s*shownSwarm = null;/);
 });
 
-test('the "Data stale" note follows what each render showed, and a run that failed to load is loaded again on reconnect', () => {
+test('the "Data stale" note follows what each render showed, and every run load and connection open goes through one runLoader', () => {
   const main = readFileSync(file('main.mjs'), 'utf8');
   const render = main.slice(main.indexOf('function render()'), main.indexOf('\n}\n', main.indexOf('function render()')));
   assert.ok(render.includes('dataStale = dataStaleSince({ connection: view.connection, refreshedAt: view.refreshedAt, pollMs: view.pollMs, now: shownAt });'));
   const open = main.slice(main.indexOf("source.addEventListener('open'"));
   const body = open.slice(0, open.indexOf('});'));
-  assert.ok(body.includes("if (wasOpen && view.page === 'run' && view.run === false) loadRun(view.runId);"));
+  assert.ok(body.includes('runLoads.opened();'), 'every open, the first one too, may load a run that failed');
+  assert.equal(main.match(/runLoader\(/g).length, 1);
+  assert.equal(main.match(/fetch\(`\/api\/runs\//g).length, 1, 'runs are fetched only inside the loader');
+  assert.equal(main.match(/runLoads\.load\(view\.runId\)/g).length, 2, 'the start of a run page and a click on a run');
 });
 
 test('the swarms handler reloads History through historyReloadWanted, so the first event after load reloads it too', () => {

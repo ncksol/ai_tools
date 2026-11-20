@@ -1,4 +1,4 @@
-import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, dataStaleSince, historyReloadWanted, isNarrow, isStale, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, retryBudget, staleChoice, staleShown, startShown, startSwarm } from './app.mjs';
+import { PICK_KEY, RELOAD_KEY, RESTORED_KEY, SHOWN_KEY, baseSearch, coalesced, dataStaleSince, historyReloadWanted, isNarrow, isStale, keptDefault, lifecycleKey, reloadCarry, reloadDecision, reloadSearch, renderApp, retryBudget, runLoader, staleChoice, staleShown, startShown, startSwarm } from './app.mjs';
 import { copyAddress, openCockpit, showRequest } from './cockpit-link.mjs';
 import { fitFooter } from './footer.mjs';
 import { tickText } from './format.mjs';
@@ -169,10 +169,10 @@ function connect() {
     justConnected = true;
     view.connection = 'open';
     view.staleSince = null;
-    // After a reconnect the server may know runs that finished meanwhile, and a run that failed to load while the
-    // connection was down may load now.
+    // After a reconnect the server may know runs that finished meanwhile. A run that failed to load, before this
+    // connection or while it opened, may load now.
     if (wasOpen && historyAsked) reloadHistory();
-    if (wasOpen && view.page === 'run' && view.run === false) loadRun(view.runId);
+    runLoads.opened();
     wasOpen = true;
     checkServerVersion();
     scheduleRender();
@@ -470,17 +470,18 @@ function reloadHistory() {
   loadHistory();
 }
 
-async function loadRun(id) {
-  try {
+const runLoads = runLoader({
+  async fetchRun(id) {
     const response = await fetch(`/api/runs/${encodeURIComponent(id)}`);
-    const run = response.ok ? await response.json() : false;
+    return response.ok ? response.json() : false;
+  },
+  show(id, run) {
     // A slow answer for a run the user has left must not replace the one shown.
     if (view.runId === id) view.run = run;
-  } catch {
-    if (view.runId === id) view.run = false;
-  }
-  scheduleRender();
-}
+    scheduleRender();
+  },
+  current: () => (view.page === 'run' ? view.runId : null),
+});
 
 function act(target) {
   const el = target.closest('[data-page],[data-tab],[data-span],[data-close],[data-open],[data-run],[data-finished],[data-archived],[data-showall],[data-cockpit],[data-cockpit-copy],[data-theme-toggle]');
@@ -523,7 +524,7 @@ function act(target) {
     view.page = 'run';
     view.runId = el.dataset.run;
     view.run = null;
-    loadRun(view.runId);
+    runLoads.load(view.runId);
   } else if (el.dataset.cockpit !== undefined) {
     view.cockpitNote = view.snapshot ? openCockpit(window, { swarm: view.snapshot.run.id, host: view.host, plugin: view.installedVersion }) : null;
   } else if (el.dataset.themeToggle !== undefined) {
@@ -627,6 +628,6 @@ window.addEventListener('pageshow', event => {
 });
 
 if (view.page === 'history') reloadHistory();
-if (view.page === 'run') loadRun(view.runId);
+if (view.page === 'run') runLoads.load(view.runId);
 connect();
 render();

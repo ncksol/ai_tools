@@ -18,8 +18,9 @@ const NO_REFRESH = { stage: null, refreshStartedAt: null, progressAt: null, last
  * Each page gets a heartbeat with the time of the last finished refresh, so it can tell when its data stops changing.
  * A refresh that makes no progress (see the engine's status()) for refreshLimitMs, while poolPassedSince(its last
  * progress) says file system calls still finish, is stuck on something a new engine does not share: the hub logs where,
- * retires the engine and starts another, at most maxRestarts times in a row. Reads waiting on a retired engine move to
- * its replacement. Never writes to stdout.
+ * retires the engine and starts another, at most maxRestarts times in a row. Reads waiting on a replaced engine move to
+ * its replacement. An engine the hub drops for good, replaced, idle or closed, is retired, so a refresh still in flight
+ * in it stores nothing over what a later engine stores. Never writes to stdout.
  */
 export function createHub({
   createEngine, now = Date.now, intervalMs = 3000, engineIdleMs = 300000, heartbeatMs = 1000, maxClients = 32, stallMs = 30000,
@@ -44,8 +45,10 @@ export function createHub({
   let chainStartedAt = null;
   let restarts = 0;
   let gaveUp = false;
-  // Each engine's retirement: settled when it is replaced ('replaced') or the hub closes ('closed'), so reads stop waiting on it.
-  const retirements = new WeakMap();
+  let closed = false;
+  // Reads in progress: the engine each one runs on, and wake(reason), which ends its wait when that engine is dropped.
+  // A read leaves the set when it ends, so nothing here keeps a finished read's result alive.
+  const reads = new Set();
   const warn = error => log({ level: 'warn', source: 'server', message: error?.message ?? String(error) });
 
   function createCurrent() {
@@ -53,9 +56,6 @@ export function createHub({
     engine = created;
     unsubscribe = created.subscribe(change => { changed(change).catch(warn); });
     const abandoned = new Promise(resolve => { abandon = resolve; });
-    let retire;
-    const retired = new Promise(resolve => { retire = resolve; });
-    retirements.set(created, { retired, retire });
     ready = Promise.race([Promise.resolve(created.refresh()).catch(warn), abandoned]);
     if (!watchdog) {
       watchdog = setInterval(checkRefresh, refreshCheckMs);
@@ -117,16 +117,23 @@ export function createHub({
     replaceEngine();
   }
 
+  /**
+   * Drops an engine for good: retire() stops it and keeps a refresh still in flight from storing anything over what a
+   * later engine stores. Reads running on it wake with `reason`: 'replaced' runs them again, 'closed' fails them.
+   */
+  function discard(old, reason) {
+    if (old.retire) old.retire();
+    else old.stop();
+    for (const read of reads) if (read.engine === old) read.wake(reason);
+  }
+
   function replaceEngine() {
     const old = engine;
     const wake = abandon;
-    // retire() also stops a refresh still in flight from storing anything over what the new engine stores.
-    if (old.retire) old.retire();
-    else old.stop();
     unsubscribe?.();
+    discard(old, 'replaced');
     createCurrent();
     wake?.();
-    retirements.get(old)?.retire('replaced');
     const current = engine;
     if (polling) current.start({ intervalMs });
     swarmsKey = '';
@@ -185,10 +192,11 @@ export function createHub({
 
   function release() {
     idleTimer = null;
-    if (clients.size || !engine) return;
+    // An engine that a read still uses is not idle; the read schedules the release again when it ends.
+    if (clients.size || reads.size || !engine) return;
     settle(engine.status?.());
-    engine.stop();
     unsubscribe?.();
+    discard(engine, 'closed');
     stopWatchdog();
     endChain();
     abandon?.();
@@ -342,34 +350,42 @@ export function createHub({
     await push(client);
   }
 
+  const closing = () => Object.assign(new Error('The dashboard server is closing'), { retriable: true });
+
   /**
-   * Run fn with the engine, creating it if needed; an engine with no connected page is dropped later. When the engine is
-   * replaced while fn waits on it, fn runs again on the new engine; when the hub closes, this fails with an error whose
-   * `retriable` is true.
+   * Run fn with the engine, creating it if needed; the engine is kept while fn runs, and one with no connected page is
+   * dropped later. When the engine is replaced while fn waits on it, fn runs again on the new engine; when the hub closes,
+   * this fails with an error whose `retriable` is true.
    */
   async function withEngine(fn) {
-    for (;;) {
-      const current = await acquire();
-      const { retired } = retirements.get(current);
-      const work = Promise.resolve().then(() => fn(current));
-      // An engine dropped, replaced or closed while fn ran may have reopened its read-only connections, so stop it again
-      // once fn ends, even when this no longer waits for it.
-      const ended = () => {
-        if (current !== engine) current.stop();
-      };
-      work.then(ended, ended);
-      let outcome;
-      try {
-        outcome = await Promise.race([work.then(value => ({ value })), retired]);
-      } finally {
-        scheduleRelease();
+    const read = { engine: null, wake: null };
+    reads.add(read);
+    try {
+      for (;;) {
+        if (closed) throw closing();
+        const current = await acquire();
+        if (closed) throw closing();
+        const woken = new Promise(resolve => { read.wake = resolve; });
+        read.engine = current;
+        const work = Promise.resolve().then(() => fn(current));
+        // An engine dropped, replaced or closed while fn ran may have reopened its read-only connections, so stop it
+        // again once fn ends, even when this no longer waits for it.
+        const ended = () => {
+          if (current !== engine) current.stop();
+        };
+        work.then(ended, ended);
+        const outcome = await Promise.race([work.then(value => ({ value })), woken]);
+        if (outcome === 'closed') throw closing();
+        if (outcome !== 'replaced') return outcome.value;
       }
-      if (outcome === 'closed') throw Object.assign(new Error('The dashboard server is closing'), { retriable: true });
-      if (outcome !== 'replaced') return outcome.value;
+    } finally {
+      reads.delete(read);
+      scheduleRelease();
     }
   }
 
   function close() {
+    closed = true;
     for (const client of clients) {
       client.closed = true;
       clearTimeout(client.stallTimer);
@@ -383,9 +399,8 @@ export function createHub({
     heartbeat = null;
     polling = false;
     if (engine) {
-      engine.stop();
       unsubscribe?.();
-      retirements.get(engine)?.retire('closed');
+      discard(engine, 'closed');
     }
     endChain();
     abandon?.();
@@ -397,5 +412,9 @@ export function createHub({
   /** Bytes written to live pages that their sockets have not taken yet (a diagnostic for tests). */
   const queuedBytes = () => [...clients].reduce((sum, client) => sum + (client.res.writableLength ?? 0), 0);
 
-  return { add, withEngine, close, status, clientCount: () => clients.size, hasEngine: () => engine !== null, queuedBytes };
+  return {
+    add, withEngine, close, status, clientCount: () => clients.size, hasEngine: () => engine !== null, queuedBytes,
+    // Reads in progress (a diagnostic for tests).
+    pendingReads: () => reads.size,
+  };
 }

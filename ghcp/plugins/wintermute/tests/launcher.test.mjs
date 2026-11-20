@@ -94,14 +94,20 @@ test('bad arguments print the usage and exit 2', async () => {
 });
 
 // Runs finish() in a child process, after an optional file system call that never finishes, and reports how it ended.
-function finishInChild({ fifo = null, graceMs }) {
+// stderr 'stuck' takes the note but never reports it written, and 'throws' rejects it.
+function finishInChild({ fifo = null, graceMs, stderr: stderrKind = null }) {
   const launcher = new URL('../scripts/swarm-dashboard.mjs', import.meta.url).href;
   const code = `
     import { open } from 'node:fs/promises';
     import { finish } from ${JSON.stringify(launcher)};
     const fifo = ${JSON.stringify(fifo)};
     if (fifo) open(fifo).catch(() => {});
-    finish(1, { graceMs: ${graceMs} });
+    const stderrs = {
+      stuck: { writableNeedDrain: false, write() { return false; } },
+      throws: { writableNeedDrain: false, write() { throw new Error('stderr is closed'); } },
+    };
+    const kind = ${JSON.stringify(stderrKind)};
+    finish(1, { graceMs: ${graceMs}, ...(kind ? { stderr: stderrs[kind] } : {}) });
   `;
   const child = spawn(process.execPath, ['--input-type=module', '-e', code], { stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
@@ -133,6 +139,20 @@ test('a failed launcher held open by a file system call that never finishes ends
     const result = await finishInChild({ fifo, graceMs: 200 });
     assert.equal(result.signal, 'SIGTERM', `it ends itself rather than hanging (exit code ${result.exitCode}, ${result.ms} ms)`);
     assert.match(result.stderr, /could not exit because a file system call is stuck/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a failed launcher held open by a stuck call ends itself even when its last note cannot be written', { skip: process.platform === 'win32' && 'needs a FIFO' }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'wintermute-finish-'));
+  try {
+    for (const stderr of ['stuck', 'throws']) {
+      const fifo = join(dir, `never-written-${stderr}`);
+      execFileSync('mkfifo', [fifo]);
+      const result = await finishInChild({ fifo, graceMs: 200, stderr });
+      assert.equal(result.signal, 'SIGTERM', `stderr ${stderr}: it ends itself (exit code ${result.exitCode}, signal ${result.signal}, ${result.ms} ms)`);
+    }
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

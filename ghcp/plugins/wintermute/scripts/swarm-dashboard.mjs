@@ -21,6 +21,8 @@ const SCENARIOS = ['example', 'stress'];
 
 /** How long a failed launcher waits to exit by itself before it ends its own process. */
 export const EXIT_GRACE_MS = 2000;
+/** How long the launcher gives its last note to reach stderr before it ends its own process. */
+export const NOTE_FLUSH_MS = 100;
 
 export function parseArguments(argv, env = process.env) {
   const options = { port: null, demo: null, still: false, help: false };
@@ -105,16 +107,23 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
 /**
  * End the launcher's process with main()'s code. A failed run that has not exited within graceMs is held open by a
  * native call that will not finish, such as a stuck file system call after the dashboard broke. process.exit() then
- * hangs as well, because exit waits for the stuck libuv worker thread, so the process ends itself with SIGTERM.
+ * hangs as well, because exit waits for the stuck libuv worker thread, so the process ends itself with SIGTERM. The note
+ * it writes first is best-effort: the signal follows NOTE_FLUSH_MS later whether or not stderr took the note.
  */
 export function finish(code, { graceMs = EXIT_GRACE_MS, stderr = process.stderr } = {}) {
   process.exitCode = code;
   if (code === 0) return;
   setTimeout(() => {
-    stderr.write('The process could not exit because a file system call is stuck; ending it.\n', () => {
+    try {
+      // A stderr that is already backed up gets nothing more.
+      if (!stderr.writableNeedDrain) stderr.write('The process could not exit because a file system call is stuck; ending it.\n');
+    } catch {
+      // Ending the process matters more than the note.
+    }
+    setTimeout(() => {
       process.removeAllListeners('SIGTERM');
       process.kill(process.pid, 'SIGTERM');
-    });
+    }, NOTE_FLUSH_MS).unref();
   }, graceMs).unref();
 }
 
