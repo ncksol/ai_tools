@@ -1,6 +1,8 @@
 import { parseTime } from '../time.mjs';
 
-const table = (name, columns, required) => Object.freeze({ table: name, columns: Object.freeze(columns), required: Object.freeze(required) });
+const table = (name, columns, required, { optional = false } = {}) => Object.freeze({
+  table: name, columns: Object.freeze(columns), required: Object.freeze(required), optional,
+});
 
 /**
  * Named columns only: data.db also holds a GitHub token column, which the engine never reads. data.db is the app's
@@ -8,6 +10,9 @@ const table = (name, columns, required) => Object.freeze({ table: name, columns:
  */
 export const APP_TABLES = Object.freeze({
   projects: table('projects', ['id', 'name', 'github_owner', 'github_repo'], ['id']),
+  // Copilot app Projects. An app without Projects has no such table, so a missing or reshaped table is not a problem to report;
+  // a read that fails is.
+  persistentProjects: table('persistent_projects', ['session_id'], ['session_id'], { optional: true }),
   worktrees: table('worktrees', ['id', 'branch', 'base_branch'], ['id']),
   workspaces: table('workspaces', [
     'id', 'project_id', 'worktree_id', 'name', 'branch', 'created_at', 'archived_at', 'session_id',
@@ -24,11 +29,36 @@ export const APP_TABLES = Object.freeze({
 /** Lists the existing columns of exactly the tables in APP_TABLES. */
 export const SCHEMA_SQL = `SELECT m.name AS table_name, p.name AS column_name FROM sqlite_master AS m JOIN pragma_table_info(m.name) AS p WHERE m.type = 'table' AND m.name IN (${Object.values(APP_TABLES).map(item => `'${item.table}'`).join(', ')})`;
 
+/**
+ * Lists one table's columns: none when the table is missing. It matches SCHEMA_SQL's tables, so a view or anything else of that
+ * name is not a table either. The table names are constants, never data.
+ */
+const columnsSql = name => `SELECT p.name AS name FROM sqlite_master AS m JOIN pragma_table_info(m.name) AS p WHERE m.type = 'table' AND m.name = '${name}'`;
+
+/**
+ * One table's columns, for when the schema query failed: a Set, null when the table is missing, or undefined when this query
+ * failed too, and the table's state is not known.
+ */
+async function columnsOf(db, name) {
+  try {
+    const found = await db.all(columnsSql(name));
+    return found?.length ? new Set(found.map(row => row.name)) : null;
+  } catch {
+    return undefined;
+  }
+}
+
 const text = value => (typeof value === 'string' && value.length ? value : null);
 const count = value => (value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value));
 
+/**
+ * Reads the tables in APP_TABLES. `failed` names the keys of the tables whose read failed, such as a busy database: their values
+ * are empty, so what this read gives is partial. A table that is missing, or lacks a required column, is not a failed read, even
+ * when the schema query failed.
+ */
 export async function readAppDb(db) {
   const diagnostics = [];
+  const failed = new Set();
   const rows = {};
   let present = null;
   try {
@@ -41,19 +71,21 @@ export async function readAppDb(db) {
     present = null;
     diagnostics.push({ level: 'warn', source: 'data.db', message: `schema: ${error.message}` });
   }
-  for (const [key, { table: name, columns, required }] of Object.entries(APP_TABLES)) {
+  for (const [key, { table: name, columns, required, optional }] of Object.entries(APP_TABLES)) {
     rows[key] = [];
     let selected = columns;
-    if (present) {
-      const have = present.get(name);
+    // When the schema query failed, each table is looked up on its own, so that a table found missing is not taken for a failed
+    // read. A table whose lookup fails too is read with every column it should have.
+    const have = present ? present.get(name) ?? null : await columnsOf(db, name);
+    if (have !== undefined) {
       if (!have) {
-        diagnostics.push({ level: 'warn', source: 'data.db', message: `${key}: table ${name} not found` });
+        if (!optional) diagnostics.push({ level: 'warn', source: 'data.db', message: `${key}: table ${name} not found` });
         continue;
       }
       const missingRequired = required.filter(column => !have.has(column));
       if (missingRequired.length) {
         const names = columns.filter(column => missingRequired.includes(column));
-        diagnostics.push({ level: 'warn', source: 'data.db', message: `${key}: missing column(s) ${names.join(', ')}` });
+        if (!optional) diagnostics.push({ level: 'warn', source: 'data.db', message: `${key}: missing column(s) ${names.join(', ')}` });
         continue;
       }
       selected = columns.filter(column => have.has(column));
@@ -63,11 +95,13 @@ export async function readAppDb(db) {
     try {
       rows[key] = await db.all(`SELECT ${selected.join(', ')} FROM ${name}`);
     } catch (error) {
+      failed.add(key);
       diagnostics.push({ level: 'warn', source: 'data.db', message: `${key}: ${error.message}` });
     }
   }
   return {
     projects: new Map(rows.projects.map(row => [row.id, { id: row.id, name: row.name ?? '', githubOwner: text(row.github_owner), githubRepo: text(row.github_repo) }])),
+    persistentProjects: new Set(rows.persistentProjects.map(row => text(row.session_id)).filter(Boolean)),
     worktrees: new Map(rows.worktrees.map(row => [row.id, { id: row.id, branch: text(row.branch), baseBranch: text(row.base_branch) }])),
     workspaces: new Map(rows.workspaces.map(row => [row.id, {
       id: row.id, projectId: text(row.project_id), worktreeId: text(row.worktree_id), name: row.name ?? '', branch: text(row.branch),
@@ -92,6 +126,7 @@ export async function readAppDb(db) {
       // Ownership does not prove that the target session was created for the schedule (Projects design U12).
       ownerSessionId: text(row.owner_session_id),
     })),
+    failed,
     diagnostics,
   };
 }

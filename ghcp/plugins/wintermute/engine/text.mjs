@@ -24,3 +24,8 @@ export function firstLine(value) {
   }
   return null;
 }
+
+/** True for a string that is one safe file or folder name: not empty, `.` or `..`, and with no path separator or NUL. */
+export function isPathComponent(value) {
+  return typeof value === 'string' && value !== '' && value !== '.' && value !== '..' && !/[/\\\0]/.test(value);
+}

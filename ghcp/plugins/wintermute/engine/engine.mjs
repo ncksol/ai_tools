@@ -8,15 +8,20 @@ import { readAppDb } from './readers/app-db.mjs';
 import { createTail, fileStamp, lastWorkTime, readNewLines } from './readers/events.mjs';
 import { createLedger, readUsage } from './readers/ledger.mjs';
 import { createProcessProbe } from './readers/process-probe.mjs';
-import { createSessionDbCache, listLocks, readWorkspaceYaml } from './readers/session-files.mjs';
-import { buildForest, resolveNodeId, treeNodes } from './model/forest.mjs';
+import { createSessionDbCache, listLocks, readProjectOptIn, readWorkspaceYaml, sessionFile } from './readers/session-files.mjs';
+import { buildForest, resolveNodeId, rootProjectId, treeNodes } from './model/forest.mjs';
 import { parseQuestionTag } from './model/contract.mjs';
 import { createHistoryStore, listItemOf, summarizeRun } from './model/history.mjs';
 import { createPrLookup } from './model/pr-lookup.mjs';
 import { applyLine, applyRecovered, createSessionState, isWorkEvent } from './model/session-state.mjs';
 import { buildSnapshot } from './model/swarm.mjs';
+import { HOUR, MINUTE } from './time.mjs';
 
 const LIVENESS_TTL_MS = 15_000;
+// After an owed summary's second failed try (see owedSaves), the next waits this long, doubling after each later failure, up to
+// OWED_RETRY_MAX_MS. The first failed try is tried again at the next poll.
+const OWED_RETRY_MS = MINUTE;
+const OWED_RETRY_MAX_MS = HOUR;
 const EXTRA_TRACKED = 3;
 // The listing's activity time comes from file modification times, which on real files run a few milliseconds after the last
 // event's timestamp. Without this slack every stored summary would look stale against the listing.
@@ -25,7 +30,10 @@ const round1 = value => Math.round(value * 10) / 10;
 const shortId = id => String(id).slice(0, 8);
 
 function emptyApp() {
-  return { projects: new Map(), worktrees: new Map(), workspaces: new Map(), parentLinks: [], aliases: [], chatLinks: [], sessions: new Map(), automations: [], diagnostics: [] };
+  return {
+    projects: new Map(), worktrees: new Map(), workspaces: new Map(), parentLinks: [], aliases: [], chatLinks: [], sessions: new Map(), automations: [],
+    persistentProjects: new Set(), diagnostics: [],
+  };
 }
 
 function sqliteProblem(source, error) {
@@ -87,7 +95,9 @@ const byLifecycleThenActivity = (a, b) => (a.lifecycle === b.lifecycle ? b.lastA
  * @param {import('./schema.mjs').EngineOptions & {
  *   processProbe?: (locks: {pid: number, mtimeMs: number}[]) => Promise<Map<number, boolean>>,
  *   historyStore?: ReturnType<typeof createHistoryStore>,
- * }} options `historyStore` is a test seam: the store to use instead of one on `historyDir`.
+ *   sqliteReader?: ReturnType<typeof createSqliteReader>,
+ * }} options `historyStore` and `sqliteReader` are test seams: the store to use instead of one on `historyDir`, and the
+ *   SQLite reader to use instead of one for the `sqlite` backend.
  * @returns {import('./schema.mjs').SwarmEngine}
  */
 export function createSwarmEngine(options = {}) {
@@ -96,7 +106,7 @@ export function createSwarmEngine(options = {}) {
   const now = options.now ?? Date.now;
   const thresholds = resolveThresholds(options.thresholds);
   const sqlite = { backend: options.sqlite ?? 'auto' };
-  const reader = createSqliteReader(sqlite);
+  const reader = options.sqliteReader ?? createSqliteReader(sqlite);
   const log = item => {
     try {
       if (typeof options.log === 'function') options.log(item);
@@ -115,6 +125,7 @@ export function createSwarmEngine(options = {}) {
   // Per root id: true when the last refresh read every one of its sessions' logs in full for cost (see readCosts).
   const costsComplete = new Map();
   const readDb = createSessionDbCache();
+  const readOptIn = createSessionDbCache(readProjectOptIn);
   const sessions = new Map();
   const liveness = new Map();
   // Per CLI session: { stamp, mtimeMs, at, checkedAt } from the last look at the end of its log (see workTimeOf).
@@ -135,9 +146,20 @@ export function createSwarmEngine(options = {}) {
   // when the root leaves the forest.
   const verified = new Map();
   const pendingRoots = new Set();
+  // Per root id: { failures, retryAt } for a finished run that owes its stored summary. A tracked run that is built finished owes
+  // it until persistFinished stores or confirms it, for example when data.db or a log was not read in full, or the write failed;
+  // so does a live run that a partial read of data.db hides (see doRefresh). A later refresh rebuilds it, whether or not anything
+  // asks for the run, until its summary is stored or confirmed, it is built live, or a full read of data.db no longer lists it.
+  // The retries are bounded. An owed run is rebuilt only while data.db and every one of its sessions' logs read in full
+  // (costsComplete), so a run whose log is gone for good is never rebuilt for it. A try with those inputs that still fails, such
+  // as a write to a read-only history folder, is tried again at the next poll, then 1, 2, 4 ... minutes later, at most hourly.
+  const owedSaves = new Map();
   const requested = [];
   const listeners = new Set();
   let app = null;
+  // False while `app` comes from a data.db read in which a table failed to read (see readAppDb). A refresh that finds no data.db
+  // keeps `app`, and so keeps this too.
+  let appComplete = true;
   let forest = null;
   let swarms = [];
   let diagnostics = [];
@@ -157,7 +179,8 @@ export function createSwarmEngine(options = {}) {
   const logFailureSince = new Map();
 
   const projectOf = node => {
-    const project = node.projectId ? app.projects.get(node.projectId) : null;
+    const projectId = rootProjectId(forest, node.id);
+    const project = projectId ? app.projects.get(projectId) : null;
     return project ? { id: project.id, name: project.name } : null;
   };
 
@@ -334,6 +357,29 @@ export function createSwarmEngine(options = {}) {
     return waiting;
   }
 
+  /**
+   * The forest's Project candidates (see buildForest) whose session.db turns wintermute on in its latest wintermute_project row.
+   * `files` collects the session.db files read, so that their cache entries and connections are kept. A read that fails uses
+   * the last value read from that file, with a warning. A session id that is not one safe folder name is never read.
+   */
+  async function optedInProjects(diag, files) {
+    const on = new Set();
+    for (const { id, cliId } of forest.projectCandidates) {
+      const file = sessionFile(paths.stateDir, cliId, 'session.db');
+      if (!file) continue;
+      files.add(file);
+      let value;
+      try {
+        value = await readOptIn(file, reader);
+      } catch (error) {
+        value = readOptIn.last(file) ?? null;
+        diag.push({ level: 'warn', source: 'session.db', message: `${shortId(cliId)}: ${error.message}` });
+      }
+      if (value === true) on.add(id);
+    }
+    return on;
+  }
+
   function markLogUnreadable(cliId, at) {
     logsUnreadable.add(cliId);
     if (!logFailureSince.has(cliId)) logFailureSince.set(cliId, at);
@@ -455,8 +501,8 @@ export function createSwarmEngine(options = {}) {
    * Builds a tracked root's snapshot. Resolves `{ snapshot, complete }`: `complete` is true only when this refresh read every
    * source the snapshot uses, so a summary of it may be marked checked (see persistFinished). It is false when a session's log
    * or session.db could not be read (the last good value was used), when a PR's first lookup has not finished (its outcome is
-   * not known yet), or `globalsRead` is false (data.db failed). `costsIncomplete` holds the CLI sessions whose cost is not
-   * complete (see readCosts), so a summary built from them never replaces the last good one.
+   * not known yet), or `globalsRead` is false (data.db, or one of its tables, failed to read). `costsIncomplete` holds the CLI
+   * sessions whose cost is not complete (see readCosts), so a summary built from them never replaces the last good one.
    * `shared` holds engine-wide and this root's cost diagnostics. The snapshot adds the notes from reading this root's
    * sessions; those notes are also added to `diag`, the engine's list.
    */
@@ -556,17 +602,35 @@ export function createSwarmEngine(options = {}) {
    * Stores the summary of a finished run's snapshot and marks it checked for the listing. Only a `complete` snapshot (see
    * buildTracked) does either: one built while a source could not be read holds older or missing inputs, so the stored
    * summary, the last good one, stays as it is, unchecked, and the stale check rebuilds the run once its sources can be read.
+   * Resolves true when the stored summary is now this snapshot's: written, or found the same.
    */
   async function persistFinished(snapshot, diag, complete) {
-    if (!persist || !complete) return;
+    if (!persist || !complete) return false;
     try {
       const stamp = listedStamp(snapshot.run.id);
       const key = await writeSummary(snapshot);
       // The snapshot was built after this refresh listed the run, so the stored summary is current for that listing.
       if (stamp) verified.set(snapshot.run.id, { ...stamp, digest: key });
+      return true;
     } catch (error) {
       diag.push({ level: 'warn', source: 'history', message: error.message });
+      return false;
     }
+  }
+
+  /**
+   * Records that a finished run owes its stored summary (see owedSaves). `tried` is true when the build that failed to store it
+   * had full inputs (data.db and every log of the run); only such a try counts as a failure and moves the next try later.
+   */
+  function owe(rootId, at, tried) {
+    const entry = owedSaves.get(rootId);
+    if (!tried) {
+      if (!entry) owedSaves.set(rootId, { failures: 0, retryAt: at });
+      return;
+    }
+    const failures = (entry?.failures ?? 0) + 1;
+    const wait = failures === 1 ? 0 : Math.min(OWED_RETRY_MAX_MS, OWED_RETRY_MS * 2 ** (failures - 2));
+    owedSaves.set(rootId, { failures, retryAt: at + wait });
   }
 
   async function doRefresh() {
@@ -574,7 +638,8 @@ export function createSwarmEngine(options = {}) {
     const sequence = ++refreshes;
     const at = now();
     const diag = [];
-    // False once data.db fails to read; a database that is not found is not a failure.
+    // False once data.db, or one of its tables, fails to read, or this refresh reuses an earlier read that was partial; a
+    // database or table that is not found is not a failure.
     let globalsRead = true;
     if (sqlite.backend === 'auto') {
       diag.push({ level: 'info', source: 'sqlite', message: (await loadNodeSqlite()) ? 'Reading SQLite through node:sqlite.' : 'Reading SQLite through the sqlite3 command-line tool.' });
@@ -582,12 +647,17 @@ export function createSwarmEngine(options = {}) {
     try {
       const data = await reader.read(paths.dataDb, readAppDb);
       if (data) {
+        // A partial read must not replace a stored summary: a Project read as empty would lose the run's project. The last good
+        // Projects are kept, so the run shows as before until the next good read.
+        appComplete = !data.failed.size;
+        if (data.failed.has('persistentProjects') && app) data.persistentProjects = app.persistentProjects;
         app = data;
         diag.push(...data.diagnostics);
       } else {
         app = app ?? emptyApp();
         diag.push({ level: 'warn', source: 'data.db', message: 'The Copilot app database was not found.' });
       }
+      if (!appComplete) globalsRead = false;
     } catch (error) {
       globalsRead = false;
       app = app ?? emptyApp();
@@ -595,6 +665,7 @@ export function createSwarmEngine(options = {}) {
     }
     // The CLI sessions of top sessions that may be swarms before their first child (see waitingOrchestrators).
     const candidateCliIds = new Set();
+    const optInFiles = new Set();
     // Roots before this refresh: a root that leaves the forest is reported as changed, so a page that shows it learns it has gone.
     const before = forest ? forest.roots.map(root => root.id) : [];
     try {
@@ -604,7 +675,8 @@ export function createSwarmEngine(options = {}) {
       forest = buildForest(app, { hasSubagents });
       const found = await scanTaskStarts(forest.taskCandidates, diag);
       const waiting = await waitingOrchestrators(at, candidateCliIds);
-      if (waiting.size || found) forest = buildForest(app, { waitingRoots: waiting, hasSubagents });
+      const optedIn = await optedInProjects(diag, optInFiles);
+      if (waiting.size || found || optedIn.size) forest = buildForest(app, { waitingRoots: waiting, hasSubagents, optedInProjects: optedIn });
     } catch (error) {
       forest = forest ?? buildForest(emptyApp());
       diag.push({ level: 'warn', source: 'forest', message: error.message });
@@ -616,10 +688,20 @@ export function createSwarmEngine(options = {}) {
     costsIncomplete = await readCosts(costIds, costDiagnostics, at);
     swarms = await listRoots(at, diag);
     const rootIds = new Set(forest.roots.map(root => root.id));
+    const fullInputs = rootId => globalsRead && costsComplete.get(rootId) === true;
+    // A live run that a partial read of data.db leaves out of the forest may be hidden only for now: it owes its summary, so it is
+    // rebuilt once it is back. Only a full read that no longer lists a run ends what it owes.
+    if (persist && !globalsRead) {
+      for (const rootId of before) if (!rootIds.has(rootId) && snapshots.get(rootId)?.snapshot.run.lifecycle === 'live') owe(rootId, at, false);
+    }
+    if (globalsRead) for (const rootId of [...owedSaves.keys()]) if (!rootIds.has(rootId)) owedSaves.delete(rootId);
     const tracked = new Set([
       ...swarms.filter(swarm => swarm.lifecycle === 'live').map(swarm => swarm.id),
       ...requested.filter(id => rootIds.has(id)),
       ...[...pendingRoots].filter(id => rootIds.has(id)),
+      // A run whose last snapshot was live is built once more, so its finish is never only listed: it is stored, or owed.
+      ...[...snapshots].filter(([id, entry]) => rootIds.has(id) && entry.snapshot.run.lifecycle === 'live').map(([id]) => id),
+      ...[...owedSaves].filter(([id, entry]) => rootIds.has(id) && fullInputs(id) && at >= entry.retryAt).map(([id]) => id),
     ]);
     const changed = [];
     const failed = new Set();
@@ -648,9 +730,11 @@ export function createSwarmEngine(options = {}) {
         }
         if (snapshot.run.lifecycle === 'finished') {
           knownFinished.set(rootId, cheapLast.get(rootId));
-          await persistFinished(snapshot, diag, complete);
+          if (await persistFinished(snapshot, diag, complete)) owedSaves.delete(rootId);
+          else if (persist) owe(rootId, at, fullInputs(rootId));
         } else {
           knownFinished.delete(rootId);
+          owedSaves.delete(rootId);
         }
       } catch (error) {
         failed.add(rootId);
@@ -677,7 +761,8 @@ export function createSwarmEngine(options = {}) {
     for (const [cliId, entry] of [...liveness]) if (at - entry.checkedAt > 4 * LIVENESS_TTL_MS) liveness.delete(cliId);
     for (const [cliId, entry] of [...workTimes]) if (at - entry.checkedAt > 4 * LIVENESS_TTL_MS) workTimes.delete(cliId);
     readDb.retain(dbFiles);
-    reader.retain(new Set([...dbFiles, paths.dataDb]));
+    readOptIn.retain(optInFiles);
+    reader.retain(new Set([...dbFiles, ...optInFiles, paths.dataDb]));
     swarms = swarms.map(item => {
       const entry = snapshots.get(item.id);
       return entry ? { ...item, lifecycle: entry.snapshot.run.lifecycle, lastActivityAt: entry.snapshot.run.lastActivityAt } : item;

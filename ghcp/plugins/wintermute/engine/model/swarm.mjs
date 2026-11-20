@@ -2,7 +2,7 @@ import { CREDIT_USD, MAX_FINISHED_SUBAGENT_UNITS, NANO_AIU_PER_CREDIT, SCHEMA_VE
 import { clip, firstLine, oneLine } from '../text.mjs';
 import { MINUTE, maxTime, minTime } from '../time.mjs';
 import { UNIT_LABEL_RE, normaliseRegistry, parseQuestionTag, parseReportBody, parseStatusLine, purposeToStatus } from './contract.mjs';
-import { descendants, resolveNodeId } from './forest.mjs';
+import { descendants, resolveNodeId, rootProjectId } from './forest.mjs';
 import { NEW_SESSION, dispatchesFor } from './dispatch.mjs';
 import { setRunStats } from './run-stats.mjs';
 import { effortOf, mergeStates } from './session-state.mjs';
@@ -859,6 +859,16 @@ function costSummary(ledger, cliIds, units) {
   };
 }
 
+/**
+ * The project that the run shows: the root's own, or for a Copilot app Project, the one most of its children use (see
+ * rootProjectId). It names the run only: a unit's PR is resolved from the unit's own repository, never from this guess.
+ */
+function shownProject(app, forest, rootId) {
+  const projectId = rootProjectId(forest, rootId);
+  const project = projectId ? app.projects.get(projectId) ?? null : null;
+  return project ? { id: project.id, name: project.name } : null;
+}
+
 export function buildSnapshot(input) {
   const { forest, rootId, app, now, thresholds } = input;
   const root = forest.nodes.get(rootId);
@@ -921,7 +931,7 @@ export function buildSnapshot(input) {
     generatedAt: now,
     revision: input.revision ?? 0,
     run: {
-      id: root.id, name: root.name ?? '', project: project ? { id: project.id, name: project.name } : null,
+      id: root.id, name: root.name ?? '', project: shownProject(app, forest, rootId),
       startedAt: root.createdAt ?? orchestrator.startedAt, firstChildAt: minTime(...nodes.map(node => node.createdAt)),
       lastActivityAt, lifecycle, finishedAt, quietSince: anyActive ? null : lastActivityAt, stalled,
       contract: { registry: registry.present && registry.rows.size > 0, statusLines: flags.statusLines, questionTags: flags.questionTags },

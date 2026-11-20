@@ -134,6 +134,77 @@ test('a missing required column skips the table', async () => {
   assert.deepEqual(app.diagnostics, [{ level: 'warn', source: 'data.db', message: 'parentLinks: missing column(s) parent_workspace_id' }]);
 });
 
+test('Copilot app Projects are read from persistent_projects: a missing or reshaped table is quiet, a failed read is not', async () => {
+  const rows = { persistent_projects: [{ session_id: 'project-a' }, { session_id: '' }, { session_id: 'project-b' }] };
+  assert.deepEqual([...(await readAppDb(fakeDb({ rows }))).persistentProjects], ['project-a', 'project-b']);
+
+  const gone = await readAppDb(fakeDb({ missing: { persistent_projects: true } }));
+  assert.deepEqual([...gone.persistentProjects], []);
+  assert.deepEqual([gone.diagnostics, [...gone.failed]], [[], []]);
+
+  const schema = (await fakeDb().all(SCHEMA_SQL)).filter(row => row.table_name !== 'persistent_projects');
+  const reshaped = await readAppDb({ all: async sql => (sql === SCHEMA_SQL ? [...schema, { table_name: 'persistent_projects', column_name: 'agent_id' }] : []) });
+  assert.deepEqual([...reshaped.persistentProjects], []);
+  assert.deepEqual([reshaped.diagnostics, [...reshaped.failed]], [[], []]);
+
+  const failing = await readAppDb({
+    all: async sql => {
+      if (sql === SCHEMA_SQL) return fakeDb().all(sql);
+      if (/FROM persistent_projects/.test(sql)) throw new Error('database is locked');
+      return [];
+    },
+  });
+  assert.deepEqual([...failing.persistentProjects], []);
+  assert.deepEqual(failing.diagnostics, [{ level: 'warn', source: 'data.db', message: 'persistentProjects: database is locked' }]);
+  assert.deepEqual([...failing.failed], ['persistentProjects']);
+});
+
+/** A db whose schema query fails; every other query is answered from `tables` ({table: [columns]}), as SQLite would. */
+function schemaLockedDb(tables, { locked = [] } = {}) {
+  return {
+    all: async sql => {
+      if (sql === SCHEMA_SQL) throw new Error('database is locked');
+      const probed = /pragma_table_info\(m\.name\) AS p WHERE m\.type = 'table' AND m\.name = '(\w+)'$/.exec(sql)?.[1];
+      const [, list, table] = probed ? [null, null, probed] : /^SELECT (.+) FROM (\w+)$/.exec(sql);
+      if (locked.includes(table)) throw new Error('database is locked');
+      if (probed) return (tables[probed] ?? []).map(name => ({ name }));
+      if (!tables[table]) throw new Error(`no such table: ${table}`);
+      const missing = list.split(', ').find(column => !tables[table].includes(column));
+      if (missing) throw new Error(`no such column: ${missing}`);
+      return [];
+    },
+  };
+}
+
+test('when the schema query fails, each table is looked up on its own, so a missing or reshaped Projects table is still quiet', async () => {
+  const all = Object.fromEntries(Object.values(APP_TABLES).map(({ table, columns }) => [table, columns]));
+  const { persistent_projects: _, ...withoutProjects } = all;
+  const schemaWarning = { level: 'warn', source: 'data.db', message: 'schema: database is locked' };
+  for (const tables of [withoutProjects, { ...withoutProjects, persistent_projects: ['agent_id'] }]) {
+    const app = await readAppDb(schemaLockedDb(tables));
+    assert.deepEqual([app.diagnostics, [...app.failed]], [[schemaWarning], []]);
+  }
+  const locked = await readAppDb(schemaLockedDb(all, { locked: ['persistent_projects'] }));
+  assert.deepEqual([...locked.failed], ['persistentProjects']);
+  assert.deepEqual(locked.diagnostics, [schemaWarning, { level: 'warn', source: 'data.db', message: 'persistentProjects: database is locked' }]);
+});
+
+for (const backend of TEST_BACKENDS) {
+  test(`${backend}: when the schema query fails, a view named like an app table is still not read as one`, async () => {
+    const file = path.join(tempDir('swarm-views-'), 'data.db');
+    execSql(file, `CREATE TABLE workspaces (id TEXT, name TEXT, created_at TEXT);
+      CREATE VIEW sessions AS SELECT 'chat-1' AS id, 'Chat' AS title;
+      CREATE VIEW persistent_projects AS SELECT 'p-1' AS session_id`);
+    const read = schemaFails => withReadOnly(file, { backend }, db => readAppDb(schemaFails
+      ? { all: sql => (sql === SCHEMA_SQL ? Promise.reject(new Error('database is locked')) : db.all(sql)) }
+      : db));
+    const normal = await read(false);
+    const fallback = await read(true);
+    assert.deepEqual([fallback.sessions.size, [...fallback.persistentProjects], [...fallback.failed]], [0, [], []]);
+    assert.deepEqual(fallback.diagnostics, [{ level: 'warn', source: 'data.db', message: 'schema: database is locked' }, ...normal.diagnostics]);
+  });
+}
+
 for (const backend of TEST_BACKENDS) {
   test(`${backend}: a minimal database degrades instead of failing`, async () => {
     const file = path.join(tempDir('swarm-minimal-'), 'data.db');
