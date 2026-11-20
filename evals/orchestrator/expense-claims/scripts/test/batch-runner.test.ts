@@ -1,16 +1,17 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { appendFileSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import type { LogEvent } from "../lib/events.ts";
-import { saveState, validateConfig } from "../lib/batch/state.ts";
+import { saveState, validateConfig, type BatchState } from "../lib/batch/state.ts";
 import { agentBundleSha256 } from "../lib/batch/pins.ts";
 import { currentPins, requestStop, STOP_MESSAGE } from "../lib/batch/runner.ts";
 import { eventsPath } from "../lib/batch/swarm.ts";
 import { run as runProc } from "../lib/proc.ts";
 import { readResults, replaceResult, summarize, formatSummary } from "../lib/results.ts";
 import { calibrationDecision, scoredCount } from "../lib/batch/plan.ts";
+import { KIT_DIR } from "../lib/suite.ts";
 import { FIXTURE_HEADER, harness, RUN1_RESULTS, type Harness } from "./fixtures/batch.ts";
 
 const made: Harness[] = [];
@@ -25,6 +26,102 @@ after(() => {
 
 const flag = (args: string[], name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
 const policyLabels = ["orchestrator-review-a", "orchestrator-review-b", "orchestrator-review-c"];
+
+const OLD_CARD = "pricing/2026-11-10.json";
+const NEW_CARD = "pricing/2026-11-20.json";
+const digest = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
+
+function installLegacyState(h: Harness, state: BatchState): void {
+  // Main at de02559: initialState's persisted fields and all original file pins.
+  // Keep the harness's machine pins, and carry over the first run already admitted.
+  saveState(h.config.dir, {
+    revision: state.revision,
+    phase: "runs",
+    pins: {
+      ...state.pins,
+      files: {
+        ...state.pins.files,
+        "score.ts": "214a0eed8ef9f8c673abf6c30acbb45a41114f3e772e440c9df763fe25f3bede",
+        "scripts/lib/usage.ts": "24713c1677946fc53dd344cc8f5801f990260c33fd3427530559299a6c5d255c",
+        "scripts/lib/batch/state.ts": "61cd5aa4e8537f0fe36b11f20634f4232eb5a916470fe94da0ea07fd5e4c2e7f",
+        "scripts/lib/batch/runner.ts": "08ba11c2d2360854220e2eb2bdc62254962529a3bc6cddbaabe7d6218f8f08df",
+        [OLD_CARD]: "fefeb9e9c9196ef5a72c9f7cd9e343eccfc263fc6e5ca742af46be05021d9cfd",
+      },
+    },
+    pending: state.pending, actionSeq: state.actionSeq, recorded: state.recorded, selftests: [],
+    runs: state.runs, provisioned: state.provisioned, active: state.active,
+    startFailures: 0, scoreFailures: 0, notified: state.notified, caffeinate: state.caffeinate,
+    lastHeartbeatAt: state.lastHeartbeatAt, stopRequested: false, calibration: state.calibration,
+    startedAt: state.startedAt, warnings: [], owner: state.owner,
+  });
+}
+
+function realScore(h: Harness, beforeSpawn = () => {}) {
+  const exec = h.ctx.deps.exec;
+  h.ctx.deps.exec = (cmd, args, opts) => {
+    if (cmd !== process.execPath || args[0] !== h.config.scoreScript) return exec(cmd, args, opts);
+    beforeSpawn();
+    const env = { ...process.env };
+    delete env.NODE_TEST_CONTEXT;
+    return runProc(cmd, args, { ...opts, env });
+  };
+}
+
+test("new batch scores using its saved pricing pin", async () => {
+  const h = await make({ scenarios: ["ask-final"] });
+  const sha256 = digest(join(KIT_DIR, NEW_CARD));
+  assert.deepEqual(h.state().pricing, { file: NEW_CARD, sha256 });
+  realScore(h);
+  await h.until(() => false);
+  assert.equal(h.state().runs[0].row?.pricing_version, `2026-11-20:${sha256}`);
+});
+
+test("an upgraded driver scores an admitted run using main's saved pin but admits no more runs", async () => {
+  const h = await make({ scenarios: ["ask-final", "ask-final"], runsPerVariant: 2 });
+  await h.until((_, state) => state.runs[0]?.status === "running");
+  installLegacyState(h, h.state());
+  realScore(h);
+  const done = await h.until(() => false);
+  const state = h.state();
+  assert.equal(state.runs[0].row?.pricing_version, `2026-11-10:${digest(join(KIT_DIR, OLD_CARD))}`);
+  assert.equal(state.runs.length, 1);
+  assert.equal(state.phase, "stopped");
+  assert.match(String(done.details?.reason), /pinned inputs changed:.*score\.ts changed/);
+});
+
+test("pricing changed after admission and just before the scorer starts leaves no row", async () => {
+  const h = await make({ scenarios: ["ask-final", "ask-final"], runsPerVariant: 2 });
+  const scratchKit = join(h.dir, "kit");
+  mkdirSync(scratchKit);
+  for (const path of ["pricing", "acceptance", "robustness", "scripts", "seed/docs", "kickoff.md", "answers.md"]) {
+    cpSync(join(KIT_DIR, path), join(scratchKit, path), { recursive: true });
+  }
+  h.config.kitDir = scratchKit;
+  h.config.scoreScript = join(scratchKit, "scripts", "score.ts");
+  await h.until((_, state) => state.runs[0]?.status === "running");
+  realScore(h, () => appendFileSync(join(scratchKit, NEW_CARD), "\n"));
+  const done = await h.until(() => false);
+  const state = h.state();
+  assert.deepEqual(readResults(h.config.resultsPath), []);
+  assert.match(state.runs[0].flags.find((f) => f.code === "score-failed")?.detail ?? "", /pricing.*digest mismatch/i);
+  assert.equal(state.runs.length, 1);
+  assert.match(String(done.details?.reason), /pinned inputs changed:.*pricing\/2026-11-20\.json changed/);
+});
+
+test("main's unpinned scorer invocation stops instead of using the new card", async () => {
+  const h = await make({ scenarios: ["ask-final"] });
+  const [results, stateDir] = [h.config.resultsPath, h.config.stateDir];
+  const before = readFileSync(results);
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  const result = await runProc(process.execPath, [h.config.scoreScript,
+    "--repo-dir", join(h.dir, "orch-eval-variant-a-1"), "--session", "legacy-session",
+    "--state-dir", stateDir, "--results", results, "--note", "legacy batch"],
+  { cwd: KIT_DIR, env });
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, /unpinned.*pricing|pricing.*pin/i);
+  assert.deepEqual(readFileSync(results), before);
+});
 
 function pinPolicy(h: Harness) {
   const variants = Object.fromEntries(h.config.variants.map((agent) => {

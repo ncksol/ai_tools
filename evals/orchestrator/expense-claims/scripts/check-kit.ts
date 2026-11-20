@@ -183,7 +183,7 @@ try {
     const resultsPath = join(tmp, "results.csv");
     const result = await run(
       process.execPath,
-      ["scripts/score.ts", "--repo-dir", repoDir, "--session", values.session, "--no-github", "--results", resultsPath],
+      ["scripts/score.ts", "--standalone", "--repo-dir", repoDir, "--session", values.session, "--no-github", "--results", resultsPath],
       { cwd: KIT_DIR, env: childEnv() },
     );
     if (result.code !== 0) return verdict(false, `exit ${result.code}: ${(result.stderr || result.stdout).trim()}`);

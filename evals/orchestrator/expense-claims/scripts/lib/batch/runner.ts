@@ -524,6 +524,7 @@ function admissionBlock(ctx: Ctx, state: BatchState): Stop | null {
   if (state.scoreFailures >= 2) return { reason: "score failed for two runs in a row", failure: true };
   const drift = diffPins(state.pins, currentPins(ctx.config));
   if (drift.length > 0) return { reason: `pinned inputs changed: ${drift.join("; ")}`, failure: true };
+  if (!batchPricing(state)) return { reason: "batch has no valid pricing pin", failure: true };
   if (ctx.config.variantSet) {
     const mismatches = verifyVariants(ctx.config.variantSet, ctx.config.agentsDir);
     if (mismatches.length > 0) return { reason: `variant registration differs from manifest: ${mismatches.join("; ")}`, failure: true };
@@ -936,6 +937,17 @@ async function startNextRound(ctx: Ctx, state: BatchState): Promise<StepResult> 
   return { progressed: true };
 }
 
+function pinsForFiles(config: BatchConfig, files: Record<string, string>) {
+  return computePins({
+    agentsDir: config.agentsDir,
+    variants: config.variantSet ? variantAgents(config.variantSet) : config.variants.map(liveAgent),
+    explicitAgents: Boolean(config.variantSet),
+    files,
+    appPlist: config.appPlist,
+    cliVersionFile: config.cliVersionFile,
+  });
+}
+
 export function currentPins(config: BatchConfig) {
   const files: Record<string, string> = {
     "kickoff.md": join(config.kitDir, "kickoff.md"), "answers.md": join(config.kitDir, "answers.md"),
@@ -952,14 +964,7 @@ export function currentPins(config: BatchConfig) {
     }
   };
   for (const dir of ["acceptance", "robustness", "pricing", "scripts/lib"]) addFiles(dir);
-  return computePins({
-    agentsDir: config.agentsDir,
-    variants: config.variantSet ? variantAgents(config.variantSet) : config.variants.map(liveAgent),
-    explicitAgents: Boolean(config.variantSet),
-    files,
-    appPlist: config.appPlist,
-    cliVersionFile: config.cliVersionFile,
-  });
+  return pinsForFiles(config, files);
 }
 
 // stopFirst: the run's swarm may still be working, so it gets the stop message and the drain wait
@@ -1362,6 +1367,13 @@ function archiveRunLogs(ctx: Ctx, run: RunState): void {
   } else log(ctx, `${run.key} logs archived in ${join(ctx.config.dir, "sessions", run.name)}`);
 }
 
+function batchPricing(state: BatchState) {
+  const file = state.pricing?.file ?? "pricing/2026-11-10.json";
+  const sha256 = state.pins.files[file];
+  if (!sha256 || !/^[a-f0-9]{64}$/.test(sha256) || (state.pricing && state.pricing.sha256 !== sha256)) return null;
+  return { file, sha256 };
+}
+
 async function scoreRun(ctx: Ctx, state: BatchState, run: RunState): Promise<void> {
   const { config, deps } = ctx;
   findAnswerSource(ctx, run);
@@ -1369,7 +1381,9 @@ async function scoreRun(ctx: Ctx, state: BatchState, run: RunState): Promise<voi
     const variant = config.variantSet?.variants[run.variant];
     const primary = variant ? variant.agent : liveAgent(run.variant);
     const watched = variant ? [variant.agent, ...Object.keys(variant.workers)] : run.agentBundleNames ?? Object.keys(state.pins.agents);
-    const now = currentPins(config);
+    // Admission checks all file pins. During scoring, leave the card read to the scorer so
+    // even an unreadable card takes the normal score-failed path.
+    const now = pinsForFiles(config, {});
     if (!run.agentSha256 || !run.agentBundleSha256) addFlag(run, "agent-drift", "registered launch hashes were not recorded; provenance is unavailable", iso(deps.now()));
     else {
       const changed = watched.filter((name) =>
@@ -1392,7 +1406,11 @@ async function scoreRun(ctx: Ctx, state: BatchState, run: RunState): Promise<voi
   if (run.endReason === "final" && run.final) args.push("--end-at", run.final.timestamp);
   else args.push("--outcome", run.endReason ?? "stalled");
   if (run.answerSource) args.push("--answer-source", run.answerSource);
-  const result = await deps.exec(process.execPath, args, { cwd: config.kitDir, timeoutMs: TIMEOUTS.score });
+  const pricing = batchPricing(state);
+  if (pricing) args.push("--pricing", join(config.kitDir, pricing.file), "--pricing-sha256", pricing.sha256);
+  const result = pricing
+    ? await deps.exec(process.execPath, args, { cwd: config.kitDir, timeoutMs: TIMEOUTS.score })
+    : { code: 1, stdout: "", stderr: "batch has no valid pricing pin" };
   mkdirSync(join(config.dir, "runs"), { recursive: true });
   run.scoreLog = join(config.dir, "runs", `${run.name}.score.log`);
   writeFileSync(run.scoreLog, `$ node ${args.join(" ")}\nexit ${result.code}\n\n${result.stdout}\n${result.stderr}`);

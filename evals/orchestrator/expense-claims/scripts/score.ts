@@ -19,7 +19,7 @@ import {
   type ResultRow,
 } from "./lib/results.ts";
 import { KIT_DIR, ROBUSTNESS_TIMEOUT_MS, robustnessFiles, robustnessSha256, runSuite, suiteFiles } from "./lib/suite.ts";
-import { collectUsage, readPricing, type UsageSummary } from "./lib/usage.ts";
+import { collectUsage, DEFAULT_PRICING_FILE, readPricing, type UsageSummary } from "./lib/usage.ts";
 import { variantLabel } from "./lib/variants.ts";
 
 const USAGE = `Usage:
@@ -27,7 +27,7 @@ const USAGE = `Usage:
                    [--features <list>] [--outcome <timeout|stalled>] [--calibration <yes|no>] [--results <csv>]
                    [--no-github] [--start <iso> --end <iso> [--blocked-min <m>] [--questions <n>]] [--note <text>]
                    [--answer-source <value>] [--end-at <iso>] [--replace]
-                   [--app-db <path>] [--pricing <json>]
+                   [--app-db <path>] [--pricing <json> [--pricing-sha256 <hash>]]
                    [--agent-revision <sha> --agent-sha256 <hash> --agent-bundle-sha256 <hash>]
   npm run score -- --summary [--results <csv>]`;
 const TIMEOUT_MS = 90 * 60_000;
@@ -51,7 +51,9 @@ const { values } = parseArgs({
     session: { type: "string" },
     "state-dir": { type: "string", default: join(homedir(), ".copilot", "session-state") },
     "app-db": { type: "string", default: join(homedir(), ".copilot", "data.db") },
-    pricing: { type: "string", default: join(KIT_DIR, "pricing", "2026-11-10.json") },
+    standalone: { type: "boolean" },
+    pricing: { type: "string" },
+    "pricing-sha256": { type: "string" },
     "agent-revision": { type: "string" },
     "agent-sha256": { type: "string" },
     "agent-bundle-sha256": { type: "string" },
@@ -202,6 +204,18 @@ async function main(): Promise<number> {
     return 0;
   }
   if (!values["repo-dir"]) throw new UsageError("--repo-dir is required");
+  // An old batch driver runs this file directly without any pricing arguments.
+  if (!values.standalone && values.pricing === undefined) {
+    throw new UsageError("Refusing unpinned pricing for a direct scorer call. Use npm run score for standalone scoring; a batch must pass its pricing pin.");
+  }
+  const expectedPricingSha = values["pricing-sha256"];
+  if (expectedPricingSha !== undefined && (!values.pricing || !/^[a-f0-9]{64}$/.test(expectedPricingSha))) {
+    throw new UsageError("--pricing-sha256 requires --pricing and must be a full lowercase SHA-256 digest");
+  }
+  // Use the same bytes for digest verification and rates. A card error is not a recoverable usage warning.
+  const pricing = !values.start || values.pricing !== undefined
+    ? readPricing(resolve(values.pricing ?? join(KIT_DIR, DEFAULT_PRICING_FILE)), expectedPricingSha)
+    : null;
   if (values.outcome !== undefined && !["timeout", "stalled"].includes(values.outcome)) {
     throw new UsageError(`--outcome must be timeout or stalled, not "${values.outcome}"`);
   }
@@ -280,13 +294,10 @@ async function main(): Promise<number> {
 
   const capturedAt = new Date().toISOString();
   let usage: UsageSummary | null = null;
-  let pricingVersion = "";
   const costWarnings: string[] = [];
   const costNotes: string[] = [];
-  if (timing.session !== "manual") {
+  if (timing.session !== "manual" && pricing) {
     try {
-      const pricing = readPricing(resolve(values.pricing));
-      pricingVersion = pricing.version;
       const db = openAppDb(values["app-db"]);
       usage = collectUsage({
         stateDir: resolve(values["state-dir"]), rootId: timing.session, start: timing.start, capturedAt, pricing,
@@ -394,7 +405,7 @@ async function main(): Promise<number> {
       robustness_sha256: "",
       cost_status: usage?.status ?? "unavailable",
       cost_usd: usage?.usd == null ? "" : usage.usd.toFixed(9),
-      pricing_version: pricingVersion,
+      pricing_version: timing.session === "manual" ? "" : pricing?.version ?? "",
       cost_captured_at: timing.session === "manual" ? "" : capturedAt,
       cost_sessions: usage ? String(usage.sessions) : "",
       usage_records: usage ? String(usage.records) : "",
