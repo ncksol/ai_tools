@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { createServer as createTcpServer } from 'node:net';
 import { createDemoEngine } from '../server/demo-engine.mjs';
 import { createDashboardServer } from '../server/http.mjs';
-import { DEFAULT_PORT, listenShared, probePort, resolvePort } from '../server/shared.mjs';
+import { DEFAULT_PORT, HEALTH_BODY_LIMIT, listenShared, probePort, resolvePort } from '../server/shared.mjs';
 import { freePort } from './helpers/http.mjs';
 
 const dashboard = port => createDashboardServer({ createEngine: () => createDemoEngine({ simulate: false }), port, version: 'test' });
@@ -47,7 +47,7 @@ test('the probe tells a free port, our dashboard, another program and a silent l
   try {
     assert.deepEqual(await probePort(port, { timeoutMs: 200 }), { state: 'unresponsive' });
   } finally {
-    // A timed-out fetch leaves its socket open, so close the server's side before closing the server.
+    // The server's side of a timed-out probe's socket may still be open, so close it before closing the server.
     for (const socket of sockets) socket.destroy();
     await new Promise(resolve => silent.close(() => resolve()));
   }
@@ -189,6 +189,27 @@ test('a probe opens a new connection each time, so a connection the holder alrea
     for (let probe = 0; probe < 3; probe += 1) assert.equal((await probePort(port)).state, 'ours', `probe ${probe + 1}`);
   } finally {
     await close(dropsReused);
+  }
+});
+
+test('a health answer must arrive in full within the time limit and stay small to count', async () => {
+  const port = await freePort();
+  const health = JSON.stringify({ app: 'swarm-dashboard', version: 'test', pool: 'ok', refreshStartedAt: null });
+  let mode = 'stalls';
+  const holder = createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (mode === 'stalls') res.write(health.slice(0, 10));
+    else res.end(health + ' '.repeat(HEALTH_BODY_LIMIT));
+  });
+  await listen(holder, port);
+  try {
+    const startedAt = Date.now();
+    assert.deepEqual(await probePort(port, { timeoutMs: 200 }), { state: 'unresponsive' }, 'a body that never finishes');
+    assert.ok(Date.now() - startedAt < 2000, 'the time limit covers the body, not only the status line');
+    mode = 'too long';
+    assert.deepEqual(await probePort(port), { state: 'other' }, 'a body longer than the limit');
+  } finally {
+    await close(holder);
   }
 });
 

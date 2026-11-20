@@ -1,3 +1,4 @@
+import { request } from 'node:http';
 import { APP_ID } from './http.mjs';
 import { REFRESH_CHECK_MS, REFRESH_LIMIT_MS } from './hub.mjs';
 
@@ -23,6 +24,51 @@ export function resolvePort(env = process.env) {
   return port;
 }
 
+/** The largest health answer a probe reads; a longer one comes from another program. */
+export const HEALTH_BODY_LIMIT = 64 * 1024;
+
+/**
+ * GET the port's /api/health on a connection of its own, which closes after the answer, so a connection that a holder
+ * has already dropped is never reused. Resolves with the status and, for a 200, the body (null when it is longer than
+ * HEALTH_BODY_LIMIT); rejects with the connection error, or a TimeoutError when the whole answer takes over timeoutMs.
+ */
+function readHealth(port, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    // Only this loopback port is asked, and node:http does not follow redirects.
+    const req = request({ hostname: '127.0.0.1', port, path: '/api/health', agent: false });
+    const timer = setTimeout(() => fail(Object.assign(new Error(`no health answer within ${timeoutMs} ms`), { name: 'TimeoutError' })), timeoutMs);
+    // The first outcome wins; destroying the request afterwards may report an error that no longer counts.
+    function settle(finish, value) {
+      clearTimeout(timer);
+      finish(value);
+      req.destroy();
+    }
+    function fail(error) {
+      settle(reject, error);
+    }
+    req.on('error', fail);
+    req.on('response', response => {
+      if (response.statusCode !== 200) {
+        settle(resolve, { status: response.statusCode, body: null });
+        return;
+      }
+      const chunks = [];
+      let size = 0;
+      response.on('data', chunk => {
+        size += chunk.length;
+        if (size > HEALTH_BODY_LIMIT) settle(resolve, { status: 200, body: null });
+        else chunks.push(chunk);
+      });
+      response.on('end', () => settle(resolve, { status: 200, body: Buffer.concat(chunks).toString('utf8') }));
+      response.on('error', fail);
+      response.on('close', () => {
+        if (!response.complete) fail(Object.assign(new Error('the health answer was cut short'), { code: 'ECONNRESET' }));
+      });
+    });
+    req.end();
+  });
+}
+
 /**
  * Who holds the port: our dashboard ('ours', with its health answer), nobody ('free'), another program ('other'), or
  * something that accepts connections but does not answer in time ('unresponsive'). A dashboard that answers but can no
@@ -34,20 +80,21 @@ export function resolvePort(env = process.env) {
  */
 export async function probePort(port, { timeoutMs = 2500, staleAfterMs = STALE_REFRESH_MS } = {}) {
   try {
-    // Only a direct answer from this loopback port counts: a redirect could name another listener, or leave the machine.
-    const response = await fetch(`http://127.0.0.1:${port}/api/health`, { headers: { connection: 'close' }, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
-    if (response.status !== 200) {
-      await response.body?.cancel().catch(() => {});
+    const answer = await readHealth(port, timeoutMs);
+    if (answer.status !== 200) return { state: 'other' };
+    let body = null;
+    try {
+      body = JSON.parse(answer.body);
+    } catch {
       return { state: 'other' };
     }
-    const body = await response.json().catch(() => null);
     if (!body || body.app !== APP_ID) return { state: 'other' };
     if (body.pool === 'broken') return { state: 'unresponsive', reason: 'broken', health: body };
     if (typeof body.refreshStartedAt === 'number' && Date.now() - quietSince(body) > staleAfterMs) return { state: 'unresponsive', reason: 'stale', health: body };
     return { state: 'ours', health: body };
   } catch (error) {
-    if ((error?.cause?.code ?? error?.code) === 'ECONNREFUSED') return { state: 'free' };
-    if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return { state: 'unresponsive' };
+    if (error?.code === 'ECONNREFUSED') return { state: 'free' };
+    if (error?.name === 'TimeoutError') return { state: 'unresponsive' };
     return { state: 'other' };
   }
 }

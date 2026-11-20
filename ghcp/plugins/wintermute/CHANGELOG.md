@@ -21,7 +21,7 @@ After merging, run `npm run release:publish -- --dry-run`, then `npm run release
 - A request waiting on a replaced engine is answered by the new one. A request cut short because the server closes either gets `503` with `Retry-After` or is disconnected; retry it in both cases. A request that is still running keeps its engine, so the server does not drop that engine as idle under it.
 - An engine that the server replaces, drops as idle or drops when it closes no longer stores a run summary over a newer one if its refresh is still running.
 - The launcher exits with status 1 when its server breaks. If a stuck file system call still holds the process open 2 seconds later, it ends itself with SIGTERM, because a normal exit waits for that call. It sends the signal even when stderr cannot take its last note.
-- A run page whose run failed to load loads it again on the next connection, including when the load failed before the first connection or just after one opened. A load that is still running is not started twice.
+- A run page whose run failed to load loads it again on the next connection, including when the load failed before the first connection or just after one opened. A load that is still running is not started twice, even when you open another run and come back while it runs.
 - When the broken process is the only host, opening the dashboard fails with a `reload_extensions` error that asks you to reload extensions. The runtime does not restart an extension process that exits, so the process stays up and reports the error rather than exiting.
 
 ## 1.5.3 — 2026-11-20

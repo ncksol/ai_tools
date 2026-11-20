@@ -1071,9 +1071,13 @@ test('an engine the dashboard server drops as idle does not store a summary stil
   const hub = createHub({ createEngine: slowOpen, heartbeatMs: 1000, engineIdleMs: 10 });
   try {
     let olderRequest;
-    // The read ends at once, so only the refresh it started is left writing when the engine is dropped as idle.
-    await hub.withEngine(engine => { olderRequest = engine.getRunSummary('ws-old'); });
-    assert.equal(await writing, 2, 'the server\'s engine is writing a summary with 2 credits');
+    // The read keeps the engine until the write it started is held, then ends, so only that write is left when the
+    // engine is dropped as idle.
+    const credits = await hub.withEngine(engine => {
+      olderRequest = engine.getRunSummary('ws-old');
+      return writing;
+    });
+    assert.equal(credits, 2, 'the server\'s engine is writing a summary with 2 credits');
     for (let waited = 0; hub.hasEngine() && waited < 2000; waited += 10) await sleep(10);
     assert.equal(hub.hasEngine(), false, 'the engine was dropped as idle');
     await newerWritesThree();

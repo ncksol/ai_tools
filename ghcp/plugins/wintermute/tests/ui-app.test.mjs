@@ -659,3 +659,19 @@ test('a load still running is never started twice, and a run the page has left i
   loader.opened();
   assert.deepEqual(fetches.map(fetch => fetch.id), ['run-1', 'run-1', 'run-2', 'run-3', 'run-3'], 'a late failure of a run the page left does not hide the failure of the one it shows');
 });
+
+test('a run the page leaves and comes back to while it loads is loaded once, and its answer is the one shown', async () => {
+  const { loader, fetches, shown, page } = runPage();
+  loader.load('run-1');
+  page.current = 'run-2';
+  loader.load('run-2');
+  page.current = 'run-1';
+  loader.load('run-1');
+  assert.deepEqual(fetches.map(fetch => fetch.id), ['run-1', 'run-2'], 'coming back to run-1 starts no second load');
+  fetches[0].ok({ id: 'run-1' });
+  fetches[1].fail();
+  await settled();
+  assert.deepEqual(shown, [['run-1', { id: 'run-1' }], ['run-2', false]]);
+  loader.opened();
+  assert.equal(fetches.length, 2, 'run-1 loaded, and the page no longer shows run-2');
+});

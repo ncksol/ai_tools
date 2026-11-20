@@ -190,32 +190,33 @@ export function coalesced(load) {
 /**
  * Loads the run that the run page shows. fetchRun(id) resolves the run, or false for an answer that is not OK, and may
  * reject; show(id, run) gets each load's result, false for a failure; current() is the run the page shows now, or null.
- * A load is never started for a run whose load is still running. A failed load runs again when the live connection
- * next opens (opened()), or at once, a single time, when the connection opened while it ran: that open came too early
- * to retry it, and no other may follow.
+ * A load is never started for a run whose load is still running, even when the page showed other runs meanwhile. A
+ * failed load runs again when the live connection next opens (opened()), or at once, a single time, when the
+ * connection opened while it ran: that open came too early to retry it, and no other may follow.
  */
 export function runLoader({ fetchRun, show, current }) {
-  let running = null;
+  // The connection opens counted when each running load started, by run.
+  const running = new Map();
   let failed = null;
   let opens = 0;
   async function load(id) {
-    if (running?.id === id) return;
-    const mine = { id, opens };
-    running = mine;
+    if (running.has(id)) return;
+    const startedAfter = opens;
+    running.set(id, startedAfter);
     let run;
     try {
       run = await fetchRun(id);
     } catch {
       run = false;
     }
-    if (running === mine) running = null;
+    running.delete(id);
     show(id, run);
     if (run !== false) {
       if (failed === id) failed = null;
     } else if (current() === id) {
       // Only the run the page shows is worth loading again.
       failed = id;
-      if (opens !== mine.opens && running?.id !== id) load(id);
+      if (opens !== startedAfter) load(id);
     }
   }
   return {
@@ -223,7 +224,7 @@ export function runLoader({ fetchRun, show, current }) {
     opened() {
       opens += 1;
       const id = current();
-      if (id !== null && failed === id && running?.id !== id) load(id);
+      if (id !== null && failed === id && !running.has(id)) load(id);
     },
   };
 }
