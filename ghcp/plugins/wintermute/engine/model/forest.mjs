@@ -162,6 +162,24 @@ export function buildForest(app, { waitingRoots = new Set(), hasSubagents = () =
   return { nodes, roots, workspaceOfSession, candidates, taskCandidates: [...taskCandidates], projectCandidates };
 }
 
+/**
+ * The app project (data.db projects) of a node: its own, or for a Copilot app Project, which has none, the one that most of its
+ * direct child sessions' workspaces use, ties going to the earliest child; null when none has one.
+ */
+export function rootProjectId(forest, nodeId) {
+  const node = forest.nodes.get(nodeId);
+  if (!node) return null;
+  if (node.projectId || !node.persistentProject) return node.projectId ?? null;
+  const counts = new Map();
+  for (const childId of node.childIds) {
+    const projectId = forest.nodes.get(childId)?.projectId;
+    if (projectId) counts.set(projectId, (counts.get(projectId) ?? 0) + 1);
+  }
+  let best = null;
+  for (const [projectId, count] of counts) if (best === null || count > counts.get(best)) best = projectId;
+  return best;
+}
+
 export function descendants(forest, rootId) {
   const out = [];
   const visit = id => {

@@ -106,6 +106,13 @@ export class CopilotHome {
     }
   }
 
+  /** A Copilot app Project: a chat-backed session that data.db lists in persistent_projects. */
+  persistentProject({ id, title = id, createdAt, archivedAt = null }) {
+    execSql(this.dataDb, 'CREATE TABLE IF NOT EXISTS persistent_projects (session_id TEXT PRIMARY KEY NOT NULL)');
+    this.session({ id, title, createdAt, archivedAt });
+    this.insert(this.dataDb, 'persistent_projects', { session_id: id });
+  }
+
   automation({ sessionId, ownerSessionId = sessionId, everyMinutes = 10, lastRunAt = null, nextRunAt = null, pausedAt = null, name = 'PR monitor' }) {
     this.insert(this.dataDb, 'session_automations', {
       session_id: sessionId, prompt: 'synthetic monitor prompt', interval: 'minutes', every_minutes: everyMinutes, schedule_hour: null,
