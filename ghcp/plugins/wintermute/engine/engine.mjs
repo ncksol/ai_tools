@@ -141,9 +141,16 @@ export function createSwarmEngine(options = {}) {
   // when the root leaves the forest.
   const verified = new Map();
   const pendingRoots = new Set();
+  // Finished runs whose summary a refresh did not store because data.db was not read in full (see persistFinished). Each stays
+  // tracked, so a later refresh that reads data.db in full stores it, even when nothing asks for the run; dropped then, when the
+  // run is live again, or when the root leaves the forest.
+  const deferredSaves = new Set();
   const requested = [];
   const listeners = new Set();
   let app = null;
+  // False while `app` comes from a data.db read in which a table failed to read (see readAppDb). A refresh that finds no data.db
+  // keeps `app`, and so keeps this too.
+  let appComplete = true;
   let forest = null;
   let swarms = [];
   let diagnostics = [];
@@ -626,7 +633,8 @@ export function createSwarmEngine(options = {}) {
     const sequence = ++refreshes;
     const at = now();
     const diag = [];
-    // False once data.db, or one of its tables, fails to read; a database or table that is not found is not a failure.
+    // False once data.db, or one of its tables, fails to read, or this refresh reuses an earlier read that was partial; a
+    // database or table that is not found is not a failure.
     let globalsRead = true;
     enter('sqlite');
     if (sqlite.backend === 'auto') {
@@ -638,7 +646,7 @@ export function createSwarmEngine(options = {}) {
       if (data) {
         // A partial read must not replace a stored summary: a Project read as empty would lose the run's project. The last good
         // Projects are kept, so the run shows as before until the next good read.
-        if (data.failed.size) globalsRead = false;
+        appComplete = !data.failed.size;
         if (data.failed.has('persistentProjects') && app) data.persistentProjects = app.persistentProjects;
         app = data;
         diag.push(...data.diagnostics);
@@ -646,6 +654,7 @@ export function createSwarmEngine(options = {}) {
         app = app ?? emptyApp();
         diag.push({ level: 'warn', source: 'data.db', message: 'The Copilot app database was not found.' });
       }
+      if (!appComplete) globalsRead = false;
     } catch (error) {
       globalsRead = false;
       app = app ?? emptyApp();
@@ -683,6 +692,7 @@ export function createSwarmEngine(options = {}) {
       ...swarms.filter(swarm => swarm.lifecycle === 'live').map(swarm => swarm.id),
       ...requested.filter(id => rootIds.has(id)),
       ...[...pendingRoots].filter(id => rootIds.has(id)),
+      ...[...deferredSaves].filter(id => rootIds.has(id)),
     ]);
     const changed = [];
     const failed = new Set();
@@ -714,8 +724,11 @@ export function createSwarmEngine(options = {}) {
           knownFinished.set(rootId, cheapLast.get(rootId));
           enter('history');
           await persistFinished(snapshot, diag, complete);
+          if (persist && !globalsRead) deferredSaves.add(rootId);
+          else deferredSaves.delete(rootId);
         } else {
           knownFinished.delete(rootId);
+          deferredSaves.delete(rootId);
         }
       } catch (error) {
         failed.add(rootId);
@@ -739,6 +752,7 @@ export function createSwarmEngine(options = {}) {
     for (const rootId of [...summaryDigests.keys()]) if (!current.has(rootId)) summaryDigests.delete(rootId);
     for (const rootId of [...verified.keys()]) if (!current.has(rootId)) verified.delete(rootId);
     for (const rootId of [...pendingRoots]) if (!current.has(rootId)) pendingRoots.delete(rootId);
+    for (const rootId of [...deferredSaves]) if (!current.has(rootId)) deferredSaves.delete(rootId);
     for (const [cliId, entry] of [...liveness]) if (at - entry.checkedAt > 4 * LIVENESS_TTL_MS) liveness.delete(cliId);
     for (const [cliId, entry] of [...workTimes]) if (at - entry.checkedAt > 4 * LIVENESS_TTL_MS) workTimes.delete(cliId);
     readDb.retain(dbFiles);

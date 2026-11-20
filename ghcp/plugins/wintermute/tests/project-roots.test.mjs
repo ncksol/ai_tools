@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createSwarmEngine } from '../engine/engine.mjs';
 import { SUMMARY_RULES } from '../engine/schema.mjs';
@@ -267,5 +267,79 @@ test('a failed read of a Project opt-in keeps the last value read, with a warnin
   }
   await engine.refresh();
   assert.deepEqual([engine.listSwarms().map(swarm => swarm.id), warnings()], [['p-solo'], []]);
+  engine.stop();
+});
+
+/** A finished Project run 30 days old, with one child in the app project repo-1, and where its summary is stored. */
+function finishedProjectRun() {
+  const home = new CopilotHome();
+  const old = T0 - 30 * DAY;
+  home.persistentProject({ id: 'p-old', title: 'Old', createdAt: old });
+  home.project({ id: 'repo-1', name: 'sample-repo' });
+  home.workspace({ id: 'ws-a', projectId: 'repo-1', name: 'a: API', createdAt: old + 1000, creatorSessionId: 'p-old' });
+  home.usage([{ sessionId: 'p-old', nanoAiu: 1e9, createdAt: old + 2000 }, { sessionId: 'ws-a', nanoAiu: 1e9, createdAt: old + 3000 }]);
+  const historyDir = path.join(tempDir('project-roots-'), 'history');
+  const stored = path.join(historyDir, 'runs', 'p-old.json');
+  const saved = () => {
+    if (!existsSync(stored)) return null;
+    const { project, rules } = JSON.parse(readFileSync(stored, 'utf8'));
+    return [project?.id ?? null, rules];
+  };
+  return { home, historyDir, saved };
+}
+
+test('a data.db that is gone after a partial read leaves that read incomplete, so no summary is stored from it', async () => {
+  const { home, historyDir, saved } = finishedProjectRun();
+  const locked = new Set();
+  const open = () => createSwarmEngine({
+    copilotHome: home.root, historyDir, now: () => T0, processProbe: alwaysAlive, prLookup: 'off', sqliteReader: lockingReader(home.dataDb, locked),
+  });
+  let engine = open();
+  await engine.getRunSummary('p-old');
+  assert.deepEqual(saved(), ['repo-1', SUMMARY_RULES]);
+  locked.add('projects');
+  await engine.refresh();
+  assert.deepEqual(saved(), ['repo-1', SUMMARY_RULES]);
+  locked.clear();
+  const aside = `${home.dataDb}.aside`;
+  renameSync(home.dataDb, aside);
+  await engine.refresh();
+  assert.deepEqual(saved(), ['repo-1', SUMMARY_RULES]);
+  renameSync(aside, home.dataDb);
+  await engine.refresh();
+  assert.deepEqual(saved(), ['repo-1', SUMMARY_RULES]);
+  engine.stop();
+  engine = open();
+  assert.equal((await engine.getRunSummary('p-old')).project?.id, 'repo-1');
+  engine.stop();
+});
+
+test('a run that finishes during a partial data.db read is stored by the next full read, without anyone asking for it', async () => {
+  const home = new CopilotHome();
+  home.persistentProject({ id: 'p-run', title: 'Run', createdAt: T0 });
+  home.project({ id: 'repo-1', name: 'sample-repo' });
+  home.workspace({ id: 'ws-a', projectId: 'repo-1', name: 'a: API', createdAt: T0 + 1000, creatorSessionId: 'p-run' });
+  home.usage([{ sessionId: 'p-run', nanoAiu: 1e9, createdAt: T0 + 2000 }, { sessionId: 'ws-a', nanoAiu: 1e9, createdAt: T0 + 3000 }]);
+  const stored = path.join(tempDir('project-roots-'), 'history', 'runs', 'p-run.json');
+  let clock = T0 + 10_000;
+  const locked = new Set();
+  const engine = createSwarmEngine({
+    copilotHome: home.root, historyDir: path.dirname(path.dirname(stored)), now: () => clock, processProbe: alwaysAlive, prLookup: 'off',
+    sqliteReader: lockingReader(home.dataDb, locked),
+  });
+  const lifecycle = () => engine.listSwarms().find(swarm => swarm.id === 'p-run').lifecycle;
+  await engine.refresh();
+  assert.equal(lifecycle(), 'live');
+  clock = T0 + DAY;
+  locked.add('projects');
+  await engine.refresh();
+  assert.deepEqual([lifecycle(), existsSync(stored)], ['finished', false]);
+  locked.clear();
+  for (let poll = 1; poll <= 3; poll += 1) {
+    clock = T0 + DAY + poll * 60_000;
+    await engine.refresh();
+  }
+  assert.equal(JSON.parse(readFileSync(stored, 'utf8')).project?.id, 'repo-1');
+  assert.equal((await engine.listHistory()).find(item => item.id === 'p-run').summarized, true);
   engine.stop();
 });
