@@ -31,7 +31,8 @@ export function isWorkEvent(event) {
 
 /** Each skip type mapped to its own constant: keeping head[1], a slice of the line, would pin the whole read chunk. */
 const SKIP_NAMES = new Map([...SKIP_TYPES].map(type => [type, type]));
-const WAIT_TOOLS = new Map([['ask_user', 'question'], ['exit_plan_mode', 'plan']]);
+const RELAY = 'relay_session_input';
+const WAIT_TOOLS = new Map([['ask_user', 'question'], ['exit_plan_mode', 'plan'], [RELAY, 'question']]);
 const BUSY_JOIN_MS = 5000;
 /** Most levels of nested sub-agents followed when a sub-agent's clock moves its ancestors' (a guard against a cycle). */
 const MAX_NESTING = 64;
@@ -770,11 +771,21 @@ function onToolStart(state, data, at) {
   pushBounded(state.recent.calls, { at, name, key: callKey(name, data.arguments), prompt: state.prompts }, LIMITS.recent);
   const kind = WAIT_TOOLS.get(name);
   if (kind) {
-    const text = clip(String((kind === 'question' ? args.question : args.summary) ?? ''), 2000);
-    state.waits.set(id, { id, kind, text, startedAt: at });
+    const relay = name === RELAY;
+    const text = relay ? clip(args.context, 2000)?.trim() ?? '' : clip(String((kind === 'question' ? args.question : args.summary) ?? ''), 2000);
+    const requestId = kind === 'question' && typeof args.request_id === 'string' && args.request_id.trim() ? ownString(args.request_id) : null;
+    const wait = { id, kind, text, startedAt: at };
+    if (requestId) wait.requestId = requestId;
+    if (relay) {
+      const target = [args.project_session_id, args.session_id].find(value => typeof value === 'string' && value.trim());
+      wait.relay = true;
+      if (target) wait.target = ownString(target);
+    }
+    state.waits.set(id, wait);
     if (kind === 'question') {
-      addMark(state, at, 'question', text || 'Question');
-      addFeed(state, at, 'question', `asked: ${text}`);
+      const display = text || (relay ? 'Relayed question' : '');
+      addMark(state, at, 'question', display || 'Question');
+      addFeed(state, at, 'question', `asked: ${display}`);
     } else {
       addMark(state, at, 'plan-req', 'Plan sent for approval');
       addFeed(state, at, 'plan-req', 'sent a plan for approval');
@@ -797,6 +808,16 @@ function resultText(data) {
   return typeof content === 'string' ? content : '';
 }
 
+function relayAnswered(data) {
+  if (data.success === false) return false;
+  try {
+    const result = JSON.parse(resultText(data));
+    return result?.outcome === 'answered_here' || (typeof result?.answer === 'string' && result.answer.trim().length > 0);
+  } catch {
+    return false;
+  }
+}
+
 function onToolComplete(state, data, at) {
   const id = typeof data.toolCallId === 'string' ? data.toolCallId : null;
   if (!id) return;
@@ -812,7 +833,9 @@ function onToolComplete(state, data, at) {
   const wait = state.waits.get(id);
   if (wait) {
     closeWait(state, id, wait, at);
-    if (wait.kind === 'question') {
+    if (wait.relay && !relayAnswered(data)) {
+      addFeed(state, at, 'question', 'a relayed question ended without an answer');
+    } else if (wait.kind === 'question') {
       addMark(state, at, 'answer', 'Answer received');
       addFeed(state, at, 'answer', 'got an answer');
     } else if (data.success !== false && /plan approved/i.test(resultText(data))) {

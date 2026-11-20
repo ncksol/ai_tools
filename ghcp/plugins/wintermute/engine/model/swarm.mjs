@@ -737,22 +737,55 @@ function buildSubagentUnits(input, rootContext, root, takenLabels, extraFeed, me
   };
 }
 
+function matchingQuestion(waits, relay, tag) {
+  const questions = [...waits.values()].filter(wait => wait.kind === 'question' && !wait.relay && wait.startedAt <= relay.startedAt);
+  const byId = questions.filter(wait => relay.requestId && wait.requestId === relay.requestId);
+  if (byId.length) return byId.length === 1 ? byId[0] : null;
+  // The app may omit the request ID from the child's log. Only fold a relay into a unique earlier question with exactly
+  // the same text (ignoring the tag and outer whitespace), and never when two known IDs disagree. Otherwise show both.
+  const text = (tag?.text ?? relay.text).trim();
+  if (!text) return null;
+  const byText = questions.filter(wait => (!relay.requestId || !wait.requestId) && (parseQuestionTag(wait.text)?.text ?? wait.text).trim() === text);
+  return byText.length === 1 ? byText[0] : null;
+}
+
 function buildNeeds(contexts, rootId, labels, flags) {
   const labelIndex = new Map([...labels].filter(([id]) => id !== rootId).map(([id, label]) => [label.toLowerCase(), id]));
-  const needs = [];
+  const active = new Map([...contexts].filter(([, c]) => c.current && c.alive !== false && c.node.archivedAt == null));
+  const unitOfId = new Map();
   for (const [id, c] of contexts) {
-    if (c.alive === false || (c.node.archivedAt !== null && c.node.archivedAt !== undefined)) continue;
-    for (const wait of c.current ? c.current.waits.values() : []) {
-      const tag = wait.kind === 'question' ? parseQuestionTag(wait.text) : null;
+    if (id !== rootId) for (const sessionId of c.ids) unitOfId.set(sessionId, id);
+  }
+  const matchedRelays = new Set();
+  const relayTags = new Map();
+  for (const relay of active.get(rootId)?.current.waits.values() ?? []) {
+    if (!relay.relay || !relay.target) continue;
+    const waits = active.get(unitOfId.get(relay.target))?.current.waits;
+    if (!waits) continue;
+    const tag = parseQuestionTag(relay.text);
+    const match = matchingQuestion(waits, relay, tag);
+    if (!match) continue;
+    matchedRelays.add(relay);
+    if (tag) relayTags.set(match, tag);
+  }
+
+  const needs = [];
+  for (const [id, c] of active) {
+    for (const wait of c.current.waits.values()) {
+      if (matchedRelays.has(wait)) continue;
+      const ownTag = wait.kind === 'question' ? parseQuestionTag(wait.text) : null;
+      const tag = relayTags.get(wait) ?? ownTag;
       if (tag) flags.questionTags = true;
       let unitIds = id === rootId ? [] : [id];
-      if (tag && id === rootId && !tag.units.includes('*')) {
+      const targetUnit = id === rootId && wait.relay ? unitOfId.get(wait.target) : undefined;
+      if (targetUnit) unitIds = [targetUnit];
+      else if (tag && id === rootId && !tag.units.includes('*')) {
         unitIds = [...new Set(tag.units.map(label => labelIndex.get(label.toLowerCase())).filter(Boolean))];
       }
       const kind = wait.kind === 'plan' ? 'plan' : tag?.need ?? 'question';
       needs.push({
         id: `${id}:${kind}:${c.current.id}/${wait.id}`, kind, unitIds, labels: unitIds.map(unitId => labels.get(unitId)),
-        fromId: id, text: oneLine(tag ? tag.text : wait.text, 300), since: wait.startedAt, tagged: Boolean(tag),
+        fromId: id, text: oneLine(ownTag?.text ?? (wait.text || (wait.relay ? 'Relayed question' : '')), 300), since: wait.startedAt, tagged: Boolean(tag),
       });
     }
   }
