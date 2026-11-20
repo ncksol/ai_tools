@@ -8,6 +8,29 @@ const skill = name => readFileSync(new URL(`../skills/${name}/SKILL.md`, import.
 const COORDINATOR = skill('wintermute-project');
 const WORKER = skill('wintermute-project-worker');
 
+test('the Project archives each claims checker in the turn it records the verdict', () => {
+  const claims = COORDINATOR.split('\n').find(l => l.startsWith('- **Claims check**:')) ?? '';
+  assert.ok(claims.includes('In the same turn you record its verdict, archive the checker if it meets the checks in "Ending work" and has no active Agent merge.'), 'archive timing and safety checks');
+});
+
+test('the Project starts a new claims checker for every check, including helper requests', () => {
+  const lines = COORDINATOR.split('\n');
+  const claims = lines.find(l => l.startsWith('- **Claims check**:')) ?? '';
+  const helpers = lines.find(l => l.startsWith('**Helper requests.**')) ?? '';
+  assert.ok(claims.includes('Start a new claims checker for every claims check.'), 'claims check rule');
+  assert.ok(helpers.includes('For a claims check, start a new claims checker instead of using an idle session.'), 'helper routing exception');
+});
+
+test('the Project does not retain claims checkers for reuse and keeps the reviewer and final panel rules', () => {
+  const lines = COORDINATOR.split('\n');
+  const claims = lines.find(l => l.startsWith('- **Claims check**:')) ?? '';
+  const ending = lines.find(l => l.startsWith('**Ending work.**')) ?? '';
+  assert.ok(!COORDINATOR.includes('idle claims checker'), 'no idle claims checker reuse');
+  assert.doesNotMatch(claims, /until the unit merges/);
+  assert.doesNotMatch(ending, /claims checker[^.]*until the unit merges/);
+  assert.ok(ending.includes("Keep a unit's reviewer until the unit merges, and the final panel's judges until the task's last merge in their repository, so that they can take re-checks."));
+});
+
 test('a carry-forward counts only when it was recorded and read back before the publish or merge at the new head', () => {
   assert.ok(COORDINATOR.includes('the earlier verdict stands for the new head only in the same unit and repository, only if its base branch and merge base are the ones the verdict named, and only once that carry-forward is recorded in `child_notes` and read back, before any publish or merge at the new head'));
   assert.ok(COORDINATOR.includes("A carry-forward recorded after the publish or merge doesn't count: that action ran without checks at its head."));
