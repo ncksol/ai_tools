@@ -1,4 +1,4 @@
-import { request } from 'node:http';
+import { Server, request } from 'node:http';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createFakeEngine } from '../engine/fake-engine.mjs';
@@ -95,17 +95,127 @@ async function until(check, timeoutMs = 3000) {
 
 test('health reports the pool check and when the engine last finished a refresh', async () => {
   const fake = createFakeEngine({ snapshots: [exampleSnapshot()] });
-  const engine = { ...fake, status: () => ({ stage: null, refreshStartedAt: null, lastRefreshAt: 1234 }) };
+  const engine = { ...fake, status: () => ({ stage: null, refreshStartedAt: null, progressAt: null, lastRefreshAt: 1234 }) };
   const server = await started(() => engine);
   try {
     const before = JSON.parse((await get(server.port, '/api/health')).body);
     assert.equal(before.pool, 'ok');
     assert.equal(before.lastRefreshAt, null, 'no engine yet');
     assert.equal(before.refreshStartedAt, null);
+    assert.equal(before.progressAt, null);
+    assert.equal(before.restarts, 0);
     assert.equal((await get(server.port, '/api/swarms')).status, 200);
     const after = JSON.parse((await get(server.port, '/api/health')).body);
     assert.equal(after.lastRefreshAt, 1234);
   } finally {
+    await server.close();
+  }
+});
+
+test('a read that fails as retriable gets 503 with Retry-After, not 500', async () => {
+  const fake = createFakeEngine({ snapshots: [exampleSnapshot()] });
+  const engine = { ...fake, getRunSummary: async () => { throw Object.assign(new Error('closing'), { retriable: true }); } };
+  const server = await started(() => engine);
+  try {
+    const response = await get(server.port, '/api/runs/run-1');
+    assert.equal(response.status, 503);
+    assert.equal(response.headers['retry-after'], '1');
+  } finally {
+    await server.close();
+  }
+});
+
+test('close ends a request still waiting on the engine even where the server cannot close all connections itself', async () => {
+  const saved = Object.getOwnPropertyDescriptor(Server.prototype, 'closeAllConnections');
+  // Node 18.0 and 18.1 have no closeAllConnections.
+  delete Server.prototype.closeAllConnections;
+  let asked = 0;
+  const fake = createFakeEngine({ snapshots: [exampleSnapshot()] });
+  const engine = { ...fake, getSnapshot: () => { asked += 1; return new Promise(() => {}); } };
+  let server;
+  try {
+    server = await started(() => engine);
+    const pending = get(server.port, '/api/snapshot').then(() => 'answered', () => 'closed');
+    await until(() => asked === 1);
+    const closed = server.close().then(() => 'done');
+    const limit = new Promise(resolve => { setTimeout(() => resolve('timed out'), 2000).unref(); });
+    assert.equal(await Promise.race([closed, limit]), 'done', 'close does not wait on the open request');
+    assert.equal(await Promise.race([pending, limit]), 'closed');
+  } finally {
+    if (saved) Object.defineProperty(Server.prototype, 'closeAllConnections', saved);
+    await server?.close().catch(() => {});
+  }
+});
+
+/**
+ * An engine that, like the real one, refreshes on its own timer once started and notifies each new revision; its swarm's
+ * name is `name`. Set `hung` to make its next refresh stop where it is, without progress.
+ */
+function pollingEngine(name) {
+  const fake = createFakeEngine();
+  let revision = 0;
+  let timer = null;
+  const engine = {
+    ...fake, hung: false, retired: false,
+    state: { stage: null, refreshStartedAt: null, progressAt: null, lastRefreshAt: null },
+    status: () => ({ ...engine.state }),
+    poll() {
+      if (engine.hung) {
+        if (engine.state.refreshStartedAt === null) {
+          const startedAt = Date.now();
+          engine.state = { ...engine.state, stage: 'costs', refreshStartedAt: startedAt, progressAt: startedAt };
+        }
+        return;
+      }
+      revision += 1;
+      engine.state = { stage: null, refreshStartedAt: null, progressAt: null, lastRefreshAt: Date.now() };
+      const snapshot = exampleSnapshot();
+      snapshot.run.name = name;
+      snapshot.revision = revision;
+      fake.push(snapshot);
+    },
+    async refresh() { engine.poll(); },
+    start({ intervalMs }) { timer = setInterval(engine.poll, intervalMs); },
+    stop() { clearInterval(timer); timer = null; },
+    retire() { engine.retired = true; engine.stop(); },
+  };
+  return engine;
+}
+
+test('a stuck refresh is replaced only once a pool check passes after it stopped, and the open page then gets the new engine\'s revisions', async () => {
+  let holding = false;
+  let releaseProbe = null;
+  const probe = () => (holding ? new Promise(resolve => { releaseProbe = resolve; }) : Promise.resolve());
+  const engines = [];
+  const server = await started(() => {
+    const engine = pollingEngine(engines.length ? 'B' : 'A');
+    engines.push(engine);
+    return engine;
+  }, {
+    hub: { refreshLimitMs: 150, refreshCheckMs: 20, intervalMs: 30, heartbeatMs: 1000, engineIdleMs: 60000 },
+    poolCheck: { probe, intervalMs: 20, timeoutMs: 5000 },
+  });
+  const page = openEvents(server.port, '/api/events');
+  const shown = (name, revision) => entry => entry.event === 'snapshot' && entry.data.snapshot?.run.name === name && entry.data.snapshot.revision >= revision;
+  try {
+    await page.waitFor(shown('A', 2));
+    holding = true;
+    await until(() => releaseProbe !== null);
+    const [first] = engines;
+    first.hung = true;
+    await until(() => first.state.refreshStartedAt !== null);
+    await new Promise(resolve => setTimeout(resolve, 400));
+    assert.equal(engines.length, 1, 'no replacement while no pool check has passed since the refresh stopped');
+    assert.equal(first.retired, false);
+
+    holding = false;
+    releaseProbe();
+    await until(() => engines.length === 2);
+    assert.equal(first.retired, true);
+    await page.waitFor(shown('B', 2), 3000);
+    assert.equal(page.events.filter(entry => entry.event === 'hello').length, 1, 'the same connection');
+  } finally {
+    page.close();
     await server.close();
   }
 });

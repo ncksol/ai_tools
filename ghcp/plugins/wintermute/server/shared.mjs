@@ -2,10 +2,15 @@ import { APP_ID } from './http.mjs';
 import { REFRESH_CHECK_MS, REFRESH_LIMIT_MS } from './hub.mjs';
 
 /**
- * A dashboard whose refresh has run this long has not recovered by itself: its hub replaces an engine stuck for
- * REFRESH_LIMIT_MS once file system calls are known to work, and checks every REFRESH_CHECK_MS.
+ * A dashboard whose refresh has made no progress for this long has not recovered by itself: its hub replaces an engine
+ * that made no progress for REFRESH_LIMIT_MS once file system calls are known to work, and checks every REFRESH_CHECK_MS.
  */
 export const STALE_REFRESH_MS = REFRESH_LIMIT_MS + 2 * REFRESH_CHECK_MS;
+
+/** When a dashboard's running refresh last made progress, from its health answer. */
+export function quietSince(health) {
+  return Math.max(health.refreshStartedAt, typeof health.progressAt === 'number' ? health.progressAt : -Infinity);
+}
 
 /** The dashboard's fixed loopback port (IANA-unassigned, below macOS's ephemeral range). */
 export const DEFAULT_PORT = 7927;
@@ -22,8 +27,9 @@ export function resolvePort(env = process.env) {
  * Who holds the port: our dashboard ('ours', with its health answer), nobody ('free'), another program ('other'), or
  * something that accepts connections but does not answer in time ('unresponsive'). A dashboard that answers but can no
  * longer refresh is 'unresponsive' too, with its health and a reason: 'broken' when its file system calls stopped
- * finishing, 'stale' when its refresh has run longer than staleAfterMs. Only a direct 200 answer from the port counts;
- * a redirect means another program.
+ * finishing, 'stale' when its refresh has made no progress (since it started, or since its progressAt) for longer than
+ * staleAfterMs. A dashboard with no refresh running is never stale. Only a direct 200 answer from the port counts; a
+ * redirect means another program.
  */
 export async function probePort(port, { timeoutMs = 2500, staleAfterMs = STALE_REFRESH_MS } = {}) {
   try {
@@ -36,7 +42,7 @@ export async function probePort(port, { timeoutMs = 2500, staleAfterMs = STALE_R
     const body = await response.json().catch(() => null);
     if (!body || body.app !== APP_ID) return { state: 'other' };
     if (body.pool === 'broken') return { state: 'unresponsive', reason: 'broken', health: body };
-    if (typeof body.refreshStartedAt === 'number' && Date.now() - body.refreshStartedAt > staleAfterMs) return { state: 'unresponsive', reason: 'stale', health: body };
+    if (typeof body.refreshStartedAt === 'number' && Date.now() - quietSince(body) > staleAfterMs) return { state: 'unresponsive', reason: 'stale', health: body };
     return { state: 'ours', health: body };
   } catch (error) {
     if ((error?.cause?.code ?? error?.code) === 'ECONNREFUSED') return { state: 'free' };

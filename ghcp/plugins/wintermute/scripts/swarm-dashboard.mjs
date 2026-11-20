@@ -19,6 +19,9 @@ If a dashboard with the same data already runs on the port, prints its address a
 `;
 const SCENARIOS = ['example', 'stress'];
 
+/** How long a failed launcher waits to exit by itself before it ends its own process. */
+export const EXIT_GRACE_MS = 2000;
+
 export function parseArguments(argv, env = process.env) {
   const options = { port: null, demo: null, still: false, help: false };
   for (let index = 0; index < argv.length; index += 1) {
@@ -99,6 +102,22 @@ export async function main(argv, { stdout = process.stdout, stderr = process.std
   return broken ? 1 : 0;
 }
 
+/**
+ * End the launcher's process with main()'s code. A failed run that has not exited within graceMs is held open by a
+ * native call that will not finish, such as a stuck file system call after the dashboard broke. process.exit() then
+ * hangs as well, because exit waits for the stuck libuv worker thread, so the process ends itself with SIGTERM.
+ */
+export function finish(code, { graceMs = EXIT_GRACE_MS, stderr = process.stderr } = {}) {
+  process.exitCode = code;
+  if (code === 0) return;
+  setTimeout(() => {
+    stderr.write('The process could not exit because a file system call is stuck; ending it.\n', () => {
+      process.removeAllListeners('SIGTERM');
+      process.kill(process.pid, 'SIGTERM');
+    });
+  }, graceMs).unref();
+}
+
 if (process.argv[1] && await realpath(fileURLToPath(import.meta.url)) === await realpath(process.argv[1])) {
-  process.exitCode = await main(process.argv.slice(2));
+  finish(await main(process.argv.slice(2)));
 }

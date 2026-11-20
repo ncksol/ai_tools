@@ -258,14 +258,14 @@ test('one failing swarm does not stop the refresh', async () => {
   assert.equal(problem.message, 'ws-bad: a lookup failure');
 });
 
-test('status names the stage a running refresh is in, and records when the last refresh finished', async () => {
+test('status names the stage a running refresh is in and when it last made progress, and records when the last refresh finished', async () => {
   const home = scenario();
   let release;
   const gate = new Promise(resolve => { release = resolve; });
   const engine = createSwarmEngine({
     copilotHome: home.root, historyDir: path.join(tempDir('swarm-engine-'), 'h'), now: () => at(60), processProbe: async locks => { await gate; return alwaysAlive(locks); }, prLookup: 'off',
   });
-  assert.deepEqual(engine.status(), { stage: null, refreshStartedAt: null, lastRefreshAt: null });
+  assert.deepEqual(engine.status(), { stage: null, refreshStartedAt: null, progressAt: null, lastRefreshAt: null });
   const before = Date.now();
   const running = engine.refresh();
   const deadline = Date.now() + 5000;
@@ -273,12 +273,14 @@ test('status names the stage a running refresh is in, and records when the last 
   const stuck = engine.status();
   assert.equal(stuck.stage, 'roots', 'the process check of each swarm root is waiting');
   assert.ok(stuck.refreshStartedAt >= before && stuck.refreshStartedAt <= Date.now(), 'the start is wall-clock time');
+  assert.ok(stuck.progressAt >= stuck.refreshStartedAt && stuck.progressAt <= Date.now(), 'reaching a stage is progress');
   assert.equal(stuck.lastRefreshAt, null);
   release();
   await running;
   const done = engine.status();
   assert.equal(done.stage, null);
   assert.equal(done.refreshStartedAt, null);
+  assert.equal(done.progressAt, null);
   assert.ok(done.lastRefreshAt >= stuck.refreshStartedAt);
 });
 
@@ -996,6 +998,44 @@ test('a summary request that overlaps a refresh never overwrites the newer summa
   assert.deepEqual(overlapItem, [OLD_LAST, 3, false], 'History does not show the older cached snapshot as summarised once the listing shows 3');
   assert.deepEqual(await oldItem(engine), [OLD_LAST, 3, true]);
   engine.stop();
+});
+
+test('a retired engine whose summary write was still in flight does not store it over a newer engine\'s summary', async () => {
+  const { home, stored } = await storedOldRun();
+  const historyDir = path.dirname(path.dirname(stored));
+  const store = createHistoryStore(historyDir);
+  let entered;
+  const writing = new Promise(resolve => { entered = resolve; });
+  let finishWrite;
+  const held = new Promise(resolve => { finishWrite = resolve; });
+  const slowStore = {
+    ...store,
+    async put(summary, options) {
+      entered(summary.credits);
+      await held;
+      return store.put(summary, options);
+    },
+  };
+  const open = historyStore => createSwarmEngine({
+    copilotHome: home.root, historyDir, historyStore, now: () => at(0), processProbe: alwaysAlive, prLookup: 'off',
+  });
+
+  home.usage([{ sessionId: 'cli-old', nanoAiu: 1e9, createdAt: OLD_LAST - 20_000 }]);
+  const older = open(slowStore);
+  const olderRequest = older.getRunSummary('ws-old');
+  assert.equal(await writing, 2, 'the older engine is writing a summary with 2 credits');
+  older.retire();
+
+  home.usage([{ sessionId: 'cli-old', nanoAiu: 1e9, createdAt: OLD_LAST - 10_000 }]);
+  const newer = open(undefined);
+  assert.equal((await newer.getRunSummary('ws-old')).credits, 3);
+  assert.equal(readSummary(stored).credits, 3);
+
+  finishWrite();
+  await olderRequest;
+  assert.equal(readSummary(stored).credits, 3, 'the newer summary stays');
+  assert.deepEqual(readdirSync(path.dirname(stored)), ['ws-old.json'], 'the dropped write leaves no temporary file');
+  newer.stop();
 });
 
 /**

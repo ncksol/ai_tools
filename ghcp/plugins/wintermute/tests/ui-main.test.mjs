@@ -70,7 +70,7 @@ test('a disconnected page stops its clocks where it lost the connection', () => 
   const main = readFileSync(file('main.mjs'), 'utf8');
   assert.match(main, /if \(view\.connection !== 'retrying'\) view\.staleSince = now\(\);/);
   assert.match(main, /view\.connection = 'open';\n {4}view\.staleSince = null;/);
-  assert.ok(main.includes('morph(dash, renderApp({ ...view, now: shownNow(),'));
+  assert.ok(main.includes('const shownAt = shownNow();\n  morph(dash, renderApp({ ...view, now: shownAt,'));
   const tick = main.slice(main.indexOf('setInterval('), main.indexOf('}, 1000);'));
   assert.match(tick, /^setInterval\(\(\) => \{\n {2}\/\/ [^\n]*\n {2}if \(isStale\(view\)\) return;/);
 });
@@ -139,6 +139,15 @@ test('a transport swarm gives way as on the server, and picking a swarm clears i
   const picker = main.slice(main.indexOf("addEventListener('change'"));
   const change = picker.slice(0, picker.indexOf('});'));
   assert.match(change, /swarmFromUrl = false;\s*shownSwarm = null;/);
+});
+
+test('the "Data stale" note follows what each render showed, and a run that failed to load is loaded again on reconnect', () => {
+  const main = readFileSync(file('main.mjs'), 'utf8');
+  const render = main.slice(main.indexOf('function render()'), main.indexOf('\n}\n', main.indexOf('function render()')));
+  assert.ok(render.includes('dataStale = dataStaleSince({ connection: view.connection, refreshedAt: view.refreshedAt, pollMs: view.pollMs, now: shownAt });'));
+  const open = main.slice(main.indexOf("source.addEventListener('open'"));
+  const body = open.slice(0, open.indexOf('});'));
+  assert.ok(body.includes("if (wasOpen && view.page === 'run' && view.run === false) loadRun(view.runId);"));
 });
 
 test('the swarms handler reloads History through historyReloadWanted, so the first event after load reloads it too', () => {

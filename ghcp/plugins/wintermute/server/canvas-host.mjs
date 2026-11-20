@@ -1,5 +1,5 @@
 import { createDashboardServer } from './http.mjs';
-import { listenShared, probePort } from './shared.mjs';
+import { listenShared, probePort, quietSince } from './shared.mjs';
 
 export const CANVAS_TITLE = 'Wintermute';
 
@@ -89,7 +89,7 @@ export function createCanvasHost({
           // The dashboard there closes or recovers by itself; while canvases are open here, watch() takes the port once it is free.
           report('warn', result.reason === 'broken'
             ? `the dashboard serving port ${port} has stopped working; this canvas takes the port over once it closes`
-            : `the dashboard serving port ${port} has not finished a refresh for over ${Math.round((Date.now() - result.health.refreshStartedAt) / 1000)} s; this canvas takes the port over if it closes`);
+            : `the dashboard serving port ${port} has made no progress on a refresh for over ${Math.round((Date.now() - quietSince(result.health)) / 1000)} s; this canvas takes the port over if it closes`);
         } else {
           const error = new Error(`Port ${port} ${result.status === 'taken' ? 'is used by another program' : 'is in use and not answering'}. Stop that program, or set SWARM_DASHBOARD_PORT to a free port for the Copilot app and restart it.`);
           error.code = 'port_in_use';

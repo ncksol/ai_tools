@@ -169,8 +169,10 @@ function connect() {
     justConnected = true;
     view.connection = 'open';
     view.staleSince = null;
-    // After a reconnect the server may know runs that finished meanwhile.
+    // After a reconnect the server may know runs that finished meanwhile, and a run that failed to load while the
+    // connection was down may load now.
     if (wasOpen && historyAsked) reloadHistory();
+    if (wasOpen && view.page === 'run' && view.run === false) loadRun(view.runId);
     wasOpen = true;
     checkServerVersion();
     scheduleRender();
@@ -233,7 +235,10 @@ function connect() {
   });
 }
 
-/** Render when the top bar's "Data stale" note should appear or go: on each heartbeat, and each second without one. */
+/**
+ * Render when the top bar's "Data stale" note should appear or go: on each heartbeat, and each second without one.
+ * dataStale is what the last render showed, so a render for any other reason keeps it in step.
+ */
 let dataStale = null;
 function checkDataStale() {
   const since = dataStaleSince({ connection: view.connection, refreshedAt: view.refreshedAt, pollMs: view.pollMs, now: now() });
@@ -332,7 +337,9 @@ function render() {
   const focused = document.activeElement && dash.contains(document.activeElement) ? focusSelector(document.activeElement) : null;
   const { scrollX, scrollY } = window;
   const cards = cardRects();
-  morph(dash, renderApp({ ...view, now: shownNow(), phaseMs: performance.now() }));
+  const shownAt = shownNow();
+  morph(dash, renderApp({ ...view, now: shownAt, phaseMs: performance.now() }));
+  dataStale = dataStaleSince({ connection: view.connection, refreshedAt: view.refreshedAt, pollMs: view.pollMs, now: shownAt });
   lastWidth = width;
   afterRender();
   if (focused && !dash.contains(document.activeElement)) dash.querySelector(focused)?.focus({ preventScroll: true });

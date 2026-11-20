@@ -10,14 +10,18 @@ After merging, run `npm run release:publish -- --dry-run`, then `npm run release
 
 ### Added
 
-- The dashboard's top bar says "Data stale since HH:MM" when the server stays connected but has not finished a refresh for three poll intervals. Heartbeats now carry the time of the last finished refresh.
-- `/api/health` reports the state of the server's file system check (`pool`), when the last refresh finished (`lastRefreshAt`) and when the current one started (`refreshStartedAt`).
+- The dashboard's top bar says "Data stale since HH:MM" when the server stays connected but has not finished a refresh for three poll intervals. Heartbeats now carry the time of the last finished refresh, which the server keeps when it replaces its engine.
+- `/api/health` reports the state of the server's file system check (`pool`), when the last refresh finished (`lastRefreshAt`), when the current refresh started (`refreshStartedAt`, the first of any attempts restarted since), when it last made progress (`progressAt`) and how many times it has been restarted (`restarts`).
 
 ### Fixed
 
 - A dashboard server whose host process stops finishing file system calls no longer serves frozen data. Every 10 seconds it checks that a file system call finishes. When one has not finished after 20 seconds, it marks itself broken, closes its listener and connections, and never binds the port again, so another host's server takes over.
-- Other hosts no longer reuse a server on the port whose health reports a broken check, or a refresh that has run more than 70 seconds; they wait for it to close and take the port over.
-- A refresh that runs longer than 60 seconds while file system calls still finish is logged with the stage it is stuck in, and the server replaces its engine, so later refreshes run.
+- Other hosts no longer reuse a server on the port whose health reports a broken check, or a refresh that has made no progress for more than 70 seconds; they wait for it to close and take the port over.
+- A refresh that makes no progress for 60 seconds while file system calls still finish is logged with the stage it is stuck in, and the server replaces its engine, so later refreshes run. A slow refresh that keeps reading files or sessions is left to finish. After 3 replacements in a row without a finished refresh, the server logs an error and stops replacing the engine until a refresh finishes.
+- A request waiting on a replaced engine is answered by the new one. A request cut short because the server closes gets `503` with `Retry-After`.
+- A replaced engine whose refresh is still running no longer stores a run summary over a newer one.
+- The launcher exits with status 1 when its server breaks. If a stuck file system call still holds the process open 2 seconds later, it ends itself with SIGTERM, because a normal exit waits for that call.
+- After a reconnect, a run page that failed to load while the connection was down loads again.
 - When the broken process is the only host, opening the dashboard fails with a `reload_extensions` error that asks you to reload extensions. The runtime does not restart an extension process that exits, so the process stays up and reports the error rather than exiting.
 
 ## 1.5.3 — 2026-11-20

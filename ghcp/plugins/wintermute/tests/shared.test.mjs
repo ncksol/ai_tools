@@ -141,6 +141,7 @@ test('a dashboard whose pool check failed, or whose refresh has run too long, is
   const cases = [
     [{ pool: 'broken' }, 'broken'],
     [{ refreshStartedAt: Date.now() - 10 * 60000 }, 'stale'],
+    [{ refreshStartedAt: Date.now() - 10 * 60000, progressAt: Date.now() - 5 * 60000 }, 'stale'],
   ];
   for (const [fields, reason] of cases) {
     const stuck = await holder(port, fields);
@@ -161,6 +162,12 @@ test('a dashboard whose pool check failed, or whose refresh has run too long, is
     assert.equal((await probePort(port)).state, 'ours', 'a refresh that started a moment ago is normal');
   } finally {
     await close(busy);
+  }
+  const reading = await holder(port, { refreshStartedAt: Date.now() - 10 * 60000, progressAt: Date.now() - 1000 });
+  try {
+    assert.equal((await probePort(port)).state, 'ours', 'a long refresh that still makes progress, such as a cold start or a recovering engine, is not stale');
+  } finally {
+    await close(reading);
   }
 });
 

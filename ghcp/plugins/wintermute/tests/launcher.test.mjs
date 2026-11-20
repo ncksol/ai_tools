@@ -1,6 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync, spawn } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { main, parseArguments } from '../scripts/swarm-dashboard.mjs';
 import { createDemoEngine } from '../server/demo-engine.mjs';
 import { createDashboardServer } from '../server/http.mjs';
@@ -87,4 +91,49 @@ test('bad arguments print the usage and exit 2', async () => {
   const stderr = sink();
   assert.equal(await main(['--port', '0'], { stdout: sink(), stderr }), 2);
   assert.match(stderr.text, /Usage: swarm-dashboard/);
+});
+
+// Runs finish() in a child process, after an optional file system call that never finishes, and reports how it ended.
+function finishInChild({ fifo = null, graceMs }) {
+  const launcher = new URL('../scripts/swarm-dashboard.mjs', import.meta.url).href;
+  const code = `
+    import { open } from 'node:fs/promises';
+    import { finish } from ${JSON.stringify(launcher)};
+    const fifo = ${JSON.stringify(fifo)};
+    if (fifo) open(fifo).catch(() => {});
+    finish(1, { graceMs: ${graceMs} });
+  `;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', code], { stdio: ['ignore', 'ignore', 'pipe'] });
+  let stderr = '';
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  const startedAt = Date.now();
+  return new Promise(resolve => {
+    const limit = setTimeout(() => child.kill('SIGKILL'), 10000);
+    child.on('close', (exitCode, signal) => {
+      clearTimeout(limit);
+      resolve({ exitCode, signal, stderr, ms: Date.now() - startedAt });
+    });
+  });
+}
+
+test('a failed launcher with nothing left to do exits with code 1', async () => {
+  const result = await finishInChild({ graceMs: 5000 });
+  assert.equal(result.exitCode, 1);
+  assert.equal(result.signal, null);
+  assert.ok(result.ms < 5000, `it exits before the grace period ends (${result.ms} ms)`);
+  assert.equal(result.stderr, '');
+});
+
+test('a failed launcher held open by a file system call that never finishes ends itself', { skip: process.platform === 'win32' && 'needs a FIFO' }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'wintermute-finish-'));
+  try {
+    const fifo = join(dir, 'never-written');
+    // Opening a FIFO for reading blocks a libuv worker thread until a writer opens it, and none ever does.
+    execFileSync('mkfifo', [fifo]);
+    const result = await finishInChild({ fifo, graceMs: 200 });
+    assert.equal(result.signal, 'SIGTERM', `it ends itself rather than hanging (exit code ${result.exitCode}, ${result.ms} ms)`);
+    assert.match(result.stderr, /could not exit because a file system call is stuck/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

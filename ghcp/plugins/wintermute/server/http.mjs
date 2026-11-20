@@ -62,8 +62,8 @@ export function createDashboardServer({ createEngine, host = '127.0.0.1', port =
     if (path.startsWith('/api/') && fromOtherSite(req, [`http://127.0.0.1:${boundPort}`, `http://localhost:${boundPort}`])) return reply(res, 403, TEXT, 'Forbidden');
     const param = name => url.searchParams.get(name) || null;
     if (path === '/api/health') {
-      const { lastRefreshAt, refreshStartedAt } = hub.status();
-      return json(res, { app: APP_ID, version, pid: process.pid, startedAt, demo, pool: pool?.state() ?? null, lastRefreshAt, refreshStartedAt });
+      const { lastRefreshAt, refreshStartedAt, progressAt, restarts } = hub.status();
+      return json(res, { app: APP_ID, version, pid: process.pid, startedAt, demo, pool: pool?.state() ?? null, lastRefreshAt, refreshStartedAt, progressAt, restarts });
     }
     if (path === '/api/events') {
       // A HEAD request gets the headers only; it opens no live connection and creates no engine.
@@ -91,16 +91,26 @@ export function createDashboardServer({ createEngine, host = '127.0.0.1', port =
   const server = createServer((req, res) => {
     route(req, res).catch(error => {
       log({ level: 'warn', source: 'server', message: error.message });
-      if (!res.headersSent) reply(res, 500, TEXT, 'Internal error');
+      // A retriable error (see the hub's withEngine) means the read was cut short, not that it went wrong.
+      if (!res.headersSent && error.retriable) reply(res, 503, TEXT, 'Try again', { 'Retry-After': '1', 'Cache-Control': 'no-store' });
+      else if (!res.headersSent) reply(res, 500, TEXT, 'Internal error');
       else res.end();
     });
+  });
+  // Tracked so close() can end every connection, including requests still waiting on the engine, on any Node version
+  // (closeAllConnections() is missing before 18.2).
+  const sockets = new Set();
+  server.on('connection', socket => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
   });
 
   async function close() {
     pool?.stop();
     hub.close();
-    server.closeAllConnections?.();
-    await new Promise(resolve => server.close(() => resolve()));
+    const closed = new Promise(resolve => server.close(() => resolve()));
+    for (const socket of sockets) socket.destroy();
+    await closed;
     boundPort = null;
   }
 

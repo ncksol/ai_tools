@@ -215,7 +215,7 @@ test('hello carries the poll interval and last refresh, and heartbeats carry the
   const hub = createHub({ createEngine: () => engine, now: () => 5000, intervalMs: 3000, heartbeatMs: 5, engineIdleMs: 10 });
   const page = exchange();
   try {
-    assert.deepEqual(hub.status(), { stage: null, refreshStartedAt: null, lastRefreshAt: null }, 'no engine, no refresh');
+    assert.deepEqual(hub.status(), { stage: null, refreshStartedAt: null, progressAt: null, lastRefreshAt: null, restarts: 0 }, 'no engine, no refresh');
     hub.add(page.req, page.res);
     await until(() => page.res.frames.some(isSnapshot));
     const hello = dataOf(page.res.frames.find(frame => frame.startsWith('event: hello')));
@@ -223,7 +223,146 @@ test('hello carries the poll interval and last refresh, and heartbeats carry the
     assert.equal(hello.refreshedAt, 4242);
     await until(() => page.res.frames.some(isHeartbeat), 200);
     assert.deepEqual(dataOf(page.res.frames.find(isHeartbeat)), { serverNow: 5000, refreshedAt: 4242 });
-    assert.deepEqual(hub.status(), { stage: null, refreshStartedAt: null, lastRefreshAt: 4242 });
+    assert.deepEqual(hub.status(), { stage: null, refreshStartedAt: null, progressAt: null, lastRefreshAt: 4242, restarts: 0 });
+  } finally {
+    hub.close();
+  }
+});
+
+/** A fake engine whose status the test sets through `state`; it counts start(), stop() and retire() calls. */
+function controlledEngine(label, state = {}, overrides = {}) {
+  const engine = {
+    ...createFakeEngine({ snapshots: [exampleSnapshot()] }),
+    label, starts: 0, stops: 0, retired: false,
+    state: { stage: null, refreshStartedAt: null, progressAt: null, lastRefreshAt: null, ...state },
+    status: () => ({ ...engine.state }),
+    start() { engine.starts += 1; },
+    stop() { engine.stops += 1; },
+    retire() { engine.retired = true; },
+    ...overrides,
+  };
+  return engine;
+}
+
+test('a refresh that keeps making progress past the limit is left to finish; once it stops making progress it is replaced', async () => {
+  const logged = [];
+  const slow = controlledEngine('slow', { stage: 'costs', refreshStartedAt: Date.now() - 10000, progressAt: Date.now() });
+  const engines = [slow, controlledEngine('fresh')];
+  let created = 0;
+  const hub = createHub({
+    createEngine: () => engines[created++], refreshLimitMs: 50, refreshCheckMs: 5, poolPassedSince: () => true,
+    heartbeatMs: 1000, engineIdleMs: 10000, log: entry => logged.push(entry),
+  });
+  const progress = setInterval(() => { slow.state.progressAt = Date.now(); }, 5);
+  try {
+    await hub.withEngine(engine => engine.listSwarms());
+    await wait(150);
+    assert.equal(created, 1, 'a refresh that is still reading is not replaced, however long it has run');
+    assert.equal(slow.retired, false);
+    clearInterval(progress);
+    await until(() => created === 2, 1000);
+    assert.equal(slow.retired, true, 'the stuck engine is retired, not only stopped');
+    const warning = logged.find(entry => /no progress/.test(entry.message));
+    assert.ok(warning, JSON.stringify(logged));
+    assert.match(warning.message, /costs/);
+  } finally {
+    clearInterval(progress);
+    hub.close();
+  }
+});
+
+test('the hub replaces a stuck engine at most maxRestarts times in a row, and again once a refresh finishes', async () => {
+  const logged = [];
+  const engines = [];
+  const hub = createHub({
+    createEngine: () => {
+      const engine = controlledEngine(`e${engines.length}`, { stage: 'snapshots', refreshStartedAt: Date.now() - 10000 });
+      engines.push(engine);
+      return engine;
+    },
+    refreshLimitMs: 30, refreshCheckMs: 5, maxRestarts: 2, poolPassedSince: () => true, heartbeatMs: 1000, engineIdleMs: 10000,
+    log: entry => logged.push(entry),
+  });
+  try {
+    await hub.withEngine(engine => engine.listSwarms());
+    await until(() => engines.length === 3, 1000);
+    await wait(120);
+    assert.equal(engines.length, 3, 'no engine past the limit');
+    assert.equal(hub.status().restarts, 2);
+    const gaveUp = logged.filter(entry => entry.level === 'error');
+    assert.equal(gaveUp.length, 1, `the hub says once that it stopped replacing: ${JSON.stringify(logged)}`);
+    assert.match(gaveUp[0].message, /snapshots/);
+
+    // The last engine finishes a refresh, then gets stuck again: that is a new streak, so it is replaced again.
+    engines[2].state = { stage: null, refreshStartedAt: null, progressAt: null, lastRefreshAt: Date.now() };
+    await wait(20);
+    assert.equal(hub.status().restarts, 0);
+    engines[2].state = { stage: 'roots', refreshStartedAt: Date.now() - 10000, progressAt: null, lastRefreshAt: engines[2].state.lastRefreshAt };
+    await until(() => engines.length === 4, 1000);
+  } finally {
+    hub.close();
+  }
+});
+
+test('the last finished refresh, and when the wait for the next one began, outlive a replaced engine', async () => {
+  const startedA = Date.now() - 10000;
+  const first = controlledEngine('A', { lastRefreshAt: 1111 });
+  let finishB;
+  const second = controlledEngine('B', {}, { refresh: () => new Promise(resolve => { finishB = resolve; }) });
+  const engines = [first, second];
+  let created = 0;
+  const hub = createHub({
+    createEngine: () => engines[created++], now: () => 7000, refreshLimitMs: 50, refreshCheckMs: 5, poolPassedSince: () => true,
+    heartbeatMs: 5, engineIdleMs: 10,
+  });
+  const page = exchange();
+  try {
+    hub.add(page.req, page.res);
+    await until(() => page.res.frames.some(isSnapshot));
+    assert.equal(dataOf(page.res.frames.find(frame => frame.startsWith('event: hello'))).refreshedAt, 1111);
+    first.state = { stage: 'costs', refreshStartedAt: startedA, progressAt: null, lastRefreshAt: 1111 };
+    await until(() => created === 2, 1000);
+    second.state = { stage: 'data.db', refreshStartedAt: Date.now(), progressAt: Date.now(), lastRefreshAt: null };
+    const during = hub.status();
+    assert.equal(during.lastRefreshAt, 1111, 'the replaced engine\'s last refresh still counts');
+    assert.equal(during.refreshStartedAt, startedA, 'the wait for fresh data began with the replaced engine\'s refresh');
+    assert.equal(during.restarts, 1);
+    const seen = page.res.frames.length;
+    await until(() => page.res.frames.slice(seen).some(isHeartbeat), 200);
+    assert.equal(dataOf(page.res.frames.slice(seen).find(isHeartbeat)).refreshedAt, 1111, 'the page keeps counting from the last refresh');
+
+    second.state = { stage: null, refreshStartedAt: null, progressAt: null, lastRefreshAt: 2222 };
+    finishB();
+    const after = hub.status();
+    assert.equal(after.lastRefreshAt, 2222);
+    assert.equal(after.refreshStartedAt, null);
+    assert.equal(after.restarts, 0);
+  } finally {
+    hub.close();
+  }
+});
+
+test('a read waiting on an engine that is replaced is answered by the new engine; one waiting when the hub closes fails as retriable', async () => {
+  const first = controlledEngine('A', { lastRefreshAt: 1111 }, { getRunSummary: () => new Promise(() => {}) });
+  const second = controlledEngine('B', {}, { getRunSummary: async id => ({ id, from: 'B' }) });
+  const engines = [first, second];
+  let created = 0;
+  const hub = createHub({
+    createEngine: () => engines[created++], refreshLimitMs: 50, refreshCheckMs: 5, poolPassedSince: () => true, engineIdleMs: 10000,
+  });
+  try {
+    // The first refresh has finished, so the read runs on an engine that has data, then hangs.
+    assert.deepEqual(await hub.withEngine(engine => engine.listSwarms().length), 1);
+    const read = hub.withEngine(engine => engine.getRunSummary('run-1'));
+    await wait(20);
+    first.state = { stage: 'history', refreshStartedAt: Date.now() - 10000, progressAt: null, lastRefreshAt: 1111 };
+    assert.deepEqual(await read, { id: 'run-1', from: 'B' });
+
+    second.getRunSummary = () => new Promise(() => {});
+    const stranded = hub.withEngine(engine => engine.getRunSummary('run-2'));
+    await wait(10);
+    hub.close();
+    await assert.rejects(stranded, error => error.retriable === true);
   } finally {
     hub.close();
   }
