@@ -14,7 +14,7 @@ After merging, run `npm run release:publish -- --dry-run`, then `npm run release
 
 ### Known limitations
 
-- A child session that only runs one of a Project's schedules still shows as a unit, and its cost counts. The app records who owns a schedule but not why a session was created, so the dashboard can't yet tell such a child apart (Projects design U12). The dashboard guide and the dashboard design say so.
+- A session that only runs one of a Project's schedules, and that the app links to the Project as a child, still shows as a unit, and its cost counts. Without that link, neither the session nor its cost is in the swarm. The app records who owns a schedule but not why a session was created, so the dashboard can't yet tell such a child apart (Projects design U12). The dashboard guide and the dashboard design say so.
 
 ## 1.5.1 — 2026-11-20
 
