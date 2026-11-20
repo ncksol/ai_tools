@@ -29,8 +29,11 @@ export const APP_TABLES = Object.freeze({
 /** Lists the existing columns of exactly the tables in APP_TABLES. */
 export const SCHEMA_SQL = `SELECT m.name AS table_name, p.name AS column_name FROM sqlite_master AS m JOIN pragma_table_info(m.name) AS p WHERE m.type = 'table' AND m.name IN (${Object.values(APP_TABLES).map(item => `'${item.table}'`).join(', ')})`;
 
-/** Lists one table's columns: none when the table is missing. The table names are constants, never data. */
-const columnsSql = name => `SELECT name FROM pragma_table_info('${name}')`;
+/**
+ * Lists one table's columns: none when the table is missing. It matches SCHEMA_SQL's tables, so a view or anything else of that
+ * name is not a table either. The table names are constants, never data.
+ */
+const columnsSql = name => `SELECT p.name AS name FROM sqlite_master AS m JOIN pragma_table_info(m.name) AS p WHERE m.type = 'table' AND m.name = '${name}'`;
 
 /**
  * One table's columns, for when the schema query failed: a Set, null when the table is missing, or undefined when this query
