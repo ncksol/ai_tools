@@ -113,6 +113,14 @@ export class CopilotHome {
     this.insert(this.dataDb, 'persistent_projects', { session_id: id });
   }
 
+  /** The wintermute_project rows that the wintermute-project skill writes in a Project's session.db: [[at, enabled], ...]. */
+  projectOptIn(cliId, rows) {
+    const file = path.join(this.dir(cliId), 'session.db');
+    execSql(file, 'CREATE TABLE IF NOT EXISTS wintermute_project (at TEXT NOT NULL, enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)))');
+    for (const [atMs, enabled] of rows) this.insert(file, 'wintermute_project', { at: iso(atMs), enabled });
+    return file;
+  }
+
   automation({ sessionId, ownerSessionId = sessionId, everyMinutes = 10, lastRunAt = null, nextRunAt = null, pausedAt = null, name = 'PR monitor' }) {
     this.insert(this.dataDb, 'session_automations', {
       session_id: sessionId, prompt: 'synthetic monitor prompt', interval: 'minutes', every_minutes: everyMinutes, schedule_hour: null,

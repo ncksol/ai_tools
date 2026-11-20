@@ -1,14 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createSwarmEngine } from '../engine/engine.mjs';
 import { SUMMARY_RULES } from '../engine/schema.mjs';
 import { createSqliteReader } from '../engine/sqlite.mjs';
 import { buildForest, rootProjectId } from '../engine/model/forest.mjs';
+import { readProjectOptIn } from '../engine/readers/session-files.mjs';
 import { CopilotHome } from './helpers/copilot-home.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { DAY, T0, alwaysAlive } from './helpers/scenario.mjs';
+import { TEST_BACKENDS, canWriteWithNode, execSql, holdExclusiveLock } from './helpers/sqlite-writer.mjs';
 import { tempDir } from './helpers/temp.mjs';
 
 /*
@@ -202,3 +204,68 @@ for (const table of ['persistent_projects', 'projects']) {
     engine.stop();
   });
 }
+
+for (const backend of TEST_BACKENDS) {
+  test(`${backend}: the opt-in is the latest wintermute_project row, and anything else reads as null`, async () => {
+    const home = new CopilotHome();
+    const read = cliId => readProjectOptIn(home.projectOptIn(cliId, []), { backend });
+    home.projectOptIn('on', [[T0, 0], [T0 + 1000, 1]]);
+    home.projectOptIn('off', [[T0, 1], [T0 + 1000, 0]]);
+    home.projectOptIn('tie', [[T0, 0], [T0, 1]]);
+    assert.equal(await read('on'), true);
+    assert.equal(await read('off'), false);
+    assert.equal(await read('tie'), true);
+    assert.equal(await read('empty'), null);
+    const other = home.sessionDb('other');
+    assert.equal(await readProjectOptIn(other, { backend }), null);
+    execSql(other, 'CREATE TABLE wintermute_project (at TEXT, state TEXT)');
+    assert.equal(await readProjectOptIn(other, { backend }), null);
+    for (const value of ['NULL', "''", '2']) {
+      const loose = home.sessionDb(`loose-${value.length}`);
+      execSql(loose, `CREATE TABLE wintermute_project (at TEXT, enabled INTEGER); INSERT INTO wintermute_project VALUES ('2026-10-15T08:00:00Z', ${value})`);
+      assert.equal(await readProjectOptIn(loose, { backend }), null, value);
+    }
+  });
+}
+
+test('the engine lists an opted-in Project that has no child session, and no other childless Project', async () => {
+  const home = new CopilotHome();
+  home.persistentProject({ id: 'p-solo', title: 'Solo', createdAt: T0 });
+  home.projectOptIn('p-solo', [[T0 + 1000, 1]]);
+  const solo = new EventLog(T0 + 500);
+  solo.start();
+  home.writeEvents('p-solo', solo.events);
+  home.persistentProject({ id: 'p-off', title: 'Off', createdAt: T0 });
+  home.projectOptIn('p-off', [[T0 + 1000, 1], [T0 + 2000, 0]]);
+  home.persistentProject({ id: 'p-never', title: 'Never', createdAt: T0 });
+  const engine = createSwarmEngine({ copilotHome: home.root, persistHistory: false, now: () => T0 + 10_000, processProbe: alwaysAlive, prLookup: 'off' });
+  await engine.refresh();
+  assert.deepEqual(engine.listSwarms().map(swarm => swarm.id), ['p-solo']);
+  const snapshot = await engine.getSnapshot('p-solo');
+  assert.deepEqual([snapshot.run.id, snapshot.units.length, snapshot.run.project], ['p-solo', 0, null]);
+  assert.deepEqual(engine.diagnostics().filter(item => item.level === 'warn'), []);
+});
+
+test('a failed read of a Project opt-in keeps the last value read, with a warning, until the next good read', { skip: !canWriteWithNode }, async () => {
+  const home = new CopilotHome();
+  home.persistentProject({ id: 'p-solo', title: 'Solo', createdAt: T0 });
+  const file = home.projectOptIn('p-solo', [[T0 + 1000, 1]]);
+  const engine = createSwarmEngine({ copilotHome: home.root, persistHistory: false, now: () => T0 + 10_000, processProbe: alwaysAlive, prLookup: 'off' });
+  const warnings = () => engine.diagnostics().filter(item => item.level === 'warn' && /wintermute_project/.test(item.message)).map(item => item.message);
+  await engine.refresh();
+  assert.deepEqual(engine.listSwarms().map(swarm => swarm.id), ['p-solo']);
+  // A writer in another process holds an exclusive lock while the file's stamps change, so the next read fails as busy.
+  const lock = await holdExclusiveLock(file);
+  try {
+    utimesSync(file, new Date(), new Date(Date.now() + 9000));
+    await engine.refresh();
+    assert.deepEqual(engine.listSwarms().map(swarm => swarm.id), ['p-solo']);
+    assert.equal(warnings().length, 1);
+    assert.match(warnings()[0], /^p-solo: session\.db wintermute_project: .*database is locked/);
+  } finally {
+    await lock.release();
+  }
+  await engine.refresh();
+  assert.deepEqual([engine.listSwarms().map(swarm => swarm.id), warnings()], [['p-solo'], []]);
+  engine.stop();
+});

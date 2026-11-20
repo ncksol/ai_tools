@@ -114,6 +114,38 @@ export async function readSessionDb(file, source = {}) {
   });
 }
 
+/** The queries for the latest `wintermute_project` row, which the `wintermute-project` skill writes in a Project's session.db. */
+export const OPT_IN_QUERIES = Object.freeze({
+  table: "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'wintermute_project'",
+  columns: "SELECT name FROM pragma_table_info('wintermute_project')",
+  latest: 'SELECT enabled FROM wintermute_project ORDER BY at DESC, rowid DESC LIMIT 1',
+});
+
+/**
+ * Whether the latest `wintermute_project` row of a Project's session.db turns wintermute on: true for `enabled = 1`, false for
+ * `enabled = 0`, and null when the table, one of its columns or a row is missing, or the value is anything else, such as NULL or
+ * an empty string in a table without the skill's CHECK. `source` is as for readSessionDb, and a query that fails rejects in the
+ * same way.
+ */
+export async function readProjectOptIn(file, source = {}) {
+  const run = typeof source.read === 'function' ? fn => source.read(file, fn) : fn => withReadOnly(file, source, fn);
+  return run(async db => {
+    const query = async name => {
+      try {
+        return (await db.all(OPT_IN_QUERIES[name])) ?? [];
+      } catch (error) {
+        throw new Error(`session.db wintermute_project: ${error?.message ?? error}`, { cause: error });
+      }
+    };
+    if (!(await query('table')).length) return null;
+    const columns = new Set((await query('columns')).map(row => row.name));
+    if (!columns.has('at') || !columns.has('enabled')) return null;
+    const [row] = await query('latest');
+    const value = row?.enabled;
+    return value === 1 || value === '1' ? true : value === 0 || value === '0' ? false : null;
+  });
+}
+
 /**
  * Caches each file's last successful read under its stamps. A read that throws stores nothing: the last good entry stays for
  * get.last(file), and its stamps no longer match, so the next get reads again even when the file has not changed since.
