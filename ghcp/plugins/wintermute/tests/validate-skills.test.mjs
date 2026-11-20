@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   COORDINATOR_SKILL, POLICY_AGENT, PROJECT_SKILLS, SKILLS_DIR, WORKER_SKILL,
-  headingsOf, neverUseList, policyBlocks, sectionOf, tierTable, validateSkills,
+  headingsOf, neverUseList, pinList, policyBlocks, sectionOf, tierTable, validateSkills,
 } from '../scripts/lib/validate-skills.mjs';
 import { tempDir } from './helpers/temp.mjs';
 
@@ -91,6 +91,15 @@ test('neverUseList runs to the end of the section, keeps wrapped and loose items
   assert.match(neverUseList('No list here.').error, /has no "Never use these:" line/);
 });
 
+test('pinList runs to the tier table, keeps wrapped and loose items, and rejects other text', () => {
+  const list = 'Pinned models:\n\n- One: `a`.\n- Two: `b`,\n  wrapped.\n\n- Three, after a blank line.';
+  assert.deepEqual(pinList(`Intro.\n\n${list}\n\n| A |\n|---|\n| 1 |`), { pins: list, error: null });
+  assert.deepEqual(pinList(`${list}\n\n`), { pins: list, error: null });
+  assert.match(pinList(`${list}\n\nA paragraph.\n\n| A |\n|---|\n| 1 |`).error, /not a list item/);
+  assert.match(pinList('Pinned models:\n\n| A |\n|---|\n| 1 |').error, /no list items/);
+  assert.match(pinList(`${list}\n\n${list}`).error, /more than one/);
+});
+
 test('skills with an exact copy of the model policy pass', async () => {
   assert.deepEqual(await errorsFor(), []);
 });
@@ -99,6 +108,8 @@ test('a change to the pinned models, the tier table or the list in wintermute-co
   const differs = (label, line) => `the ${label} differs from ${POLICY_AGENT} at its line ${line}`;
   const edits = [
     [editCore(policy.pins, policy.pins.replace('`gpt-6.1-sol`', '`gpt-6.2-sol`')), differs('"Pinned models:" list', policy.pins.split('\n').findIndex(line => line.includes('gpt-6.1-sol')) + 1)],
+    [editCore(policy.pins, `${policy.pins}\n\n- Haiku: \`claude-haiku-5\` (Anthropic), added only in wintermute-core, after a blank line.`), differs('"Pinned models:" list', policy.pins.split('\n').length + 1)],
+    [editCore(policy.pins, `${policy.pins}\n  wrapped onto a second line only in wintermute-core.`), differs('"Pinned models:" list', policy.pins.split('\n').length + 1)],
     [editCore(policy.table, changedTable()), differs('tier table', tableRows.length)],
     [editCore(policy.neverUse, [listLines[0], '- Haiku at `max`.', ...listLines.slice(1)].join('\n')), differs('"Never use these:" list', 2)],
     [editCore(policy.neverUse, `${policy.neverUse}\n\n- Haiku at \`max\`: added only in wintermute-core, after a blank line.`), differs('"Never use these:" list', listLines.length + 1)],

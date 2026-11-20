@@ -114,17 +114,25 @@ export function neverUseList(section) {
   return { list: lines.slice(start, end).join('\n'), error: null };
 }
 
-/** The "Pinned models:" line and the list right after it, which ends at its first blank or other line: { pins, error }. */
+/** The "Pinned models:" line and its list, up to the tier table or the end of the section, which must be list items: { pins, error }. */
 export function pinList(section) {
   const lines = section.split(/\r?\n/);
   const start = lines.indexOf(PINNED);
   if (start < 0) return { pins: null, error: `has no "${PINNED}" line` };
   if (lines.indexOf(PINNED, start + 1) >= 0) return { pins: null, error: `has more than one "${PINNED}" line` };
   let end = start + 1;
-  while (end < lines.length && lines[end].trim() === '') end += 1;
-  const first = end;
-  while (end < lines.length && lines[end].startsWith('- ')) end += 1;
-  if (end === first) return { pins: null, error: `has no list items under "${PINNED}"` };
+  while (end < lines.length && !lines[end].startsWith('|')) end += 1;
+  while (end > start + 1 && lines[end - 1].trim() === '') end -= 1;
+  let items = 0;
+  for (const line of lines.slice(start + 1, end)) {
+    if (line.trim() === '') continue;
+    if (line.startsWith('- ')) {
+      items += 1;
+    } else if (!(items > 0 && /^\s+\S/.test(line))) {
+      return { pins: null, error: `has text after "${PINNED}" that is not a list item, so the list's end is unclear: ${JSON.stringify(line.slice(0, 60))}` };
+    }
+  }
+  if (items === 0) return { pins: null, error: `has no list items under "${PINNED}"` };
   return { pins: lines.slice(start, end).join('\n'), error: null };
 }
 
