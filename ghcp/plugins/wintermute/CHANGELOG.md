@@ -6,6 +6,12 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.5.2 — 2026-11-20
+
+### Fixed
+
+- The session orchestrator and Project coordinator archive each claims checker when they record its verdict and the usual archive checks pass. Each later claims check gets a new checker. Reviewers and final panel judges still stay for re-checks (#148).
+
 ## 1.5.1 — 2026-11-20
 
 ### Added

@@ -44,13 +44,13 @@ test('a unit that only waits for its planned review and claims check reports com
 
 const ROUTING = [
   '  - Before you choose who does a job, decide whether it is a review or a claims check. A review looks for defects. A claims check confirms what the owner says it delivered, at the pushed commit; the owner\'s own report is not that proof. If a request asks for both, such as "re-check the fix and refresh the test claims", split it into two jobs: the review part goes to its reviewer, and the claims part goes to a claims checker.',
-  '  - Every claims check goes to a claims checker at the claims check row, with its model and effort set explicitly: a new one, or the unit\'s idle claims checker from an earlier check of the same unit, which checks the new head from its own fresh fetch. This includes a request to refresh earlier claims, and the claims check of your own unit. Never give a claims check to a reviewer, a judge or any other agent because it already has the context, and never give a claims checker a reviewer\'s model or effort. A model or effort the user named for claims checks overrides the row.',
+  '  - Every claims check goes to a new claims checker at the claims check row, with its model and effort set explicitly. This includes a request to refresh earlier claims, and the claims check of your own unit. Never give a claims check to a reviewer, a judge or any other agent because it already has the context, and never give a claims checker a reviewer\'s model or effort. A model or effort the user named for claims checks overrides the row.',
   '  - The claims check brief gives the scope to check, the repo, the branch, the exact pushed head commit, the target or base branch, and the evidence to send back: the tests run at that commit with their counts, CI at that commit, and the scope compared with the brief.',
   '  - A review brief covers only the review. The reviewer may still run tests, read CI or reproduce a failure when it needs that to establish a finding. Those results don\'t count as the claims check.',
   '  - If a reviewer reports that it was sent a claims job, start a claims checker for it. Don\'t count the check as done or as not needed.',
 ].join('\n');
-const REUSE_CLAUSE = 'A claims check goes only to a claims checker, never to another idle agent because it has the context: start a new one, or use the unit\'s idle claims checker (see "Claims check" in "Evidence and review").';
-const RECHECK_CLAUSE = 'A re-check covers only the review of the new diff: the claims check for the new commit goes to a claims checker (see "Claims check"), unless "Follow-up jobs" lets you skip it.';
+const REUSE_CLAUSE = 'Always start a new claims checker for a claims check (see "Claims check" in "Evidence and review").';
+const RECHECK_CLAUSE = 'A re-check covers only the review of the new diff: the claims check for the new commit goes to a new claims checker (see "Claims check"), unless "Follow-up jobs" lets you skip it.';
 const OWN_UNIT_LINE = '- Start its claims check and its regular or critical review yourself, as separate jobs, as you would for a child\'s unit (see "Evidence and review").';
 const CLAIMS_ROW = '| Claims check | Sol at `medium`; Opus at `low` if Sol isn\'t listed | The check before every merge, publish and "done". A check, not a review. |';
 
@@ -167,8 +167,25 @@ test('the rules that follow-ups touch point to Follow-up jobs', () => {
   assert.doesNotMatch(text, /goes back to the same reviewer/, 'old re-check rule removed');
 });
 
-test('the orchestrator keeps a unit\'s claims checker for its later claims checks', () => {
-  assert.ok(agent(ORCHESTRATOR).includes('created with `base_branch` set to that branch. Keep it until the unit merges, so that it can take the unit\'s later claims checks.'));
+test('the orchestrator archives a claims checker in the turn it records the verdict, subject to the archive checks', () => {
+  const claims = agent(ORCHESTRATOR).split('\n').find(l => l.startsWith('- **Claims check**:')) ?? '';
+  assert.ok(claims.includes('In the same turn you record its verdict, archive the checker if it is idle, its worktree is clean, and it has no PR, automation or active Agent merge.'), 'archive timing and safety checks');
+});
+
+test('the orchestrator gives each later claims check to a new checker and does not keep the earlier checker until merge', () => {
+  const text = agent(ORCHESTRATOR);
+  const claims = text.split('\n').find(l => l.startsWith('- **Claims check**:')) ?? '';
+  assert.ok(!text.includes('idle claims checker'), 'no idle claims checker reuse');
+  assert.doesNotMatch(claims, /until the unit merges/);
+  assert.ok(text.includes('Every claims check goes to a new claims checker'), 'every check gets a new checker');
+});
+
+test('the orchestrator keeps reviewers until the unit merges and final panel judges until the last PR merges', () => {
+  const lines = agent(ORCHESTRATOR).split('\n');
+  const review = lines.find(l => l.startsWith('- **Regular review**:')) ?? '';
+  const judges = lines.find(l => l.startsWith('  - Run the judges as two one-off sessions')) ?? '';
+  assert.ok(review.includes('Keep the session until the unit merges, so that it can take a re-check.'));
+  assert.ok(judges.includes('Keep them until the last PR merges, so that they can take a re-check.'));
 });
 
 const RECHECK_RUN_LIMIT = 'A reviewer who re-checks it checks only the new diff. The re-check brief says so, and says to run code only to settle a possible finding, with the smallest check that settles it, such as one test file. The reviewer doesn\'t repeat the owner\'s test runs, full test suites or mutation checks, even when a project\'s test rules ask authors for them: the owner\'s evidence and CI cover those, and so does the claims check when one runs.';
