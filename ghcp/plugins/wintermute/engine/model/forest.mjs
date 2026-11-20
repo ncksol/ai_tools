@@ -1,3 +1,5 @@
+import { isPathComponent } from '../text.mjs';
+
 function makeNode(fields) {
   return { persistentProject: false, ...fields, currentCliSessionId: fields.cliSessionIds[fields.cliSessionIds.length - 1] ?? null, parentId: null, childIds: [], depth: 0 };
 }
@@ -32,6 +34,7 @@ export const ORCHESTRATOR_AGENTS = Object.freeze([...ORCHESTRATOR_AGENT_NAMES, .
  * A Copilot app Project (data.db persistent_projects) with no child session, or with only sub-agents, is a swarm root only when
  * `optedInProjects` names it: the latest row of the wintermute_project table in its session.db turns wintermute on. Every such
  * Project, archived or not, is listed in `projectCandidates`, for the engine to read that row (see engine.mjs, optedInProjects).
+ * A Project whose id is not one safe folder name is never a candidate, so no file is read for it.
  */
 export function buildForest(app, { waitingRoots = new Set(), hasSubagents = () => false, optedInProjects = new Set() } = {}) {
   const projects = app.persistentProjects ?? new Set();
@@ -143,6 +146,7 @@ export function buildForest(app, { waitingRoots = new Set(), hasSubagents = () =
   }
   const projectCandidates = [];
   for (const id of projects) {
+    if (!isPathComponent(id)) continue;
     const node = nodes.get(id);
     if (node ? node.parentId || node.childIds.length : !app.sessions.has(id) || workspaceOfSession.has(id) || orphanSessions.has(id)) continue;
     projectCandidates.push({ id, cliId: id });

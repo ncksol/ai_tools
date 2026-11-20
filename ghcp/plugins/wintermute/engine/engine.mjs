@@ -8,7 +8,7 @@ import { readAppDb } from './readers/app-db.mjs';
 import { createTail, fileStamp, lastWorkTime, readNewLines } from './readers/events.mjs';
 import { createLedger, readUsage } from './readers/ledger.mjs';
 import { createProcessProbe } from './readers/process-probe.mjs';
-import { createSessionDbCache, listLocks, readProjectOptIn, readWorkspaceYaml } from './readers/session-files.mjs';
+import { createSessionDbCache, listLocks, readProjectOptIn, readWorkspaceYaml, sessionFile } from './readers/session-files.mjs';
 import { buildForest, resolveNodeId, rootProjectId, treeNodes } from './model/forest.mjs';
 import { parseQuestionTag } from './model/contract.mjs';
 import { createHistoryStore, listItemOf, summarizeRun } from './model/history.mjs';
@@ -370,12 +370,13 @@ export function createSwarmEngine(options = {}) {
   /**
    * The forest's Project candidates (see buildForest) whose session.db turns wintermute on in its latest wintermute_project row.
    * `files` collects the session.db files read, so that their cache entries and connections are kept. A read that fails uses
-   * the last value read from that file, with a warning.
+   * the last value read from that file, with a warning. A session id that is not one safe folder name is never read.
    */
   async function optedInProjects(diag, files) {
     const on = new Set();
     for (const { id, cliId } of forest.projectCandidates) {
-      const file = path.join(paths.stateDir, cliId, 'session.db');
+      const file = sessionFile(paths.stateDir, cliId, 'session.db');
+      if (!file) continue;
       files.add(file);
       let value;
       try {

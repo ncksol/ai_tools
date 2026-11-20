@@ -6,7 +6,7 @@ import { createSwarmEngine } from '../engine/engine.mjs';
 import { SUMMARY_RULES } from '../engine/schema.mjs';
 import { createSqliteReader } from '../engine/sqlite.mjs';
 import { buildForest, rootProjectId } from '../engine/model/forest.mjs';
-import { readProjectOptIn } from '../engine/readers/session-files.mjs';
+import { readProjectOptIn, sessionFile } from '../engine/readers/session-files.mjs';
 import { CopilotHome } from './helpers/copilot-home.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { DAY, T0, alwaysAlive } from './helpers/scenario.mjs';
@@ -343,5 +343,31 @@ test('a run that finishes during a partial data.db read is stored by the next fu
   }
   assert.equal(JSON.parse(readFileSync(stored, 'utf8')).project?.id, 'repo-1');
   assert.equal((await engine.listHistory()).find(item => item.id === 'p-run').summarized, true);
+  engine.stop();
+});
+
+const UNSAFE_IDS = ['../outside', 'nested/p', 'back\\slash', '..', '.'];
+
+test('a Project whose id is not one safe folder name is never a candidate, opted in or not, and names no session file', () => {
+  for (const id of UNSAFE_IDS) assert.equal(sessionFile('/synthetic/state', id, 'session.db'), null, id);
+  assert.equal(sessionFile('/synthetic/state', 'p-ok', 'session.db'), path.join('/synthetic/state', 'p-ok', 'session.db'));
+  const app = appWith({ projects: [...UNSAFE_IDS, 'p-ok'], sessions: [...UNSAFE_IDS, 'p-ok'] });
+  const forest = buildForest(app, { optedInProjects: new Set([...UNSAFE_IDS, 'p-ok']) });
+  assert.deepEqual(forest.projectCandidates.map(item => item.id), ['p-ok']);
+  assert.deepEqual(forest.roots.map(root => root.id), ['p-ok']);
+});
+
+test('the engine reads no opt-in for a Project id that would leave its own session folder', async () => {
+  const home = new CopilotHome();
+  for (const id of ['../outside', 'nested/p']) {
+    home.persistentProject({ id, title: id, createdAt: T0 });
+    home.projectOptIn(id, [[T0 + 1000, 1]]);
+  }
+  const reads = [];
+  const reader = createSqliteReader();
+  const sqliteReader = { read: (file, fn) => { reads.push(file); return reader.read(file, fn); }, retain: files => reader.retain(files), close: () => reader.close() };
+  const engine = createSwarmEngine({ copilotHome: home.root, persistHistory: false, now: () => T0 + 10_000, processProbe: alwaysAlive, prLookup: 'off', sqliteReader });
+  await engine.refresh();
+  assert.deepEqual([engine.listSwarms(), reads], [[], [home.dataDb]]);
   engine.stop();
 });
