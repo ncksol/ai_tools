@@ -1376,9 +1376,10 @@ jq -c 'select(.agentId==null and .type=="user.message" and .data.source==null an
 jq -c 'select(.agentId==null and .type=="skill.invoked") | {line: input_line_number, at: .timestamp, name: .data.name, source: .data.source, plugin: .data.pluginName, trigger: .data.trigger}' "$L"
 jq -c 'select(.agentId==null and .type=="tool.execution_start") | {line: input_line_number, at: .timestamp, tool: .data.toolName}' "$L"
 jq -c 'select(.agentId==null and (.type=="assistant.message" or .type=="assistant.turn_end")) | {line: input_line_number, type, tools: (.data.toolRequests // [] | length), text: (.data.content // "" | .[0:60])}' "$L"
+A=<load line>; M=<opt-in message line>; jq -c --argjson a "$A" --argjson m "$M" 'select(input_line_number > $a and input_line_number < $m) | {line: input_line_number, type, agent: .agentId}' "$L"
 ```
 
-Pass for the opted-in Project: the first typed message starts with `/wintermute-project` and the tag; an own `skill.invoked` with `name` `wintermute-project`, `source` `plugin` and `plugin` `wintermute` comes either after that message, or immediately before it with `trigger` `user-invoked` and no other typed message or own assistant message between them (the app logs a typed slash command's load just before the message); and that load comes before the first own session tool (`create_session`, `send_session_message`, `open_pr_session` or `open_issue_session`). The first assistant text after that message starts with `wintermute-project rules loaded.`.
+Pass for the opted-in Project: the first typed message, the opt-in message, starts with `/wintermute-project` and the tag; and an own `skill.invoked` with `name` `wintermute-project`, `source` `plugin` and `plugin` `wintermute` is tied to it in one of two ways. After it: the load's line is after the opt-in message and before the next typed message, the first own assistant message after the opt-in message, and the first own session tool (`create_session`, `send_session_message`, `open_pr_session` or `open_issue_session`). Before it, as the app logs a typed slash command: the load has `trigger` `user-invoked`, its line is before the opt-in message, and the fifth command, run with `A` set to the load's line and `M` to the message's line, prints only `hook.start` and `hook.end`. In both cases the load comes before the first own session tool. If neither link holds, S1 doesn't pass. The first assistant text after that message starts with `wintermute-project rules loaded.`.
 
 Run the same four commands with `P=<N>`. Pass for the negative Project: its first typed message is the negative prompt with the tag; the whole interaction, from that message to the next typed message or the end of the log, ends with an assistant message with `tools` 0 and some text, then an `assistant.turn_end`, and that reply doesn't start with `wintermute-project rules loaded.`; and in that interaction there is no own call to `sql`, `update_project_memory`, `get_session`, `create_session`, `send_session_message`, `open_pr_session`, `open_issue_session`, `task`, `publish_chat_update`, `save_session_automation`, `relay_session_input`, `answer_session_input`, `respond_to_session_plan_v2`, `archive_session`, a shell tool, a tool that changes files (`edit`, `create`, `apply_patch` or similar), or any other tool that changes state or delegates, such as `create_pull_request`. List every own tool call in that interaction, and say whether `wintermute-project` loaded.
 
@@ -1592,16 +1593,18 @@ Run the two queries of Task 7, Step 1, second block, with `P=<P>`. The `session_
 
 - [ ] **Step 2: F1, skill loads**
 
+For `<P>`, run the commands of Task 7, Step 2 with `P=<P>`. For the children:
+
 ```bash
-P=<P>; KIDS="<all child session IDs>"
-for S in "$P" $KIDS; do
+KIDS="<all child session IDs>"
+for S in $KIDS; do
   L="$HOME/.copilot/session-state/$S/events.jsonl"; echo "== $S"
-  jq -c 'select(.agentId==null and .type=="skill.invoked") | {line: input_line_number, name: .data.name, source: .data.source, plugin: .data.pluginName, trigger: .data.trigger}' "$L"
+  jq -c 'select(.agentId==null and .type=="skill.invoked") | {line: input_line_number, name: .data.name, source: .data.source, plugin: .data.pluginName}' "$L"
   jq -c 'select(.agentId==null and .type=="tool.execution_start" and .data.toolName!="skill") | {line: input_line_number, first_tool: .data.toolName}' "$L" | head -1
 done
 ```
 
-Ok: `<P>` loads `wintermute-project` from source `plugin`, plugin `wintermute`, at the opt-in message in either order that Task 7, Step 2 allows (its first command gives the message's line), and before its first session tool; each child loads `wintermute-project-worker` the same way before its first own tool other than `skill`; no child loads `wintermute-project`.
+Ok: `<P>` loads `wintermute-project` from source `plugin`, plugin `wintermute`, tied to the opt-in message by the rule of Task 7, Step 2, and before its first session tool (`create_session`, `send_session_message`, `open_pr_session` or `open_issue_session`; another tool, such as `add_repository`, doesn't count); each child loads `wintermute-project-worker` the same way before its first own tool other than `skill`; no child loads `wintermute-project`.
 
 - [ ] **Step 3: F2, models**
 
