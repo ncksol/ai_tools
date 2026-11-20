@@ -39,6 +39,10 @@ Always run `wintermute:wintermute-core` as a top-level session. Never start it a
 - **Reviews and checks.** Before a unit merges, a model from another vendor reviews it, and a separate session checks the author's claims (tests, CI, scope) at the pushed commit. Two judges from two vendors check the last PR before it merges.
 - **The end.** The orchestrator reports the result, open risks and any skipped reviews, then archives the finished child sessions.
 
+## In a Copilot app Project
+
+A [Copilot app Project](https://docs.github.com/en/copilot/how-tos/github-copilot-app/working-with-projects) can't run `wintermute-core` as its agent, but it can follow the same rules through the plugin's `wintermute-project` skill. In the Project, start a message with `/wintermute-project`, followed by your request. The Project then plans the work, starts child sessions with a model and effort for each, and has every PR reviewed and checked; it asks for your go-ahead before it opens, publishes or merges one. Its Overview and Inbox work as usual. To turn wintermute off, ask the Project to. The [README](README.md#projects) has the details.
+
 ## Open the dashboard
 
 In the app, the dashboard opens by itself when the orchestrator creates its first child session. If you closed it, or want it in another session, ask the agent to open the swarm dashboard canvas (canvas id `swarm-dashboard`). It shows the swarm of the session it was opened in.
