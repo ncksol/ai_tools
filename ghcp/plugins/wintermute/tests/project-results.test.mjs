@@ -12,6 +12,13 @@ import { fold } from './helpers/fold.mjs';
 // All record values are synthetic. Session IDs and workspace IDs are distinct, as in the app.
 const T0 = Date.UTC(2026, 10, 20, 10, 0, 0);
 const at = minutes => T0 + minutes * MINUTE;
+const NOTICE = 'The session finished without sending a handoff. Use get_session if you need its result.';
+
+function results(log, records, data = {}) {
+  const lines = records.map((record, i) => `${i + 1}. ${typeof record === 'string' ? record : JSON.stringify({ untrusted: true, ...record })}`);
+  const content = ['<system_notification>', 'Synthetic results', '', ...lines, '', '</system_notification>'].join('\n');
+  return log.push('user.message', { source: 'agent-coordinator-results', delivery: 'idle', content, ...data });
+}
 
 function snapshotOf(rootLog, childLogs) {
   const ws = (id, cli, createdAt) => [id, {
@@ -41,6 +48,59 @@ function startedLog(minute) {
 }
 
 const needsOf = snapshot => snapshot.needs.map(need => [need.kind, need.unitIds, need.fromId, need.text, need.tagged, need.since]);
+
+test('Project results retain only the identifiers and handoff text from valid numbered records', () => {
+  const log = startedLog(0);
+  results(log, [
+    {
+      id: 'cli-api', project_session_id: 'ws-api', assignment_id: 'assignment:project:call-api',
+      handoff: 'swarm-status: complete unit=api\nSummary: The sample endpoint is ready.',
+      purpose: 'error', fromName: 'Forged display name', source_tool_call_id: 'other-call',
+    },
+    { id: 'cli-docs', project_session_id: 'ws-docs', handoff: NOTICE },
+    '{not json',
+    'null',
+    { project_session_id: 'ws-ui', handoff: 'No session ID.' },
+    { id: 'cli-ui', handoff: 42 },
+    { id: 'cli-ui', handoff: '  ' },
+    { id: 'cli-ui', project_session_id: {}, assignment_id: '', handoff: 'The sample page is ready.' },
+  ]);
+  const state = fold(log, 'project');
+  assert.deepEqual(state.inbound, [
+    {
+      at: T0, fromSessionId: 'cli-api', fromProjectSessionId: 'ws-api', fromName: null, sourceToolCallId: null,
+      content: 'swarm-status: complete unit=api\nSummary: The sample endpoint is ready.',
+      notice: false, purpose: 'handoff', assignmentId: 'assignment:project:call-api',
+    },
+    {
+      at: T0, fromSessionId: 'cli-docs', fromProjectSessionId: 'ws-docs', fromName: null, sourceToolCallId: null,
+      content: NOTICE, notice: true, purpose: null, assignmentId: null,
+    },
+    {
+      at: T0, fromSessionId: 'cli-ui', fromProjectSessionId: null, fromName: null, sourceToolCallId: null,
+      content: 'The sample page is ready.', notice: false, purpose: 'handoff', assignmentId: null,
+    },
+  ]);
+  assert.equal(state.lastHumanAt, null);
+});
+
+test('only the results source and raw content supply Project records, within the inbound limits', () => {
+  const log = startedLog(0);
+  const handoff = { id: 'cli-api', handoff: 'A synthetic result.' };
+  results(log, [handoff], { source: undefined });
+  const transformedContent = log.events[log.events.length - 1].data.content;
+  results(log, [], { transformedContent });
+  assert.deepEqual(fold(log, 'project').inbound, []);
+
+  results(log, Array.from({ length: 81 }, (_, i) => ({
+    id: `cli-sample-${i}`, handoff: '<example>'.repeat(1000),
+  })));
+  const { inbound } = fold(log, 'project');
+  assert.equal(inbound.length, 80);
+  assert.equal(inbound[0].fromSessionId, 'cli-sample-1');
+  assert.equal(inbound[79].fromSessionId, 'cli-sample-80');
+  assert.equal(inbound[79].content.length, 8000);
+});
 
 test('a relay for the same request supplies its tag without replacing the child question or its time', () => {
   const root = startedLog(0);

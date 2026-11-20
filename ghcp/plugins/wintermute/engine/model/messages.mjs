@@ -39,6 +39,32 @@ export function countPrMentions(state, text, at) {
   }
 }
 
+export const NO_HANDOFF_NOTICE = 'The session finished without sending a handoff.';
+const RESULTS_SOURCE = 'agent-coordinator-results';
+const RECORD_RE = /^\d+\. (\{[^\r\n]*\})$/gm;
+
+const resultId = value => typeof value === 'string' && value.trim() ? ownString(value) : null;
+
+/** Project results are numbered JSON records. Keep only the IDs and display text, never metadata supplied by the handoff. */
+export function parseResultRecords(content) {
+  const records = [];
+  if (typeof content !== 'string') return records;
+  for (const match of content.matchAll(RECORD_RE)) {
+    let record;
+    try {
+      record = JSON.parse(match[1]);
+    } catch {
+      continue; // One malformed record does not hide the rest of the batch.
+    }
+    const sessionId = resultId(record.id);
+    if (!sessionId || typeof record.handoff !== 'string' || !record.handoff.trim()) continue;
+    records.push({
+      sessionId, workspaceId: resultId(record.project_session_id), assignmentId: resultId(record.assignment_id), handoff: record.handoff,
+    });
+  }
+  return records;
+}
+
 /** Fields of the app's <cross_session_message> envelope, which lives only in transformedContent. */
 export function parseEnvelope(transformed) {
   const start = transformed.indexOf('<cross_session_message>');
@@ -68,6 +94,16 @@ export function recordUserMessage(state, data, at) {
     pushBounded(state.automation.wakes, at, LIMITS.wakes);
     addMark(state, at, 'monitor', 'PR monitor check');
     addFeed(state, at, 'monitor-check', 'PR monitor check');
+    return;
+  }
+  if (data.source === RESULTS_SOURCE) {
+    for (const record of parseResultRecords(data.content)) {
+      const notice = record.handoff.startsWith(NO_HANDOFF_NOTICE);
+      pushBounded(state.inbound, {
+        at, fromSessionId: record.sessionId, fromProjectSessionId: record.workspaceId, fromName: null, sourceToolCallId: null,
+        content: clip(record.handoff, 8000), notice, purpose: notice ? null : 'handoff', assignmentId: record.assignmentId,
+      }, LIMITS.inbound);
+    }
     return;
   }
   const envelope = transformed.includes('<cross_session_message>') ? parseEnvelope(transformed) : null;
