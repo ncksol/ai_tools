@@ -1,5 +1,5 @@
 function makeNode(fields) {
-  return { ...fields, currentCliSessionId: fields.cliSessionIds[fields.cliSessionIds.length - 1] ?? null, parentId: null, childIds: [], depth: 0 };
+  return { persistentProject: false, ...fields, currentCliSessionId: fields.cliSessionIds[fields.cliSessionIds.length - 1] ?? null, parentId: null, childIds: [], depth: 0 };
 }
 
 /** The plugin that ships the orchestrator agents; the runtime names a plugin agent `<plugin>:<file-stem>`. */
@@ -28,8 +28,13 @@ export const ORCHESTRATOR_AGENTS = Object.freeze([...ORCHESTRATOR_AGENT_NAMES, .
  *   orchestrator that has used only `task` sub-agents so far (issue #30). Sub-agent work alone is not enough: most
  *   sessions start sub-agents, and they are not swarms (issue #29, item 10). `taskCandidates` lists those CLI sessions,
  *   archived or not, current or older aliases, for the engine to look for sub-agent starts (see engine.mjs, scanTaskStarts).
+ *
+ * A Copilot app Project (data.db persistent_projects) with no child session, or with only sub-agents, is a swarm root only when
+ * `optedInProjects` names it: the latest row of the wintermute_project table in its session.db turns wintermute on. Every such
+ * Project, archived or not, is listed in `projectCandidates`, for the engine to read that row (see engine.mjs, optedInProjects).
  */
-export function buildForest(app, { waitingRoots = new Set(), hasSubagents = () => false } = {}) {
+export function buildForest(app, { waitingRoots = new Set(), hasSubagents = () => false, optedInProjects = new Set() } = {}) {
+  const projects = app.persistentProjects ?? new Set();
   const nodes = new Map();
   const workspaceOfSession = new Map();
   const aliasesByWorkspace = new Map();
@@ -71,7 +76,7 @@ export function buildForest(app, { waitingRoots = new Set(), hasSubagents = () =
     if (!row || workspaceOfSession.has(id) || orphanSessions.has(id)) return null;
     nodes.set(id, makeNode({
       id, kind: 'chat', name: row.title, projectId: null, branch: null, baseBranch: null, createdAt: row.createdAt,
-      archivedAt: row.archivedAt, cliSessionIds: [id], createdPr: null,
+      archivedAt: row.archivedAt, cliSessionIds: [id], createdPr: null, persistentProject: projects.has(id),
     }));
     return id;
   };
@@ -136,6 +141,13 @@ export function buildForest(app, { waitingRoots = new Set(), hasSubagents = () =
     taskCandidates.add(row.id);
     if (working([row.id])) promoted.add(chatNode(row.id));
   }
+  const projectCandidates = [];
+  for (const id of projects) {
+    const node = nodes.get(id);
+    if (node ? node.parentId || node.childIds.length : !app.sessions.has(id) || workspaceOfSession.has(id) || orphanSessions.has(id)) continue;
+    projectCandidates.push({ id, cliId: id });
+    if (optedInProjects.has(id)) promoted.add(chatNode(id));
+  }
   const roots = [...nodes.values()].filter(node => !node.parentId && (node.childIds.length > 0 || promoted.has(node.id)));
   for (const root of roots) {
     const stack = [[root.id, 0]];
@@ -147,7 +159,7 @@ export function buildForest(app, { waitingRoots = new Set(), hasSubagents = () =
     }
   }
   roots.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
-  return { nodes, roots, workspaceOfSession, candidates, taskCandidates: [...taskCandidates] };
+  return { nodes, roots, workspaceOfSession, candidates, taskCandidates: [...taskCandidates], projectCandidates };
 }
 
 export function descendants(forest, rootId) {
