@@ -21,6 +21,11 @@ function object(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
+/** The rate card in pricing/ that `score` uses without --pricing, and that a new batch pins for all its runs. */
+export const DEFAULT_PRICING = "2026-11-20.json";
+/** The card that a batch created before batches recorded their card scores with: the default when it started. */
+export const LEGACY_BATCH_PRICING = "2026-11-10.json";
+
 export function readPricing(path: string): Pricing {
   const text = readFileSync(path, "utf8");
   const data = object(JSON.parse(text));

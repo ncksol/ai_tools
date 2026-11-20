@@ -6,7 +6,8 @@ import { after, test } from "node:test";
 import type { LogEvent } from "../lib/events.ts";
 import { saveState, validateConfig } from "../lib/batch/state.ts";
 import { agentBundleSha256 } from "../lib/batch/pins.ts";
-import { currentPins, requestStop, STOP_MESSAGE } from "../lib/batch/runner.ts";
+import { currentPins, pricingCard, requestStop, STOP_MESSAGE } from "../lib/batch/runner.ts";
+import { DEFAULT_PRICING, LEGACY_BATCH_PRICING } from "../lib/usage.ts";
 import { eventsPath } from "../lib/batch/swarm.ts";
 import { run as runProc } from "../lib/proc.ts";
 import { readResults, replaceResult, summarize, formatSummary } from "../lib/results.ts";
@@ -203,6 +204,42 @@ test("custom live --variants labels outside LIVE_VARIANTS keep the normal calibr
   assert.equal(summary.groups[0].medianMinutes, 20);
   assert.match(formatSummary(summary), /Calibration runs count as scored runs\./);
   assert.doesNotMatch(formatSummary(summary), /Pinned policy calibrations/);
+});
+
+test("every run is scored with the rate card that its batch pinned, and a batch from before that pin keeps 2026-11-10", async () => {
+  for (const legacy of [false, true]) {
+    const h = await make({ scenarios: ["ask-final"] });
+    const state = h.state();
+    assert.equal(state.pricing, DEFAULT_PRICING);
+    if (legacy) {
+      delete state.pricing;
+      saveState(h.config.dir, state);
+    }
+    await h.until(() => false);
+    const card = join(h.config.kitDir, "pricing", legacy ? LEGACY_BATCH_PRICING : DEFAULT_PRICING);
+    assert.deepEqual(h.scoreCalls.map((args) => flag(args, "--pricing")), [card]);
+    assert.equal(h.state().runs[0].row?.outcome, "passed");
+  }
+});
+
+test("a rate card that changes after a run starts stops that run's scoring before any row is written", async () => {
+  const h = await make({ scenarios: ["ask-final"] });
+  const state = h.state();
+  const label = join("pricing", DEFAULT_PRICING);
+  assert.deepEqual(pricingCard(h.config, state), { path: join(h.config.kitDir, label) });
+  const { [label]: _, ...unpinned } = state.pins.files;
+  assert.deepEqual(pricingCard(h.config, { ...state, pins: { ...state.pins, files: unpinned } }), { error: `${label} was not pinned when the batch started` });
+
+  await h.until((_, now) => now.runs[0]?.status === "running");
+  const running = h.state();
+  const rows = readResults(h.config.resultsPath).length;
+  saveState(h.config.dir, { ...running, pins: { ...running.pins, files: { ...running.pins.files, [label]: "0".repeat(64) } } });
+  await h.until(() => false);
+  const run = h.state().runs[0];
+  assert.deepEqual(h.scoreCalls, []);
+  assert.equal(readResults(h.config.resultsPath).length, rows);
+  assert.equal(run.row, undefined);
+  assert.ok(run.flags.some((item) => item.code === "score-failed" && item.detail.includes(`${label} changed since the batch started`)), JSON.stringify(run.flags));
 });
 
 test("an interrupted diagnostic step preserves and commits the already-saved gate result", async () => {

@@ -3,7 +3,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFile
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { readPricing, priceUsage, collectUsage } from "../lib/usage.ts";
+import { DEFAULT_PRICING, readPricing, priceUsage, collectUsage } from "../lib/usage.ts";
 import { KIT_DIR } from "../lib/suite.ts";
 import { ev, writeSession } from "./fixtures/events.ts";
 
@@ -29,6 +29,22 @@ test("Astra and Sol use the high tier only above 272000 inclusive input tokens",
   for (const [model, inputTokens, expected] of cases) {
     assert.equal(priceUsage(usage(model, { inputTokens, cacheReadTokens: 0, cacheWriteTokens: 0 }), at, pricing()), expected);
   }
+});
+
+test("the default card prices GPT-6.2 Astra and Sol at GitHub's rates, with the long-context tier only above 272000 input tokens", () => {
+  const card = readPricing(join(KIT_DIR, "pricing", DEFAULT_PRICING));
+  const u = (model: string, inputTokens: number) => usage(model, { inputTokens, cacheReadTokens: 100_000, cacheWriteTokens: 50_000, outputTokens: 10_000 });
+  // At 272000: (122000 uncached * input + 100000 * cached + 50000 * write + 10000 * output) / 1e6, in USD per million tokens.
+  const cases: [string, number, number][] = [
+    ["gpt-6.2-astra", 272000, (122000 * 8 + 100000 * 0.4 + 50000 * 10 + 10000 * 40) / 1e6],
+    ["gpt-6.2-astra", 272001, (122001 * 16 + 100000 * 0.8 + 50000 * 20 + 10000 * 60) / 1e6],
+    ["gpt-6.2-sol", 272000, (122000 * 2 + 100000 * 0.1 + 50000 * 2.5 + 10000 * 10) / 1e6],
+    ["gpt-6.2-sol", 272001, (122001 * 4 + 100000 * 0.2 + 50000 * 5 + 10000 * 15) / 1e6],
+  ];
+  for (const [model, inputTokens, expected] of cases) {
+    assert.ok(Math.abs(priceUsage(u(model, inputTokens), "2026-11-20T12:00:00Z", card) - expected) < 1e-9, `${model} at ${inputTokens}`);
+  }
+  assert.deepEqual(cases.map(([, , usd]) => Math.round(usd * 1e6) / 1e6), [1.916, 3.632016, 0.479, 0.908004]);
 });
 
 test("Argon promotion expiry is exclusive and unsupported cache writes are not free tokens", () => {

@@ -7,7 +7,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Pins } from "./state.ts";
 
-const sha256 = (path: string): string => createHash("sha256").update(readFileSync(path)).digest("hex");
+export const sha256 = (path: string): string => createHash("sha256").update(readFileSync(path)).digest("hex");
 
 export function agentBundleSha256(agents: Pins["agents"]): string {
   const entries = Object.entries(agents).sort(([a], [b]) => a.localeCompare(b));
