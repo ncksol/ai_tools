@@ -6,6 +6,15 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.4.1 — 2026-11-20
+
+### Fixed
+
+- `wintermute-project` and `wintermute-project-worker`: a child acts on its coordinator's assignment for a PR change, and the coordinator sends one only when it holds your go-ahead for that change or a standing delegation you gave it in the Project. Children no longer need your own message forwarded to them, which the app can refuse after the turn you sent it in.
+- `wintermute-project`: one rule decides which commit a review, claims check or panel verdict covers, and the publish and merge steps all use it. Verdicts carried forward to a new commit after a mechanical change count only at the same base branch and merge base, and only when the coordinator recorded the carry-forward and read it back before the publish or merge at that commit; a write that changed no row records nothing, and a rebase is never mechanical in advance. Every action that makes a PR ready for review starts with a live read: of the branch before a new PR is opened ready, and of the PR before a draft leaves draft.
+- Both skills say that a PR gets its title and body when it is opened, and that later edits to them stay with you, like retargets and label changes. An owner's pushes to its own branch are its ordinary work, not PR changes.
+- `wintermute-project-worker`: a test or check command keeps its own exit code in the log when its output goes through a pipe, and no later command in the same call hides it.
+
 ## 1.4.0 — 2026-11-20
 
 ### Changed
