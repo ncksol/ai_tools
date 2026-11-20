@@ -8,7 +8,7 @@ import { readAppDb } from './readers/app-db.mjs';
 import { createTail, fileStamp, lastWorkTime, readNewLines } from './readers/events.mjs';
 import { createLedger, readUsage } from './readers/ledger.mjs';
 import { createProcessProbe } from './readers/process-probe.mjs';
-import { createSessionDbCache, listLocks, readWorkspaceYaml } from './readers/session-files.mjs';
+import { createSessionDbCache, listLocks, readProjectOptIn, readWorkspaceYaml } from './readers/session-files.mjs';
 import { buildForest, resolveNodeId, rootProjectId, treeNodes } from './model/forest.mjs';
 import { parseQuestionTag } from './model/contract.mjs';
 import { createHistoryStore, listItemOf, summarizeRun } from './model/history.mjs';
@@ -120,6 +120,7 @@ export function createSwarmEngine(options = {}) {
   // Per root id: true when the last refresh read every one of its sessions' logs in full for cost (see readCosts).
   const costsComplete = new Map();
   const readDb = createSessionDbCache();
+  const readOptIn = createSessionDbCache(readProjectOptIn);
   const sessions = new Map();
   const liveness = new Map();
   // Per CLI session: { stamp, mtimeMs, at, checkedAt } from the last look at the end of its log (see workTimeOf).
@@ -338,6 +339,28 @@ export function createSwarmEngine(options = {}) {
       if ([...(state?.waits.values() ?? [])].some(wait => wait.kind === 'question' && parseQuestionTag(wait.text))) waiting.add(id);
     }
     return waiting;
+  }
+
+  /**
+   * The forest's Project candidates (see buildForest) whose session.db turns wintermute on in its latest wintermute_project row.
+   * `files` collects the session.db files read, so that their cache entries and connections are kept. A read that fails uses
+   * the last value read from that file, with a warning.
+   */
+  async function optedInProjects(diag, files) {
+    const on = new Set();
+    for (const { id, cliId } of forest.projectCandidates) {
+      const file = path.join(paths.stateDir, cliId, 'session.db');
+      files.add(file);
+      let value;
+      try {
+        value = await readOptIn(file, reader);
+      } catch (error) {
+        value = readOptIn.last(file) ?? null;
+        diag.push({ level: 'warn', source: 'session.db', message: `${shortId(cliId)}: ${error.message}` });
+      }
+      if (value === true) on.add(id);
+    }
+    return on;
   }
 
   function markLogUnreadable(cliId, at) {
@@ -605,6 +628,7 @@ export function createSwarmEngine(options = {}) {
     }
     // The CLI sessions of top sessions that may be swarms before their first child (see waitingOrchestrators).
     const candidateCliIds = new Set();
+    const optInFiles = new Set();
     // Roots before this refresh: a root that leaves the forest is reported as changed, so a page that shows it learns it has gone.
     const before = forest ? forest.roots.map(root => root.id) : [];
     try {
@@ -614,7 +638,8 @@ export function createSwarmEngine(options = {}) {
       forest = buildForest(app, { hasSubagents });
       const found = await scanTaskStarts(forest.taskCandidates, diag);
       const waiting = await waitingOrchestrators(at, candidateCliIds);
-      if (waiting.size || found) forest = buildForest(app, { waitingRoots: waiting, hasSubagents });
+      const optedIn = await optedInProjects(diag, optInFiles);
+      if (waiting.size || found || optedIn.size) forest = buildForest(app, { waitingRoots: waiting, hasSubagents, optedInProjects: optedIn });
     } catch (error) {
       forest = forest ?? buildForest(emptyApp());
       diag.push({ level: 'warn', source: 'forest', message: error.message });
@@ -687,7 +712,8 @@ export function createSwarmEngine(options = {}) {
     for (const [cliId, entry] of [...liveness]) if (at - entry.checkedAt > 4 * LIVENESS_TTL_MS) liveness.delete(cliId);
     for (const [cliId, entry] of [...workTimes]) if (at - entry.checkedAt > 4 * LIVENESS_TTL_MS) workTimes.delete(cliId);
     readDb.retain(dbFiles);
-    reader.retain(new Set([...dbFiles, paths.dataDb]));
+    readOptIn.retain(optInFiles);
+    reader.retain(new Set([...dbFiles, ...optInFiles, paths.dataDb]));
     swarms = swarms.map(item => {
       const entry = snapshots.get(item.id);
       return entry ? { ...item, lifecycle: entry.snapshot.run.lifecycle, lastActivityAt: entry.snapshot.run.lastActivityAt } : item;
