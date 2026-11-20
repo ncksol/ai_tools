@@ -194,3 +194,24 @@ test('the orchestrator limits what a re-checking reviewer runs', () => {
   const recheck = agent(ORCHESTRATOR).split('\n').find(l => l.startsWith('- **Re-checks**')) ?? '';
   assert.ok(recheck.includes(RECHECK_RUN_LIMIT));
 });
+
+test('the orchestrator records a keep reason and archives kept children in a cleanup sweep', () => {
+  const text = agent(ORCHESTRATOR);
+  const lines = text.split('\n');
+  const keep = lines.find(l => l.startsWith('- **Keep reasons**')) ?? '';
+  const sweep = lines.find(l => l.startsWith('- **Cleanup sweep**')) ?? '';
+  for (const holder of ['for a reviewer;', 'merged owner', 'final panel\'s judges', 'one-off session']) {
+    assert.ok(keep.includes(holder), `keep reason for ${holder}`);
+  }
+  for (const trigger of ['a PR merges', 'a unit ends', 'the final panel passes', 'a planned follow-up finishes', 'the user says some work is done or dropped', 'resume or compaction']) {
+    assert.ok(sweep.includes(trigger), `sweep trigger: ${trigger}`);
+  }
+  assert.ok(sweep.includes('every claims checker whose verdict you recorded (see "Claims check"), the reviewers, judges and helpers of a unit that ended'));
+  assert.ok(!keep.includes('claims checker'), 'claims checkers have no keep reason');
+  assert.ok(sweep.includes('Don\'t ask the user first.'));
+  assert.ok(sweep.includes('It has no open job when its latest report is `complete`, you have sent it no work since, and nothing it raised (a `needs_input` or `blocked` report, or a question for the user) is still waiting, or when its unit ended `closed` or `failed`. A `merged` outcome doesn\'t decide this'));
+  assert.ok(sweep.includes('every other child that is due.'));
+  assert.doesNotMatch(sweep, /or its unit has ended\)/);
+  assert.ok(text.includes('If the panel has already passed, or this was the last PR, nothing holds it: archive it in the cleanup sweep now.'));
+  assert.ok(text.includes('reconcile what changed in the meantime. Then run the cleanup sweep (see "Lifecycle").'));
+});
