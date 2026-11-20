@@ -93,18 +93,22 @@ test('an action on an existing PR names the exact PR, and a second PR on the sam
 });
 
 test('an owner opens a PR ready only after a live read finds none open from its branch, and reads back the PR the opening returned', () => {
-  assert.ok(WORKER.includes('to open the PR ready, check live that no PR is open from your branch (`gh pr list -R <owner>/<repo> --head <branch> --state open --json number`): the read must succeed and return none;'));
+  assert.ok(WORKER.includes(`to open the PR ready, check live that no PR is open from your branch in this repository (\`gh pr list -R <owner>/<repo> --head <branch> --state open --json number,headRepositoryOwner,headRepository --jq '[.[] | select(.headRepositoryOwner.login == "<owner>" and .headRepository.name == "<repo>") | .number]'\`, which leaves out a fork's branch of the same name): the read must succeed and return none;`));
+  assert.ok(COORDINATOR.includes(`and that no PR is open from the branch in this repository (\`gh pr list -R <owner>/<repo> --head <branch> --state open --json number,headRepositoryOwner,headRepository --jq '[.[] | select(.headRepositoryOwner.login == "<owner>" and .headRepository.name == "<repo>") | .number]'\`, which leaves out a fork's branch of the same name)`));
   assert.ok(WORKER.includes('to take your draft out of draft, read the PR that the assignment names, by its number (`gh pr view <number> -R <owner>/<repo> --json number,headRefOid,baseRefName,state,isDraft`): it must be open, a draft, and at the head and base the assignment names.'));
   assert.ok(WORKER.includes('If a read fails, if a PR is already open from your branch when you are to open one, or if anything differs from the assignment, don\'t act: report `blocked`.'));
   assert.ok(WORKER.includes('Read the PR back: for a new PR, the one that the opening call returned, by its number or URL, never a PR found by branch; otherwise the PR that the assignment names. It must be open, ready for review, and at the head and base the assignment names.'));
   assert.doesNotMatch(WORKER, /and, if the PR exists, its repository/);
 });
 
-test('a publish assignment names the verdicts that cover its head, and the worker counts a carry-forward from an earlier head as clean only on the same base and merge base', () => {
-  assert.ok(COORDINATOR.includes('It also names which verdicts cover that head: checked at it, or carried forward to it from the head they checked by the record you read back (see "Follow-up jobs").'));
-  assert.ok(WORKER.includes('A PR is review-ready when an assignment authorizes you to publish it at a named commit, base branch and merge base, and names the review and claims check verdicts that cover that commit: checked at it, or carried forward to it from an earlier commit by your coordinator\'s record, such as a README-only commit after the checked one on the same base branch and merge base. "Clean" means those verdicts.'));
+test('a worker opens or publishes a PR only when the assignment names a clean review and claims check that cover its head, and checks that before it acts', () => {
+  const gate = '   - Before anything else, check the verdicts that the assignment names: a review and a claims check, each clean (a review with no open must-fix or should-fix finding, and a claims check that passed), and each checked at the named commit or carried forward to it by your coordinator\'s record, on the same base branch and merge base. If either is missing, pending or not clean, don\'t open the PR or take it out of draft: report `blocked`.';
+  assert.ok(WORKER.includes(gate));
+  assert.ok(WORKER.indexOf(gate) < WORKER.indexOf('   - Open the PR ready for review against the base branch the assignment names'));
+  assert.ok(COORDINATOR.includes('It also names which verdicts cover that head and that each is clean: checked at it, or carried forward to it from the head they checked by the record you read back (see "Follow-up jobs").'));
+  assert.ok(WORKER.includes('A PR is review-ready when an assignment authorizes you to publish it at a named commit, base branch and merge base, and names a clean review and a clean claims check that cover that commit: checked at it, or carried forward to it from an earlier commit by your coordinator\'s record, such as a README-only commit after the checked one on the same base branch and merge base.'));
   assert.ok(WORKER.includes('You don\'t read your coordinator\'s state, and its record grants no permission. If the base branch or merge base you read differs from the assignment\'s, no carry-forward covers the commit: don\'t publish it; report `blocked`.'));
-  assert.doesNotMatch(WORKER, /publish it at a commit whose review and claims check are clean/);
+  assert.doesNotMatch(WORKER, /"Clean" means those verdicts|publish it at a commit whose review and claims check are clean/);
 });
 
 test("printing a saved exit status isn't enough: the call exits with it", () => {
