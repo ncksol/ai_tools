@@ -8,11 +8,19 @@ import { SUMMARY_RULES } from '../engine/schema.mjs';
 import { createSqliteReader } from '../engine/sqlite.mjs';
 import { buildForest, rootProjectId } from '../engine/model/forest.mjs';
 import { readProjectOptIn, sessionFile } from '../engine/readers/session-files.mjs';
+import { createHub } from '../server/hub.mjs';
 import { CopilotHome } from './helpers/copilot-home.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { DAY, NO_SUCH_PID, T0, alwaysAlive } from './helpers/scenario.mjs';
 import { TEST_BACKENDS, canWriteWithNode, execSql, holdExclusiveLock } from './helpers/sqlite-writer.mjs';
 import { tempDir } from './helpers/temp.mjs';
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function until(predicate, timeoutMs = 3000) {
+  for (let waited = 0; !predicate() && waited < timeoutMs; waited += 5) await sleep(5);
+  assert.ok(predicate(), 'the condition never held');
+}
 
 /*
  * A Copilot app Project is a chat-backed session that data.db lists in persistent_projects. With child sessions it is a swarm root
@@ -134,8 +142,11 @@ test("a Project run's summary saved under older rules is rebuilt with the projec
   engine.stop();
 });
 
-/** The engine's SQLite reader, except that a data.db read of a table in `locked` fails, as a read of a busy database can. */
-function lockingReader(dataDb, locked) {
+/**
+ * The engine's SQLite reader, except that a data.db read of a table in `locked` fails, as a read of a busy database can, and so
+ * does any read of a file in `busy`.
+ */
+function lockingReader(dataDb, locked, busy = new Set()) {
   const reader = createSqliteReader();
   const guard = db => ({
     all: async sql => {
@@ -143,7 +154,10 @@ function lockingReader(dataDb, locked) {
       return db.all(sql);
     },
   });
-  return { read: (file, fn) => reader.read(file, file === dataDb ? db => fn(guard(db)) : fn), retain: files => reader.retain(files), close: () => reader.close() };
+  return {
+    read: (file, fn) => (busy.has(file) ? Promise.reject(new Error('database is locked')) : reader.read(file, file === dataDb ? db => fn(guard(db)) : fn)),
+    retain: files => reader.retain(files), close: () => reader.close(),
+  };
 }
 
 test('a failed read of the Project table keeps the last good Projects, with a warning, until the next good read', async () => {
@@ -319,30 +333,41 @@ test('a data.db that is gone after a partial read leaves that read incomplete, s
 
 /**
  * A Project run with one child (CLI session ws-a, whose log has the run's last work), live at T0 + 10 s and finished from T0 + DAY,
- * with its summary stored in a fresh history folder. Its engine's data.db reads of the tables in `locked` fail, and `wrapHistory`
- * can change its history store. `poll(time)` refreshes at that time; `archived()` is the stored summary's project and whether
- * History lists it as summarized.
+ * with its summary stored in a fresh history folder. With `solo`, the Project has no child session and has opted in (its session.db
+ * is `optIn`), and its own log has the run's last work. Its engine's data.db reads of the tables in `locked` fail, so do its reads
+ * of the files in `busy`, and `wrapHistory` can change its history store. `open()` makes another engine on the same data, history
+ * folder and clock, with its own `store` wrapper and `reader`. `poll(time)` refreshes at that time; `archived()` is the stored
+ * summary's project and whether History lists it as summarized; `stored()` is the stored summary.
  */
-function finishingRun({ wrapHistory = store => store, processProbe = alwaysAlive } = {}) {
+function finishingRun({ wrapHistory = store => store, processProbe = alwaysAlive, solo = false } = {}) {
   const home = new CopilotHome();
   home.persistentProject({ id: 'p-run', title: 'Run', createdAt: T0 });
-  home.project({ id: 'repo-1', name: 'sample-repo' });
-  home.workspace({ id: 'ws-a', projectId: 'repo-1', name: 'a: API', createdAt: T0 + 1000, creatorSessionId: 'p-run' });
-  home.usage([{ sessionId: 'p-run', nanoAiu: 1e9, createdAt: T0 + 2000 }, { sessionId: 'ws-a', nanoAiu: 1e9, createdAt: T0 + 3000 }]);
+  let optIn = null;
+  if (solo) {
+    optIn = home.projectOptIn('p-run', [[T0 + 1000, 1]]);
+    home.usage([{ sessionId: 'p-run', nanoAiu: 1e9, createdAt: T0 + 2000 }]);
+  } else {
+    home.project({ id: 'repo-1', name: 'sample-repo' });
+    home.workspace({ id: 'ws-a', projectId: 'repo-1', name: 'a: API', createdAt: T0 + 1000, creatorSessionId: 'p-run' });
+    home.usage([{ sessionId: 'p-run', nanoAiu: 1e9, createdAt: T0 + 2000 }, { sessionId: 'ws-a', nanoAiu: 1e9, createdAt: T0 + 3000 }]);
+  }
   // As a real log does, the child's ends with a message after its last model call, so the run's last work is in that log alone.
   const last = new EventLog(T0 + 5000);
   last.message('The API is done.');
-  home.writeEvents('ws-a', last.events, { append: true });
+  home.writeEvents(solo ? 'p-run' : 'ws-a', last.events, { append: true });
   const historyDir = path.join(tempDir('project-roots-'), 'history');
   const stored = path.join(historyDir, 'runs', 'p-run.json');
   const locked = new Set();
+  const busy = new Set();
   let clock = T0;
-  const engine = createSwarmEngine({
-    copilotHome: home.root, historyDir, historyStore: wrapHistory(createHistoryStore(historyDir)), now: () => clock, processProbe,
-    prLookup: 'off', sqliteReader: lockingReader(home.dataDb, locked),
+  const open = ({ store = wrapHistory, reader = lockingReader(home.dataDb, locked, busy) } = {}) => createSwarmEngine({
+    copilotHome: home.root, historyDir, historyStore: store(createHistoryStore(historyDir)), now: () => clock, processProbe,
+    prLookup: 'off', sqliteReader: reader,
   });
+  const engine = open();
   return {
-    home, engine, locked,
+    home, engine, locked, busy, optIn, open,
+    at: time => { clock = time; },
     poll: async time => {
       clock = time;
       await engine.refresh();
@@ -352,6 +377,7 @@ function finishingRun({ wrapHistory = store => store, processProbe = alwaysAlive
       existsSync(stored) ? JSON.parse(readFileSync(stored, 'utf8')).project?.id ?? null : null,
       (await engine.listHistory()).find(item => item.id === 'p-run')?.summarized ?? null,
     ],
+    stored: () => (existsSync(stored) ? readFileSync(stored, 'utf8') : null),
     /** Three healthy polls a minute apart, after the finish. */
     recover: async () => {
       for (let minute = 1; minute <= 3; minute += 1) {
@@ -451,6 +477,132 @@ test('a save that keeps failing is tried again less and less often', async () =>
   run.engine.stop();
 });
 
+for (const busy of [false, true]) {
+  test(`an opted-in Project with no child session that a partial data.db read hides as it finishes is stored once it is back${busy ? ', after a busy read of its opt-in' : ''}`, async () => {
+    const run = finishingRun({ solo: true });
+    await run.poll(T0 + 10_000);
+    assert.equal(run.listed(), 'live');
+    run.locked.add('sessions');
+    await run.poll(T0 + DAY);
+    assert.equal(run.listed(), null);
+    run.locked.clear();
+    if (busy) {
+      // data.db reads in full, but the Project's opt-in can't be read and none is cached, so whether it is a swarm isn't known.
+      run.busy.add(run.optIn);
+      await run.poll(T0 + DAY + 1000);
+      assert.equal(run.listed(), null);
+      run.busy.clear();
+    }
+    await run.recover();
+    assert.equal(run.listed(), 'finished');
+    assert.equal(JSON.parse(run.stored() ?? '{}').id, 'p-run');
+    assert.equal((await run.archived())[1], true);
+    run.engine.stop();
+  });
+}
+
+test('a save that keeps failing follows the same backoff after someone opened the run, and each new request still tries it at once', async () => {
+  const tries = async opened => {
+    let puts = 0;
+    const run = finishingRun({ wrapHistory: store => ({ ...store, put: async () => { puts += 1; throw new Error('read-only file system'); } }) });
+    await run.poll(T0 + 10_000);
+    await run.poll(T0 + DAY);
+    if (opened) await run.engine.getRunSummary('p-run');
+    for (let poll = 1; poll <= 30; poll += 1) await run.poll(T0 + DAY + poll * 3000);
+    const background = puts;
+    await run.engine.getRunSummary('p-run');
+    run.engine.stop();
+    return [background, puts - background];
+  };
+  const [control] = await tries(false);
+  const [opened, request] = await tries(true);
+  assert.ok(opened <= control + 1, `${opened} tries in 30 polls after the run was opened, ${control} without`);
+  assert.equal(request, 1, 'a new request tries the save at once');
+});
+
+for (const [when, stuckIn, missingAtStart = false] of [
+  ['after its first write failed', 'data.db'],
+  ['after its first write failed, and the replacement first finds no data.db', 'data.db', true],
+  ['while its first write is still running', 'history'],
+  ['before it saw the run finish', 'finish'],
+]) {
+  test(`an engine that the watchdog replaces ${when} hands the summary it owes to its replacement, and stores nothing itself`, { timeout: 10_000 }, async () => {
+    const run = finishingRun();
+    const aside = `${run.home.dataDb}.aside`;
+    const engines = [];
+    const commits = [0, 0];
+    let failWrite = false;
+    let holdWrite = false;
+    let holdRead = false;
+    const releases = [];
+    const held = () => new Promise(resolve => releases.push(resolve));
+    // Engine 0's writes fail or wait while asked to, and so do its reads of data.db; each engine counts the writes it stores.
+    const store = index => base => ({
+      ...base,
+      put: async (summary, options) => {
+        if (index === 0 && failWrite) throw new Error('no space left on device');
+        if (index === 0 && holdWrite) await held();
+        const done = await base.put(summary, options);
+        if (done !== false) commits[index] += 1;
+        return done;
+      },
+    });
+    const reader = index => {
+      const base = lockingReader(run.home.dataDb, new Set());
+      return { ...base, read: async (file, fn) => { if (index === 0 && holdRead && file === run.home.dataDb) await held(); return base.read(file, fn); } };
+    };
+    const hub = createHub({
+      createEngine: () => {
+        const index = engines.length;
+        // A data.db that is missing is not a read that confirms the run is gone.
+        if (index === 1 && missingAtStart) renameSync(run.home.dataDb, aside);
+        engines.push(run.open({ store: store(index), reader: reader(index) }));
+        return engines[index];
+      },
+      refreshLimitMs: 200, refreshCheckMs: 5, poolPassedSince: () => true, engineIdleMs: 600_000, heartbeatMs: 600_000,
+    });
+    const poll = async time => {
+      run.at(time);
+      await hub.withEngine(engine => engine.refresh());
+    };
+    try {
+      await poll(T0 + 10_000);
+      if (stuckIn === 'data.db') {
+        failWrite = true;
+        await poll(T0 + DAY);
+        failWrite = false;
+        holdRead = true;
+        await poll(T0 + DAY + 20_000);
+      } else {
+        if (stuckIn === 'history') holdWrite = true;
+        else holdRead = true;
+        await poll(T0 + DAY);
+      }
+      assert.equal(engines.length, 2, 'the stuck engine was replaced');
+      if (missingAtStart) {
+        assert.equal(existsSync(run.home.dataDb), false);
+        renameSync(aside, run.home.dataDb);
+      }
+      for (let minute = 1; minute <= 3; minute += 1) await poll(T0 + DAY + minute * 60_000);
+      const saved = run.stored();
+      assert.equal(JSON.parse(saved ?? '{}').project?.id, 'repo-1');
+      assert.equal((await hub.withEngine(engine => engine.listHistory())).find(item => item.id === 'p-run')?.summarized, true);
+      assert.equal(commits[1] >= 1, true);
+      // The stuck engine's read or write finishes now, and its refresh runs to the end without storing anything.
+      holdRead = false;
+      holdWrite = false;
+      for (const release of releases) release();
+      await engines[0].refresh();
+      assert.deepEqual([commits[0], run.stored()], [0, saved]);
+    } finally {
+      for (const release of releases) release();
+      if (existsSync(aside)) renameSync(aside, run.home.dataDb);
+      hub.close();
+      run.engine.stop();
+    }
+  });
+}
+
 const UNSAFE_IDS = ['../outside', 'nested/p', 'back\\slash', '..', '.'];
 
 test('a Project whose id is not one safe folder name is never a candidate, opted in or not, and names no session file', () => {
@@ -501,4 +653,53 @@ test("the opt-in scan reports progress for each Project, so the dashboard doesn'
   assert.equal(seen.length >= 2, true);
   assert.ok(seen[1] - seen[0] >= 25, `progress ${seen[0]} then ${seen[1]}`);
   engine.stop();
+});
+
+test("a Project read whose statements are each slow but return isn't taken for a stuck refresh, while one that never returns is", { timeout: 10_000 }, async () => {
+  const home = new CopilotHome();
+  home.persistentProject({ id: 'p-solo', title: 'Solo', createdAt: T0 });
+  const optIn = home.projectOptIn('p-solo', [[T0 + 1000, 1]]);
+  // The engine's progress and the watchdog read Date.now(): each statement of the opt-in read takes 20 s on that clock.
+  const realNow = Date.now;
+  let wall = realNow();
+  let hang = false;
+  let hung = false;
+  const slow = db => ({
+    ...db,
+    all: async (sql, params) => {
+      await sleep(10);
+      wall += 20_000;
+      if (hang) {
+        hung = true;
+        return new Promise(() => {});
+      }
+      await sleep(10);
+      return db.all(sql, params);
+    },
+  });
+  const base = createSqliteReader();
+  const sqliteReader = { read: (file, fn) => base.read(file, file === optIn ? db => fn(slow(db)) : fn), retain: files => base.retain(files), close: () => base.close() };
+  const engines = [];
+  Date.now = () => wall;
+  const hub = createHub({
+    createEngine: () => {
+      engines.push(createSwarmEngine({ copilotHome: home.root, persistHistory: false, now: () => T0 + 10_000, processProbe: alwaysAlive, prLookup: 'off', sqliteReader }));
+      return engines[engines.length - 1];
+    },
+    refreshLimitMs: 50_000, refreshCheckMs: 2, poolPassedSince: () => true, engineIdleMs: 600_000, heartbeatMs: 600_000,
+  });
+  try {
+    assert.deepEqual(await hub.withEngine(engine => engine.listSwarms().map(swarm => swarm.id)), ['p-solo']);
+    assert.equal(engines.length, 1, 'three statements of 20 s each, 60 s in all, against a limit of 50 s');
+    hang = true;
+    // A new stamp, so the next refresh reads the opt-in again.
+    utimesSync(optIn, new Date(realNow()), new Date(realNow() + 5000));
+    engines[0].refresh();
+    await until(() => hung);
+    wall += 40_000;
+    await until(() => engines.length === 2);
+  } finally {
+    Date.now = realNow;
+    hub.close();
+  }
 });
