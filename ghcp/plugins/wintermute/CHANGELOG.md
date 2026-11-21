@@ -6,6 +6,20 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.5.5 — 2026-11-21
+
+### Added
+
+- The dashboard reads Copilot app Projects. A Project that has turned wintermute on with the `wintermute-project` skill shows as a swarm before it has a child session, for example while it works only through sub-agents; a Project with child sessions shows as before. A Project's swarm names the repository that most of its child sessions work in; each child's PR still comes from its own repository. Run summaries saved by earlier versions are rebuilt once where the run's logs are still complete.
+
+### Fixed
+
+- A refresh that can't read one of the app database's tables, for example while the database is busy, no longer saves or confirms a run summary from that partial read, or from that read reused when the database is then missing, so a saved summary keeps its project until a later read succeeds. A run whose summary can't be saved as it finishes, for example during such a read, while one of its logs is missing for a moment, or when the write fails, is saved by a later refresh without anyone opening it; a run whose log is gone for good isn't rebuilt for it. A failed read of the Projects table keeps the Projects from the last good read.
+
+### Known limitations
+
+- A Project with no child session can still lose a summary save that is waiting for a retry, if its opt-in can't be read on the next poll. After you open a run's summary, a save that keeps failing is tried on every poll instead of less and less often (#154).
+
 ## 1.5.4 — 2026-11-20
 
 ### Added
