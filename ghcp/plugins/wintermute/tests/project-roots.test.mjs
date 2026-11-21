@@ -393,9 +393,9 @@ test('a run whose summary could not be written as it finished is written by a la
   const run = finishingRun({
     wrapHistory: store => ({
       ...store,
-      put: async summary => {
+      put: async (summary, options) => {
         if (failing) throw new Error('no space left on device');
-        return store.put(summary);
+        return store.put(summary, options);
       },
     }),
   });
