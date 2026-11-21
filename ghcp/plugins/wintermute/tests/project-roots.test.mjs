@@ -520,9 +520,15 @@ test('a save that keeps failing follows the same backoff after someone opened th
   assert.equal(request, 1, 'a new request tries the save at once');
 });
 
-for (const [when, stuckIn] of [['after its first write failed', 'data.db'], ['while its first write is still running', 'history'], ['before it saw the run finish', 'finish']]) {
+for (const [when, stuckIn, missingAtStart = false] of [
+  ['after its first write failed', 'data.db'],
+  ['after its first write failed, and the replacement first finds no data.db', 'data.db', true],
+  ['while its first write is still running', 'history'],
+  ['before it saw the run finish', 'finish'],
+]) {
   test(`an engine that the watchdog replaces ${when} hands the summary it owes to its replacement, and stores nothing itself`, { timeout: 10_000 }, async () => {
     const run = finishingRun();
+    const aside = `${run.home.dataDb}.aside`;
     const engines = [];
     const commits = [0, 0];
     let failWrite = false;
@@ -548,6 +554,8 @@ for (const [when, stuckIn] of [['after its first write failed', 'data.db'], ['wh
     const hub = createHub({
       createEngine: () => {
         const index = engines.length;
+        // A data.db that is missing is not a read that confirms the run is gone.
+        if (index === 1 && missingAtStart) renameSync(run.home.dataDb, aside);
         engines.push(run.open({ store: store(index), reader: reader(index) }));
         return engines[index];
       },
@@ -571,6 +579,10 @@ for (const [when, stuckIn] of [['after its first write failed', 'data.db'], ['wh
         await poll(T0 + DAY);
       }
       assert.equal(engines.length, 2, 'the stuck engine was replaced');
+      if (missingAtStart) {
+        assert.equal(existsSync(run.home.dataDb), false);
+        renameSync(aside, run.home.dataDb);
+      }
       for (let minute = 1; minute <= 3; minute += 1) await poll(T0 + DAY + minute * 60_000);
       const saved = run.stored();
       assert.equal(JSON.parse(saved ?? '{}').project?.id, 'repo-1');
@@ -584,6 +596,7 @@ for (const [when, stuckIn] of [['after its first write failed', 'data.db'], ['wh
       assert.deepEqual([commits[0], run.stored()], [0, saved]);
     } finally {
       for (const release of releases) release();
+      if (existsSync(aside)) renameSync(aside, run.home.dataDb);
       hub.close();
       run.engine.stop();
     }

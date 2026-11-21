@@ -1,4 +1,5 @@
-import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { renameSync } from 'node:fs';
+import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { COST_SOURCE, SCHEMA_VERSION, SUMMARY_RULES, validateRunSummary } from '../schema.mjs';
 import { getRunStats } from './run-stats.mjs';
@@ -141,7 +142,8 @@ export function createHistoryStore(dir) {
     },
     /**
      * Stores the summary and resolves true. When `shouldCommit` returns false just before the summary would replace the
-     * stored one, the write is dropped and this resolves false.
+     * stored one, the write is dropped and this resolves false. The check and the replace run with nothing in between, so a
+     * caller that `shouldCommit` stops after the check (a retired engine) can't land its summary after a later write.
      */
     async put(summary, { shouldCommit = null } = {}) {
       const target = fileOf(summary?.id);
@@ -154,7 +156,7 @@ export function createHistoryStore(dir) {
         await unlink(temp);
         return false;
       }
-      await rename(temp, target);
+      renameSync(temp, target);
       return true;
     },
   };

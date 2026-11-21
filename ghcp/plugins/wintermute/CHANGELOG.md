@@ -12,7 +12,7 @@ After merging, run `npm run release:publish -- --dry-run`, then `npm run release
 
 - A run summary is no longer lost when a Copilot app Project with no child session finishes while a partial read of the app database hides it, and its opt-in can't be read on the next poll. The save waits until the Project shows again, or until a read confirms that it was removed or turned wintermute off. This closes the first known limitation from 1.5.5 (#154).
 - After you open a run's summary, a save that keeps failing is tried less and less often, as for any other run, instead of on every poll. Opening the run again still tries the save at once. This closes the second known limitation from 1.5.5.
-- When the dashboard server replaces a stuck engine, the new engine saves the run summaries that the old one still owed: a save that failed and waits for a retry, a save that was still being written, and a run that finished before the old engine saw it. The replaced engine still stores nothing.
+- When the dashboard server replaces a stuck engine, the new engine saves the run summaries that the old one still owed: a save that failed and waits for a retry, a save that was still being written, and a run that finished before the old engine saw it. It keeps them owed when its first read finds no app database. The replaced engine stores nothing, and a write it had already started can no longer land over the newer summary.
 - A refresh now counts each SQLite statement that finishes as progress. A refresh whose database reads are slow but finish is no longer taken for a stuck one, while a statement that never finishes still makes the server replace its engine.
 
 ## 1.5.7 — 2026-11-21

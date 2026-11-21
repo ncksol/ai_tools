@@ -168,8 +168,8 @@ export function createSwarmEngine(options = {}) {
   // it until persistFinished stores or confirms it, for example when data.db or a log was not read in full, or the write failed;
   // so does a live run that a partial read of data.db, or a failed read of its Project opt-in, hides (see doRefresh). A later
   // refresh rebuilds it, whether or not anything asks for the run, until its summary is stored or confirmed, it is built live, or a
-  // full read of data.db no longer lists it and, for a Project, its opt-in was read (see optedInProjects). An engine that
-  // replaces this one takes over what it owes (see owedRuns).
+  // full read of data.db (one that finds no file is not) no longer lists it and, for a Project, its opt-in was read (see
+  // optedInProjects). An engine that replaces this one takes over what it owes (see owedRuns).
   // The retries are bounded. An owed run is rebuilt only while data.db and every one of its sessions' logs read in full
   // (costsComplete), so a run whose log is gone for good is never rebuilt for it. A try with those inputs that still fails, such
   // as a write to a read-only history folder, is tried again at the next poll, then 1, 2, 4 ... minutes later, at most hourly. A
@@ -698,6 +698,9 @@ export function createSwarmEngine(options = {}) {
     // False once data.db, or one of its tables, fails to read, or this refresh reuses an earlier read that was partial; a
     // database or table that is not found is not a failure.
     let globalsRead = true;
+    // True only when this refresh read data.db in full, so the forest's roots are confirmed. A data.db that is missing or not
+    // SQLite confirms nothing, even for an engine that has never read it, so it ends no owed save (see owedSaves).
+    let appRead = false;
     enter('sqlite');
     if (sqlite.backend === 'auto') {
       diag.push({ level: 'info', source: 'sqlite', message: (await loadNodeSqlite()) ? 'Reading SQLite through node:sqlite.' : 'Reading SQLite through the sqlite3 command-line tool.' });
@@ -709,6 +712,7 @@ export function createSwarmEngine(options = {}) {
         // A partial read must not replace a stored summary: a Project read as empty would lose the run's project. The last good
         // Projects are kept, so the run shows as before until the next good read.
         appComplete = !data.failed.size;
+        appRead = appComplete;
         if (data.failed.has('persistentProjects') && app) data.persistentProjects = app.persistentProjects;
         app = data;
         diag.push(...data.diagnostics);
@@ -753,10 +757,10 @@ export function createSwarmEngine(options = {}) {
     swarms = await listRoots(at, diag);
     const rootIds = new Set(forest.roots.map(root => root.id));
     const fullInputs = rootId => globalsRead && costsComplete.get(rootId) === true;
-    // A live run that a partial read of data.db, or a failed read of its Project opt-in, leaves out of the forest may be hidden only
-    // for now: it owes its summary, so it is rebuilt once it is back. For the same reason, what a run owes ends only when a full
-    // read no longer lists it and, for a Project, its opt-in was read: removed or turned off.
-    const hidden = rootId => !globalsRead || membershipUnknown.has(rootId);
+    // A live run that a partial or missing read of data.db, or a failed read of its Project opt-in, leaves out of the forest may be
+    // hidden only for now: it owes its summary, so it is rebuilt once it is back. For the same reason, what a run owes ends only
+    // when a full read of data.db no longer lists it and, for a Project, its opt-in was read: removed or turned off.
+    const hidden = rootId => !appRead || membershipUnknown.has(rootId);
     if (persist) {
       for (const rootId of before) if (!rootIds.has(rootId) && hidden(rootId) && snapshots.get(rootId)?.snapshot.run.lifecycle === 'live') owe(rootId, at, false);
     }

@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import fsp from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { SUMMARY_RULES, validateRunSummary } from '../engine/schema.mjs';
 import { createHistoryStore, listItemOf, summarizeRun } from '../engine/model/history.mjs';
@@ -73,6 +75,40 @@ test('the history store writes atomically, lists newest first and skips bad file
 
 test('an empty history folder lists nothing', async () => {
   assert.deepEqual(await createHistoryStore(path.join(tempDir('swarm-history-'), 'none')).list(), []);
+});
+
+test("nothing runs between the store's commit check and the file's replacement, so a write that a newer one follows never lands last", async () => {
+  const dir = tempDir('swarm-history-');
+  const store = createHistoryStore(dir);
+  const older = fixture('example-run-summary.json');
+  const newer = { ...older, credits: older.credits + 3 };
+  const target = path.join(dir, 'runs', `${older.id}.json`);
+  // As when the watchdog retires an engine right after its write passed the check: its replacement writes a newer summary as
+  // soon as anything else can run. An asynchronous replace of the older write is held until then.
+  let newerWritten = null;
+  let first = true;
+  const rename = fsp.rename;
+  fsp.rename = async (from, to) => {
+    if (to === target && first) {
+      first = false;
+      await newerWritten;
+    }
+    return rename(from, to);
+  };
+  syncBuiltinESMExports();
+  try {
+    await store.put(older, {
+      shouldCommit: () => {
+        newerWritten = new Promise(resolve => setImmediate(() => resolve(store.put(newer))));
+        return true;
+      },
+    });
+    await newerWritten;
+    assert.equal(JSON.parse(readFileSync(target, 'utf8')).credits, newer.credits);
+  } finally {
+    fsp.rename = rename;
+    syncBuiltinESMExports();
+  }
 });
 
 test('a run summary counts done units apart from closed ones and records its rules', () => {
