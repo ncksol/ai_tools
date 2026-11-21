@@ -1,7 +1,13 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { withReadOnly } from '../sqlite.mjs';
+import { isPathComponent } from '../text.mjs';
 import { parseTime } from '../time.mjs';
+
+/** The path of a file in a CLI session's folder under `stateDir`, or null when the session id is not one safe folder name. */
+export function sessionFile(stateDir, cliId, name) {
+  return isPathComponent(cliId) ? path.join(stateDir, cliId, name) : null;
+}
 
 export function readWorkspaceYaml(dir) {
   let text;
@@ -111,6 +117,42 @@ export async function readSessionDb(file, source = {}) {
       children,
       ...(notes.length ? { notes } : {}),
     };
+  });
+}
+
+/**
+ * The queries for the latest `wintermute_project` row, which the `wintermute-project` skill writes in a Project's session.db. The
+ * latest row's `enabled` comes back as an integer 0 or 1, or NULL for any other value: SQLite checks its storage class, so a blob
+ * or text never reads as a number, and a value too large for a JavaScript number never reaches either backend.
+ */
+export const OPT_IN_QUERIES = Object.freeze({
+  table: "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'wintermute_project'",
+  columns: "SELECT name FROM pragma_table_info('wintermute_project')",
+  latest: "SELECT CASE WHEN typeof(enabled) = 'integer' AND enabled IN (0, 1) THEN enabled END AS enabled FROM wintermute_project ORDER BY at DESC, rowid DESC LIMIT 1",
+});
+
+/**
+ * Whether the latest `wintermute_project` row of a Project's session.db turns wintermute on: true for the integer 1, false for the
+ * integer 0, and null when the table, one of its columns or a row is missing, or the value is anything else, such as NULL, text,
+ * a blob or another number in a table without the skill's CHECK. `source` is as for readSessionDb, and a query that fails rejects
+ * in the same way.
+ */
+export async function readProjectOptIn(file, source = {}) {
+  const run = typeof source.read === 'function' ? fn => source.read(file, fn) : fn => withReadOnly(file, source, fn);
+  return run(async db => {
+    const query = async name => {
+      try {
+        return (await db.all(OPT_IN_QUERIES[name])) ?? [];
+      } catch (error) {
+        throw new Error(`session.db wintermute_project: ${error?.message ?? error}`, { cause: error });
+      }
+    };
+    if (!(await query('table')).length) return null;
+    const columns = new Set((await query('columns')).map(row => row.name));
+    if (!columns.has('at') || !columns.has('enabled')) return null;
+    const [row] = await query('latest');
+    const value = row?.enabled;
+    return value === 1 ? true : value === 0 ? false : null;
   });
 }
 
