@@ -6,6 +6,15 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.5.8 — 2026-11-21
+
+### Fixed
+
+- A run summary is no longer lost when a Copilot app Project with no child session finishes while a partial read of the app database hides it, and its opt-in can't be read on the next poll. The save waits until the Project shows again, or until a read confirms that it was removed or turned wintermute off. This closes the first known limitation from 1.5.5 (#154).
+- After you open a run's summary, a save that keeps failing is tried less and less often, as for any other run, instead of on every poll. Opening the run again still tries the save at once. This closes the second known limitation from 1.5.5.
+- When the dashboard server replaces a stuck engine, the new engine saves the run summaries that the old one still owed: a save that failed and waits for a retry, a save that was still being written, and a run that finished before the old engine saw it. The replaced engine still stores nothing.
+- A refresh now counts each SQLite statement that finishes as progress. A refresh whose database reads are slow but finish is no longer taken for a stuck one, while a statement that never finishes still makes the server replace its engine.
+
 ## 1.5.7 — 2026-11-21
 
 ### Fixed
@@ -37,7 +46,7 @@ After merging, run `npm run release:publish -- --dry-run`, then `npm run release
 
 ### Known limitations
 
-- A Project with no child session can still lose a summary save that is waiting for a retry, if its opt-in can't be read on the next poll. After you open a run's summary, a save that keeps failing is tried on every poll instead of less and less often (#154).
+- A Project with no child session can still lose a summary save that is waiting for a retry, if its opt-in can't be read on the next poll. After you open a run's summary, a save that keeps failing is tried on every poll instead of less and less often (#154). Both are fixed in 1.5.8.
 
 ## 1.5.4 — 2026-11-20
 

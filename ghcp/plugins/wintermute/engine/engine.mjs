@@ -84,6 +84,24 @@ function digest(snapshot) {
   return createHash('sha1').update(JSON.stringify({ ...snapshot, generatedAt: 0, revision: 0 })).digest('hex');
 }
 
+/**
+ * `reader`, with the end of each SQL statement, whether it returned or failed, reported to `settled`. A refresh whose statements
+ * are slow but return then shows progress, and one stuck in a statement shows none (see the engine's status()).
+ */
+function observeStatements(reader, settled) {
+  const observe = db => ({
+    ...db,
+    all: async (...args) => {
+      try {
+        return await db.all(...args);
+      } finally {
+        settled();
+      }
+    },
+  });
+  return { read: (file, fn) => reader.read(file, db => fn(observe(db))), retain: files => reader.retain(files), close: () => reader.close() };
+}
+
 /** True for a log event that starts a sub-agent: a `task` tool call, or subagent.started. */
 const isTaskStart = event => Boolean(event && typeof event === 'object'
   && (event.type === 'subagent.started' || (event.type === 'tool.execution_start' && event.data?.toolName === 'task')));
@@ -106,7 +124,7 @@ export function createSwarmEngine(options = {}) {
   const now = options.now ?? Date.now;
   const thresholds = resolveThresholds(options.thresholds);
   const sqlite = { backend: options.sqlite ?? 'auto' };
-  const reader = options.sqliteReader ?? createSqliteReader(sqlite);
+  const reader = observeStatements(options.sqliteReader ?? createSqliteReader(sqlite), () => progress());
   const log = item => {
     try {
       if (typeof options.log === 'function') options.log(item);
@@ -148,13 +166,22 @@ export function createSwarmEngine(options = {}) {
   const pendingRoots = new Set();
   // Per root id: { failures, retryAt } for a finished run that owes its stored summary. A tracked run that is built finished owes
   // it until persistFinished stores or confirms it, for example when data.db or a log was not read in full, or the write failed;
-  // so does a live run that a partial read of data.db hides (see doRefresh). A later refresh rebuilds it, whether or not anything
-  // asks for the run, until its summary is stored or confirmed, it is built live, or a full read of data.db no longer lists it.
+  // so does a live run that a partial read of data.db, or a failed read of its Project opt-in, hides (see doRefresh). A later
+  // refresh rebuilds it, whether or not anything asks for the run, until its summary is stored or confirmed, it is built live, or a
+  // full read of data.db no longer lists it and, for a Project, its opt-in was read (see optedInProjects). An engine that
+  // replaces this one takes over what it owes (see owedRuns).
   // The retries are bounded. An owed run is rebuilt only while data.db and every one of its sessions' logs read in full
   // (costsComplete), so a run whose log is gone for good is never rebuilt for it. A try with those inputs that still fails, such
-  // as a write to a read-only history folder, is tried again at the next poll, then 1, 2, 4 ... minutes later, at most hourly.
+  // as a write to a read-only history folder, is tried again at the next poll, then 1, 2, 4 ... minutes later, at most hourly. A
+  // run that is rebuilt for another reason, such as an earlier request, waits for that time too; only a new request (see
+  // track) tries at once.
   const owedSaves = new Map();
   const requested = [];
+  // Runs that a request asked for (see track) since the latest refresh started. The next refresh may store their summaries
+  // before their retry times (see owedSaves); they stay in `requested`, but later refreshes wait for those times.
+  const asked = new Set();
+  // The run whose summary persistFinished is storing, while it runs (see owedRuns).
+  let saving = null;
   const listeners = new Set();
   let app = null;
   // False while `app` comes from a data.db read in which a table failed to read (see readAppDb). A refresh that finds no data.db
@@ -379,9 +406,10 @@ export function createSwarmEngine(options = {}) {
   /**
    * The forest's Project candidates (see buildForest) whose session.db turns wintermute on in its latest wintermute_project row.
    * `files` collects the session.db files read, so that their cache entries and connections are kept. A read that fails uses
-   * the last value read from that file, with a warning. A session id that is not one safe folder name is never read.
+   * the last value read from that file, with a warning; when there is none, `unknown` collects the Project, as whether it is a
+   * swarm is not known. A session id that is not one safe folder name is never read.
    */
-  async function optedInProjects(diag, files) {
+  async function optedInProjects(diag, files, unknown) {
     const on = new Set();
     for (const { id, cliId } of forest.projectCandidates) {
       progress();
@@ -392,7 +420,9 @@ export function createSwarmEngine(options = {}) {
       try {
         value = await readOptIn(file, reader);
       } catch (error) {
-        value = readOptIn.last(file) ?? null;
+        const last = readOptIn.last(file);
+        if (last === undefined) unknown.add(id);
+        value = last ?? null;
         diag.push({ level: 'warn', source: 'session.db', message: `${shortId(cliId)}: ${error.message}` });
       }
       if (value === true) on.add(id);
@@ -661,6 +691,9 @@ export function createSwarmEngine(options = {}) {
     // Taken before the first await, so refreshStartedNow can read it as soon as refresh() returns.
     const sequence = ++refreshes;
     const at = now();
+    // The runs a request asked for since the last refresh started: this refresh may store their summaries before their retry times.
+    const fresh = new Set(asked);
+    asked.clear();
     const diag = [];
     // False once data.db, or one of its tables, fails to read, or this refresh reuses an earlier read that was partial; a
     // database or table that is not found is not a failure.
@@ -692,6 +725,8 @@ export function createSwarmEngine(options = {}) {
     // The CLI sessions of top sessions that may be swarms before their first child (see waitingOrchestrators).
     const candidateCliIds = new Set();
     const optInFiles = new Set();
+    // Projects whose opt-in could not be read, with no value read before (see optedInProjects).
+    const membershipUnknown = new Set();
     // Roots before this refresh: a root that leaves the forest is reported as changed, so a page that shows it learns it has gone.
     const before = forest ? forest.roots.map(root => root.id) : [];
     try {
@@ -702,7 +737,7 @@ export function createSwarmEngine(options = {}) {
       forest = buildForest(app, { hasSubagents });
       const found = await scanTaskStarts(forest.taskCandidates, diag);
       const waiting = await waitingOrchestrators(at, candidateCliIds);
-      const optedIn = await optedInProjects(diag, optInFiles);
+      const optedIn = await optedInProjects(diag, optInFiles, membershipUnknown);
       if (waiting.size || found || optedIn.size) forest = buildForest(app, { waitingRoots: waiting, hasSubagents, optedInProjects: optedIn });
     } catch (error) {
       forest = forest ?? buildForest(emptyApp());
@@ -718,12 +753,14 @@ export function createSwarmEngine(options = {}) {
     swarms = await listRoots(at, diag);
     const rootIds = new Set(forest.roots.map(root => root.id));
     const fullInputs = rootId => globalsRead && costsComplete.get(rootId) === true;
-    // A live run that a partial read of data.db leaves out of the forest may be hidden only for now: it owes its summary, so it is
-    // rebuilt once it is back. Only a full read that no longer lists a run ends what it owes.
-    if (persist && !globalsRead) {
-      for (const rootId of before) if (!rootIds.has(rootId) && snapshots.get(rootId)?.snapshot.run.lifecycle === 'live') owe(rootId, at, false);
+    // A live run that a partial read of data.db, or a failed read of its Project opt-in, leaves out of the forest may be hidden only
+    // for now: it owes its summary, so it is rebuilt once it is back. For the same reason, what a run owes ends only when a full
+    // read no longer lists it and, for a Project, its opt-in was read: removed or turned off.
+    const hidden = rootId => !globalsRead || membershipUnknown.has(rootId);
+    if (persist) {
+      for (const rootId of before) if (!rootIds.has(rootId) && hidden(rootId) && snapshots.get(rootId)?.snapshot.run.lifecycle === 'live') owe(rootId, at, false);
     }
-    if (globalsRead) for (const rootId of [...owedSaves.keys()]) if (!rootIds.has(rootId)) owedSaves.delete(rootId);
+    for (const rootId of [...owedSaves.keys()]) if (!rootIds.has(rootId) && !hidden(rootId)) owedSaves.delete(rootId);
     const tracked = new Set([
       ...swarms.filter(swarm => swarm.lifecycle === 'live').map(swarm => swarm.id),
       ...requested.filter(id => rootIds.has(id)),
@@ -760,9 +797,20 @@ export function createSwarmEngine(options = {}) {
         }
         if (snapshot.run.lifecycle === 'finished') {
           knownFinished.set(rootId, cheapLast.get(rootId));
-          enter('history');
-          if (await persistFinished(snapshot, diag, complete)) owedSaves.delete(rootId);
-          else if (persist) owe(rootId, at, fullInputs(rootId));
+          const owed = owedSaves.get(rootId);
+          // A run rebuilt for any reason but a new request waits for its retry time (see owedSaves).
+          if (!owed || at >= owed.retryAt || fresh.has(rootId)) {
+            enter('history');
+            saving = rootId;
+            let saved;
+            try {
+              saved = await persistFinished(snapshot, diag, complete);
+            } finally {
+              saving = null;
+            }
+            if (saved) owedSaves.delete(rootId);
+            else if (persist) owe(rootId, at, fullInputs(rootId));
+          }
         } else {
           knownFinished.delete(rootId);
           owedSaves.delete(rootId);
@@ -860,6 +908,7 @@ export function createSwarmEngine(options = {}) {
   }
 
   function track(id) {
+    asked.add(id);
     const index = requested.indexOf(id);
     if (index >= 0) requested.splice(index, 1);
     requested.unshift(id);
@@ -976,6 +1025,25 @@ export function createSwarmEngine(options = {}) {
     retire() {
       retired = true;
       stop();
+    },
+    /**
+     * The runs whose summaries this engine still owes, for an engine that replaces it (see adoptOwed): those in owedSaves, one
+     * whose write is still running, and those whose last snapshot was live, which are built once more as they finish.
+     */
+    owedRuns() {
+      const ids = new Set(owedSaves.keys());
+      if (saving) ids.add(saving);
+      for (const [id, entry] of snapshots) if (entry.snapshot.run.lifecycle === 'live') ids.add(id);
+      return [...ids];
+    },
+    /**
+     * Takes over the runs that the engine this one replaces still owes (see owedRuns), before this engine's first refresh. Each
+     * is owed from now, so a refresh rebuilds it once its inputs read in full, and stores its summary or finds it live.
+     */
+    adoptOwed(ids) {
+      if (!persist || retired) return;
+      const at = now();
+      for (const id of ids) if (typeof id === 'string' && !owedSaves.has(id)) owedSaves.set(id, { failures: 0, retryAt: at });
     },
     listSwarms: () => swarms.map(item => ({ ...item })),
     /**

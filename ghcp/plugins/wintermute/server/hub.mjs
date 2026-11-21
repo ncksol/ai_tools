@@ -18,7 +18,8 @@ const NO_REFRESH = { stage: null, refreshStartedAt: null, progressAt: null, last
  * Each page gets a heartbeat with the time of the last finished refresh, so it can tell when its data stops changing.
  * A refresh that makes no progress (see the engine's status()) for refreshLimitMs, while poolPassedSince(its last
  * progress) says file system calls still finish, is stuck on something a new engine does not share: the hub logs where,
- * retires the engine and starts another, at most maxRestarts times in a row. Reads waiting on a replaced engine move to
+ * retires the engine and starts another, which takes over the run summaries the retired one still owes (see the engine's
+ * owedRuns), at most maxRestarts times in a row. Reads waiting on a replaced engine move to
  * its replacement. An engine the hub drops for good, replaced, idle or closed, is retired, so a refresh still in flight
  * in it stores nothing over what a later engine stores. Never writes to stdout.
  */
@@ -51,9 +52,11 @@ export function createHub({
   const reads = new Set();
   const warn = error => log({ level: 'warn', source: 'server', message: error?.message ?? String(error) });
 
-  function createCurrent() {
+  function createCurrent(owed = []) {
     const created = createEngine();
     engine = created;
+    // A replacement takes over the run summaries that the engine it replaces still owes, before its first refresh.
+    if (owed.length) created.adoptOwed?.(owed);
     unsubscribe = created.subscribe(change => { changed(change).catch(warn); });
     const abandoned = new Promise(resolve => { abandon = resolve; });
     ready = Promise.race([Promise.resolve(created.refresh()).catch(warn), abandoned]);
@@ -130,9 +133,11 @@ export function createHub({
   function replaceEngine() {
     const old = engine;
     const wake = abandon;
+    // Read before the old engine is retired; retired, it still stores nothing (see discard).
+    const owed = old.owedRuns?.() ?? [];
     unsubscribe?.();
     discard(old, 'replaced');
-    createCurrent();
+    createCurrent(owed);
     wake?.();
     const current = engine;
     if (polling) current.start({ intervalMs });
