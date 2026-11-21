@@ -476,3 +476,29 @@ test('the engine reads no opt-in for a Project id that would leave its own sessi
   assert.deepEqual([engine.listSwarms(), reads], [[], [home.dataDb]]);
   engine.stop();
 });
+
+test("the opt-in scan reports progress for each Project, so the dashboard doesn't take a slow scan for a stuck refresh", async () => {
+  const home = new CopilotHome();
+  for (const id of ['p-one', 'p-two']) {
+    home.persistentProject({ id, title: id, createdAt: T0 });
+    home.projectOptIn(id, [[T0 + 1000, 1]]);
+  }
+  const seen = [];
+  const reader = createSqliteReader();
+  let engine = null;
+  const sqliteReader = {
+    read: async (file, fn) => {
+      if (file !== home.dataDb) {
+        seen.push(engine.status().progressAt);
+        await new Promise(resolve => setTimeout(resolve, 30));
+      }
+      return reader.read(file, fn);
+    },
+    retain: files => reader.retain(files), close: () => reader.close(),
+  };
+  engine = createSwarmEngine({ copilotHome: home.root, persistHistory: false, now: () => T0 + 10_000, processProbe: alwaysAlive, prLookup: 'off', sqliteReader });
+  await engine.refresh();
+  assert.equal(seen.length >= 2, true);
+  assert.ok(seen[1] - seen[0] >= 25, `progress ${seen[0]} then ${seen[1]}`);
+  engine.stop();
+});

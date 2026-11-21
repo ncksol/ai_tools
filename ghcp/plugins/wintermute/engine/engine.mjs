@@ -384,6 +384,7 @@ export function createSwarmEngine(options = {}) {
   async function optedInProjects(diag, files) {
     const on = new Set();
     for (const { id, cliId } of forest.projectCandidates) {
+      progress();
       const file = sessionFile(paths.stateDir, cliId, 'session.db');
       if (!file) continue;
       files.add(file);
