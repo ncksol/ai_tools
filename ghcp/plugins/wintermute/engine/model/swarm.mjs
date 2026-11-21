@@ -797,7 +797,7 @@ function buildNeeds(contexts, rootId, labels, flags) {
       const kind = wait.kind === 'plan' ? 'plan' : tag?.need ?? 'question';
       needs.push({
         id: `${id}:${kind}:${c.current.id}/${wait.id}`, kind, unitIds, labels: unitIds.map(unitId => labels.get(unitId)),
-        fromId: id, text: oneLine(ownTag?.text ?? (wait.text || (wait.relay ? 'Relayed question' : '')), 300), since: wait.startedAt, tagged: Boolean(tag),
+        fromId: id, text: oneLine((ownTag?.text ?? wait.text) || (wait.relay ? 'Relayed question' : ''), 300), since: wait.startedAt, tagged: Boolean(tag),
       });
     }
   }
@@ -819,7 +819,7 @@ function buildFeed(forest, contexts, labels, extraFeed, flags) {
       if (item.kind === 'question' && text.startsWith('asked: ')) {
         const tag = parseQuestionTag(text.slice(7));
         if (tag) flags.questionTags = true;
-        text = `asked: ${tag?.text ?? text.slice(7)}`;
+        text = `asked: ${(tag?.text ?? text.slice(7)) || (item.relay ? 'Relayed question' : '')}`;
       }
       items.push({ id: `${id}:${item.kind}:${item.source}`, at: item.at, unitId: id, label: labels.get(id), kind: item.kind, text });
     }

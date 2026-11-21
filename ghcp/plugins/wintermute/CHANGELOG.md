@@ -6,6 +6,15 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.5.7 — 2026-11-21
+
+### Fixed
+
+- A relayed question whose context is only a need tag shows "Relayed question" instead of blank text or a raw tag. A matched child question keeps its own text and time.
+- Received cross-session reports keep their `purpose`, so a child's request for input or error still shows as `needs_input` or `blocked` when its own log is unavailable.
+- The activity feed names the child when a Project updates or clears its schedule using `automation_session_id`.
+- Dispatch records keep the exact child ID from both repository-child `(id: ...)` and chat-child `(session_id: ...)` creation results.
+
 ## 1.5.6 — 2026-11-21
 
 ### Changed

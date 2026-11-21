@@ -36,7 +36,7 @@ test('cross-session messages, automation wakes and human messages are told apart
   log.wait(1000); log.automationWake();
   log.wait(1000); log.user('Status?');
   const state = fold(log);
-  assert.deepEqual(state.inbound, [{ at: T0, fromSessionId: 'cli-orch', fromProjectSessionId: 'ws-orch', fromName: 'Sample story', sourceToolCallId: 'call-77', content: 'Go ahead with option A.' }]);
+  assert.deepEqual(state.inbound, [{ at: T0, fromSessionId: 'cli-orch', fromProjectSessionId: 'ws-orch', fromName: 'Sample story', sourceToolCallId: 'call-77', purpose: null, content: 'Go ahead with option A.' }]);
   assert.deepEqual(state.automation.wakes, [T0 + 1000]);
   assert.deepEqual(state.marks.map(mark => mark.kind), ['monitor']);
   assert.equal(state.lastHumanAt, T0 + 2000);
@@ -45,6 +45,18 @@ test('cross-session messages, automation wakes and human messages are told apart
 
 test('parseEnvelope returns null without an envelope', () => {
   assert.equal(parseEnvelope('plain text'), null);
+});
+
+test('both create_session result shapes retain the exact returned child ID', () => {
+  const log = new EventLog(T0);
+  log.start();
+  log.done(log.tool('create_session', { name: 'Repository work' }), {
+    result: "Created session 'Repository work' (id: ws-sample).",
+  });
+  log.done(log.tool('create_session', { name: 'Chat work' }), {
+    result: "Created session 'Chat work' (session_id: chat-sample).",
+  });
+  assert.deepEqual(fold(log).created.map(item => item.sessionId), ['ws-sample', 'chat-sample']);
 });
 
 test('monitor schedules and completed tasks are recorded', () => {
