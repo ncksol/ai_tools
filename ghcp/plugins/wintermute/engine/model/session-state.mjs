@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { MAX_FINISHED_SUBAGENT_UNITS } from '../schema.mjs';
 import { clip, oneLine, ownString } from '../text.mjs';
 import { maxTime, minTime, parseTime } from '../time.mjs';
+import { parseQuestionTag } from './contract.mjs';
 import { recordTaskComplete, recordToolComplete, recordToolStart, recordUserMessage } from './messages.mjs';
 import { LIMITS, POLLING_TOOLS, addFeed, addMark, pushBounded } from './state-utils.mjs';
 
@@ -784,9 +785,9 @@ function onToolStart(state, data, at) {
     }
     state.waits.set(id, wait);
     if (kind === 'question') {
-      const display = text || (relay ? 'Relayed question' : '');
+      const display = (relay && parseQuestionTag(text)?.text === '' ? '' : text) || (relay ? 'Relayed question' : '');
       addMark(state, at, 'question', display || 'Question');
-      addFeed(state, at, 'question', `asked: ${display}`);
+      addFeed(state, at, 'question', `asked: ${text || display}`, relay ? { relay: true } : null);
     } else {
       addMark(state, at, 'plan-req', 'Plan sent for approval');
       addFeed(state, at, 'plan-req', 'sent a plan for approval');

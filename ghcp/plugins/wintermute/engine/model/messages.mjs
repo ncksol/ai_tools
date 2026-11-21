@@ -83,6 +83,7 @@ export function parseEnvelope(transformed) {
     fromProjectSessionId,
     fromName: field('from_project_session_name') ?? field('from_display_name'),
     sourceToolCallId: field('source_tool_call_id'),
+    purpose: field('purpose'),
   };
 }
 
@@ -154,14 +155,14 @@ export function recordToolStart(state, tool, args) {
     const raw = args.every_minutes;
     const minutes = typeof raw === 'string' || typeof raw === 'number' ? Math.round(Number(raw)) : NaN;
     const everyMinutes = Number.isSafeInteger(minutes) && minutes > 0 ? minutes : null;
-    const target = typeof args.session_id === 'string' && args.session_id ? ownString(args.session_id) : null;
+    const target = [args.session_id, args.automation_session_id].find(value => typeof value === 'string' && value.trim());
     // Keep pending metadata with the open tool so an abort or shutdown drops it.
-    tool.automationSave = { clear, everyMinutes, target };
+    tool.automationSave = { clear, everyMinutes, target: target ? ownString(target) : null };
   }
 }
 
-// The app's create_session result: "Created session '<name>' (id: <id>) ...".
-const CREATED_ID_RE = /\(id:\s*([^\s)]+)\)/;
+// The app returns "(id: ...)" for a repository child and "(session_id: ...)" for a chat child.
+const CREATED_ID_RE = /\((?:session_)?id:\s*([^\s)]+)\)/;
 
 export function recordToolComplete(state, callId, data, at, tool) {
   const created = state.created.find(item => item.toolCallId === callId);

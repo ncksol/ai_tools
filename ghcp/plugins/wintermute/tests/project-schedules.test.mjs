@@ -124,3 +124,18 @@ test('a Project names the child it schedules or clears without changing feed aut
   assert.deepEqual([cleared.feed[0].unitId, cleared.feed[0].text], ['project', `cleared the schedule of ${unit.label}`]);
   assert.equal(cleared.units[0].monitor.state, 'none');
 });
+
+test('a Project names the child when updating or clearing its schedule by automation_session_id', () => {
+  const project = new EventLog(T0);
+  project.start();
+  project.done(project.tool('save_session_automation', {
+    automation_session_id: 'cli-api', interval: 'minutes', every_minutes: 10, prompt: 'Check progress',
+  }));
+  project.at(at(40));
+  project.done(project.tool('save_session_automation', { automation_session_id: 'ws-api', clear: true }));
+  const snapshot = snapshotOf({ project });
+  assert.deepEqual(snapshot.feed.map(item => [item.unitId, item.text]), [
+    ['project', 'cleared the schedule of A1'],
+    ['project', 'set a schedule for A1 (every 10 min)'],
+  ]);
+});

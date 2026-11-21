@@ -9,6 +9,7 @@ import { buildSnapshot } from '../engine/model/swarm.mjs';
 import { createLedger } from '../engine/readers/ledger.mjs';
 import { SUMMARY_RULES, validateSnapshot } from '../engine/schema.mjs';
 import { MINUTE } from '../engine/time.mjs';
+import { needItems, orchestratorView } from '../ui/model.mjs';
 import { CopilotHome } from './helpers/copilot-home.mjs';
 import { EventLog } from './helpers/event-log.mjs';
 import { fold } from './helpers/fold.mjs';
@@ -135,6 +136,29 @@ test('a received Project handoff is a fallback for a sent report and can still b
   assert.equal(snapshot.run.contract.statusLines, true);
 });
 
+for (const [purpose, status] of [['needs_input', 'needs_input'], ['error', 'blocked']]) {
+  test(`a received ${purpose} envelope supplies the report status without a child log`, () => {
+    const root = startedLog(0);
+    const content = 'The sample job needs a configuration choice.';
+    root.push('user.message', {
+      source: 'agent-cli-api', delivery: 'idle', content,
+      transformedContent: [
+        '<cross_session_message>',
+        'from_session_id: cli-api',
+        `purpose: ${purpose}`,
+        'source_tool_call_id: call-sample',
+        'assignment_id: assignment:project:call-sample',
+        '</cross_session_message>',
+        content,
+      ].join('\n'),
+    });
+    const snapshot = snapshotOf(root, {});
+    assert.deepEqual(validateSnapshot(snapshot), []);
+    const report = snapshot.units.find(unit => unit.id === 'ws-api').report;
+    assert.deepEqual([report.status, report.source, report.title], [status, 'purpose', content]);
+  });
+}
+
 test('no-handoff notices are not reports and are shown once per assignment or unkeyed delivery time', () => {
   const root = startedLog(0);
   const ui = startedLog(2);
@@ -184,6 +208,52 @@ test('a relay for the same request supplies its tag without replacing the child 
     ['question', ['ws-api'], 'ws-api', 'Which port should the server use?', false, at(35)],
     ['question', ['ws-docs'], 'ws-docs', 'Which example belongs in the guide?', false, at(36)],
   ]);
+  assert.equal(snapshot.feed.find(item => item.unitId === 'project' && item.kind === 'question').text, 'asked: The API change is ready.');
+});
+
+test('a tag-only relay without a child log supplies display text throughout the dashboard', () => {
+  const root = startedLog(0);
+  root.at(at(40));
+  root.tool('relay_session_input', {
+    project_session_id: 'ws-api', request_id: 'request-pr', context: '[unit=api need=pr]',
+  });
+  const snapshot = snapshotOf(root, {});
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  assert.deepEqual({
+    needs: needsOf(snapshot),
+    needsYou: needItems(snapshot).map(item => item.text),
+    header: orchestratorView(snapshot).text,
+    feed: snapshot.feed.find(item => item.kind === 'question').text,
+    mark: snapshot.orchestrator.timeline.marks.find(mark => mark.kind === 'question').text,
+  }, {
+    needs: [['pr', ['ws-api'], 'project', 'Relayed question', true, at(40)]],
+    needsYou: ['Relayed question'],
+    header: 'Relayed question',
+    feed: 'asked: Relayed question',
+    mark: 'Relayed question',
+  });
+});
+
+test('a tag-only matched relay preserves the child question and labels the relay activity', () => {
+  const root = startedLog(0);
+  const api = startedLog(1);
+  api.at(at(35));
+  api.ask('Open the sample pull request?');
+  root.at(at(40));
+  root.tool('relay_session_input', {
+    project_session_id: 'ws-api', request_id: 'request-pr', context: '[unit=api need=pr]',
+  });
+  const snapshot = snapshotOf(root, { 'cli-api': api });
+  assert.deepEqual(validateSnapshot(snapshot), []);
+  assert.deepEqual({
+    needs: needsOf(snapshot),
+    feed: snapshot.feed.find(item => item.unitId === 'project' && item.kind === 'question').text,
+    mark: snapshot.orchestrator.timeline.marks.find(mark => mark.kind === 'question').text,
+  }, {
+    needs: [['pr', ['ws-api'], 'ws-api', 'Open the sample pull request?', true, at(35)]],
+    feed: 'asked: Relayed question',
+    mark: 'Relayed question',
+  });
 });
 
 test('a distinct request is not hidden by another question belonging to the same child', () => {
