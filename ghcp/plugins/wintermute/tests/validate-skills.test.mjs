@@ -107,7 +107,7 @@ test('skills with an exact copy of the model policy pass', async () => {
 test('a change to the pinned models, the tier table or the list in wintermute-core is reported as drift, at the first line that differs', async () => {
   const differs = (label, line) => `the ${label} differs from ${POLICY_AGENT} at its line ${line}`;
   const edits = [
-    [editCore(policy.pins, policy.pins.replace('`gpt-6.1-sol`', '`gpt-6.2-sol`')), differs('"Pinned models:" list', policy.pins.split('\n').findIndex(line => line.includes('gpt-6.1-sol')) + 1)],
+    [editCore(policy.pins, policy.pins.replace('`gpt-6.2-sol`', '`gpt-6.1-sol`')), differs('"Pinned models:" list', policy.pins.split('\n').findIndex(line => line.includes('gpt-6.2-sol')) + 1)],
     [editCore(policy.pins, `${policy.pins}\n\n- Haiku: \`claude-haiku-5\` (Anthropic), added only in wintermute-core, after a blank line.`), differs('"Pinned models:" list', policy.pins.split('\n').length + 1)],
     [editCore(policy.pins, `${policy.pins}\n  wrapped onto a second line only in wintermute-core.`), differs('"Pinned models:" list', policy.pins.split('\n').length + 1)],
     [editCore(policy.table, changedTable()), differs('tier table', tableRows.length)],

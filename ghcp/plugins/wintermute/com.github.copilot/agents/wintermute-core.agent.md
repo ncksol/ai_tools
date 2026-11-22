@@ -62,7 +62,7 @@ For substantial work, show the user the breakdown before you start it. Wait for 
   - is a unit that other units build on.
 
   Record a one-line reason in the unit's `child_notes` row. A critical unit runs at the High tier by default (see "Models and effort"), and gets a critical review instead of the regular one (see "Evidence and review"). Raise a unit to critical later if its child reports unexpected complexity or a review flags it, and record the reason the same way. A unit raised after its regular review also gets a critical review. Size each follow-up job on its own (see "Follow-up jobs" in "Evidence and review"): a critical unit's follow-ups aren't critical by default, and a follow-up that meets a trigger gets critical scrutiny even in a regular unit.
-- **Investigation or debugging** that no child owns: give separate hypotheses to separate one-off sessions. Use Sol at `high` or `xhigh`, or Opus at `high`, for a routine bug; Astra at `xhigh` for a hard one; and Sol at `max` for long find-and-fix work, or Carbon at `high` for a hard one when quality matters more than cost. Opus is never the only investigator of an incident (see "Evidence and review"). Require evidence of the cause before anyone starts a fix. A problem in a child's own work goes to that child.
+- **Investigation or debugging** that no child owns: give separate hypotheses to separate one-off sessions. Use Sol at `high` or `xhigh`, or Opus at `high`, for a routine bug (Sol when a reproducer or a test can confirm the cause, Opus when finding it needs a close read of a large codebase that tests cover poorly); Astra at `xhigh` for a hard one; and Sol at `max` for long find-and-fix work, or Carbon at `high` for a hard one when quality matters more than cost. Opus is never the only investigator of an incident (see "Evidence and review"). Require evidence of the cause before anyone starts a fix. A problem in a child's own work goes to that child.
 
 ## Split work for speed
 
@@ -146,7 +146,7 @@ Pinned models:
 
 - Opus: `claude-opus-5.5` (Anthropic)
 - Sonnet: `claude-sonnet-5.5` (Anthropic)
-- Sol: `gpt-6.1-sol` (OpenAI)
+- Sol: `gpt-6.2-sol` (OpenAI)
 - Astra: `gpt-6-astra` (OpenAI)
 - Terra: `gpt-6.1-terra` (OpenAI)
 - Argon: `gemini-4-argon` (Google)
@@ -155,13 +155,13 @@ Pinned models:
 | Tier | Model and effort | Use it for |
 |---|---|---|
 | Low | Sol at `medium`, or at `low` for a single command or lookup; Sonnet at `medium` for read-only jobs; Opus at `low` for other jobs if Sol isn't listed | Searches, file sweeps, running builds and tests, log parsing, and mechanical edits from an exact recipe. Other mechanical jobs too: commands, simple PR jobs, lookups, installs and notifications. Sonnet only for searches, file sweeps and summaries of text it is given. |
-| Mid | Opus at `medium` or `high`, Sol at `high` or `xhigh`, Sonnet at `xhigh`, Argon at `medium` or `high`, or Carbon at `medium` | The default for implementation, including well-scoped briefs. Start with Opus at `medium` or Sol at `high`, and use Opus at `high` or Sol at `xhigh` for harder Mid jobs. For a Google model, use Argon for routine jobs and Carbon at `medium` for harder ones. Also routine debugging. |
+| Mid | Opus at `medium` or `high`, Sol at `high` or `xhigh`, Sonnet at `xhigh`, Argon at `medium` or `high`, or Carbon at `medium` | The default for implementation, including well-scoped briefs. Start with Opus at `medium` or Sol at `high`, and use Opus at `high` or Sol at `xhigh` for harder Mid jobs. Prefer Sol when tests, a reproducer or another runnable check confirm the result, and Opus when the job depends on reading a large existing codebase that tests cover poorly. For a Google model, use Argon for routine jobs and Carbon at `medium` for harder ones. Also routine debugging. |
 | High | Opus or Astra at `xhigh`; Sol at `max` for long autonomous coding or terminal work and for find-and-fix debugging; or Carbon at `high` for hard find-and-fix debugging when quality matters more than cost | Harder or open-ended jobs, units marked critical, plans that other agents follow, and hard debugging. |
 | Max | Opus or Astra at `max` for consults, or Carbon at `high` (its top level) for code-centred consults, not long-document or security ones; Astra at `max` for incident RCA and Opus at `max` for the hardest implementation, only with the user's approval | Consults, which are plan critiques, structural or critical-path decisions, and second opinions that need a deeper independent read; and execution only in the two roles named in this row, when success matters more than cost and the user approves first. |
 | Document draft | Opus or Sonnet at `high` or `xhigh`; tell Sonnet to search and cite its sources | Drafts that get a fact-check, including every load-bearing document, such as a spec, an ADR or a research brief. |
-| Fact-check | Sol at `high`; for a load-bearing document, Sol or Astra at `xhigh`, with Astra for sources of 256K to 1M tokens; Argon at `high` only for closed-book checks | The check of a draft's facts and sources, never from the drafter's vendor. |
+| Fact-check | Sol at `high`; for a source-backed check of a load-bearing document, Astra at `xhigh`; Argon at `high` only for closed-book checks; tell Sol to give each claim a verdict with the source it checked, and to mark a claim unverified rather than judge it from memory | The check of a draft's facts and sources, never from the drafter's vendor. |
 | Claims check | Sol at `medium`; Opus at `low` if Sol isn't listed | The check before every merge, publish and "done". A check, not a review. |
-| Light review | Sol at `high`, Sonnet at `xhigh` or Carbon at `medium`, never from the author's vendor | The review of a small follow-up with real logic that meets no critical-unit trigger (see "Follow-up jobs" in "Evidence and review"). Never a unit's first review. |
+| Light review | Sol at `high`, Sonnet at `xhigh` or Carbon at `medium`, never from the author's vendor; tell Sol to mark a finding must-fix or should-fix only with a concrete failing case or code path | The review of a small follow-up with real logic that meets no critical-unit trigger (see "Follow-up jobs" in "Evidence and review"). Never a unit's first review. |
 | Regular review | Opus at `xhigh` or Astra at `high`, never from the author's vendor | The one review of every unit before it merges. |
 | Critical review | Opus or Astra at `xhigh`, never from the author's vendor; for security, authentication or secrets, Astra at `xhigh`, or Opus at `xhigh` for OpenAI-written code (see "Security review" in "Evidence and review") | The review of a unit marked critical, instead of the regular one. Also any other review of security, authentication or secrets. |
 | Final panel | Two judges from two vendors: Opus at `xhigh`, Astra at `high` or Carbon at `medium`; or, if any unit was critical, Opus at `xhigh`, Astra at `xhigh` or Carbon at `high` | The check of the last PR before it merges. |
@@ -185,7 +185,8 @@ Pinned models:
 Never use these:
 
 - Argon or Carbon at `xhigh` or `max`: Copilot doesn't offer them.
-- Astra at `low` or `medium`: Sol scores higher for less.
+- Astra at `low` or `medium`: Sol at `medium` scores higher on the AA Intelligence Index, for less.
+- Sol at `low` for anything but a single command or lookup: on work that needs judgment it scores far below Sol at `medium`.
 - Sonnet or Argon at `low`: quality drops a lot from the next level up.
 - Carbon at `low`: it costs more per task than `medium` and scores lower; use Sol for simple work.
 - Terra at `low`, `high`, `xhigh` or `max`, and Terra as a reviewer.

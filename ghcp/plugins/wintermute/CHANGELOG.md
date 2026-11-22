@@ -6,6 +6,16 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.6.0 — 2026-11-22
+
+### Changed
+
+- `wintermute-core` and the `wintermute-project` skill pin Sol to `gpt-6.2-sol` instead of `gpt-6.1-sol`. Every Sol slot keeps its level.
+- Fact-check: a source-backed check of a load-bearing document gets Astra at `xhigh`; Sol is no longer an option there, and Argon at `high` stays for closed-book checks. Sol at `high` keeps routine checks and gives each claim a verdict with the source it checked, marking a claim unverified rather than judging it from memory.
+- Light review: a Sol reviewer marks a finding must-fix or should-fix only with a concrete failing case or code path.
+- The Mid row and the investigation bullet prefer Sol when tests, a reproducer or a runnable check confirm the result, and Opus when the job depends on reading a large existing codebase that tests cover poorly.
+- "Never use these:" adds Sol at `low` for anything but a single command or lookup, and the Astra `low`/`medium` line now compares with Sol at `medium` on the AA Intelligence Index.
+
 ## 1.5.8 — 2026-11-21
 
 ### Fixed
