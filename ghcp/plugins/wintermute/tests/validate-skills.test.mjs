@@ -23,7 +23,7 @@ function skillText(name, { front = {}, body } = {}) {
 }
 
 /** A coordinator body with the real policy copy and the sections and labels it refers to. */
-function coordinatorBody({ pins, table, neverUse, labels = ['Follow-up jobs', 'Security review'] } = {}) {
+function coordinatorBody({ pins, table, neverUse, labels = ['Follow-up jobs', 'Security review', 'Second security review', 'Same-work judge'] } = {}) {
   const blocks = policyBlocks(coreText);
   const labelLines = labels.map(label => `- **${label}**: fixture.`).join('\n');
   return `## Models and effort\n\n${pins ?? blocks.pins}\n\n${table ?? blocks.table}\n\n- Fixture rule.\n\n${neverUse ?? blocks.neverUse}\n\n## Evidence and review\n\n${labelLines}\n`;

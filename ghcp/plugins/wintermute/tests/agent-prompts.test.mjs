@@ -87,7 +87,7 @@ test('reuse of idle agents and re-checks exclude claims checks', () => {
 test('the claims check row keeps its models and is no longer called a review row', () => {
   const text = agent(ORCHESTRATOR);
   assert.ok(text.includes(CLAIMS_ROW), 'row unchanged');
-  assert.ok(text.includes('- The last five rows are review rows. The claims check row above them is a check, not a review row.'), 'review rows counted without the claims check row');
+  assert.ok(text.includes('- The last seven rows are review rows. The claims check row above them is a check, not a review row.'), 'review rows counted without the claims check row');
   assert.doesNotMatch(text, /a claims check, a review or a judge gets its review row/);
   assert.match(text, /a claims check gets the claims check row, a review or a judge gets its review row/);
 });

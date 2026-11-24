@@ -6,6 +6,15 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.8.0 — 2026-11-24
+
+### Added
+
+- `wintermute-core` and the `wintermute-project` skill add Claude Fable 5.2 (`claude-fable-5.2`) at `high` in two roles: a second security reviewer, used when a mistake in the code would be very costly or the first security review is inconsistent, and the same-work judge, which settles a disagreement between two models given the same work. The first security review, the final panel and the disagreement panel's models don't change, and a disputed review finding still goes to the disagreement panel.
+- Fable counts as its own vendor for the vendor rules, not as Anthropic, and is never one of the two vendors of the final panel or the disagreement panel.
+- Both Fable roles are skipped when Fable isn't in the model list or the user has limited the work to one vendor. Wintermute then works as before: no second security review, and a same-work disagreement goes to the disagreement panel.
+- A new "Never use these" line rules out Fable at `low`, `medium`, `xhigh` or `max`, and Fable in any other job.
+
 ## 1.7.0 — 2026-11-24
 
 ### Changed
