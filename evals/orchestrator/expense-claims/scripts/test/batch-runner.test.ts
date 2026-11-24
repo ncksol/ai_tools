@@ -28,7 +28,7 @@ const flag = (args: string[], name: string) => (args.includes(name) ? args[args.
 const policyLabels = ["orchestrator-review-a", "orchestrator-review-b", "orchestrator-review-c"];
 
 const OLD_CARD = "pricing/2026-11-10.json";
-const NEW_CARD = "pricing/2026-11-24-v2.json";
+const NEW_CARD = "pricing/2026-11-24-v3.json";
 const digest = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
 
 function installLegacyState(h: Harness, state: BatchState): void {
@@ -105,7 +105,7 @@ test("pricing changed after admission and just before the scorer starts leaves n
   assert.deepEqual(readResults(h.config.resultsPath), []);
   assert.match(state.runs[0].flags.find((f) => f.code === "score-failed")?.detail ?? "", /pricing.*digest mismatch/i);
   assert.equal(state.runs.length, 1);
-  assert.match(String(done.details?.reason), /pinned inputs changed:.*pricing\/2026-11-24-v2\.json changed/);
+  assert.match(String(done.details?.reason), /pinned inputs changed:.*pricing\/2026-11-24-v3\.json changed/);
 });
 
 test("main's unpinned scorer invocation stops instead of using the new card", async () => {

@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readEventLog, type LogEvent } from "./events.ts";
 
-export const DEFAULT_PRICING_FILE = "pricing/2026-11-24-v2.json";
+export const DEFAULT_PRICING_FILE = "pricing/2026-11-24-v3.json";
 
 interface Rate {
   aboveInputTokens: number;

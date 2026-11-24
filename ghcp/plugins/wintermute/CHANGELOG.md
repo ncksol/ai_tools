@@ -6,6 +6,17 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.9.0 — 2026-11-24
+
+### Added
+
+- `wintermute-core` and the `wintermute-project` skill add Gemini 4 Hydrogen (`gemini-4-hydrogen`) at `medium` in the Low row, beside Sonnet at `medium`, for read-only jobs only: searches, file sweeps and summaries of text it is given. Sol at `medium` stays the default for Low work.
+- New "Never use these" entries rule out Hydrogen at `low`, `xhigh` or `max`, Hydrogen in any job other than a read-only Low job, and Hydrogen for web research that nobody checks.
+
+### Changed
+
+- The "Never use these" entry for `xhigh` now covers Neon and Hydrogen, and says that some Copilot runtimes don't handle `xhigh` reliably, instead of saying they run it as `medium`.
+
 ## 1.8.0 — 2026-11-24
 
 ### Added
