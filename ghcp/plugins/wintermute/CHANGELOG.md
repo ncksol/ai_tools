@@ -6,6 +6,20 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.10.0 — 2026-11-24
+
+### Changed
+
+- `wintermute-core` and the `wintermute-project` skill pin Astra to `gpt-6.2-astra` instead of `gpt-6-astra`. Every Astra slot keeps its level.
+- Regular and critical review: an Astra reviewer marks a finding must-fix or should-fix only with a concrete failing case or code path.
+- Fact-check: an Astra fact-checker, like Sol, gives each claim a verdict with the source it checked and marks a claim unverified rather than judge it from memory.
+- Critical review: security, authentication and secrets reviews follow one order, Astra at `xhigh`, Opus at `xhigh`, Carbon at `high`, skipping the author's vendor.
+- Security review: on a permitted defensive review, when a reviewer isn't in the model list, or refuses, fails, times out or can't finish, the next eligible reviewer in that order starts the whole review at the same commit. A fallback never retries a request that isn't allowed. A refused or partial review never clears the gate; with no eligible reviewer left, the gate stays unverified and the user decides. A required second security review still runs.
+- The High row and the investigation bullet prefer Opus at `xhigh` when the job, or finding the cause of a hard bug, needs a close read of a large existing codebase.
+- The re-check note no longer says that Astra's re-reads cost the most.
+- `wintermute-peon`, the `wintermute-project-worker` skill and Project `task` sub-agent briefs report a failed tool, command, fetch or source, and any part of the job declined or not done, even when worked around.
+- "Never use these:" gives a corrected reason for Astra at `low` or `medium`.
+
 ## 1.9.0 — 2026-11-24
 
 ### Added

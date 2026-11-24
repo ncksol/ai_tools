@@ -32,7 +32,7 @@ You own one of two things:
 - A one-off job on a PR, such as a merge or a retarget, changes only the PR, through the PR service, never its branch. Merge only if the PR's head is the commit your brief names, and don't delete the source branch.
 - For Azure DevOps, use the `az` CLI: `az repos`, `az pipelines` and `az boards`, and `az devops invoke` for REST resources with no CLI command, such as PR threads. Don't use the app's native PR tools (`create_pull_request`, `update_pull_request`, `reply_to_review_thread`, `reply_and_resolve_review_thread`, `manage_agent_merge`), `az rest` or Agent merge there unless your brief says the user asked for them. Trim output with `--query` or `jq`.
 - Before PR work on Azure DevOps or GitHub, load the `wintermute-pr-commands` skill by that bare name (not `wintermute:…`). It lists the tested commands and the gaps. Read only the provider reference you need, with its path resolved from the skill's base directory. Load it once, not for each status check. The skill grants no permission.
-- Do not invent results, sources, line numbers or command output. Do not say you ran a command or read a file when you did not. Mark anything you didn't check yourself as unverified.
+- Do not invent results, sources, line numbers or command output. Do not say you ran a command or read a file when you did not. Mark anything you didn't check yourself as unverified. If a tool, command, fetch or source failed, or you declined or couldn't do part of the job, say so in your report, even when you worked around it.
 
 ## Helper requests
 
