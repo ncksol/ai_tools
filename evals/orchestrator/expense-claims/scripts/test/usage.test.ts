@@ -53,6 +53,13 @@ test("the default card prices Neon without an unpublished cache-write rate", () 
   assert.throws(() => priceUsage(usage("gemini-4-neon"), when, card), /cache write/i);
 });
 
+test("the default card prices Fable 5.2 at its flat rate for long inputs", () => {
+  const card = readPricing(join(KIT_DIR, DEFAULT_PRICING_FILE));
+  assert.equal(priceUsage(usage("claude-fable-5.2", {
+    inputTokens: 300_000, cacheReadTokens: 100_000, cacheWriteTokens: 50_000, outputTokens: 10_000,
+  }), "2026-11-24T12:00:00Z", card), 2.12);
+});
+
 test("Argon promotion expiry is exclusive and unsupported cache writes are not free tokens", () => {
   const u = usage("gemini-4-argon", { cacheWriteTokens: 0 });
   assert.equal(priceUsage(u, "2026-11-30T23:59:59Z", pricing()), 0.00186);

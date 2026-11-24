@@ -24,7 +24,7 @@ The design, with the reasons behind each rule, is in [the design doc](../../../d
 | `reference/` | A full v2 implementation. It only proves that the suite is correct and can pass. |
 | `acceptance/` | The hidden black-box acceptance suite, one file for v1 and one per feature. |
 | `robustness/` | Hidden edge-case tests, run after scoring, never as the gate. |
-| `pricing/` | Dated USD-per-million token rates, with model tiers and promotion expiry. The default card is `2026-11-24.json`. |
+| `pricing/` | Dated USD-per-million token rates, with model tiers and promotion expiry. The default card is `2026-11-24-v2.json`. |
 | `variants/` | Eval-only A/B/C agent snapshots, their shared worker, the hashed `review-policy.json` manifest and the `single-session` baseline agent. Not ordinary agent installation files. |
 | `scripts/` | `new-run`, `score`, the acceptance and robustness runners, the kit check, the overnight batch runner (`batch.ts` and `lib/batch/`) and their tests. |
 | `package.json` | The npm scripts: `test`, `check`, `new-run`, `score`, `acceptance`, `robustness` and `batch`. |
@@ -217,7 +217,7 @@ USD = (uncached_input * input_rate
 
 Never use the session log or session store `cost` field: it is a legacy premium-request multiplier, not dollars. Token counters must be present, nonnegative integers, with cache tokens no greater than inclusive input. Missing prices, expired promotions, malformed records and missing logs produce warnings and a blank dollar total. Records with `isAuto: true` are also unpriced: Auto usage had a 10% discount, so this list-price card cannot establish their charge.
 
-Standalone scoring (`npm run score`) and new batches default to `pricing/2026-11-24.json`, which adds Gemini 4 Neon. To use another verified card for standalone scoring, pass `--pricing <file>`. A direct call to `score.ts` with no pricing arguments stops unless it passes `--standalone`, as the npm command does.
+Standalone scoring (`npm run score`) and new batches default to `pricing/2026-11-24-v2.json`, which adds Claude Fable 5.2 and retains the Gemini 4 Neon rate from the original November 24 card. To use another verified card for standalone scoring, pass `--pricing <file>`. A direct call to `score.ts` with no pricing arguments stops unless it passes `--standalone`, as the npm command does.
 
 `batch init` saves the card's filename and SHA-256. The scorer uses only those exact bytes. If it reads different bytes or cannot read the card, scoring fails and writes no row. After a checkout upgrade, the updated driver uses the pinned `pricing/2026-11-10.json` for runs already admitted by the old batch. A driver process still running the old code calls the scorer without a pin and gets no row. The upgraded checkout changes pinned inputs, so the old batch admits no more runs. Editing any pinned pricing file also stops new admissions.
 
