@@ -3,7 +3,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFile
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { readPricing, priceUsage, collectUsage } from "../lib/usage.ts";
+import { DEFAULT_PRICING_FILE, readPricing, priceUsage, collectUsage } from "../lib/usage.ts";
 import { KIT_DIR } from "../lib/suite.ts";
 import { ev, writeSession } from "./fixtures/events.ts";
 
@@ -44,6 +44,13 @@ test("GPT-6.2 Astra and Sol apply the upper tier only above 272,000 input tokens
       inputTokens, cacheReadTokens: 100_000, cacheWriteTokens: 50_000, outputTokens: 10_000,
     }), "2026-11-20T12:00:00Z", card), expected, `${model}: ${inputTokens}`);
   }
+});
+
+test("the default card prices Neon without an unpublished cache-write rate", () => {
+  const card = readPricing(join(KIT_DIR, DEFAULT_PRICING_FILE));
+  const when = "2026-11-24T12:00:00Z";
+  assert.equal(priceUsage(usage("gemini-4-neon", { cacheWriteTokens: 0 }), when, card), 0.00279);
+  assert.throws(() => priceUsage(usage("gemini-4-neon"), when, card), /cache write/i);
 });
 
 test("Argon promotion expiry is exclusive and unsupported cache writes are not free tokens", () => {
