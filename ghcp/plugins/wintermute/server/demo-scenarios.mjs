@@ -29,7 +29,7 @@ const EXTRA = [
   { label: 'K7', name: 'cost analysis that reported complete', status: 'idle', statusDetail: 'idle', bucket: 'idle', reportStatus: 'complete' },
   { label: 'J8', name: 'one-off job closed with no PR', status: 'idle', statusDetail: 'idle', bucket: 'idle', outcome: 'closed' },
   { label: 'T0', name: 'stopped with no outcome', status: 'idle', statusDetail: 'stopped', bucket: 'idle', alive: false },
-  { label: 'G4', name: 'one chip beside a long model name', status: 'busy', statusDetail: 'busy', bucket: 'working', model: 'gemini-4-argon', effort: 'high', credits: 34100, chip: 'general-purpose' },
+  { label: 'G4', name: 'one chip beside a long model name', status: 'busy', statusDetail: 'busy', bucket: 'working', model: 'gemini-4-neon', effort: 'high', credits: 34100, chip: 'general-purpose' },
   { label: 'V2', name: 'review of the paused monitor PR', status: 'idle', statusDetail: 'stopped', bucket: 'idle', alive: false, outcome: 'done', reportStatus: 'complete', reviews: 'P4' },
 ];
 

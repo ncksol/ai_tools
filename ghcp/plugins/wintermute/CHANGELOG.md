@@ -6,6 +6,13 @@ For every agent or dashboard change, run `npm run release:bump -- <version|patch
 
 After merging, run `npm run release:publish -- --dry-run`, then `npm run release:publish`, from clean main at origin/main. The publisher validates the package, creates and pushes the annotated `wintermute-vX.Y.Z` tag, then creates a GitHub Release from that section. It refuses existing tags and unfinished notes. The marketplace follows main.
 
+## 1.7.0 — 2026-11-24
+
+### Changed
+
+- `wintermute-core` and the `wintermute-project` skill replace Gemini 4 Argon with Gemini 4 Neon (`gemini-4-neon`). Neon runs at `medium` for routine Mid work and light reviews, and at `high` for harder Mid work and hard debugging on a bounded code path. It does not own critical units, write plans that other agents follow, sit on panels or do unchecked web research.
+- Carbon at `medium` takes closed-book fact-checks, and Carbon at `high` replaces Argon as the fallback for security reviews of OpenAI-written code. Carbon keeps its panel and Max consult seats.
+
 ## 1.6.0 — 2026-11-22
 
 ### Changed

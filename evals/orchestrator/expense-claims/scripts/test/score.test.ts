@@ -143,8 +143,8 @@ test("score times a synthetic session, runs the seed's suite on a fresh clone an
   assert.equal(rows[0].robustness_sha256, suiteHash);
   assert.ok(ok.stdout.includes(`Robustness suite sha256: ${suiteHash}\n`), ok.stdout);
   assert.match(rows[0].main_sha, /^[a-f0-9]{40}$/);
-  const card = readFileSync(join(KIT_DIR, "pricing", "2026-11-20.json"));
-  assert.equal(rows[0].pricing_version, `2026-11-20:${createHash("sha256").update(card).digest("hex")}`);
+  const card = readFileSync(join(KIT_DIR, "pricing", "2026-11-24.json"));
+  assert.equal(rows[0].pricing_version, `2026-11-24:${createHash("sha256").update(card).digest("hex")}`);
   assert.match(rows[0].note, /spec on main lists policy\+reports\+import; scored against the seed's policy\+reports\+import\+summary/);
   const firstFile = readFileSync(results, "utf8");
 

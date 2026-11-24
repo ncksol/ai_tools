@@ -100,7 +100,7 @@ test('the worker hands a misrouted claims job back and keeps tests for findings'
   assert.ok(agent(WORKER).includes(`${MISROUTE_HEAD} ${middle} ${MISROUTE_TAIL}`));
 });
 
-const LIGHT_ROW = '| Light review | Sol at `high`, Sonnet at `xhigh` or Carbon at `medium`, never from the author\'s vendor; tell Sol to mark a finding must-fix or should-fix only with a concrete failing case or code path | The review of a small follow-up with real logic that meets no critical-unit trigger (see "Follow-up jobs" in "Evidence and review"). Never a unit\'s first review. |';
+const LIGHT_ROW = '| Light review | Sol at `high`, Sonnet at `xhigh` or Neon at `medium`, never from the author\'s vendor; tell Sol and Neon to mark a finding must-fix or should-fix only with a concrete failing case or code path | The review of a small follow-up with real logic that meets no critical-unit trigger (see "Follow-up jobs" in "Evidence and review"). Never a unit\'s first review. |';
 const FOLLOW_UP_TIER_LINE = '- A follow-up job you hand out, such as a review, a claims check or a helper, gets the tier or review row that fits its own scope and risk, not the unit\'s (see "Follow-up jobs" in "Evidence and review"). A small fix in a critical unit doesn\'t get the critical review row, and a risky follow-up in a regular unit can. The owner\'s own fixes and rebases stay with the owner, at its model.';
 const CRITICAL_POINTER = 'Size each follow-up job on its own (see "Follow-up jobs" in "Evidence and review"): a critical unit\'s follow-ups aren\'t critical by default, and a follow-up that meets a trigger gets critical scrutiny even in a regular unit.';
 const CLAIMS_EXCEPTION = 'A follow-up commit may skip its claims check only as "Follow-up jobs" allows.';
