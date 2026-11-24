@@ -142,11 +142,12 @@ Pinned models:
 - Terra: `gpt-6.1-terra` (OpenAI)
 - Neon: `gemini-4-neon` (Google)
 - Carbon: `gemini-4-carbon` (Google)
+- Hydrogen: `gemini-4-hydrogen` (Google)
 - Fable: `claude-fable-5.2` (Fable, its own vendor; not counted as Anthropic)
 
 | Tier | Model and effort | Use it for |
 |---|---|---|
-| Low | Sol at `medium`, or at `low` for a single command or lookup; Sonnet at `medium` for read-only jobs; Opus at `low` for other jobs if Sol isn't listed | Searches, file sweeps, running builds and tests, log parsing, and mechanical edits from an exact recipe. Other mechanical jobs too: commands, simple PR jobs, lookups, installs and notifications. Sonnet only for searches, file sweeps and summaries of text it is given. |
+| Low | Sol at `medium`, or at `low` for a single command or lookup; Sonnet or Hydrogen at `medium` for read-only jobs; Opus at `low` for other jobs if Sol isn't listed | Searches, file sweeps, running builds and tests, log parsing, and mechanical edits from an exact recipe. Other mechanical jobs too: commands, simple PR jobs, lookups, installs and notifications. Sonnet and Hydrogen only for searches, file sweeps and summaries of text they are given. |
 | Mid | Opus at `medium` or `high`, Sol at `high` or `xhigh`, Sonnet at `xhigh`, or Neon at `medium` or `high` | The default for implementation, including well-scoped briefs. Start with Opus at `medium` or Sol at `high`, and use Opus at `high` or Sol at `xhigh` for harder Mid jobs. Prefer Sol when tests, a reproducer or another runnable check confirm the result, and Opus when the job depends on reading a large existing codebase that tests cover poorly. For a Google model, use Neon at `medium` for routine jobs and at `high` for harder ones. Also routine debugging. |
 | High | Opus or Astra at `xhigh`; Sol at `max` for long autonomous coding or terminal work and for find-and-fix debugging; Neon at `high` only for hard find-and-fix debugging on a bounded code path, never to own a critical unit or write a plan that other agents follow; or Carbon at `high` for hard find-and-fix debugging across a wider area, or when quality matters more than cost | Harder or open-ended jobs, units marked critical, plans that other agents follow, and hard debugging. |
 | Max | Opus or Astra at `max` for consults, or Carbon at `high` (its top level) for code-centred consults, not long-document or security ones; Astra at `max` for incident RCA and Opus at `max` for the hardest implementation, only with the user's approval | Consults, which are plan critiques, structural or critical-path decisions, and second opinions that need a deeper independent read; and execution only in the two roles named in this row, when success matters more than cost and the user approves first. |
@@ -175,16 +176,17 @@ How to apply the table in a Project:
 
 Never use these:
 
-- Neon at `xhigh`: it costs much more per task than `high` for a small, uneven gain, and older Copilot runtimes run it as `medium` without a warning.
-- Neon or Carbon at `max`, and Carbon at `xhigh`: Copilot doesn't offer them.
+- Neon or Hydrogen at `xhigh`: they cost much more per task than at `high` for a small, uneven gain, and some Copilot runtimes don't handle `xhigh` reliably.
+- Neon, Carbon or Hydrogen at `max`, and Carbon at `xhigh`: Copilot doesn't offer them.
 - Astra at `low` or `medium`: Sol at `medium` scores higher on the AA Intelligence Index, for less.
 - Sol at `low` for anything but a single command or lookup: on work that needs judgment it scores far below Sol at `medium`.
-- Sonnet or Neon at `low`: quality drops a lot from the next level up.
+- Sonnet, Neon or Hydrogen at `low`: quality drops a lot from the next level up.
 - Carbon at `low`: it costs more per task than `medium` and scores lower; use Sol for simple work.
 - Terra at `low`, `high`, `xhigh` or `max`, and Terra as a reviewer.
 - Fable at `low`, `medium`, `xhigh` or `max`, and Fable in any job other than the second security review and the same-work judge.
+- Hydrogen in any job other than a read-only Low job: the other rows have stronger listed options or no evidence for Hydrogen in that role, and users report it saying a build passed before it saw the result.
 - Sonnet at `max` for coding: it widens the scope and starts too many sub-agents. Use it at `xhigh`.
-- Neon or Carbon for web research that nobody checks.
+- Neon, Carbon or Hydrogen for web research that nobody checks.
 - A reviewer or fact-checker from the author's vendor, unless the user has limited the work to one vendor (see "Evidence and review"). Judges follow the vendor rules of the final panel and the disagreement panel instead.
 
 ## Kickoff prompts and forwarding

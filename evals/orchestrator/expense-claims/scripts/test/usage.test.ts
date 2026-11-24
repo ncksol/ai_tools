@@ -53,6 +53,18 @@ test("the default card prices Neon without an unpublished cache-write rate", () 
   assert.throws(() => priceUsage(usage("gemini-4-neon"), when, card), /cache write/i);
 });
 
+test("the default card prices Hydrogen without an unpublished cache-write rate", () => {
+  const card = readPricing(join(KIT_DIR, DEFAULT_PRICING_FILE));
+  const when = "2026-11-24T12:00:00Z";
+  const u = usage("gemini-4-hydrogen", {
+    inputTokens: 1_000_000, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0,
+  });
+  assert.equal(priceUsage(u, when, card), 1.5);
+  assert.equal(priceUsage({ ...u, cacheReadTokens: 1_000_000 }, when, card), 0.075);
+  assert.equal(priceUsage({ ...u, inputTokens: 0, outputTokens: 1_000_000 }, when, card), 7.5);
+  assert.throws(() => priceUsage({ ...u, cacheWriteTokens: 1 }, when, card), /cache write/i);
+});
+
 test("the default card prices Fable 5.2 at its flat rate for long inputs", () => {
   const card = readPricing(join(KIT_DIR, DEFAULT_PRICING_FILE));
   assert.equal(priceUsage(usage("claude-fable-5.2", {

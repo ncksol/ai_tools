@@ -151,11 +151,12 @@ Pinned models:
 - Terra: `gpt-6.1-terra` (OpenAI)
 - Neon: `gemini-4-neon` (Google)
 - Carbon: `gemini-4-carbon` (Google)
+- Hydrogen: `gemini-4-hydrogen` (Google)
 - Fable: `claude-fable-5.2` (Fable, its own vendor; not counted as Anthropic)
 
 | Tier | Model and effort | Use it for |
 |---|---|---|
-| Low | Sol at `medium`, or at `low` for a single command or lookup; Sonnet at `medium` for read-only jobs; Opus at `low` for other jobs if Sol isn't listed | Searches, file sweeps, running builds and tests, log parsing, and mechanical edits from an exact recipe. Other mechanical jobs too: commands, simple PR jobs, lookups, installs and notifications. Sonnet only for searches, file sweeps and summaries of text it is given. |
+| Low | Sol at `medium`, or at `low` for a single command or lookup; Sonnet or Hydrogen at `medium` for read-only jobs; Opus at `low` for other jobs if Sol isn't listed | Searches, file sweeps, running builds and tests, log parsing, and mechanical edits from an exact recipe. Other mechanical jobs too: commands, simple PR jobs, lookups, installs and notifications. Sonnet and Hydrogen only for searches, file sweeps and summaries of text they are given. |
 | Mid | Opus at `medium` or `high`, Sol at `high` or `xhigh`, Sonnet at `xhigh`, or Neon at `medium` or `high` | The default for implementation, including well-scoped briefs. Start with Opus at `medium` or Sol at `high`, and use Opus at `high` or Sol at `xhigh` for harder Mid jobs. Prefer Sol when tests, a reproducer or another runnable check confirm the result, and Opus when the job depends on reading a large existing codebase that tests cover poorly. For a Google model, use Neon at `medium` for routine jobs and at `high` for harder ones. Also routine debugging. |
 | High | Opus or Astra at `xhigh`; Sol at `max` for long autonomous coding or terminal work and for find-and-fix debugging; Neon at `high` only for hard find-and-fix debugging on a bounded code path, never to own a critical unit or write a plan that other agents follow; or Carbon at `high` for hard find-and-fix debugging across a wider area, or when quality matters more than cost | Harder or open-ended jobs, units marked critical, plans that other agents follow, and hard debugging. |
 | Max | Opus or Astra at `max` for consults, or Carbon at `high` (its top level) for code-centred consults, not long-document or security ones; Astra at `max` for incident RCA and Opus at `max` for the hardest implementation, only with the user's approval | Consults, which are plan critiques, structural or critical-path decisions, and second opinions that need a deeper independent read; and execution only in the two roles named in this row, when success matters more than cost and the user approves first. |
@@ -175,7 +176,7 @@ Pinned models:
 - Pass the pinned ID as the model. If a pinned ID isn't in the model list of the tool you are calling, use another pinned option from the same row that qualifies for the job under that row's limits and under the vendor and security-routing rules (see "Evidence and review"), at the level that the row gives that option, and record the substitution in `child_notes`. If no option qualifies, or the job's pinned model isn't listed and the job has no table row (for example an incident investigation), ask the user. Never move to another version of a family on your own, newer or older.
 - Fable runs only in the second security review and same-work judge rows, and it is never one of the two vendors of the final panel or the disagreement panel. If Fable isn't in the model list of the tool you are calling, or the user has limited the work to one vendor, skip both rows. Don't use another model for them and don't ask the user; "Evidence and review" says what happens instead.
 - Moving to a new model version is an explicit change to this agent file, with a plugin version bump and a CHANGELOG entry.
-- In the Low tier, run Sol at `low` for a single command or lookup, and at `medium` for a job with several steps. Give Sonnet only read-only jobs: searches, file sweeps and summaries of text it is given. If Sol isn't listed, use Opus at `low` for Low-tier jobs that aren't read-only, such as builds, tests and edits.
+- In the Low tier, run Sol at `low` for a single command or lookup, and at `medium` for a job with several steps. Give Sonnet and Hydrogen only read-only jobs: searches, file sweeps and summaries of text they are given. If Sol isn't listed, use Opus at `low` for Low-tier jobs that aren't read-only, such as builds, tests and edits.
 - Sol at `max` is an effort level inside the High tier, not the Max tier. Use it for long autonomous coding or terminal work, and for find-and-fix debugging.
 - A child session gets the tier of the work it owns. A child that owns a PR is Mid unless the unit is marked critical or the work is harder: a critical unit is High by default. A child that runs a review workflow gets the review row of the review it runs. A one-off session gets the tier or review row of its job: a claims check gets the claims check row, a review or a judge gets its review row, and a plan critique or a second opinion is Max.
 - A follow-up job you hand out, such as a review, a claims check or a helper, gets the tier or review row that fits its own scope and risk, not the unit's (see "Follow-up jobs" in "Evidence and review"). A small fix in a critical unit doesn't get the critical review row, and a risky follow-up in a regular unit can. The owner's own fixes and rebases stay with the owner, at its model.
@@ -188,16 +189,17 @@ Pinned models:
 
 Never use these:
 
-- Neon at `xhigh`: it costs much more per task than `high` for a small, uneven gain, and older Copilot runtimes run it as `medium` without a warning.
-- Neon or Carbon at `max`, and Carbon at `xhigh`: Copilot doesn't offer them.
+- Neon or Hydrogen at `xhigh`: they cost much more per task than at `high` for a small, uneven gain, and some Copilot runtimes don't handle `xhigh` reliably.
+- Neon, Carbon or Hydrogen at `max`, and Carbon at `xhigh`: Copilot doesn't offer them.
 - Astra at `low` or `medium`: Sol at `medium` scores higher on the AA Intelligence Index, for less.
 - Sol at `low` for anything but a single command or lookup: on work that needs judgment it scores far below Sol at `medium`.
-- Sonnet or Neon at `low`: quality drops a lot from the next level up.
+- Sonnet, Neon or Hydrogen at `low`: quality drops a lot from the next level up.
 - Carbon at `low`: it costs more per task than `medium` and scores lower; use Sol for simple work.
 - Terra at `low`, `high`, `xhigh` or `max`, and Terra as a reviewer.
 - Fable at `low`, `medium`, `xhigh` or `max`, and Fable in any job other than the second security review and the same-work judge.
+- Hydrogen in any job other than a read-only Low job: the other rows have stronger listed options or no evidence for Hydrogen in that role, and users report it saying a build passed before it saw the result.
 - Sonnet at `max` for coding: it widens the scope and starts too many sub-agents. Use it at `xhigh`.
-- Neon or Carbon for web research that nobody checks.
+- Neon, Carbon or Hydrogen for web research that nobody checks.
 - A reviewer or fact-checker from the author's vendor, unless the user has limited the work to one vendor (see "Evidence and review"). Judges follow the vendor rules of the final panel and the disagreement panel instead.
 
 ## Dashboard data contract
